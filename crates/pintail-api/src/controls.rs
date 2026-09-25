@@ -140,27 +140,36 @@ fn auto_resync_cooldown() -> &'static Mutex<HashMap<(String, String), Instant>> 
     COOLDOWN.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Whether the source's last probe knows `name`.
+fn probed(report: &ProbeReport, name: &str) -> bool {
+    report
+        .tables
+        .iter()
+        .any(|table| table.name.eq_ignore_ascii_case(name))
+}
+
 fn auto_resync_candidate(
     metadata: &pintail_meta::MetaStore,
     database: &DatabaseRecord,
-) -> Option<(String, bool)> {
+) -> Option<(String, bool, bool)> {
     let database_id = &database.id;
     let mut quarantined = metadata
         .tables_needing_auto_resync_under(database_id, database.keyless_policy == "auto_resync")
-        .ok()?;
+        .ok()?
+        .into_iter()
+        .collect::<Vec<_>>();
     // A successful probe may retire an old name after RENAME/DROP. Keep
-    // its visible quarantine record, but do not let it monopolize repairs.
+    // its visible quarantine record, but do not let it monopolize repairs:
+    // names the last probe knows go first. A name it does not know is still
+    // repaired after them - a table created since that probe, whose CREATE
+    // could not be read, is otherwise never copied. The repair probes the
+    // source afresh and records a table that is really gone as such.
     if let Some(report) = database
         .probe_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<ProbeReport>(json).ok())
     {
-        quarantined.retain(|name| {
-            report
-                .tables
-                .iter()
-                .any(|table| table.name.eq_ignore_ascii_case(name))
-        });
+        quarantined.sort_by_key(|name| !probed(&report, name));
     }
     let pending = quarantined
         .iter()
@@ -172,7 +181,12 @@ fn auto_resync_candidate(
         .cloned();
     let copy_pending = pending.is_some();
     let table_name = pending.or_else(|| quarantined.into_iter().next())?;
-    Some((table_name, copy_pending))
+    let known = database
+        .probe_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<ProbeReport>(json).ok())
+        .is_none_or(|report| probed(&report, &table_name));
+    Some((table_name, copy_pending, known))
 }
 
 /// Whether the control plane records `table_name` with no source key.
@@ -211,10 +225,13 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
     let Ok(Some(database)) = metadata.database(database_id) else {
         return;
     };
-    let Some((table_name, copy_pending)) = auto_resync_candidate(&metadata, &database) else {
+    let Some((table_name, copy_pending, known)) = auto_resync_candidate(&metadata, &database)
+    else {
         return;
     };
-    let keyless = table_is_keyless(&metadata, database_id, &table_name);
+    // Only while the source still has it: a keyless name the last probe no
+    // longer knows would otherwise be retried every cycle.
+    let keyless = known && table_is_keyless(&metadata, database_id, &table_name);
     if database.mode == "paused" {
         return;
     }

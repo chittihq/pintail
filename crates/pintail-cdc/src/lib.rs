@@ -801,6 +801,7 @@ async fn run_cdc_inner(
                                 })
                                 .map(|(index, _)| index)
                                 .collect::<Vec<_>>();
+                            let named_any = !named.is_empty();
                             for index in named {
                                 quarantine_schema_change(
                                     &mut metadata,
@@ -811,6 +812,28 @@ async fn run_cdc_inner(
                                     &statement,
                                     None,
                                 )?;
+                            }
+                            // A CREATE of a table the stream does not track names
+                            // nothing to quarantine, and skipping it left the new
+                            // table uncopied for good. It is recorded as awaiting
+                            // its first copy instead, as a copy that failed is,
+                            // and the repair copies it from a fresh probe - which
+                            // reads the source's own catalogue, not this text.
+                            if !named_any
+                                && let Some(table) =
+                                    created_table_name(&statement, &report.database)
+                            {
+                                metadata.upsert_snapshot_table(database_id, &table, None, None)?;
+                                metadata.fail_table_copy(
+                                    database_id,
+                                    &table,
+                                    &format!("its CREATE could not be read: {error}"),
+                                    true,
+                                )?;
+                                pintail_log::log_error!(
+                                    "table awaits its first copy db={database_id} table={table}: \
+                                     its CREATE could not be read"
+                                );
                             }
                             // Past it, as a readable DDL moves past itself:
                             // the rows before it commit, and the checkpoint
@@ -1694,6 +1717,63 @@ fn find_source_table<'a>(report: &'a ProbeReport, table: &str) -> Option<&'a Sou
 /// comment or a value quarantines a table that did not change, which costs a
 /// resync, where missing one would leave the replica disagreeing with its
 /// source and nobody the wiser.
+/// The table a `CREATE TABLE` statement creates in `database`, read from the
+/// statement's head without parsing the rest - for a CREATE the parser
+/// rejects. `None` for any other statement, a temporary table (which row
+/// events never carry), or a table in another schema.
+fn created_table_name(statement: &str, database: &str) -> Option<String> {
+    fn word<'a>(text: &mut &'a str) -> Option<&'a str> {
+        *text = text.trim_start();
+        let end = text
+            .find(|ch: char| ch.is_whitespace() || ch == '(')
+            .unwrap_or(text.len());
+        let (head, tail) = text.split_at(end);
+        *text = tail;
+        (!head.is_empty()).then_some(head)
+    }
+    fn identifier(text: &str) -> String {
+        text.strip_prefix('`')
+            .and_then(|inner| inner.strip_suffix('`'))
+            .map_or_else(|| text.to_owned(), |inner| inner.replace("``", "`"))
+    }
+    let mut rest = statement;
+    if !word(&mut rest)?.eq_ignore_ascii_case("create") {
+        return None;
+    }
+    let mut next = word(&mut rest)?;
+    if next.eq_ignore_ascii_case("temporary") {
+        return None;
+    }
+    if !next.eq_ignore_ascii_case("table") {
+        return None;
+    }
+    next = word(&mut rest)?;
+    if next.eq_ignore_ascii_case("if") {
+        word(&mut rest)?;
+        word(&mut rest)?;
+        next = word(&mut rest)?;
+    }
+    // `schema.table`, either part optionally quoted; a quoted part may hold
+    // a dot, so the split is at a dot outside backticks.
+    let mut quoted = false;
+    let split = next.char_indices().find_map(|(at, ch)| {
+        if ch == '`' {
+            quoted = !quoted;
+        }
+        (ch == '.' && !quoted).then_some(at)
+    });
+    let table = match split {
+        Some(at) => {
+            if !identifier(&next[..at]).eq_ignore_ascii_case(database) {
+                return None;
+            }
+            identifier(&next[at + 1..])
+        }
+        None => identifier(next),
+    };
+    (!table.is_empty()).then_some(table)
+}
+
 fn statement_names_table(statement: &str, table: &str) -> bool {
     if table.is_empty() {
         return false;
@@ -3019,6 +3099,36 @@ fn generated_server_id(database_id: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_unreadable_create_still_names_its_table() {
+        let name = |sql: &str| super::created_table_name(sql, "app");
+        assert_eq!(
+            name("CREATE TABLE t2 (\n  fld1 int(6) unsigned zerofill) charset utf8mb4"),
+            Some("t2".to_owned())
+        );
+        assert_eq!(
+            name("create table if not exists `odd``name`(a int)"),
+            Some("odd`name".to_owned())
+        );
+        assert_eq!(name("CREATE TABLE app.t3 LIKE t2"), Some("t3".to_owned()));
+        assert_eq!(
+            name("CREATE TABLE `app`.`dotted.name` (a int)"),
+            Some("dotted.name".to_owned())
+        );
+        assert_eq!(
+            name("CREATE TABLE other.t4 (a int)"),
+            None,
+            "another schema"
+        );
+        assert_eq!(
+            name("CREATE TEMPORARY TABLE t5 (a int)"),
+            None,
+            "never in row events"
+        );
+        assert_eq!(name("ALTER TABLE t2 ADD COLUMN b int"), None);
+        assert_eq!(name("CREATE INDEX i ON t2 (a)"), None);
+    }
 
     /// Which tables an unreadable DDL quarantines. Saying yes too often
     /// costs a resync; saying no too rarely leaves the replica disagreeing
