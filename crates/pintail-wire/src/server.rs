@@ -4016,6 +4016,12 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
             "@@transaction_isolation",
             Value::Utf8("REPEATABLE-READ".to_owned()),
         )
+    } else if normalized == "select @@transaction_read_only" {
+        // Transactions start read-write, as MySQL's do; a statement a
+        // replicated database cannot take is refused on its own.
+        ("@@transaction_read_only", Value::UInt64(0))
+    } else if normalized == "select @@tx_read_only" {
+        ("@@tx_read_only", Value::UInt64(0))
     } else if normalized.starts_with("select row_count()") {
         ("ROW_COUNT()", Value::Int64(session.row_count))
     } else if normalized.starts_with("select version()") {

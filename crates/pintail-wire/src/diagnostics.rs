@@ -1449,6 +1449,28 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn a_driver_s_read_only_probe_answers_beside_other_variables() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute(
+                "SELECT @@transaction_read_only AS tx_read_only, @@tx_read_only AS legacy, \
+                 @@max_execution_time AS met",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["tx_read_only", "legacy", "met"]
+        );
+        assert_eq!(result.rows[0][..2], [Value::UInt64(0), Value::UInt64(0)]);
+    }
+
+    #[tokio::test]
     async fn unordered_grouped_windows_use_a_stable_group_key_traversal() {
         use pintail_types::Value;
         let (_directory, backend) = local_backend();
