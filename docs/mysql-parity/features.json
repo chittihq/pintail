@@ -56,7 +56,7 @@
     ],
     "evidence": [
       "crates/pintail-sql/src/binder/mod.rs",
-      "crates/pintail-exec/tests/join_condition_subquery.rs",
+      "crates/pintail-exec/tests/integration/join_condition_subquery.rs",
       "tests/sqllogic/tests/mysql_oracle.rs",
       "docs/limitations.md"
     ],
@@ -506,7 +506,7 @@
     ],
     "evidence": [
       "docs/limitations.md",
-      "crates/pintail-exec/tests/enum_ordinal.rs"
+      "crates/pintail-exec/tests/integration/enum_ordinal.rs"
     ],
     "note": "Declaration ordinal/mask and string-comparison behavior exist with residual coercion/collation limits.",
     "acceptance": "Compare numeric/string contexts, invalid/empty members, schema history, ordering, grouping and CDC updates."
