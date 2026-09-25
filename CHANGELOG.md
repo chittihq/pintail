@@ -4,6 +4,36 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.5-rc8] - 2026-09-25
+
+Change capture that follows every table a DDL touches: rc7 replaced the
+forced database snapshot that repaired a quarantined table with a
+one-table repair, and that snapshot had been hiding four capture faults.
+Found by the first runs of the nightly replica gate.
+
+### Fixed
+
+- A table whose CREATE the stream could not parse (a ZEROFILL, INVISIBLE or
+  PARTITION clause is enough) was never copied, and every read of it failed
+  as an unknown table. It is now recorded as awaiting its first copy and
+  copied from the source's own catalogue.
+- A table dropped and re-created that way was copied but never followed
+  again: later changes to it did not reach the replica.
+- A column dropped and added back under its name read the dropped column's
+  values, and a column added with a default left the rows already copied
+  reading NULL. Such a change now recopies the table.
+- A table quarantined by a second DDL within five minutes of its last
+  repair stayed unreadable until the five minutes passed; only a repeat of
+  the same cause is held back now.
+- A comparison with a datetime literal that carries a time-zone offset
+  (`'2015-01-01 10:10:10+03:30'`) ignored the offset.
+- A binary string that is not UTF-8 failed in a numeric context instead of
+  reading as the number its leading bytes spell, as MySQL does.
+- `GROUP BY` a name two joined tables both hold refused as ambiguous where
+  MySQL takes the select alias of that name.
+- A negative-zero FLOAT printed as `0`, and DOUBLE arithmetic over numbers
+  with a declared scale printed unfixed (`0` for `0.0`).
+
 ## [0.1.5-rc7] - 2026-09-25
 
 Correctness under memory pressure and replays, a one-table blast radius for
