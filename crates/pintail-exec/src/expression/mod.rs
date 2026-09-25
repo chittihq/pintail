@@ -8008,6 +8008,9 @@ fn cast_numeric(value: &Value, data_type: Option<DataType>) -> Result<Value, Exe
     }
 }
 
+// Fallible by contract: every caller treats a truth test as one that can
+// refuse, and no value refuses today only because bytes now read as numbers.
+#[allow(clippy::unnecessary_wraps)]
 pub(crate) fn mysql_truth(value: &Value) -> Result<Option<bool>, ExecError> {
     match value {
         Value::Null => Ok(None),
@@ -8023,9 +8026,20 @@ pub(crate) fn mysql_truth(value: &Value) -> Result<Option<bool>, ExecError> {
             Ok(Some(parse_mysql_number(value) != 0.0))
         }
         Value::Binary(value) => {
-            let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
+            let value = numeric_bytes_text(value);
             Ok(Some(parse_mysql_number(value) != 0.0))
         }
+    }
+}
+
+/// The text a binary string reads as in a numeric context: its longest valid
+/// UTF-8 prefix. `MySQL` reads a number from the leading bytes and stops at the
+/// first that cannot continue it, so a byte that is not UTF-8 ends the number
+/// the way any other non-digit does - `1.0 * 0xFFFEFF` is 0, not an error.
+fn numeric_bytes_text(bytes: &[u8]) -> &str {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => std::str::from_utf8(&bytes[..error.valid_up_to()]).unwrap_or_default(),
     }
 }
 
@@ -8052,7 +8066,7 @@ pub(crate) fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
             Ok(parse_mysql_number(&average.canonical()))
         }
         Value::Binary(value) => {
-            let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
+            let value = numeric_bytes_text(value);
             Ok(parse_mysql_number(value))
         }
         Value::Null => Err(ExecError::InvalidExpressionType),
@@ -8116,7 +8130,7 @@ pub(crate) fn mysql_i64(value: &Value) -> Result<i64, ExecError> {
         // refused its own maximum. Under `SET NAMES binary` every unprefixed
         // literal is binary, so this was ordinary arithmetic, not a corner.
         Value::Binary(value) => {
-            let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
+            let value = numeric_bytes_text(value);
             exact_integer_prefix(value).map_or_else(
                 || float_to_i64(parse_mysql_number(value)),
                 |number| i64::try_from(number).map_err(|_| ExecError::NumericOverflow),
@@ -8142,7 +8156,7 @@ pub(crate) fn mysql_u64(value: &Value) -> Result<u64, ExecError> {
         }
         // As above: bytes read exactly before they read approximately.
         Value::Binary(value) => {
-            let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
+            let value = numeric_bytes_text(value);
             exact_integer_prefix(value)
                 .and_then(|number| u64::try_from(number).ok())
                 .map_or_else(|| float_to_u64(parse_mysql_number(value)), Ok)
@@ -8261,6 +8275,23 @@ fn divided_by_zero() -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn bytes_that_are_not_utf8_end_a_number_rather_than_fail_it() {
+        let bytes = |raw: &[u8]| Value::Binary(raw.to_vec());
+        assert_eq!(
+            super::mysql_f64(&bytes(&[0xFF, 0xFE, 0xFF]))
+                .unwrap()
+                .to_bits(),
+            0.0_f64.to_bits()
+        );
+        assert_eq!(
+            super::mysql_f64(&bytes(b"12\xFF3")).unwrap().to_bits(),
+            12.0_f64.to_bits()
+        );
+        assert_eq!(super::mysql_i64(&bytes(b"-7\xCA")).unwrap(), -7);
+        assert_eq!(super::mysql_u64(&bytes(&[0xFB])).unwrap(), 0);
+    }
     /// A disjunction and an integer `IN` list answer as packed masks.
     ///
     /// Both used to decline, and a filter mask that declines costs more
