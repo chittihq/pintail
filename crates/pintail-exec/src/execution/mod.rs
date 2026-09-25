@@ -4453,6 +4453,120 @@ impl PullOperator {
 /// Lowers one plan node, wrapped in a profile recorder when the execution
 /// is profiled. The recursion below goes through here, so every node of
 /// a profiled plan is measured and an unprofiled plan is built as before.
+/// Evaluates aggregate arguments that hold a correlated subquery - `SUM(x AND
+/// EXISTS (... WHERE t.id = outer.id))` - once per input row, ahead of the
+/// aggregate, and points the aggregate at the answers. Compiled expressions
+/// cannot run a subquery, so without this such an argument reached
+/// compilation unresolved and the whole statement failed. The rows are
+/// materialized, as a projection holding a correlated subquery already is.
+fn precompute_dependent_aggregate_arguments(
+    mut input: PullOperator,
+    columns: Vec<BoundColumn>,
+    aggregates: &mut [BoundAggregate],
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let mut dependent = Vec::<&mut BoundExpr>::new();
+    for aggregate in aggregates.iter_mut() {
+        if let Some(expression) = aggregate.expr.as_mut()
+            && expression_has_dependent_subquery(expression)
+        {
+            dependent.push(expression);
+        }
+        for (key, _) in &mut aggregate.order_within {
+            if expression_has_dependent_subquery(key) {
+                dependent.push(key);
+            }
+        }
+    }
+    if dependent.is_empty() {
+        return Ok((input, columns));
+    }
+    let expressions = dependent
+        .iter()
+        .map(|expression| (**expression).clone())
+        .collect::<Vec<_>>();
+    let mut rows = Vec::new();
+    let mut memo = DependentMemo::for_expressions(expressions.iter());
+    while let Some(batch) = input.next_batch(memory)? {
+        let batch_bytes = batch.estimated_bytes();
+        for row in batch.selection().selected_rows() {
+            let mut values = Vec::with_capacity(columns.len() + expressions.len());
+            for index in 0..columns.len() {
+                values.push(
+                    batch
+                        .column(index)
+                        .and_then(|column| column.value(row))
+                        .cloned()
+                        .ok_or(ExecError::InvalidBatch(
+                            "aggregate input row is narrower than its columns",
+                        ))?,
+                );
+            }
+            let context = DependentRow {
+                batch: &batch,
+                row,
+                columns: &columns,
+                provider,
+                memory,
+                collation,
+            };
+            memo.begin_row();
+            for expression in &expressions {
+                let mut expression = expression.clone();
+                resolve_dependent_expr_subqueries(&mut expression, &context, &mut memo)?;
+                let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
+                values.push(compiled.evaluate(&batch, row)?);
+            }
+            let row_bytes = estimated_row_payload_bytes(&values);
+            memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
+            memory.reserve(row_bytes)?;
+            rows.push(values);
+        }
+    }
+    record_dependent_memo(memo.finish(memory));
+    let mut output_columns = columns;
+    for (offset, expression) in dependent.into_iter().enumerate() {
+        let column = BoundColumn {
+            database_id: DatabaseId::new(u64::MAX),
+            table_id: TableId::new(u64::MAX - 5),
+            column_id: u32::try_from(offset).unwrap_or(u32::MAX),
+            relation_name: "<dependent-argument>".to_owned(),
+            name: format!("<dependent-argument-{offset}>"),
+            data_type: expression.data_type.unwrap_or(DataType::Utf8),
+            nullable: expression.nullable,
+            collation: expression.text_collation().map(str::to_owned),
+            enum_labels: None,
+            geometry: false,
+            timestamp: false,
+            binary_width: expression.binary_width(),
+            bit_width: expression.bit_width(),
+            float_decimals: expression.numeric_decimals(&[]),
+            outer: false,
+            using_shadowed: false,
+        };
+        *expression = BoundExpr {
+            kind: BoundExprKind::Column(column.clone()),
+            data_type: expression.data_type,
+            nullable: expression.nullable,
+        };
+        output_columns.push(column);
+    }
+    let column_types = output_columns
+        .iter()
+        .map(|column| column.data_type)
+        .collect();
+    Ok((
+        PullOperator::Rows {
+            rows,
+            cursor: 0,
+            column_types,
+        },
+        output_columns,
+    ))
+}
+
 fn build_operator(
     plan: PhysicalPlan,
     provider: &dyn ScanProvider,
@@ -4833,9 +4947,17 @@ fn build_operator_inner(
         PhysicalPlan::HashAggregate {
             input,
             group_by,
-            aggregates,
+            mut aggregates,
         } => {
             let (input, columns) = build_operator(*input, provider, memory, collation)?;
+            let (input, columns) = precompute_dependent_aggregate_arguments(
+                input,
+                columns,
+                &mut aggregates,
+                provider,
+                memory,
+                collation,
+            )?;
             let column_types = group_by
                 .iter()
                 .map(|expression| expression.data_type.unwrap_or(DataType::Utf8))
