@@ -63,6 +63,7 @@ bank "test(e2e): bank the differential gate" tests/e2e/results.json tests/e2e/re
 bank "test(e2e): bank the mysql80 leg" tests/e2e/results-mysql80.json tests/e2e/results-mysql80.md
 bank "test(oracle): bank the fixed MySQL corpus" tests/sqllogic/results-oracle.json
 bank "test(recovery): bank the recovery suite" tests/e2e/results-recovery.md
+bank "test(mtr): bank the MySQL and MariaDB suites" tests/mtr/results.json tests/mtr/results.md tests/mtr/results-mariadb.json tests/mtr/results-mariadb.md
 bun run scripts/refresh-differential-evidence.ts
 bun run scripts/mysql-source-ledger.ts
 bank "docs(parity): refresh differential coverage after validation" docs/mysql-parity/differential-evidence.json docs/mysql-parity/ledger.json docs/mysql-parity/functions.md docs/mysql-parity/features.md
