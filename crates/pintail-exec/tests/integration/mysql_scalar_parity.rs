@@ -272,6 +272,22 @@ fn time_arithmetic_distinguishes_date_text_from_typed_dates() {
 }
 
 #[test]
+fn timestamp_reads_its_first_argument_as_a_datetime_before_adding_the_time() {
+    // Unlike ADDTIME, which reads date text as a time, TIMESTAMP casts its
+    // first argument to DATETIME first, so a date and a time combine.
+    assert_answers(&[
+        ("TIMESTAMP('2025-01-02')", "2025-01-02 00:00:00"),
+        ("TIMESTAMP('2025-01-02','09:30:00')", "2025-01-02 09:30:00"),
+        ("TIMESTAMP('2025-01-31','25:00:00')", "2025-02-01 01:00:00"),
+        ("TIMESTAMP('2025-01-02','-01:00:00')", "2025-01-01 23:00:00"),
+        (
+            "TIMESTAMP(DATE'2025-01-02','09:30:00')",
+            "2025-01-02 09:30:00",
+        ),
+    ]);
+}
+
+#[test]
 fn decimal_integer_casts_round_and_saturate_at_integer_bounds() {
     assert_answers(&[
         (

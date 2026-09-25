@@ -624,6 +624,29 @@ pub(super) fn bind_scalar_function(
         "MOD" if args.len() == 2 => return Ok(bind_modulo(args)),
         "NOW" if args.is_empty() => ScalarFunction::Now,
         "CURDATE" if args.is_empty() => ScalarFunction::CurrentDate,
+        // TIMESTAMP(expr) is its argument as a DATETIME; TIMESTAMP(expr, time)
+        // adds the time to that DATETIME, so a DATE and a TIME column
+        // combine into the instant they name.
+        "TIMESTAMP" if matches!(args.len(), 1 | 2) => {
+            let first = args.remove(0);
+            let datetime = BoundExpr {
+                data_type: Some(DataType::DateTime64 {
+                    fsp: temporal_argument_precision(&first),
+                }),
+                nullable: true,
+                kind: BoundExprKind::Scalar {
+                    function: ScalarFunction::Cast(DataType::DateTime64 {
+                        fsp: temporal_argument_precision(&first),
+                    }),
+                    args: vec![first],
+                },
+            };
+            if args.is_empty() {
+                return Ok(datetime);
+            }
+            args.insert(0, datetime);
+            ScalarFunction::AddTime
+        }
         "DATE" if args.len() == 1 => ScalarFunction::Date,
         "TIME" if args.len() == 1 => ScalarFunction::Time,
         "YEAR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Year),
