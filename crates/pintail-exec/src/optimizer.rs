@@ -1635,6 +1635,7 @@ fn capture_timestamp_offsets(function: ScalarFunction, args: &mut [BoundExpr]) {
         | ScalarFunction::ExtractMicros { .. }
         | ScalarFunction::PackedDateParts { .. }
         | ScalarFunction::DateFormat
+        | ScalarFunction::TimeFormat
         | ScalarFunction::DateInterval { .. }
         | ScalarFunction::DayName
         | ScalarFunction::MonthName
@@ -1692,9 +1693,59 @@ fn capture_timestamp_offsets(function: ScalarFunction, args: &mut [BoundExpr]) {
     }
 }
 
+/// A TIME given where a date is read is the statement's date at that time,
+/// as `MySQL` converts it: `DAY(t)` is today's day, and a time past
+/// midnight or below zero runs into the days around it. The argument
+/// becomes a cast to DATETIME carrying the statement's date, so every
+/// date function reads it the way it reads any datetime. The time-of-day
+/// parts read the time itself and are left alone.
+fn read_time_arguments_as_dates(function: ScalarFunction, args: &mut [BoundExpr]) {
+    use pintail_sql::DatePart;
+    let positions: &[usize] = match function {
+        ScalarFunction::DatePart(DatePart::Hour | DatePart::Minute | DatePart::Second) => return,
+        ScalarFunction::DatePart(_)
+        | ScalarFunction::DayName
+        | ScalarFunction::MonthName
+        | ScalarFunction::ToDays
+        | ScalarFunction::ToSeconds
+        | ScalarFunction::YearWeek
+        | ScalarFunction::LastDay
+        | ScalarFunction::UnixTimestamp
+        | ScalarFunction::ConvertTz => &[0],
+        ScalarFunction::DateDiff | ScalarFunction::TimestampDiff { .. } => &[0, 1],
+        _ => return,
+    };
+    for position in positions {
+        let Some(argument) = args.get_mut(*position) else {
+            continue;
+        };
+        let Some(DataType::Time64 { fsp }) = argument.data_type else {
+            continue;
+        };
+        let target = DataType::DateTime64 { fsp };
+        let mut cast = vec![argument.clone()];
+        if let Some(now) = STATEMENT_NOW.get() {
+            cast.push(BoundExpr {
+                kind: BoundExprKind::Literal(Value::Utf8(now.local.format("%Y-%m-%d").to_string())),
+                data_type: Some(DataType::Date32),
+                nullable: false,
+            });
+        }
+        *argument = BoundExpr {
+            kind: BoundExprKind::Scalar {
+                function: ScalarFunction::Cast(target),
+                args: cast,
+            },
+            data_type: Some(target),
+            nullable: true,
+        };
+    }
+}
+
 /// Resolve connection settings once, before expressions move to worker threads.
 fn capture_scalar_session(function: ScalarFunction, args: &mut Vec<BoundExpr>) {
     capture_timestamp_offsets(function, args);
+    read_time_arguments_as_dates(function, args);
     if matches!(
         function,
         ScalarFunction::Cast(DataType::Year)
@@ -1861,15 +1912,16 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
             nullable: expr.nullable,
         },
         BoundExprKind::Scalar { function, args } => {
-            let function = if matches!(
-                function,
-                ScalarFunction::DatePart(pintail_sql::DatePart::Week)
-            ) {
-                ScalarFunction::DatePart(pintail_sql::DatePart::WeekMode(
-                    session_default_week_format(),
-                ))
-            } else {
-                function
+            let function = match function {
+                ScalarFunction::DatePart(pintail_sql::DatePart::Week) => ScalarFunction::DatePart(
+                    pintail_sql::DatePart::WeekMode(session_default_week_format()),
+                ),
+                ScalarFunction::DatePart(pintail_sql::DatePart::ExtractWeek(_)) => {
+                    ScalarFunction::DatePart(pintail_sql::DatePart::ExtractWeek(
+                        session_default_week_format(),
+                    ))
+                }
+                function => function,
             };
             if args.is_empty()
                 && let Some(now) = STATEMENT_NOW.get()

@@ -494,15 +494,12 @@ pub(super) fn bind_scalar_function(
     if arguments.duplicate_treatment.is_some() {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     }
-    if matches!(function_name.as_str(), "DATE_ADD" | "DATE_SUB") {
+    // One line each: the callable-surface count reads these names.
+    let adds = matches!(function_name.as_str(), "DATE_ADD" | "ADDDATE");
+    let subtracts = matches!(function_name.as_str(), "DATE_SUB" | "SUBDATE");
+    if adds || subtracts {
         return bind_date_interval(
-            function,
-            arguments,
-            function_name == "DATE_SUB",
-            tables,
-            aggregates,
-            windows,
-            subqueries,
+            function, arguments, subtracts, tables, aggregates, windows, subqueries,
         );
     }
     if function_name == "TIMESTAMPDIFF" {
@@ -737,6 +734,7 @@ pub(super) fn bind_scalar_function(
         "MINUTE" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Minute),
         "SECOND" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Second),
         "DATE_FORMAT" if args.len() == 2 => ScalarFunction::DateFormat,
+        "TIME_FORMAT" if args.len() == 2 => ScalarFunction::TimeFormat,
         "DATEDIFF" if args.len() == 2 => ScalarFunction::DateDiff,
         "UNIX_TIMESTAMP" if args.len() <= 1 => ScalarFunction::UnixTimestamp,
         "FROM_UNIXTIME" if args.len() == 1 => ScalarFunction::FromUnixTime,
@@ -825,12 +823,32 @@ fn bind_date_interval(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let [
-        FunctionArg::Unnamed(FunctionArgExpr::Expr(date)),
-        FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Interval(interval))),
-    ] = arguments.args.as_slice()
-    else {
-        return Err(BindError::UnsupportedExpression(function.to_string()));
+    // ADDDATE(date, n) and SUBDATE(date, n) count n in days.
+    let days;
+    let (date, interval) = match arguments.args.as_slice() {
+        [
+            FunctionArg::Unnamed(FunctionArgExpr::Expr(date)),
+            FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Interval(interval))),
+        ] => (date, interval),
+        [
+            FunctionArg::Unnamed(FunctionArgExpr::Expr(date)),
+            FunctionArg::Unnamed(FunctionArgExpr::Expr(amount)),
+        ] if function
+            .name
+            .to_string()
+            .to_ascii_uppercase()
+            .ends_with("DATE") =>
+        {
+            days = sqlparser::ast::Interval {
+                value: Box::new(amount.clone()),
+                leading_field: Some(DateTimeField::Day),
+                leading_precision: None,
+                last_field: None,
+                fractional_seconds_precision: None,
+            };
+            (date, &days)
+        }
+        _ => return Err(BindError::UnsupportedExpression(function.to_string())),
     };
     bind_interval_arithmetic(
         date, interval, subtract, tables, aggregates, windows, subqueries,
@@ -2207,10 +2225,14 @@ pub(super) fn bind_scalar(
         | ScalarFunction::Ascii
         | ScalarFunction::Ord
         | ScalarFunction::Field
-        | ScalarFunction::ToDays
-        | ScalarFunction::ToSeconds
         | ScalarFunction::YearWeek => (
             Some(DataType::UInt64),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        // Signed, as MySQL types them: a difference of two day counts can
+        // be negative.
+        ScalarFunction::ToDays | ScalarFunction::ToSeconds => (
+            Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::RegexpLike { .. } | ScalarFunction::DecimalComparison { .. } | ScalarFunction::FixedFloatComparison { .. } => (
@@ -2282,7 +2304,7 @@ pub(super) fn bind_scalar(
         // a date input stays a date only under pure-date units, anything
         // temporal otherwise renders as second-precision datetime text, and
         // a string input stays a string - which is also MySQL's own typing.
-        ScalarFunction::DateFormat => (
+        ScalarFunction::DateFormat | ScalarFunction::TimeFormat => (
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
@@ -2352,10 +2374,19 @@ pub(super) fn bind_scalar(
     ) && !matches!(args[0].data_type, Some(DataType::Time64 { .. }))
     {
         let mode = crate::session_parse_mode();
+        // Bit 4: the argument is a source TIMESTAMP column, whose zero
+        // value DATE() refuses under NO_ZERO_DATE where it keeps a zero
+        // DATE or DATETIME.
+        let timestamp = function == ScalarFunction::Date
+            && matches!(
+                &args[0].session_timestamp_source().unwrap_or(&args[0]).kind,
+                BoundExprKind::Column(column) if column.timestamp
+            );
         let policy = u64::from(mode.no_zero_date)
             | (u64::from(mode.no_zero_in_date) << 1)
             | (u64::from(mode.allow_invalid_dates) << 2)
-            | (u64::from(mode.time_truncate_fractional) << 3);
+            | (u64::from(mode.time_truncate_fractional) << 3)
+            | (u64::from(timestamp) << 4);
         args.push(BoundExpr {
             data_type: Some(DataType::UInt64),
             nullable: false,
@@ -2409,22 +2440,38 @@ pub(super) fn bind_scalar(
     // appended for nothing else, and a call over a date or datetime column
     // keeps the argument list its column kernels and rewrites read.
     // YEARWEEK's mode stays second.
-    if matches!(
-        function,
+    // DATE_ADD and DATE_SUB take it third, and only under
+    // ALLOW_INVALID_DATES: nothing else changes what they answer.
+    let reads_policy = match function {
         ScalarFunction::DatePart(_)
-            | ScalarFunction::DayName
-            | ScalarFunction::MonthName
-            | ScalarFunction::ToDays
-            | ScalarFunction::ToSeconds
-            | ScalarFunction::YearWeek
-            | ScalarFunction::LastDay
-    ) && (crate::session_parse_mode().allow_invalid_dates
-        || crate::session_parse_mode().no_zero_date)
-        && !matches!(
-            args[0].data_type,
+        | ScalarFunction::DayName
+        | ScalarFunction::MonthName
+        | ScalarFunction::ToDays
+        | ScalarFunction::ToSeconds
+        | ScalarFunction::YearWeek
+        | ScalarFunction::LastDay => {
+            crate::session_parse_mode().allow_invalid_dates
+                || crate::session_parse_mode().no_zero_date
+        }
+        ScalarFunction::DateInterval { .. } | ScalarFunction::TimestampDiff { .. } => {
+            args.len() == 2 && crate::session_parse_mode().allow_invalid_dates
+        }
+        _ => false,
+    };
+    let stored = |argument: &BoundExpr| {
+        matches!(
+            argument.data_type,
             Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. })
         )
-    {
+    };
+    // TIMESTAMPDIFF reads a date on both sides.
+    let written = reads_policy
+        && if matches!(function, ScalarFunction::TimestampDiff { .. }) {
+            !args.iter().all(stored)
+        } else {
+            args.first().is_some_and(|argument| !stored(argument))
+        };
+    if written {
         let literal = |value| BoundExpr {
             data_type: Some(DataType::Int64),
             nullable: false,

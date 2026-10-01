@@ -198,8 +198,17 @@ pub(super) fn date_part(value: NaiveDateTime, part: DatePart) -> u64 {
         }
         DatePart::Week => u64::from(mysql_calc_week(value.date(), 0).1),
         DatePart::IsoWeek => u64::from(mysql_calc_week(value.date(), 3).1),
-        DatePart::WeekMode(mode) => u64::from(mysql_calc_week(value.date(), u32::from(mode)).1),
+        DatePart::WeekMode(mode) | DatePart::ExtractWeek(mode) => {
+            u64::from(mysql_calc_week(value.date(), u32::from(mode)).1)
+        }
     }
+}
+
+/// The week `EXTRACT(WEEK FROM ...)` counts for calendar fields under a
+/// `WEEK()` mode. `MySQL` counts it for a zero date or a zero month or
+/// day too, with the unsigned arithmetic [`calc_week_fields`] keeps.
+pub(super) fn week_of_fields(year: u32, month: u32, day: u32, mode: u32) -> u32 {
+    calc_week_fields(year, month, day, week_mode(mode)).1
 }
 
 /// A date's year, month and day as `MySQL`'s day counting reads them.
@@ -229,7 +238,11 @@ pub(super) const TO_DAYS_EPOCH_OFFSET: i64 = 719_528;
 /// toward zero (negative when `to` precedes `from`). `Chrono`'s duration
 /// accessors already truncate toward zero for the clock units.
 pub(super) fn timestamp_diff(from: NaiveDateTime, to: NaiveDateTime, unit: IntervalUnit) -> i64 {
-    let elapsed = to.signed_duration_since(from);
+    // MySQL's year zero has no leap day: an interval across the end of its
+    // February is a day shorter than the calendar here counts.
+    let before_march = |value: NaiveDateTime| value.year() == 0 && value.month() <= 2;
+    let leap_day = Duration::days(i64::from(before_march(from)) - i64::from(before_march(to)));
+    let elapsed = to.signed_duration_since(from) - leap_day;
     match unit {
         IntervalUnit::Second => elapsed.num_seconds(),
         IntervalUnit::Minute => elapsed.num_minutes(),
@@ -263,12 +276,27 @@ pub(super) fn apply_interval(
     unit: IntervalUnit,
     subtract: bool,
 ) -> Result<NaiveDateTime, ExecError> {
+    shift_interval(value, amount, unit, subtract)?
+        // A result past the DATETIME range is NULL, as in MySQL, not a date
+        // with a five-digit year.
+        .filter(|shifted| (0..=9999).contains(&shifted.year()))
+        .ok_or(ExecError::InvalidDateTime)
+}
+
+/// [`apply_interval`] before its range check: `None` only where the
+/// calendar itself cannot hold the result.
+pub(super) fn shift_interval(
+    value: NaiveDateTime,
+    amount: i64,
+    unit: IntervalUnit,
+    subtract: bool,
+) -> Result<Option<NaiveDateTime>, ExecError> {
     let amount = if subtract {
         amount.checked_neg().ok_or(ExecError::NumericOverflow)?
     } else {
         amount
     };
-    match unit {
+    Ok(match unit {
         IntervalUnit::Year | IntervalUnit::Month => {
             let months = if unit == IntervalUnit::Year {
                 amount.checked_mul(12).ok_or(ExecError::NumericOverflow)?
@@ -295,11 +323,7 @@ pub(super) fn apply_interval(
         IntervalUnit::Second => {
             Duration::try_seconds(amount).and_then(|delta| value.checked_add_signed(delta))
         }
-    }
-    // A result past the DATETIME range is NULL, as in MySQL, not a date with
-    // a five-digit year.
-    .filter(|shifted| (0..=9999).contains(&shifted.year()))
-    .ok_or(ExecError::InvalidDateTime)
+    })
 }
 
 /// Applies one simple `MySQL` interval to a canonical temporal scalar. Window
@@ -803,6 +827,37 @@ pub(super) fn mysql_date_format_calendar(
         }
     }
     Some(output)
+}
+
+/// `TIME_FORMAT` of a time in microseconds. The clock directives print as
+/// `DATE_FORMAT` prints them, the hour as it is (it may pass 23, and `%h`
+/// and `%p` read it within its day); a negative time carries one leading
+/// minus sign. `None` (SQL NULL) for a directive that needs a date: a
+/// name, a day of the year, a week.
+pub(super) fn mysql_time_format(micros: i128, format: &str) -> Option<String> {
+    let mut characters = format.chars();
+    while let Some(character) = characters.next() {
+        if character == '%'
+            && matches!(
+                characters.next(),
+                Some('D' | 'j' | 'U' | 'u' | 'V' | 'v' | 'X' | 'x')
+            )
+        {
+            return None;
+        }
+    }
+    let seconds = micros.unsigned_abs() / 1_000_000;
+    let clock = [
+        0,
+        0,
+        0,
+        u32::try_from(seconds / 3_600).ok()?,
+        u32::try_from(seconds / 60 % 60).ok()?,
+        u32::try_from(seconds % 60).ok()?,
+        u32::try_from(micros.unsigned_abs() % 1_000_000).ok()?,
+    ];
+    let body = mysql_date_format_calendar(clock, format, crate::calendar_locale::locale(0))?;
+    Some(if micros < 0 { format!("-{body}") } else { body })
 }
 
 /// The calendar fields of a stored date or date-time spelled as stored:

@@ -3622,7 +3622,7 @@ fn bind_expr_inner(
                 DateTimeField::Minute => DatePart::Minute,
                 DateTimeField::Second => DatePart::Second,
                 DateTimeField::Quarter => DatePart::Quarter,
-                DateTimeField::Week(None) => DatePart::Week,
+                DateTimeField::Week(None) => DatePart::ExtractWeek(0),
                 // Composite units are concatenated decimal in MySQL:
                 // YEAR_MONTH is year*100+month, DAY_SECOND is DDHHMMSS.
                 // They desugar to arithmetic over the single units, so NULL

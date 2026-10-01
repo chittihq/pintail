@@ -124,3 +124,4 @@ mod wide_integer_comparison_typing;
 mod window_frame_scaling;
 mod window_hidden_order;
 mod windowed_aggregate_bench;
+mod zero_timestamp_date;

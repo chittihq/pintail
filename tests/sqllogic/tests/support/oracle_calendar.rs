@@ -297,5 +297,133 @@ pub fn cases() -> Vec<OracleCase> {
             );
         }
     }
+    interval_cases(&mut push);
     cases
+}
+
+/// Interval arithmetic and week extraction at the edges: the year zero,
+/// which `MySQL`'s day numbering gives no date of its own; the last day a
+/// date can hold; days past a month's end; and a TIME read as a date.
+#[allow(clippy::too_many_lines)] // one table of shapes
+fn interval_cases(push: &mut impl FnMut(&'static str, &'static str, String)) {
+    let modes = [super::oracle_transport::DEFAULT_MODE, "ALLOW_INVALID_DATES"];
+    for function in [
+        "EXTRACT(WEEK FROM @)",
+        "DATE_ADD(@, INTERVAL 1 DAY)",
+        "DATE_SUB(@, INTERVAL 1 DAY)",
+        "DATE_ADD(@, INTERVAL 1 SECOND)",
+        "DATE_SUB(@, INTERVAL 1 MONTH)",
+        "DATE_ADD(@, INTERVAL 1 YEAR)",
+        "ADDDATE(@, 1)",
+        "SUBDATE(@, INTERVAL 1 MONTH)",
+        "TIMESTAMPADD(DAY, 1, @)",
+        "TIMESTAMPDIFF(DAY, @, '2024-03-05')",
+        "TIMESTAMPDIFF(MONTH, '2023-01-01', @)",
+        "TIME_TO_SEC(@)",
+    ] {
+        let of = |argument: &str| function.replace('@', argument);
+        push(
+            "",
+            "calendar edges interval arithmetic",
+            format!(
+                "SELECT id, {}, {}, {} FROM {TABLE} ORDER BY id",
+                of("d"),
+                of("dt"),
+                of("dt3")
+            ),
+        );
+        // TIME_TO_SEC reads text as a time, not as a date: columns only.
+        if function.starts_with("TIME_TO_SEC") {
+            continue;
+        }
+        for sql_mode in modes {
+            push(
+                sql_mode,
+                "calendar edges interval literals",
+                format!(
+                    "SELECT {}, {}, {}, {}, {}, {}, {}, {}",
+                    of("'0000-01-01'"),
+                    of("'0000-12-31 23:59:59'"),
+                    of("'0001-01-01'"),
+                    of("'9999-12-31 23:59:59'"),
+                    of("'2024-02-30'"),
+                    of("'2024-04-31 10:00:00.5'"),
+                    of("'2023-02-29'"),
+                    of("'0000-06-15'")
+                ),
+            );
+        }
+    }
+    push(
+        "",
+        "calendar edges interval literals",
+        "SELECT DATE_ADD('0000-12-31', INTERVAL 1 DAY), DATE_SUB('0001-01-01', INTERVAL 1 DAY), \
+         DATE_SUB('0001-01-01 00:00:00', INTERVAL 1 SECOND), \
+         DATE_ADD('9999-12-31', INTERVAL 1 DAY), DATE_ADD('9999-12-01', INTERVAL 1 MONTH), \
+         DATE_SUB('0000-03-01', INTERVAL 1 DAY), DATE_ADD('0000-02-28', INTERVAL 1 DAY), \
+         DATE_ADD('0000-01-01', INTERVAL 1 YEAR), DATE_SUB('0001-06-15', INTERVAL 1 YEAR), \
+         DATE_SUB('0000-01-01', INTERVAL 1 DAY), DATE_SUB('0000-01-01', INTERVAL 2 DAY), \
+         DATE_ADD('0001-01-01', INTERVAL -1 MONTH), DATE_ADD('0000-06-15', INTERVAL 400 DAY), \
+         DATE_ADD('0000-02-28', INTERVAL 400 DAY), DATE_ADD('0000-06-15', INTERVAL 1 HOUR), \
+         DATE_ADD('9998-12-31', INTERVAL 1 YEAR)"
+            .to_owned(),
+    );
+    push(
+        "",
+        "calendar edges interval literals",
+        "SELECT FROM_DAYS(0), FROM_DAYS(365), FROM_DAYS(366), FROM_DAYS(3652424), \
+         FROM_DAYS(3652425), FROM_DAYS(3652499), FROM_DAYS(3652500), FROM_DAYS(4000000), \
+         FROM_DAYS(-1), \
+         UNIX_TIMESTAMP('2024-02-29 11:59:59.1234567') - UNIX_TIMESTAMP('2024-02-29 11:59:59'), \
+         UNIX_TIMESTAMP('2024-02-29 11:59:59.1234564') - UNIX_TIMESTAMP('2024-02-29 11:59:59')"
+            .to_owned(),
+    );
+    // TIME_FORMAT prints an hour past 23 as it is and reads %h and %p within
+    // its day; a directive that needs a date is NULL. ADDTIME and SUBTIME
+    // count a zero month or day from the day MySQL's numbering gives it,
+    // and answer NULL outside the years 1 to 9999.
+    push(
+        "",
+        "time formats and arithmetic at the edges",
+        "SELECT TIME_FORMAT('25:00:00', '%H %k %h %I %l %p %r %T %i %s %f'), \
+         TIME_FORMAT('838:59:59', '%H %k %h %I %l %p %r %T'), \
+         TIME_FORMAT('-25:30:15.5', '%H %k %h %I %l %p %r %T %f'), \
+         TIME_FORMAT('100:00:00', '%H:%i'), TIME_FORMAT('25:00:00', '%Y %m %d %a %j'), \
+         TIME_FORMAT(TIME'24:00:00', '%H %h %p'), TIME_FORMAT('12:00:00', '%h %p %r'), \
+         TIME_FORMAT('00:00:00', '%h %l %p'), TIME_FORMAT('2024-02-29 13:00:00', '%H %h')"
+            .to_owned(),
+    );
+    push(
+        "",
+        "time formats and arithmetic at the edges",
+        "SELECT id, TIME_FORMAT(clock, '%H:%i:%s.%f %p %h %k %l') FROM bounds ORDER BY id"
+            .to_owned(),
+    );
+    for function in [
+        "TIME_FORMAT(@, '%H:%i:%s %p %h %k %l')",
+        "ADDTIME(@, '01:00:00')",
+        "SUBTIME(@, '01:00:00')",
+    ] {
+        let of = |argument: &str| function.replace('@', argument);
+        push(
+            "",
+            "time formats and arithmetic at the edges",
+            format!(
+                "SELECT id, {}, {}, {} FROM {TABLE} ORDER BY id",
+                of("d"),
+                of("dt"),
+                of("dt3")
+            ),
+        );
+    }
+    // A TIME where a date is read is the statement's date at that time;
+    // measured against CURDATE() the answer does not depend on the day.
+    push(
+        "",
+        "time read as a date",
+        "SELECT id, TO_DAYS(clock) - TO_DAYS(CURDATE()), DATEDIFF(clock, CURDATE()), \
+         TIMESTAMPDIFF(MINUTE, CURDATE(), clock), TO_SECONDS(clock) - TO_SECONDS(CURDATE()) \
+         FROM bounds ORDER BY id"
+            .to_owned(),
+    );
 }

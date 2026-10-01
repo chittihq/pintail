@@ -7,8 +7,7 @@ mod temporal;
 mod vector;
 
 use temporal::{
-    TO_DAYS_EPOCH_OFFSET, apply_interval, convert_tz, mysql_yearweek, parse_mysql_datetime,
-    timestamp_diff,
+    TO_DAYS_EPOCH_OFFSET, convert_tz, mysql_yearweek, parse_mysql_datetime, timestamp_diff,
 };
 pub(crate) use temporal::{has_timestamp_offset, shift_temporal_value};
 
@@ -1635,7 +1634,9 @@ impl CompiledExpr {
                     | ScalarFunction::InetNtoa
                     | ScalarFunction::MakeTime => 64,
                     ScalarFunction::BitBytes(_) => 8,
-                    ScalarFunction::DateFormat => string(1).saturating_mul(64),
+                    ScalarFunction::DateFormat | ScalarFunction::TimeFormat => {
+                        string(1).saturating_mul(64)
+                    }
                     ScalarFunction::Like { .. } => args
                         .iter()
                         .take(2)
@@ -1837,6 +1838,7 @@ impl CompiledExpr {
                     | ScalarFunction::Time
                     | ScalarFunction::DateInterval { .. }
                     | ScalarFunction::DateFormat
+                    | ScalarFunction::TimeFormat
                     | ScalarFunction::FromUnixTime
                     | ScalarFunction::Abs { .. }
                     | ScalarFunction::Greatest { .. }
@@ -2038,7 +2040,8 @@ pub(crate) fn evaluate_units_date_part(
         | DatePart::DayOfYear
         | DatePart::Week
         | DatePart::IsoWeek
-        | DatePart::WeekMode(_) => return None,
+        | DatePart::WeekMode(_)
+        | DatePart::ExtractWeek(_) => return None,
     };
     Some(
         i64::try_from(value)
@@ -2074,7 +2077,8 @@ fn evaluate_direct_date_part(value: &Value, part: DatePart) -> Option<Result<Val
         | DatePart::DayOfYear
         | DatePart::Week
         | DatePart::IsoWeek
-        | DatePart::WeekMode(_) => return None,
+        | DatePart::WeekMode(_)
+        | DatePart::ExtractWeek(_) => return None,
         DatePart::Year => u64::try_from(year).unwrap_or(0),
         DatePart::Month => u64::from(month),
         DatePart::Day => u64::from(day),
@@ -3593,8 +3597,44 @@ fn evaluate_eager_scalar_inner(
             }
         }
         ScalarFunction::TimestampDiff { unit } => {
-            let from = parse_mysql_datetime(&scalar_string(&values[0])?)?;
-            let to = parse_mysql_datetime(&scalar_string(&values[1])?)?;
+            // A day past its month's end, stored or written under
+            // ALLOW_INVALID_DATES, counts as the day it runs into for days
+            // and clock units, and as its own fields for months and years.
+            // A zero month or day is refused.
+            let written = allows_invalid_dates(values.get(2));
+            let moment = |index: usize| {
+                let text = scalar_string(&values[index])?;
+                match parse_mysql_datetime(&text) {
+                    Ok(value) => Ok((value, None)),
+                    Err(error) if written || stored_temporal(argument_types, index) => {
+                        let rolled = stored_datetime(text.trim()).map_err(|_| error)?;
+                        Ok((rolled, temporal::stored_calendar(text.trim())))
+                    }
+                    Err(error) => Err(error),
+                }
+            };
+            let (from, from_fields) = moment(0)?;
+            let (to, to_fields) = moment(1)?;
+            if matches!(unit, IntervalUnit::Month | IntervalUnit::Year)
+                && (from_fields.is_some() || to_fields.is_some())
+            {
+                let fields = |value: NaiveDateTime, written: Option<[u32; 7]>| {
+                    let [year, month, day] = written.map_or(
+                        [u32::try_from(value.year()).unwrap_or(0), value.month(), value.day()],
+                        |[year, month, day, ..]| [year, month, day],
+                    );
+                    (i64::from(year) * 12 + i64::from(month), day, value.time())
+                };
+                let (from, to) = (fields(from, from_fields), fields(to, to_fields));
+                let (early, late, sign) = if to >= from { (from, to, 1) } else { (to, from, -1) };
+                let months =
+                    sign * (late.0 - early.0 - i64::from((late.1, late.2) < (early.1, early.2)));
+                return Ok(Value::Int64(if unit == IntervalUnit::Year {
+                    months / 12
+                } else {
+                    months
+                }));
+            }
             Ok(Value::Int64(timestamp_diff(from, to, unit)))
         }
         ScalarFunction::Now => Ok(Value::Utf8(
@@ -3605,6 +3645,17 @@ fn evaluate_eager_scalar_inner(
         )),
         ScalarFunction::CurrentDate => Ok(Value::Utf8(Local::now().format("%Y-%m-%d").to_string())),
         ScalarFunction::Date => {
+            // Policy bit 4 marks a source TIMESTAMP column, whose zero value
+            // is NULL under NO_ZERO_DATE (bit 0) where a zero DATE or
+            // DATETIME column stays the zero date.
+            if let Some(Value::UInt64(policy)) = values.get(1)
+                && policy & 0b1_0001 == 0b1_0001
+                && let Value::Utf8(text) = &values[0]
+                && text.starts_with("0000-00-00")
+                && !text.bytes().any(|byte| (b'1'..=b'9').contains(&byte))
+            {
+                return Ok(Value::Null);
+            }
             if let Some(value) = cast_temporal_carrier(
                 &values[0],
                 argument_types.first().copied().flatten(),
@@ -3689,7 +3740,11 @@ fn evaluate_eager_scalar_inner(
                     // quarter of that month: zero for a zero month.
                     let fields = matches!(
                         part,
-                        DatePart::Year | DatePart::Month | DatePart::Day | DatePart::Quarter
+                        DatePart::Year
+                            | DatePart::Month
+                            | DatePart::Day
+                            | DatePart::Quarter
+                            | DatePart::ExtractWeek(_)
                     )
                     .then(|| {
                         partial_calendar(
@@ -3705,6 +3760,11 @@ fn evaluate_eager_scalar_inner(
                             DatePart::Year => year,
                             DatePart::Month => month,
                             DatePart::Day => day,
+                            // EXTRACT(WEEK ...) counts a zero or partial
+                            // date where WEEK() refuses it.
+                            DatePart::ExtractWeek(mode) => {
+                                temporal::week_of_fields(year, month, day, u32::from(mode))
+                            }
                             _ => month.div_ceil(3),
                         })
                     } else if lenient {
@@ -3775,6 +3835,27 @@ fn evaluate_eager_scalar_inner(
             Ok(temporal::mysql_date_format_calendar(fields, &format, locale)
                 .map_or(Value::Null, Value::Utf8))
         }
+        ScalarFunction::TimeFormat => {
+            // The time as TIME() reads the argument: the clock of a date or
+            // datetime, a time as it is.
+            let time = match cast_temporal_carrier(
+                &values[0],
+                argument_types.first().copied().flatten(),
+                DataType::Time64 { fsp: 6 },
+                None,
+            ) {
+                Some(Value::Utf8(time)) => time,
+                Some(_) => return Ok(Value::Null),
+                None => match cast_mysql_time(&scalar_string(&values[0])?, 6) {
+                    Some(time) => time,
+                    None => return Ok(Value::Null),
+                },
+            };
+            let parsed = parse_temporal_micros(&time).ok_or(ExecError::InvalidDateTime)?;
+            let format = scalar_string(&values[1])?;
+            Ok(temporal::mysql_time_format(parsed.micros, &format)
+                .map_or(Value::Null, Value::Utf8))
+        }
         ScalarFunction::DateInterval { unit, subtract } => {
             let input = scalar_string(&values[0])?;
             if let Some(DataType::Time64 { fsp }) = data_type {
@@ -3806,26 +3887,81 @@ fn evaluate_eager_scalar_inner(
                 values.get(2),
             )
             .map_or(Ok(input), |value| scalar_string(&value))?;
-            let value = if stored_temporal(argument_types, 0) {
-                stored_datetime(&input)?
-            } else {
-                parse_mysql_datetime(&input)?
-            };
-            let value = if unit == IntervalUnit::Second {
-                let amount = interval_second_micros(&values[1])?;
-                let signed = if subtract { -amount } else { amount };
-                let micros = i64::try_from(signed).map_err(|_| ExecError::InvalidDateTime)?;
-                value.checked_add_signed(chrono::Duration::microseconds(micros)).filter(|shifted| (0..=9999).contains(&shifted.year())).ok_or(ExecError::InvalidDateTime)?
-            } else {
-                apply_interval(value, mysql_i64(&values[1])?, unit, subtract)?
-            };
+            let lenient =
+                stored_temporal(argument_types, 0) || allows_invalid_dates(values.get(2));
+            let by_month = matches!(unit, IntervalUnit::Year | IntervalUnit::Month);
             let date_only = input.len() <= 10
                 && matches!(
                     unit,
                     IntervalUnit::Year | IntervalUnit::Month | IntervalUnit::Day
                 );
+            // A day past its month's end, stored or written under
+            // ALLOW_INVALID_DATES, moves by months as fields: the day is
+            // kept unless the month it lands in is shorter.
+            if lenient
+                && by_month
+                && parse_mysql_datetime(&input).is_err()
+                && let Some(fields) = temporal::stored_calendar(input.trim())
+                    .filter(|[_, month, day, ..]| *month != 0 && *day != 0)
+            {
+                let fsp = match data_type {
+                    Some(DataType::DateTime64 { fsp }) => Some(fsp),
+                    _ => None,
+                };
+                return Ok(month_interval_of_fields(
+                    fields,
+                    mysql_i64(&values[1])?,
+                    unit == IntervalUnit::Year,
+                    subtract,
+                    date_only,
+                    fsp,
+                ));
+            }
+            let original = if lenient {
+                stored_datetime(&input)?
+            } else {
+                parse_mysql_datetime(&input)?
+            };
+            let shifted = if unit == IntervalUnit::Second {
+                let amount = interval_second_micros(&values[1])?;
+                let signed = if subtract { -amount } else { amount };
+                let micros = i64::try_from(signed).map_err(|_| ExecError::InvalidDateTime)?;
+                original.checked_add_signed(chrono::Duration::microseconds(micros))
+            } else {
+                temporal::shift_interval(original, mysql_i64(&values[1])?, unit, subtract)?
+            };
+            let mut value = shifted.ok_or(ExecError::InvalidDateTime)?;
+            // Days and clock units count on MySQL's day numbers, in which
+            // the year zero has no leap day and no date of its own: a
+            // result inside it is the zero date, keeping its clock, and
+            // one before it is NULL.
+            let mut zero_date = false;
+            if !by_month {
+                let moved = value
+                    .date()
+                    .signed_duration_since(original.date())
+                    .num_days();
+                let daynr = temporal::mysql_daynr(original.date()) + moved;
+                if daynr < 0 {
+                    return Err(ExecError::InvalidDateTime);
+                }
+                if daynr < 366 {
+                    zero_date = true;
+                } else if original.year() == 0 && original.month() <= 2 {
+                    value = value
+                        .checked_add_signed(chrono::Duration::days(1))
+                        .ok_or(ExecError::InvalidDateTime)?;
+                }
+            }
+            if !zero_date && !(0..=9999).contains(&value.year()) {
+                return Err(ExecError::InvalidDateTime);
+            }
             if date_only {
-                return Ok(Value::Utf8(value.format("%Y-%m-%d").to_string()));
+                return Ok(Value::Utf8(if zero_date {
+                    "0000-00-00".to_owned()
+                } else {
+                    value.format("%Y-%m-%d").to_string()
+                }));
             }
             // The result keeps the input's fractional seconds, at the
             // precision the binder declared for it. A text result has no
@@ -3836,6 +3972,12 @@ fn evaluate_eager_scalar_inner(
                 _ if value.nanosecond() != 0 => 6,
                 _ => 0,
             };
+            if zero_date {
+                return Ok(Value::Utf8(format!(
+                    "0000-00-00 {}",
+                    format_with_fraction(value, fsp, "%H:%M:%S")
+                )));
+            }
             Ok(Value::Utf8(format_with_fraction(
                 value,
                 fsp,
@@ -3950,7 +4092,7 @@ fn evaluate_eager_scalar_inner(
                 value.month(),
                 value.day(),
             );
-            Ok(Value::UInt64(u64::try_from(days).unwrap_or(0)))
+            Ok(Value::Int64(days))
         }
         ScalarFunction::ToSeconds => {
             // Whole days as TO_DAYS counts them, then the clock. A zero
@@ -3967,12 +4109,19 @@ fn evaluate_eager_scalar_inner(
                 Err(error) => return Err(error),
             };
             let days = temporal::mysql_daynr(value.date());
-            let seconds = days * 86_400 + i64::from(value.num_seconds_from_midnight());
-            Ok(Value::UInt64(u64::try_from(seconds).unwrap_or(0)))
+            Ok(Value::Int64(
+                days * 86_400 + i64::from(value.num_seconds_from_midnight()),
+            ))
         }
         ScalarFunction::FromDays => {
             let number = mysql_i64(&values[0])?;
             if number <= 365 {
+                return Ok(Value::Utf8("0000-00-00".to_owned()));
+            }
+            // Past the last day of 9999 MySQL answers NULL for the days
+            // that would still fall in the year 10000's first weeks, and the
+            // zero date beyond them.
+            if number > 3_652_499 {
                 return Ok(Value::Utf8("0000-00-00".to_owned()));
             }
             if number > 3_652_424 {
@@ -3995,7 +4144,18 @@ fn evaluate_eager_scalar_inner(
             Ok(Value::UInt64(mysql_yearweek(value, mode)))
         }
         ScalarFunction::TimeToSec => {
-            let Some(time) = cast_mysql_time(&scalar_string(&values[0])?, 6) else {
+            let text = scalar_string(&values[0])?;
+            // A stored date or datetime with a zero month or day still has
+            // its clock: midnight for a date.
+            let text = if stored_temporal(argument_types, 0)
+                && parse_mysql_datetime(&text).is_err()
+                && temporal::stored_calendar(&text).is_some()
+            {
+                text.get(11..).unwrap_or("00:00:00").to_owned()
+            } else {
+                text
+            };
+            let Some(time) = cast_mysql_time(&text, 6) else {
                 return Ok(Value::Null);
             };
             let parsed = parse_temporal_micros(&time).ok_or(ExecError::InvalidDateTime)?;
@@ -4004,8 +4164,15 @@ fn evaluate_eager_scalar_inner(
             ))
         }
         ScalarFunction::AddTime | ScalarFunction::SubTime => {
+            let left = match temporal_argument(
+                &values[0],
+                argument_types.first().copied().flatten(),
+            )? {
+                Some(left) => Some(left),
+                None => partial_datetime_micros(&values[0], argument_types),
+            };
             let (Some(left), Some(right)) = (
-                temporal_argument(&values[0], argument_types.first().copied().flatten())?,
+                left,
                 temporal_argument(&values[1], argument_types.get(1).copied().flatten())?,
             ) else {
                 return Ok(Value::Null);
@@ -4031,7 +4198,16 @@ fn evaluate_eager_scalar_inner(
                 if total % 1_000_000 == 0 { 0 } else { 6 }
             };
             Ok(if left.datetime {
-                render_datetime_micros(total, fsp).map_or(Value::Null, Value::Utf8)
+                // A datetime that leaves the years 1 to 9999 is NULL.
+                let within = i64::try_from(total)
+                    .ok()
+                    .and_then(chrono::DateTime::from_timestamp_micros)
+                    .is_some_and(|moment| (1..=9999).contains(&moment.naive_utc().year()));
+                if within {
+                    render_datetime_micros(total, fsp).map_or(Value::Null, Value::Utf8)
+                } else {
+                    Value::Null
+                }
             } else {
                 Value::Utf8(render_time_micros(total, fsp))
             })
@@ -4500,8 +4676,22 @@ fn evaluate_eager_scalar_inner(
             let micros = if values.is_empty() {
                 Some(Utc::now().timestamp_micros())
             } else {
-                parse_mysql_datetime(&scalar_string(&values[0])?)
+                let text = scalar_string(&values[0])?;
+                // A seventh fractional digit rounds the microsecond.
+                let rounds_up = text
+                    .rsplit_once('.')
+                    .is_some_and(|(_, fraction)| {
+                        fraction.len() > 6
+                            && fraction.bytes().all(|byte| byte.is_ascii_digit())
+                            && fraction.as_bytes()[6] >= b'5'
+                    });
+                parse_mysql_datetime(&text)
                     .ok()
+                    .and_then(|value| {
+                        value.checked_add_signed(chrono::Duration::microseconds(i64::from(
+                            rounds_up,
+                        )))
+                    })
                     .and_then(|value| {
                         if let Some(zone) = &zone {
                             let utc = convert_tz(
@@ -4770,6 +4960,59 @@ fn stored_datetime(text: &str) -> Result<NaiveDateTime, ExecError> {
         None => chrono::NaiveTime::MIN,
     };
     Ok(date.and_time(time))
+}
+
+/// `DATE_ADD` by months or years of a date kept as fields, as `MySQL`
+/// moves a day past its month's end: the day stays as written unless the
+/// month it lands in is shorter, and a year step shortens only a February
+/// 29th. NULL outside the years a date can hold.
+fn month_interval_of_fields(
+    [year, month, day, hour, minute, second, micros]: [u32; 7],
+    amount: i64,
+    years: bool,
+    subtract: bool,
+    date_only: bool,
+    fsp: Option<u8>,
+) -> Value {
+    let amount = if subtract {
+        amount.checked_neg()
+    } else {
+        Some(amount)
+    };
+    let moved = amount.and_then(|amount| {
+        if years {
+            let year = u32::try_from(i64::from(year).checked_add(amount)?).ok()?;
+            let day = if month == 2 && day == 29 && mysql_month_days(year, 2) != Some(29) {
+                28
+            } else {
+                day
+            };
+            Some((year, month, day))
+        } else {
+            let period = (i64::from(year) * 12 + i64::from(month) - 1).checked_add(amount)?;
+            let year = u32::try_from(period.div_euclid(12)).ok()?;
+            let month = u32::try_from(period.rem_euclid(12)).ok()? + 1;
+            (period >= 0).then_some(())?;
+            Some((year, month, day.min(mysql_month_days(year, month)?)))
+        }
+    });
+    let Some((year, month, day)) = moved.filter(|(year, ..)| *year <= 9999) else {
+        return Value::Null;
+    };
+    let date = format!("{year:04}-{month:02}-{day:02}");
+    if date_only {
+        return Value::Utf8(date);
+    }
+    let digits = usize::from(fsp.unwrap_or(if micros == 0 { 0 } else { 6 }).min(6));
+    let fraction = format!(".{micros:06}");
+    Value::Utf8(format!(
+        "{date} {hour:02}:{minute:02}:{second:02}{}",
+        if digits == 0 {
+            ""
+        } else {
+            &fraction[..=digits]
+        }
+    ))
 }
 
 /// The date a day-counting function counts from: a stored date past its
@@ -5680,6 +5923,42 @@ struct TemporalMicros {
     micros: i128,
     datetime: bool,
     fsp: u8,
+}
+
+/// A datetime with a zero month or day as `ADDTIME` and `SUBTIME` count
+/// it: from the day `MySQL`'s day numbering gives it (`2024-00-15` is
+/// December 15th of the year before), stored in a date or datetime column
+/// or written with a clock. `None` for a zero date and for anything else.
+fn partial_datetime_micros(
+    value: &Value,
+    argument_types: &[Option<DataType>],
+) -> Option<TemporalMicros> {
+    let text = scalar_string(value).ok()?;
+    let text = text.trim();
+    if !stored_temporal(argument_types, 0) && text.len() <= 10 {
+        return None;
+    }
+    let [year, month, day, hour, minute, second, micros] = temporal::stored_calendar(text)?;
+    // A zero date has no day to count from, and a day past its month's end
+    // written as text is no date here.
+    if (year == 0 && month == 0 && day == 0)
+        || (!stored_temporal(argument_types, 0) && month != 0 && day != 0)
+    {
+        return None;
+    }
+    let days = temporal::calc_daynr(year, month, day) - TO_DAYS_EPOCH_OFFSET;
+    let clock = i128::from(hour) * 3_600 + i128::from(minute) * 60 + i128::from(second);
+    let fsp = match argument_types.first().copied().flatten() {
+        Some(DataType::DateTime64 { fsp }) => fsp,
+        _ => text.rsplit_once('.').map_or(0, |(_, fraction)| {
+            u8::try_from(fraction.len().min(6)).unwrap_or(6)
+        }),
+    };
+    Some(TemporalMicros {
+        micros: (i128::from(days) * 86_400 + clock) * 1_000_000 + i128::from(micros),
+        datetime: true,
+        fsp,
+    })
 }
 
 /// The largest TIME, 838:59:59, in microseconds.

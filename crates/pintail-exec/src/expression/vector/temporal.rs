@@ -652,6 +652,13 @@ fn shifted(
             continue;
         }
         let value = input.datetime(row)?;
+        // Days and clock units from or into the year zero answer MySQL's
+        // zero date, which packed units cannot spell: row evaluation's.
+        let by_month = matches!(unit, IntervalUnit::Year | IntervalUnit::Month);
+        let in_year_zero = |moment: NaiveDateTime| chrono::Datelike::year(&moment) == 0;
+        if !by_month && in_year_zero(value) {
+            return None;
+        }
         let shifted = match apply_interval(value, amount, unit, subtract) {
             Ok(shifted) => shifted,
             // Row evaluation answers an impossible date-time with NULL.
@@ -669,7 +676,7 @@ fn shifted(
                 continue;
             }
         };
-        if !spellable(shifted) {
+        if !spellable(shifted) || (!by_month && in_year_zero(shifted)) {
             return None;
         }
         let unit = match out_fsp {
@@ -863,6 +870,7 @@ mod tests {
             DatePart::Week,
             DatePart::IsoWeek,
             DatePart::WeekMode(3),
+            DatePart::ExtractWeek(0),
         ];
         for fsp in [None, Some(0), Some(3), Some(6)] {
             let batch = batch(temporal(fsp));

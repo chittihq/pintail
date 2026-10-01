@@ -1511,6 +1511,9 @@ pub enum ScalarFunction {
     },
     /// Format a date/time with a `MySQL` format string.
     DateFormat,
+    /// `TIME_FORMAT(time, format)`: the clock directives of `DATE_FORMAT`
+    /// over a time, whose hours may pass 23.
+    TimeFormat,
     /// Add or subtract one date/time interval.
     DateInterval {
         /// Interval unit.
@@ -1557,6 +1560,10 @@ pub enum DatePart {
     IsoWeek,
     /// Explicit `WEEK(date, mode)` mode in `MySQL`'s 0-7 inventory.
     WeekMode(u8),
+    /// `EXTRACT(WEEK FROM date)` under a week mode: the week `WEEK()` counts
+    /// for a date a calendar holds, but counted rather than refused for a
+    /// zero date or a zero month or day.
+    ExtractWeek(u8),
 }
 
 /// Single-field `MySQL` interval units supported by date arithmetic.
