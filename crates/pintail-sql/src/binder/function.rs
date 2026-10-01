@@ -2490,6 +2490,19 @@ pub(super) fn bind_scalar(
         ScalarFunction::DateInterval { .. } | ScalarFunction::TimestampDiff { .. } => {
             args.len() == 2 && crate::session_parse_mode().allow_invalid_dates
         }
+        // TIMEDIFF takes it third when one side is a date or datetime and
+        // the other is not: the other side is then read as a datetime, and
+        // under NO_ZERO_DATE the zero date is none.
+        ScalarFunction::TimeDiff => {
+            args.len() == 2
+                && crate::session_parse_mode().no_zero_date
+                && args.iter().any(|argument| {
+                    matches!(
+                        argument.data_type,
+                        Some(DataType::Date32 | DataType::DateTime64 { .. })
+                    )
+                })
+        }
         // CONVERT_TZ takes it fourth: under ALLOW_INVALID_DATES a day past
         // its month's end is converted as the day it runs into.
         ScalarFunction::ConvertTz => {
@@ -2505,7 +2518,10 @@ pub(super) fn bind_scalar(
     };
     // TIMESTAMPDIFF reads a date on both sides.
     let written = reads_policy
-        && if matches!(function, ScalarFunction::TimestampDiff { .. }) {
+        && if matches!(
+            function,
+            ScalarFunction::TimestampDiff { .. } | ScalarFunction::TimeDiff
+        ) {
             !args.iter().all(stored)
         } else {
             args.first().is_some_and(|argument| !stored(argument))

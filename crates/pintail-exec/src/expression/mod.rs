@@ -4273,6 +4273,18 @@ fn evaluate_eager_scalar_inner(
             })
         }
         ScalarFunction::TimeDiff => {
+            // Beside a date or datetime, text is read as a datetime, and
+            // under NO_ZERO_DATE the zero date is none.
+            if matches!(values.get(2), Some(Value::Int64(policy)) if policy & 1 != 0)
+                && values.iter().take(2).enumerate().any(|(index, value)| {
+                    written_text(argument_types, index)
+                        && matches!(value, Value::Utf8(text)
+                            if temporal::text_time_of(text)
+                                .is_some_and(|time| time.calendar == Some([0, 0, 0])))
+                })
+            {
+                return Ok(Value::Null);
+            }
             let (Some(left), Some(right)) = (
                 temporal_argument(&values[0], argument_types.first().copied().flatten())?,
                 temporal_argument(&values[1], argument_types.get(1).copied().flatten())?,

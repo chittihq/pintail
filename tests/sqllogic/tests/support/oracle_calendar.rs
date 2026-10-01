@@ -537,6 +537,42 @@ fn interval_cases(push: &mut impl FnMut(&'static str, &'static str, String)) {
         "SELECT id, PERIOD_ADD(202400 + id, id), PERIOD_DIFF(202400 + id, 199900 + id)          FROM bounds WHERE id BETWEEN 1 AND 12 ORDER BY id"
             .to_owned(),
     );
+    // TIMEDIFF between text and a datetime reads the text as a datetime: the
+    // zero date counts from day zero, and under NO_ZERO_DATE it is no date
+    // at all and the answer is NULL. A TIME where a datetime is read is the
+    // statement's date moved by it, so only its clock is compared here.
+    for sql_mode in [
+        "NO_ENGINE_SUBSTITUTION",
+        "NO_ZERO_DATE",
+        super::oracle_transport::DEFAULT_MODE,
+    ] {
+        push(
+            sql_mode,
+            "timediff of text and a datetime",
+            "SELECT TIMEDIFF('0000-00-00 00:00:00', CAST('2008-03-26 07:09:06' AS DATETIME)), \
+             TIMEDIFF(CAST('2008-03-26 07:09:06' AS DATETIME), '0000-00-00 00:00:00'), \
+             TIMEDIFF('2008-00-26 07:09:06', CAST('2008-03-26 07:09:06' AS DATETIME)), \
+             TIMEDIFF('2008-03-00 07:09:06', CAST('2008-03-26 07:09:06' AS DATETIME)), \
+             TIMEDIFF('2008-03-25 07:09:06', CAST('2008-03-26 07:09:06' AS DATETIME)), \
+             TIMEDIFF('07:09:06', CAST('2008-03-26 07:09:06' AS DATETIME)), \
+             TIMEDIFF('0000-00-00 00:00:00', CAST('2008-03-26 07:09:06' AS DATETIME(6))), \
+             TIMEDIFF('0000-00-00 00:00:00', '2008-03-26 07:09:06')"
+                .to_owned(),
+        );
+    }
+    push(
+        "NO_ENGINE_SUBSTITUTION",
+        "timediff of text and a datetime",
+        "SELECT TIME_TO_SEC(CONVERT_TZ(TIMEDIFF('0000-00-00 00:00:00', \
+         CAST('2008-03-26 07:09:06' AS DATETIME)), 'UTC', 'Europe/Moscow')), \
+         TIME_TO_SEC(CONVERT_TZ(TIME'-838:59:59', '+00:00', '+03:00')), \
+         TIME_TO_SEC(CONVERT_TZ(TIME'-10:00:00', '+00:00', '+03:00')), \
+         DATEDIFF(CONVERT_TZ(TIME'-10:00:00', '+00:00', '+00:00'), CURDATE()), \
+         DATEDIFF(CONVERT_TZ(TIME'30:00:00', '+00:00', '+00:00'), CURDATE()), \
+         CONVERT_TZ(TIMEDIFF('0000-00-00 00:00:00', CAST('2008-03-26 07:09:06' AS DATETIME)), \
+         'UTC', 'Europe/Moscow') IS NULL"
+            .to_owned(),
+    );
     // A TIME column against a text constant. Text that is exactly a TIME -
     // spaces around it, a short form, a fraction - compares as that TIME;
     // text MySQL would have to cut or clamp to read as one never equals a
