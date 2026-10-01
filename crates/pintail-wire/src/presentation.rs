@@ -787,6 +787,25 @@ fn expression(
                 );
             }
         }
+        // A scalar subquery that selects one ungrouped SUM or COUNT presents
+        // as that aggregate does: SUM over integers is declared DECIMAL
+        // although its value travels as an integer, and COUNT is 21 wide.
+        BoundExprKind::ScalarSubquery(inner) => {
+            if inner.group_by.is_empty()
+                && let Some(projection) = inner.projection.first()
+                && let BoundExprKind::Aggregate(index) = &projection.expr.kind
+                && let Some(value) = inner.aggregates.get(*index)
+                && matches!(
+                    value.function,
+                    AggregateFunction::Sum | AggregateFunction::Count
+                )
+            {
+                let presented = aggregate(value, inner, catalog, facts);
+                column.coltype = presented.coltype;
+                column.column_length = presented.column_length;
+                column.decimals = presented.decimals;
+            }
+        }
         _ => {}
     }
     if query
@@ -1322,6 +1341,60 @@ mod tests {
             types("SELECT t.y FROM (SELECT YEAR(at) AS y FROM sales) t")[0],
             ColumnType::MysqlTypeLonglong,
             "a merged derived table keeps the computed type"
+        );
+    }
+
+    /// `(SELECT SUM(..) ..)` in a select list is declared as the SUM is
+    /// (measured against `MySQL` 8.4: DECIMAL, 24 wide for a comparison's
+    /// 0/1; COUNT stays BIGINT, 21 wide), correlated or not.
+    #[test]
+    fn a_scalar_subquery_presents_its_aggregate_as_the_aggregate_itself() {
+        use pintail_catalog::{DatabaseEntry, DatabaseId, TableEntry, TableId};
+        use pintail_types::{Column as SchemaColumn, TableSchema};
+        let schema = TableSchema::new(
+            1,
+            vec![
+                SchemaColumn::new(0, "id", DataType::Int64, false),
+                SchemaColumn::new(1, "bin", DataType::Int64, true),
+            ],
+        )
+        .unwrap();
+        let catalog = CatalogSnapshot::new([DatabaseEntry::new(
+            DatabaseId::new(1),
+            "sample",
+            [TableEntry::new(
+                TableId::new(1),
+                "crates",
+                schema,
+                pintail_catalog::TableStatistics::default(),
+            )
+            .unwrap()
+            .with_key_columns([0])
+            .unwrap()],
+        )
+        .unwrap()])
+        .unwrap();
+        let statement = pintail_sql::parse_statement(
+            "SELECT (SELECT SUM(i.bin = 3) FROM crates i WHERE i.id = c.id) AS matched, \
+             (SELECT COUNT(*) FROM crates i WHERE i.bin = c.bin) AS peers, \
+             (SELECT SUM(i.bin = 3) FROM crates i) AS everywhere \
+             FROM crates c",
+        )
+        .unwrap();
+        let query = pintail_sql::Binder::new(&catalog, Some("sample"))
+            .bind(&statement)
+            .unwrap();
+        let shown = columns(&query, &catalog, &SourceFacts::default())
+            .into_iter()
+            .map(|column| (column.coltype, column.column_length, column.decimals))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shown,
+            vec![
+                (ColumnType::MysqlTypeNewdecimal, 24, 0),
+                (ColumnType::MysqlTypeLonglong, 21, 0),
+                (ColumnType::MysqlTypeNewdecimal, 24, 0),
+            ]
         );
     }
 
