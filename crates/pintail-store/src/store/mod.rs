@@ -690,6 +690,17 @@ impl TableStore {
         }
         let next_append_row_id =
             find_next_append_row_id(&directory, &manifest, &schema, &memtable)?;
+        if !options.transactional {
+            // A replicated table keeps here the highest row version it has
+            // ever flushed: a merge that drops a delete takes the delete's
+            // version out of every segment, and what the table has applied
+            // must not look lower for it.
+            commit_version = manifest
+                .segments
+                .iter()
+                .map(|segment| segment.max_version)
+                .fold(commit_version, u64::max);
+        }
         let manifest = Arc::new(manifest);
         if !changed {
             opening.unchanged();
@@ -912,6 +923,43 @@ impl TableStore {
         self.ingest_at_sequence_with_append_policy(sequence, rows, AppendKeyPolicy::Preserve)
     }
 
+    /// Validates and durably orders one batch of a change stream that may be
+    /// reading again what this table already holds.
+    ///
+    /// A stream numbers its rows in commit order and resumes from its last
+    /// checkpoint, which can lie behind what the tables stored: the rows in
+    /// between arrive a second time, at the versions they had the first
+    /// time, and not necessarily cut into the same batches. Applying an
+    /// earlier part of them over the table as it is now is not harmless.
+    /// The newest version wins wherever both versions of a key are still
+    /// stored, but a delete that a merge has since dropped is no longer
+    /// there to win: the replayed insert of its key would be the only
+    /// version left, and the row would be visible again until the replayed
+    /// delete arrived. So a row at or below the highest version this table
+    /// has applied is not written at all. The table already holds its
+    /// effect: a table takes each batch as one log record, so it holds a
+    /// transaction's rows for it entirely or not at all.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::ingest_cdc`].
+    pub fn ingest_cdc_in_order(
+        &mut self,
+        mut rows: Vec<StoredRow>,
+    ) -> Result<IngestOutcome, StoreError> {
+        let applied = self.applied_version();
+        rows.retain(|row| row.version() > applied);
+        self.ingest_cdc(rows)
+    }
+
+    /// The highest row version this replicated table has applied, whether
+    /// or not a row of that version is still stored.
+    #[must_use]
+    pub fn applied_version(&self) -> u64 {
+        self.commit_version
+            .max(self.memtable.newest_version().unwrap_or(0))
+    }
+
     pub(crate) fn ingest_at_sequence(
         &mut self,
         sequence: u64,
@@ -1104,6 +1152,10 @@ impl TableStore {
         self.memtable.clear();
         self.last_sequence = 0;
         self.next_append_row_id = 1;
+        if !self.options.transactional {
+            // The copy that follows starts the table's versions again.
+            self.commit_version = 0;
+        }
         let previous = std::mem::replace(&mut self.manifest, Arc::new(next_manifest));
         let paths = previous
             .segments
@@ -1354,6 +1406,11 @@ impl TableStore {
             .checked_add(1)
             .ok_or(StoreError::SequenceOverflow)?;
         next_manifest.flushed_sequence = self.last_sequence;
+        if !self.options.transactional
+            && let Some(newest) = self.memtable.newest_version()
+        {
+            self.commit_version = self.commit_version.max(newest);
+        }
         next_manifest.committed_version = self.commit_version;
         next_manifest.next_segment_id = next_manifest
             .next_segment_id

@@ -3227,9 +3227,11 @@ fn flush_batch(
         |(target, rows)| {
             target
                 .store
-                .ingest_cdc(rows)
+                .ingest_cdc_in_order(rows)
                 .map(drop)
-                .map_err(|error| CdcError::from(error).for_table(&target.source.name))
+                .map_err(|error| CdcError::from(error).for_table(&target.source.name))?;
+            // Some tables hold the batch and the others do not yet.
+            recovery_point("cdc.after_table_ingest")
         },
     )?;
     let ingested = Instant::now();

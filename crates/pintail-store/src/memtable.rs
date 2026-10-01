@@ -10,6 +10,8 @@ pub(crate) struct Memtable {
     /// row it holds is older. Replacing a row can leave this below the
     /// oldest one still held, never above it.
     oldest_version: Option<u64>,
+    /// The highest version applied since the memtable was last cleared.
+    newest_version: Option<u64>,
     /// The image scans build of the rows as they are now; replaced when a
     /// write changes rows a scan has read through it or may yet.
     image: Arc<crate::store::MemtableImage>,
@@ -38,6 +40,10 @@ impl Memtable {
             self.oldest_version
                 .map_or(row.version(), |oldest| oldest.min(row.version())),
         );
+        self.newest_version = Some(
+            self.newest_version
+                .map_or(row.version(), |newest| newest.max(row.version())),
+        );
         true
     }
 
@@ -58,10 +64,15 @@ impl Memtable {
         self.oldest_version
     }
 
+    pub(crate) fn newest_version(&self) -> Option<u64> {
+        self.newest_version
+    }
+
     pub(crate) fn clear(&mut self) {
         self.rows = Arc::new(BTreeMap::new());
         self.image = Arc::default();
         self.estimated_bytes = 0;
         self.oldest_version = None;
+        self.newest_version = None;
     }
 }

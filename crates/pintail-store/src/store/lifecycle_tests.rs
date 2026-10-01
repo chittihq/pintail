@@ -232,6 +232,67 @@ fn a_merge_asked_to_yield_publishes_nothing_and_loses_nothing() {
 }
 
 #[test]
+fn a_replayed_insert_does_not_bring_back_a_row_whose_delete_was_merged_away() {
+    let directory = tempfile::tempdir().unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), keyed_schema(), options).unwrap();
+    // Two source transactions: one inserts keys 1 and 2, the next deletes
+    // key 1. Each is flushed.
+    let first = || vec![keyed_row(1, 10, false), keyed_row(2, 11, false)];
+    let second = || vec![keyed_row(1, 20, true)];
+    table.ingest_cdc_in_order(first()).unwrap();
+    table.flush().unwrap();
+    table.ingest_cdc_in_order(second()).unwrap();
+    table.flush().unwrap();
+    // The merge takes every segment: nothing is left for the delete to
+    // hide, so it is dropped, and no stored row is as new as it was.
+    assert_eq!(table.compact().unwrap().input_segments(), 2);
+    assert_eq!(visible_ids(&table.snapshot()), vec![2]);
+    assert_eq!(table.snapshot().max_row_version(), Some(11));
+    drop(table);
+
+    // The process died before the stream's checkpoint moved past either
+    // transaction; the stream reads both again, one batch each.
+    let mut table = TableStore::open(directory.path(), keyed_schema(), options).unwrap();
+    assert_eq!(
+        table.applied_version(),
+        20,
+        "the table remembers the delete it no longer stores"
+    );
+    assert_eq!(
+        table.ingest_cdc_in_order(first()).unwrap().accepted_rows(),
+        0
+    );
+    assert_eq!(
+        visible_ids(&table.snapshot()),
+        vec![2],
+        "the deleted row is not visible between the replayed insert and the replayed delete"
+    );
+    assert_eq!(
+        table.ingest_cdc_in_order(second()).unwrap().accepted_rows(),
+        0
+    );
+    assert_eq!(visible_ids(&table.snapshot()), vec![2]);
+    // What the table never held is applied, replayed in one batch or not.
+    let mut mixed = second();
+    mixed.push(keyed_row(3, 30, false));
+    assert_eq!(table.ingest_cdc_in_order(mixed).unwrap().accepted_rows(), 1);
+    assert_eq!(visible_ids(&table.snapshot()), vec![2, 3]);
+
+    // A table copied again starts its versions again.
+    table.reset_for_resnapshot().unwrap();
+    assert_eq!(table.applied_version(), 0);
+    assert_eq!(
+        table.ingest_cdc_in_order(first()).unwrap().accepted_rows(),
+        2
+    );
+    assert_eq!(visible_ids(&table.snapshot()), vec![1, 2]);
+}
+
+#[test]
 fn merge_on_read_over_a_key_range_answers_from_the_newest_versions() {
     let directory = tempfile::tempdir().unwrap();
     let schema = TableSchema::new(
