@@ -2536,6 +2536,17 @@ pub(super) fn split_grace_partition(
         let target = first + grace_partition(&key, seed);
         grace.probe_files[target].append(&key, &values, memory)?;
     }
+    // No piece receives another row. Sealed now, each gives its write
+    // buffer back; left open until it was served, the thirty-two pieces of
+    // a split kept up to a megabyte charged between them while every
+    // partition ahead of them was loaded, and under a ceiling of a few
+    // megabytes that is the room those partitions needed to fit.
+    for run in grace.build_files[first..]
+        .iter_mut()
+        .chain(grace.probe_files[first..].iter_mut())
+    {
+        run.seal(memory)?;
+    }
     Ok(())
 }
 
