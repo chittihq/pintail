@@ -1414,6 +1414,11 @@ async fn apply_ddl_actions(
     actions: Vec<DdlAction>,
 ) -> Result<(), CdcError> {
     let refreshed = probe_source(pool, &report.database).await?;
+    // A MySQL source writes every column into its row images and the mirror
+    // holds every one of them, so a statement applied to the tracked table
+    // says exactly where each column sits. Elsewhere the mirror leaves some
+    // generated columns out, and it does not.
+    let every_column_tracked = matches!(report.server.flavor, SourceFlavor::Mysql);
     // A queue rather than a plain loop: renaming an untracked table into the
     // schema is handled as the creation of its new name, which runs after the
     // rename in the same statement's order.
@@ -1448,6 +1453,7 @@ async fn apply_ddl_actions(
                     statement,
                     source,
                     (added.as_slice(), dropped.as_slice()),
+                    every_column_tracked,
                 )?;
             }
             DdlAction::Alter {
@@ -1570,6 +1576,39 @@ async fn apply_ddl_actions(
                         }
                     }
                 }
+                // The probe shows the source as it is now, which may no
+                // longer be what this statement left: the new name already
+                // renamed again or dropped, another column already added.
+                // The tracked table with the names changed IS the schema as
+                // of the statement - a rename touches nothing else - so that
+                // is what a pure rename adopts. Following the probe dropped
+                // a renamed column before its DROP arrived, and the rows
+                // written in between then had one column more than the
+                // schema and could not be placed.
+                let named = |name: &str| {
+                    source
+                        .columns
+                        .iter()
+                        .any(|column| column.name.eq_ignore_ascii_case(name))
+                };
+                let moved_past = renames
+                    .iter()
+                    .any(|(old_name, new_name)| !named(new_name) || named(old_name));
+                let source = if every_column_tracked
+                    && ddl::renames_columns_only(statement)
+                    && place_columns_in_order(&mut previous).is_ok()
+                {
+                    if moved_past {
+                        pintail_log::log_info!(
+                            "cdc schema change applied as of its statement db={database_id} \
+                             table={table}: the source has since changed the table again: \
+                             {statement}"
+                        );
+                    }
+                    previous.clone()
+                } else {
+                    source
+                };
                 let source = match pintail_probe::stabilize_source_table(&previous, source) {
                     Ok(source) => source,
                     Err(reason) => {
@@ -2050,6 +2089,11 @@ fn quarantine_schema_change(
         &Utc::now().to_rfc3339(),
     )?;
     metadata.mark_table_needs_resync(database_id, &target.source.name, statement)?;
+    // The only line that says why this table is about to be copied again.
+    pintail_log::log_error!(
+        "table quarantined db={database_id} table={}: schema change needs a recopy: {statement}",
+        target.source.name
+    );
     blocked_targets.insert(target_index);
     Ok(())
 }
@@ -2145,35 +2189,73 @@ fn apply_column_change(
     statement: &str,
     source: SourceTable,
     (added, dropped): (&[String], &[String]),
+    every_column_tracked: bool,
 ) -> Result<(), CdcError> {
     // The probe reads the source as it is NOW, which can be past this
     // statement: a column dropped and then added back under its name reads
     // as never having left, and the in-place change would keep the dropped
-    // column's values for the new one. Evolve in place only when the source
-    // still shows exactly what this statement did.
+    // column's values for the new one; a column added and since renamed is
+    // not there to be read at all. A mirror reads a statement seconds after
+    // the source ran it, so a migration of several statements met exactly
+    // that, and recopied the table every time.
+    //
+    // So the statement is applied to the table as tracked wherever its own
+    // text decides the result: that is the schema as of the statement's
+    // position, which is what the row images that follow it in the stream
+    // were written against. The probe is asked only about a column the
+    // statement does not fully describe, and only while the source still
+    // shows exactly what the statement did; past that the table is copied.
     let named = |columns: &[pintail_probe::SourceColumn], name: &str| {
         columns
             .iter()
             .any(|column| column.name.eq_ignore_ascii_case(name))
     };
-    if dropped.iter().any(|name| named(&source.columns, name))
+    let moved_past = dropped.iter().any(|name| named(&source.columns, name))
         || added.iter().any(|name| {
             !named(&source.columns, name) || named(&targets[index].source.columns, name)
-        })
-    {
-        return quarantine_schema_change(
-            metadata,
-            database_id,
-            &targets[index],
-            index,
-            blocked_targets,
-            &format!(
-                "{statement}; the source's schema has already moved past this statement, \
-                 so the table is recopied instead of evolved in place"
-            ),
-            None,
-        );
-    }
+        });
+    let source = match schema_as_of_statement(
+        &targets[index].source,
+        statement,
+        added,
+        dropped,
+        every_column_tracked,
+    ) {
+        Ok(as_of) if as_of.columns == targets[index].source.columns => {
+            // A replay of a statement already applied: a process that died
+            // between the change and its checkpoint reads it again.
+            pintail_log::log_info!(
+                "cdc schema change already applied db={database_id} table={}: {statement}",
+                targets[index].source.name
+            );
+            return Ok(());
+        }
+        Ok(as_of) => {
+            if moved_past {
+                pintail_log::log_info!(
+                    "cdc schema change applied as of its statement db={database_id} table={}: \
+                     the source has since changed the table again: {statement}",
+                    targets[index].source.name
+                );
+            }
+            as_of
+        }
+        Err(reason) if moved_past => {
+            return quarantine_schema_change(
+                metadata,
+                database_id,
+                &targets[index],
+                index,
+                blocked_targets,
+                &format!(
+                    "{statement}; the source's schema has already moved past this statement \
+                     and {reason}, so the table is recopied instead of evolved in place"
+                ),
+                None,
+            );
+        }
+        Err(_) => source,
+    };
     let source = match pintail_probe::stabilize_source_table(&targets[index].source, source) {
         Ok(source) => source,
         Err(reason) => {
@@ -2223,6 +2305,118 @@ fn apply_column_change(
         );
     }
     targets[index].source = source;
+    Ok(())
+}
+
+/// The table as one `ADD COLUMN` / `DROP COLUMN` statement left it, worked
+/// out from the tracked table and the statement's own text.
+///
+/// Returns the reason when the statement alone does not decide the result:
+/// the tracked table skips source columns, so the statement cannot say where
+/// in a row image its columns sit; a dropped column is part of the key; or
+/// an added column carries a default, a generated value, `NOT NULL`, or a
+/// type whose catalogue entry depends on defaults the statement lacks.
+fn schema_as_of_statement(
+    tracked: &SourceTable,
+    statement: &str,
+    added: &[String],
+    dropped: &[String],
+    every_column_tracked: bool,
+) -> Result<SourceTable, String> {
+    // The tracked table's own column count and ordinals are no evidence
+    // here: they come from the last probe, which is exactly what has moved
+    // on. Whether the mirror holds every source column is a property of the
+    // source's kind, and the caller knows it.
+    if !every_column_tracked {
+        return Err(
+            "the table has source columns the mirror does not hold, so the statement alone \
+             does not place its columns in a row image"
+                .to_owned(),
+        );
+    }
+    let declarations = ddl::added_columns(statement)
+        .ok_or_else(|| "its column definitions cannot be read".to_owned())?;
+    let mut as_of = tracked.clone();
+    for name in dropped {
+        if tracked
+            .key
+            .columns
+            .iter()
+            .any(|key| key.eq_ignore_ascii_case(name))
+        {
+            return Err(format!("it drops the key column {name}"));
+        }
+        as_of
+            .columns
+            .retain(|column| !column.name.eq_ignore_ascii_case(name));
+    }
+    for name in added {
+        let declaration = declarations
+            .iter()
+            .find(|declaration| declaration.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("the definition of column {name} cannot be read"))?;
+        if !declaration.plain_nullable {
+            return Err(format!(
+                "column {name} is declared with more than a nullable type, which the rows \
+                 already copied may need values for"
+            ));
+        }
+        let terms = ddl::declared_terms(&declaration.declared_type).ok_or_else(|| {
+            format!(
+                "the type of column {name} ({}) is not decided by the statement alone",
+                declaration.declared_type
+            )
+        })?;
+        let column = pintail_probe::declared_column(&pintail_probe::DeclaredColumn {
+            ordinal: 0,
+            name: &declaration.name,
+            data_type: &terms.data_type,
+            column_type: &terms.column_type,
+            numeric_precision: terms.precision,
+            numeric_scale: terms.scale,
+            datetime_precision: terms.fraction,
+            nullable: true,
+            collation: None,
+        })
+        .map_err(|error| error.to_string())?;
+        if let Some(existing) = as_of
+            .columns
+            .iter()
+            .find(|existing| existing.name.eq_ignore_ascii_case(name))
+        {
+            if existing.mysql_column_type == column.mysql_column_type && existing.nullable {
+                continue;
+            }
+            return Err(format!(
+                "column {name} is already tracked under another declaration"
+            ));
+        }
+        let position = match &declaration.position {
+            ddl::AddedPosition::First => 0,
+            ddl::AddedPosition::Last => as_of.columns.len(),
+            ddl::AddedPosition::After(other) => {
+                as_of
+                    .columns
+                    .iter()
+                    .position(|column| column.name.eq_ignore_ascii_case(other))
+                    .ok_or_else(|| format!("column {name} follows {other}, which is not tracked"))?
+                    + 1
+            }
+        };
+        as_of.columns.insert(position, column);
+    }
+    place_columns_in_order(&mut as_of)?;
+    Ok(as_of)
+}
+
+/// Numbers a table's columns as a row image of exactly these columns, in
+/// this order, carries them.
+fn place_columns_in_order(table: &mut SourceTable) -> Result<(), String> {
+    for (position, column) in table.columns.iter_mut().enumerate() {
+        column.ordinal = u32::try_from(position + 1).map_err(|error| error.to_string())?;
+    }
+    table.source_column_count =
+        u32::try_from(table.columns.len()).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -3914,6 +4108,7 @@ mod tests {
     use super::{
         CdcOptions, CdcTarget, PendingMutation, PendingTransaction, StreamPosition,
         generated_server_id, new_table_matches, push_mutations, sanitize_binlog_filename,
+        schema_as_of_statement,
     };
     use pintail_meta::{MetaStore, SnapshotCheckpointRecord};
     use pintail_probe::{SourceColumn, SourceFlavor, SourceKey, SourceTable};
@@ -4445,6 +4640,118 @@ mod tests {
             warnings: Vec::new(),
             source_column_count: 0,
         }
+    }
+
+    /// A table tracked exactly as the source declares it: `id`, then `note`.
+    fn tracked_table() -> SourceTable {
+        let mut table = source_table(KeyMode::Primary);
+        table.columns[0].ordinal = 1;
+        let mut note = table.columns[0].clone();
+        note.id = 2;
+        note.name = "note".to_owned();
+        note.nullable = true;
+        note.ordinal = 2;
+        table.columns.push(note);
+        table.source_column_count = 2;
+        table
+    }
+
+    #[test]
+    fn a_column_change_is_worked_out_from_its_statement_when_the_source_moved_on() {
+        let tracked = tracked_table();
+        // The source has since renamed or dropped `extra`: the probe no
+        // longer shows it, and the statement is the only record of it.
+        let as_of = schema_as_of_statement(
+            &tracked,
+            "ALTER TABLE events ADD COLUMN extra INT NULL AFTER id",
+            &["extra".to_owned()],
+            &[],
+            true,
+        )
+        .expect("a plain nullable column is decided by its statement");
+        assert_eq!(
+            as_of
+                .columns
+                .iter()
+                .map(|column| (column.name.as_str(), column.ordinal))
+                .collect::<Vec<_>>(),
+            vec![("id", 1), ("extra", 2), ("note", 3)]
+        );
+        assert_eq!(as_of.source_column_count, 3);
+        assert_eq!(as_of.columns[1].pintail_type, DataType::Int32);
+        assert!(as_of.columns[1].nullable);
+
+        // Read again after a restart, the statement changes nothing.
+        let replayed = schema_as_of_statement(
+            &as_of,
+            "ALTER TABLE events ADD COLUMN extra INT NULL AFTER id",
+            &["extra".to_owned()],
+            &[],
+            true,
+        )
+        .expect("replay");
+        assert_eq!(replayed.columns, as_of.columns);
+
+        // A column since added back at the source is still dropped here.
+        let dropped = schema_as_of_statement(
+            &as_of,
+            "ALTER TABLE events DROP COLUMN extra",
+            &[],
+            &["extra".to_owned()],
+            true,
+        )
+        .expect("drop");
+        assert_eq!(dropped.columns, tracked.columns);
+    }
+
+    #[test]
+    fn a_column_change_its_statement_does_not_decide_still_needs_the_copy() {
+        let tracked = tracked_table();
+        for (statement, added, dropped) in [
+            // The rows already copied need the default.
+            (
+                "ALTER TABLE events ADD COLUMN extra INT NOT NULL DEFAULT 7",
+                "extra",
+                "",
+            ),
+            (
+                "ALTER TABLE events ADD COLUMN extra INT NOT NULL",
+                "extra",
+                "",
+            ),
+            // The collation comes from table defaults the statement lacks.
+            (
+                "ALTER TABLE events ADD COLUMN extra VARCHAR(20) NULL",
+                "extra",
+                "",
+            ),
+            ("ALTER TABLE events DROP COLUMN id", "", "id"),
+        ] {
+            let names = |name: &str| {
+                if name.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![name.to_owned()]
+                }
+            };
+            assert!(
+                schema_as_of_statement(&tracked, statement, &names(added), &names(dropped), true)
+                    .is_err(),
+                "{statement}"
+            );
+        }
+        // A source whose row images carry columns the mirror leaves out:
+        // the statement cannot say where its own column sits in one.
+        assert!(
+            schema_as_of_statement(
+                &tracked,
+                "ALTER TABLE events ADD COLUMN extra INT NULL",
+                &["extra".to_owned()],
+                &[],
+                false,
+            )
+            .is_err()
+        );
     }
 
     #[test]

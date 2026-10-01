@@ -623,6 +623,7 @@ impl Simulation {
                     // The live source, as the refreshed probe would read it.
                     self.sources[*table].clone(),
                     (added.as_slice(), &[]),
+                    true,
                 )?;
             }
             Change::Truncate(table) => {

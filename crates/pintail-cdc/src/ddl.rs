@@ -42,6 +42,161 @@ pub(crate) enum DdlAction {
     Create { table: String },
 }
 
+/// Where an `ADD COLUMN` puts its column.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AddedPosition {
+    First,
+    After(String),
+    Last,
+}
+
+/// One column an `ALTER TABLE` adds, as the statement itself declares it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AddedColumn {
+    pub(crate) name: String,
+    /// The declared type as written, for example `DECIMAL(10,2)`.
+    pub(crate) declared_type: String,
+    /// Nullable with nothing else declared but a comment: no default, no
+    /// generated value, nothing the rows the table already holds would need.
+    pub(crate) plain_nullable: bool,
+    pub(crate) position: AddedPosition,
+}
+
+/// The columns `statement` adds, read from its own text.
+///
+/// The probe describes the source as it is now. A statement the stream
+/// reaches after the source has changed the table again describes a schema
+/// the probe no longer shows, and the statement is then the only record of
+/// what the column was.
+pub(crate) fn added_columns(statement: &str) -> Option<Vec<AddedColumn>> {
+    use sqlparser::ast::{ColumnOption, MySQLColumnPosition};
+    let mut added = Vec::new();
+    for statement in parse_source_ddl(statement).ok()? {
+        let Statement::AlterTable(alter) = statement else {
+            continue;
+        };
+        for operation in alter.operations {
+            let AlterTableOperation::AddColumn {
+                column_def,
+                column_position,
+                ..
+            } = operation
+            else {
+                continue;
+            };
+            added.push(AddedColumn {
+                name: column_def.name.value.clone(),
+                declared_type: column_def.data_type.to_string(),
+                plain_nullable: column_def.options.iter().all(|option| {
+                    matches!(option.option, ColumnOption::Null | ColumnOption::Comment(_))
+                }),
+                position: match column_position {
+                    Some(MySQLColumnPosition::First) => AddedPosition::First,
+                    Some(MySQLColumnPosition::After(column)) => AddedPosition::After(column.value),
+                    None => AddedPosition::Last,
+                },
+            });
+        }
+    }
+    Some(added)
+}
+
+/// Whether `statement` does nothing but `RENAME COLUMN`: the form that
+/// restates no type, so the columns it names keep everything but the name.
+pub(crate) fn renames_columns_only(statement: &str) -> bool {
+    parse_source_ddl(statement).is_ok_and(|statements| {
+        !statements.is_empty()
+            && statements.iter().all(|statement| {
+                matches!(statement, Statement::AlterTable(alter)
+                if alter.operations.iter().all(|operation| {
+                    matches!(operation, AlterTableOperation::RenameColumn { .. })
+                }))
+            })
+    })
+}
+
+/// A declared type in the terms the source's catalogue reports it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DeclaredTerms {
+    /// As `DATA_TYPE` reports it: `int`, `decimal`.
+    pub(crate) data_type: String,
+    /// As `COLUMN_TYPE` reports it: `int unsigned`, `decimal(10,2)`.
+    pub(crate) column_type: String,
+    pub(crate) precision: Option<u8>,
+    pub(crate) scale: Option<u8>,
+    /// Declared fractional-second digits.
+    pub(crate) fraction: Option<u8>,
+}
+
+/// The catalogue terms of a declared type, for the types whose catalogue
+/// entry the declaration alone decides.
+///
+/// Text types are left out - their character set and collation come from
+/// table and schema defaults the statement does not carry - as are the
+/// types whose reported form depends on the server version.
+pub(crate) fn declared_terms(declared: &str) -> Option<DeclaredTerms> {
+    let terms = |data_type: &str, column_type: String| DeclaredTerms {
+        data_type: data_type.to_owned(),
+        column_type,
+        precision: None,
+        scale: None,
+        fraction: None,
+    };
+    let lower = declared.trim().to_ascii_lowercase();
+    let (head, unsigned) = lower
+        .strip_suffix(" unsigned")
+        .map_or((lower.as_str(), false), |head| (head, true));
+    let (word, arguments) = match head.split_once('(') {
+        Some((word, rest)) => (word.trim(), Some(rest.strip_suffix(')')?.trim())),
+        None => (head.trim(), None),
+    };
+    let sign = if unsigned { " unsigned" } else { "" };
+    match word {
+        "tinyint" | "smallint" | "mediumint" | "int" | "integer" | "bigint" => {
+            let bare = if word == "integer" { "int" } else { word };
+            // The catalogue keeps a display width only for `tinyint(1)`.
+            let width = if bare == "tinyint" && arguments == Some("1") {
+                "(1)"
+            } else {
+                ""
+            };
+            Some(terms(bare, format!("{bare}{width}{sign}")))
+        }
+        "float" | "double" | "date" if arguments.is_none() && !unsigned => {
+            Some(terms(word, word.to_owned()))
+        }
+        "datetime" | "time" if !unsigned => {
+            let fraction = match arguments {
+                Some(digits) => Some(digits.parse::<u8>().ok().filter(|digits| *digits <= 6)?),
+                None => None,
+            };
+            let full = match fraction {
+                Some(digits) if digits > 0 => format!("{word}({digits})"),
+                _ => word.to_owned(),
+            };
+            Some(DeclaredTerms {
+                fraction,
+                ..terms(word, full)
+            })
+        }
+        "decimal" | "numeric" => {
+            let (precision, scale) = match arguments?.split_once(',') {
+                Some((precision, scale)) => (
+                    precision.trim().parse::<u8>().ok()?,
+                    scale.trim().parse::<u8>().ok()?,
+                ),
+                None => (arguments?.parse::<u8>().ok()?, 0),
+            };
+            Some(DeclaredTerms {
+                precision: Some(precision),
+                scale: Some(scale),
+                ..terms("decimal", format!("decimal({precision},{scale}){sign}"))
+            })
+        }
+        _ => None,
+    }
+}
+
 /// What one DDL statement means for the tracked schema.
 ///
 /// Object names qualified to a DIFFERENT schema are dropped during
@@ -882,5 +1037,60 @@ mod migration_family_tests {
             "classified as {:?}",
             parsed.actions,
         );
+    }
+
+    #[test]
+    fn reads_added_columns_from_the_statement() {
+        use crate::ddl::{AddedPosition, added_columns, declared_terms};
+        let added = added_columns(
+            "ALTER TABLE events ADD COLUMN a INT NULL AFTER id, ADD b DECIMAL(10,2) NOT NULL \
+             DEFAULT 1 FIRST, ADD COLUMN c BIGINT UNSIGNED COMMENT 'x'",
+        )
+        .expect("added columns");
+        assert_eq!(
+            added
+                .iter()
+                .map(|column| (
+                    column.name.as_str(),
+                    column.plain_nullable,
+                    column.position.clone()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("a", true, AddedPosition::After("id".to_owned())),
+                ("b", false, AddedPosition::First),
+                ("c", true, AddedPosition::Last),
+            ]
+        );
+        let column_type = |declared: &str| declared_terms(declared).map(|terms| terms.column_type);
+        assert_eq!(column_type(&added[0].declared_type).as_deref(), Some("int"));
+        assert_eq!(
+            column_type(&added[1].declared_type).as_deref(),
+            Some("decimal(10,2)")
+        );
+        assert_eq!(
+            column_type(&added[2].declared_type).as_deref(),
+            Some("bigint unsigned")
+        );
+        assert_eq!(column_type("INT(11)").as_deref(), Some("int"));
+        assert_eq!(column_type("TINYINT(1)").as_deref(), Some("tinyint(1)"));
+        assert_eq!(column_type("DATETIME(3)").as_deref(), Some("datetime(3)"));
+        assert!(crate::ddl::renames_columns_only(
+            "ALTER TABLE events RENAME COLUMN a TO b"
+        ));
+        assert!(!crate::ddl::renames_columns_only(
+            "ALTER TABLE events CHANGE COLUMN a b BIGINT"
+        ));
+        // Decided by table defaults or the server, not by the declaration.
+        for declared in [
+            "VARCHAR(20)",
+            "TEXT",
+            "TIMESTAMP",
+            "DECIMAL",
+            "JSON",
+            "ENUM('a')",
+        ] {
+            assert_eq!(declared_terms(declared), None, "{declared}");
+        }
     }
 }

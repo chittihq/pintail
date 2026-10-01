@@ -238,6 +238,23 @@ fn table_is_keyless(
         })
 }
 
+/// Says why a table is about to be copied again, in the log and in the
+/// activity feed. A recopy with no stated cause reads as a fault, and
+/// telling a designed one from a fault took reading the metadata while it
+/// happened.
+fn announce_recopy(state: &ApiState, database_id: &str, table_name: &str, reason: Option<&str>) {
+    let cause = reason.unwrap_or("no reason was recorded when it was set aside");
+    pintail_log::log_info!(
+        "auto resync db={database_id} table={table_name}: quarantined table is being recopied \
+         because: {cause}"
+    );
+    state.publish(ApiEvent::database(
+        "replication.table-recopy",
+        database_id,
+        format!("{table_name} is being recopied because: {cause}"),
+    ));
+}
+
 /// Recopies the first quarantined table of `database_id`, exactly as the
 /// operator resync endpoint would - same job claim, same fence, same
 /// completion bookkeeping - but driven by the supervisor, so a table that
@@ -309,6 +326,7 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
         state.release_job(database_id);
         return;
     }
+    announce_recopy(state, database_id, &table_name, reason.as_deref());
     auto_resync_cooldown()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -316,9 +334,6 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
             (database_id.to_owned(), table_name.clone()),
             (Instant::now(), reason),
         );
-    pintail_log::log_info!(
-        "auto resync db={database_id} table={table_name}: quarantined table is being recopied"
-    );
     // A dedicated thread with its own runtime, exactly like the operator
     // reconcile path: the caller is supervise_database, which runs on a
     // PER-CYCLE current-thread runtime that dies when the cycle returns.
