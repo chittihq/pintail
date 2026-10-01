@@ -377,14 +377,289 @@ fn memtable_dimension_scan_cost() {
                 if only.as_deref().is_some_and(|only| only != label) {
                     continue;
                 }
-                let mut times = (0..runs)
-                    .map(|_| fixture.run(&fixture.live, &sql).1)
-                    .collect::<Vec<_>>();
+                // The settled store holds the same final rows with nothing in
+                // the memtable: what the written table's answer should cost.
+                // The two arms alternate so neither runs on a warmer machine.
+                let mut times = Vec::with_capacity(runs);
+                let mut settled = Vec::with_capacity(runs);
+                for _ in 0..runs {
+                    times.push(fixture.run(&fixture.live, &sql).1);
+                    settled.push(fixture.run(&fixture.settled, &sql).1);
+                }
                 times.sort_by(f64::total_cmp);
+                settled.sort_by(f64::total_cmp);
                 println!(
-                    "shops {shops:>9} changed {percent:>2}% {label:<14} median {:>8.2} ms  min {:>8.2} ms",
+                    "shops {shops:>9} changed {percent:>2}% {label:<14} median {:>8.2} ms  min {:>8.2} ms  settled median {:>8.2} ms  min {:>8.2} ms  ratio {:>5.2}",
                     times[runs / 2],
                     times[0],
+                    settled[runs / 2],
+                    settled[0],
+                    times[runs / 2] / settled[runs / 2],
+                );
+            }
+        }
+    }
+}
+
+/// A fact table that is being written to, beside a small settled dimension:
+/// the fact's rows sit in segments and `percent` of them changed through the
+/// change path, so its scan hands masked and interleaved batches to the
+/// aggregate lanes above it.
+mod written_fact {
+    use super::{
+        CatalogSnapshot, Column, DataType, DatabaseEntry, DatabaseId, Fixture, KeyPart, PrimaryKey,
+        Shop, StoreOptions, StoredRow, TableEntry, TableId, TableSchema, TableStatistics,
+        TableStore, Value, shop_schema,
+    };
+
+    const SHOPS: u64 = 5_000;
+
+    fn sale_schema() -> TableSchema {
+        TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "shop_id", DataType::UInt64, false),
+                Column::new(
+                    3,
+                    "amount",
+                    DataType::Decimal {
+                        precision: 12,
+                        scale: 2,
+                    },
+                    false,
+                ),
+                Column::new(4, "placed", DataType::Date32, false),
+                Column::new(5, "qty", DataType::Int64, true),
+            ],
+        )
+        .expect("schema")
+    }
+
+    /// The sale `id` as first loaded, or as the change path rewrote it.
+    fn sale(id: u64, revised: bool, version: u64, deleted: bool) -> StoredRow {
+        let seed = if revised { id.wrapping_mul(13) + 7 } else { id };
+        let cents = seed.wrapping_mul(31) % 1_000_000;
+        // 2024-01-01 is day 19723.
+        let day = 19_723 + i64::try_from(seed % 700).expect("small");
+        let qty = (!seed.is_multiple_of(17)).then(|| i64::try_from(seed % 50).expect("small") - 20);
+        StoredRow::new(
+            PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+            vec![
+                Value::UInt64(id),
+                Value::UInt64(seed.wrapping_mul(7_919) % SHOPS + 1),
+                Value::Utf8(format!("{}.{:02}", cents / 100, cents % 100)),
+                Value::Utf8(pintail_types::format_date_days(day).expect("date")),
+                qty.map_or(Value::Null, Value::Int64),
+            ],
+            version,
+            deleted,
+        )
+    }
+
+    /// `sales` rows loaded as a snapshot, then `percent` of them changed - a
+    /// third updated, a third deleted, a third inserted past the last key -
+    /// and left in the memtable; the settled copy holds the same final rows
+    /// in segments alone.
+    pub(super) fn fixture(sales: u64, percent: u64) -> Fixture {
+        let directory = tempfile::tempdir().expect("directory");
+        let open = |name: &str, schema: TableSchema| {
+            TableStore::open(directory.path().join(name), schema, StoreOptions::default())
+                .expect("store")
+        };
+        let shops = |name: &str| {
+            let mut store = open(name, shop_schema(false));
+            store
+                .bulk_ingest_snapshot(
+                    (1..=SHOPS)
+                        .map(|id| Shop::original(id).row(id, false, 1, false))
+                        .collect(),
+                )
+                .expect("shops");
+            store
+        };
+        let each = sales * percent / 300;
+        let step = sales.checked_div(each).unwrap_or(0);
+        // What the change path did to `id`: updated, deleted, or nothing.
+        let updated = |id: u64| each > 0 && (id - 1).is_multiple_of(step) && (id - 1) / step < each;
+        let deleted = |id: u64| {
+            each > 0 && id >= 2 && (id - 2).is_multiple_of(step) && (id - 2) / step < each
+        };
+        let load = |store: &mut TableStore, rows: &mut dyn Iterator<Item = StoredRow>| {
+            loop {
+                let chunk = rows.take(500_000).collect::<Vec<_>>();
+                if chunk.is_empty() {
+                    break;
+                }
+                store.bulk_ingest_snapshot(chunk).expect("snapshot");
+            }
+        };
+        let mut live = open("live-sales", sale_schema());
+        load(
+            &mut live,
+            &mut (1..=sales).map(|id| sale(id, false, 1, false)),
+        );
+        let mut version = 2;
+        let mut changes = Vec::new();
+        for index in 0..each {
+            for (id, revised, gone) in [
+                (1 + index * step, true, false),
+                (2 + index * step, false, true),
+                (sales + 1 + index, true, false),
+            ] {
+                changes.push(sale(id, revised, version, gone));
+                version += 1;
+            }
+            if changes.len() >= 3_000 {
+                live.ingest_cdc(std::mem::take(&mut changes))
+                    .expect("changes");
+            }
+        }
+        if !changes.is_empty() {
+            live.ingest_cdc(changes).expect("changes");
+        }
+        let mut settled = open("settled-sales", sale_schema());
+        load(
+            &mut settled,
+            &mut (1..=sales + each)
+                .filter(|id| *id > sales || !deleted(*id))
+                .map(|id| sale(id, id > sales || updated(id), 1, false)),
+        );
+        let entries = [
+            ("shops", shop_schema(false), SHOPS),
+            ("sales", sale_schema(), sales),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (name, schema, rows))| {
+            TableEntry::new(
+                TableId::new(u64::try_from(index + 1).expect("table")),
+                name,
+                schema,
+                TableStatistics::with_row_count(rows),
+            )
+            .expect("entry")
+            .with_key_columns([1])
+            .expect("key")
+        })
+        .collect::<Vec<_>>();
+        let live = vec![shops("live-shops"), live];
+        let settled = vec![shops("settled-shops"), settled];
+        Fixture {
+            _directory: directory,
+            live,
+            settled,
+            catalog: CatalogSnapshot::new([
+                DatabaseEntry::new(DatabaseId::new(1), "app", entries).expect("database")
+            ])
+            .expect("catalog"),
+            updated: 1,
+            last: sales + each,
+        }
+    }
+
+    pub(super) fn queries(fixture: &Fixture) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "fact sums",
+                "SELECT COUNT(*), SUM(amount), SUM(qty), COUNT(qty) FROM sales".to_owned(),
+            ),
+            (
+                "fact filter",
+                "SELECT COUNT(*), SUM(amount), MIN(placed), MAX(placed) FROM sales \
+                 WHERE placed >= '2025-01-01' AND qty > 3"
+                    .to_owned(),
+            ),
+            (
+                "fact groups",
+                "SELECT placed, COUNT(*), SUM(amount), SUM(qty) FROM sales GROUP BY placed \
+                 ORDER BY placed"
+                    .to_owned(),
+            ),
+            (
+                "fact join",
+                "SELECT s.region, COUNT(*), SUM(o.amount), SUM(o.qty) FROM sales o JOIN shops s \
+                 ON o.shop_id = s.id GROUP BY s.region ORDER BY s.region"
+                    .to_owned(),
+            ),
+            (
+                "fact join filter",
+                "SELECT s.region, COUNT(*), SUM(o.amount), AVG(o.amount) FROM sales o JOIN shops s \
+                 ON o.shop_id = s.id WHERE s.rate > 700 AND o.placed < '2025-06-01' \
+                 GROUP BY s.region ORDER BY s.region"
+                    .to_owned(),
+            ),
+            (
+                "fact rows",
+                format!(
+                    "SELECT id, shop_id, amount, placed, qty FROM sales WHERE id > {} OR id < 40 \
+                     ORDER BY id",
+                    fixture.last.saturating_sub(40)
+                ),
+            ),
+        ]
+    }
+}
+
+#[test]
+fn a_written_fact_answers_exactly() {
+    for sales in [5_000, 300_000] {
+        for percent in [0, 1, 10, 30] {
+            let fixture = written_fact::fixture(sales, percent);
+            for (label, sql) in written_fact::queries(&fixture) {
+                let (live, _) = fixture.run(&fixture.live, &sql);
+                let (settled, _) = fixture.run(&fixture.settled, &sql);
+                assert_eq!(live, settled, "{sales} rows, {percent}%: {label}: {sql}");
+                assert!(!settled.is_empty(), "{label}: {sql}");
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "measurement, not an assertion"]
+fn memtable_fact_scan_cost() {
+    let list = |name: &str, default: &[u64]| {
+        std::env::var(name).map_or_else(
+            |_| default.to_vec(),
+            |list| {
+                list.split(',')
+                    .map(|item| item.parse().expect("number"))
+                    .collect::<Vec<u64>>()
+            },
+        )
+    };
+    let sizes = list("FACT_SIZES", &[200_000, 2_000_000]);
+    let percents = list("DIMENSION_PERCENTS", &[0, 1, 10, 30]);
+    let runs = usize::try_from(list("DIMENSION_RUNS", &[9])[0]).expect("runs");
+    let only = std::env::var("DIMENSION_QUERY").ok();
+    for sales in sizes {
+        for percent in percents.iter().copied() {
+            let fixture = written_fact::fixture(sales, percent);
+            for (label, sql) in written_fact::queries(&fixture) {
+                if only.as_deref().is_some_and(|only| only != label) {
+                    continue;
+                }
+                assert_eq!(
+                    fixture.run(&fixture.live, &sql).0,
+                    fixture.run(&fixture.settled, &sql).0,
+                    "{label}: {sql}"
+                );
+                let mut times = Vec::with_capacity(runs);
+                let mut settled = Vec::with_capacity(runs);
+                for _ in 0..runs {
+                    times.push(fixture.run(&fixture.live, &sql).1);
+                    settled.push(fixture.run(&fixture.settled, &sql).1);
+                }
+                times.sort_by(f64::total_cmp);
+                settled.sort_by(f64::total_cmp);
+                println!(
+                    "sales {sales:>9} changed {percent:>2}% {label:<16} median {:>8.2} ms  min {:>8.2} ms  settled median {:>8.2} ms  min {:>8.2} ms  ratio {:>5.2}",
+                    times[runs / 2],
+                    times[0],
+                    settled[runs / 2],
+                    settled[0],
+                    times[runs / 2] / settled[runs / 2],
                 );
             }
         }
