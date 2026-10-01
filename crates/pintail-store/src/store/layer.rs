@@ -8,15 +8,15 @@
 //! newer segments column by column, as packed as a base decodes.
 
 use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex, atomic::AtomicUsize},
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, Mutex, OnceLock, atomic::AtomicUsize},
 };
 
 use pintail_types::{KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
 use rayon::prelude::*;
 
 use super::projected_scan_pool;
-use super::scan::DecodedColumn;
+use super::scan::{DecodedColumn, empty_packed_column};
 use crate::{StoreError, segment};
 
 /// One value an overlay writes into a decoded chunk: a memtable row's, or
@@ -130,6 +130,8 @@ pub(super) enum SpanRow<'a> {
     /// A live row of a layer's newer segment `segment`, at physical row
     /// `row` of it.
     Layer { segment: u32, row: u32 },
+    /// A live memtable row, by its place in the memtable's image.
+    Image { row: u32 },
 }
 
 /// Appends the integer parts of `key` to `out`; `false` when a part is not
@@ -275,25 +277,7 @@ impl LayerIndex {
         index: usize,
         template: &PrimaryKey,
     ) -> Result<PrimaryKey, StoreError> {
-        let unfit = || StoreError::FormatLimit("a layered key does not fit its key type".into());
-        let parts = self
-            .key(index)
-            .iter()
-            .zip(template.parts())
-            .map(|(value, part)| match part {
-                KeyPart::Int64(_) => i64::try_from(*value)
-                    .map(KeyPart::Int64)
-                    .map_err(|_| unfit()),
-                KeyPart::UInt64(_) => u64::try_from(*value)
-                    .map(KeyPart::UInt64)
-                    .map_err(|_| unfit()),
-                _ => Err(unfit()),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if parts.len() != self.parts {
-            return Err(unfit());
-        }
-        PrimaryKey::new(parts).map_err(|_| unfit())
+        primary_key_of(self.key(index), template)
     }
 
     /// The entries inside a key range, as a range of this index.
@@ -302,32 +286,7 @@ impl LayerIndex {
         lo: &std::ops::Bound<PrimaryKey>,
         hi: &std::ops::Bound<PrimaryKey>,
     ) -> Result<std::ops::Range<usize>, StoreError> {
-        use std::ops::Bound::{Excluded, Included, Unbounded};
-        let parts_of = |key: &PrimaryKey| {
-            let mut parts = Vec::with_capacity(key.parts().len());
-            if push_key_parts(key, &mut parts) {
-                Ok(parts)
-            } else {
-                Err(StoreError::FormatLimit(
-                    "a layered scan needs integer key bounds".into(),
-                ))
-            }
-        };
-        // The first entry at or above a key, and the first above it.
-        let at_or_above =
-            |parts: &[i128]| partition_point(self.len(), |index| self.key(index) < parts);
-        let above = |parts: &[i128]| partition_point(self.len(), |index| self.key(index) <= parts);
-        let start = match lo {
-            Included(key) => at_or_above(&parts_of(key)?),
-            Excluded(key) => above(&parts_of(key)?),
-            Unbounded => 0,
-        };
-        let end = match hi {
-            Included(key) => above(&parts_of(key)?),
-            Excluded(key) => at_or_above(&parts_of(key)?),
-            Unbounded => self.len(),
-        };
-        Ok(start..end.max(start))
+        key_range(self.len(), |index| self.key(index), lo, hi)
     }
 
     /// Reads the headers of `segments` (oldest first) and resolves them to
@@ -472,6 +431,187 @@ fn merge_headers(older: &Headers, newer: &Headers, parts: usize) -> Headers {
     out
 }
 
+/// Integer key parts as a key of the table, typed as `template`'s are.
+fn primary_key_of(parts: &[i128], template: &PrimaryKey) -> Result<PrimaryKey, StoreError> {
+    let unfit = || StoreError::FormatLimit("a layered key does not fit its key type".into());
+    if parts.len() != template.parts().len() {
+        return Err(unfit());
+    }
+    let parts = parts
+        .iter()
+        .zip(template.parts())
+        .map(|(value, part)| match part {
+            KeyPart::Int64(_) => i64::try_from(*value)
+                .map(KeyPart::Int64)
+                .map_err(|_| unfit()),
+            KeyPart::UInt64(_) => u64::try_from(*value)
+                .map(KeyPart::UInt64)
+                .map_err(|_| unfit()),
+            _ => Err(unfit()),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    PrimaryKey::new(parts).map_err(|_| unfit())
+}
+
+/// The entries of `len` sorted keys that lie inside a key range.
+fn key_range<'keys>(
+    len: usize,
+    key: impl Fn(usize) -> &'keys [i128],
+    lo: &std::ops::Bound<PrimaryKey>,
+    hi: &std::ops::Bound<PrimaryKey>,
+) -> Result<std::ops::Range<usize>, StoreError> {
+    use std::ops::Bound::{Excluded, Included, Unbounded};
+    let parts_of = |bound: &PrimaryKey| {
+        let mut parts = Vec::with_capacity(bound.parts().len());
+        if push_key_parts(bound, &mut parts) {
+            Ok(parts)
+        } else {
+            Err(StoreError::FormatLimit(
+                "a layered scan needs integer key bounds".into(),
+            ))
+        }
+    };
+    // The first entry at or above a key, and the first above it.
+    let at_or_above = |parts: &[i128]| partition_point(len, |index| key(index) < parts);
+    let above = |parts: &[i128]| partition_point(len, |index| key(index) <= parts);
+    let start = match lo {
+        Included(bound) => at_or_above(&parts_of(bound)?),
+        Excluded(bound) => above(&parts_of(bound)?),
+        Unbounded => 0,
+    };
+    let end = match hi {
+        Included(bound) => above(&parts_of(bound)?),
+        Excluded(bound) => at_or_above(&parts_of(bound)?),
+        Unbounded => len,
+    };
+    Ok(start..end.max(start))
+}
+
+/// Rows of the memtable one chunk of an image column holds.
+const IMAGE_CHUNK_ROWS: usize = 16 * 1024;
+
+/// The memtable's keys, versions and delete flags as arrays in key order.
+struct ImageKeys {
+    parts: usize,
+    keys: Vec<i128>,
+    versions: Vec<u64>,
+    deleted: Vec<bool>,
+}
+
+impl ImageKeys {
+    /// `None` for a memtable whose keys are not all integers of one shape.
+    fn build(memtable: &BTreeMap<PrimaryKey, StoredRow>) -> Option<Self> {
+        let parts = memtable.keys().next()?.parts().len();
+        if parts == 0 || u32::try_from(memtable.len()).is_err() {
+            return None;
+        }
+        let mut image = Self {
+            parts,
+            keys: Vec::with_capacity(memtable.len() * parts),
+            versions: Vec::with_capacity(memtable.len()),
+            deleted: Vec::with_capacity(memtable.len()),
+        };
+        for (key, row) in memtable {
+            if key.parts().len() != parts || !push_key_parts(key, &mut image.keys) {
+                return None;
+            }
+            image.versions.push(row.version());
+            image.deleted.push(row.is_deleted());
+        }
+        Some(image)
+    }
+
+    fn key(&self, index: usize) -> &[i128] {
+        &self.keys[index * self.parts..(index + 1) * self.parts]
+    }
+
+    fn row(&self, index: usize) -> SpanRow<'static> {
+        if self.deleted[index] {
+            SpanRow::Mask
+        } else {
+            SpanRow::Image {
+                row: u32::try_from(index).unwrap_or(u32::MAX),
+            }
+        }
+    }
+}
+
+/// One schema column of every memtable row, packed, in chunks of
+/// [`IMAGE_CHUNK_ROWS`] rows.
+type ImageColumn = Arc<Vec<DecodedColumn>>;
+
+/// The cell of memtable row `row` in an image column.
+pub(super) fn image_cell(column: &[DecodedColumn], row: usize) -> Cell<'_> {
+    column
+        .get(row / IMAGE_CHUNK_ROWS)
+        .map_or(Cell::Null, |chunk| chunk.cell(row % IMAGE_CHUNK_ROWS))
+}
+
+/// One state of the memtable as arrays: its keys in key order, and each
+/// column a scan has asked for, packed in the shape a segment of that type
+/// decodes to. Built by the first scan to need it and read by every scan of
+/// the same state after it; the memtable hands out a new one once a write
+/// changes its rows.
+///
+/// A scan otherwise walks the memtable's map for every slice it overlays,
+/// turns each key into integers to compare, and parses each changed value
+/// from its row form into the chunk - the same work again for every query,
+/// though the rows are the same.
+#[derive(Default)]
+pub(crate) struct MemtableImage {
+    keys: OnceLock<Option<ImageKeys>>,
+    columns: Mutex<HashMap<usize, Arc<OnceLock<ImageColumn>>>>,
+}
+
+impl MemtableImage {
+    /// Whether a scan has built any of it.
+    pub(crate) fn is_built(&self) -> bool {
+        self.keys.get().is_some()
+    }
+
+    fn keys(&self, memtable: &BTreeMap<PrimaryKey, StoredRow>) -> Option<&ImageKeys> {
+        self.keys
+            .get_or_init(|| ImageKeys::build(memtable))
+            .as_ref()
+    }
+
+    /// The column at schema `position`, built from the rows on first use.
+    /// One thread builds it while the others that want it wait; different
+    /// columns build side by side.
+    fn column(
+        &self,
+        position: usize,
+        data_type: pintail_types::DataType,
+        memtable: &BTreeMap<PrimaryKey, StoredRow>,
+    ) -> ImageColumn {
+        let slot = Arc::clone(
+            self.columns
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(position)
+                .or_default(),
+        );
+        Arc::clone(slot.get_or_init(|| {
+            let mut chunks = Vec::with_capacity(memtable.len().div_ceil(IMAGE_CHUNK_ROWS));
+            let mut cells = Vec::with_capacity(IMAGE_CHUNK_ROWS.min(memtable.len()));
+            for row in memtable.values() {
+                cells.push((
+                    cells.len(),
+                    row.values().get(position).map_or(Cell::Null, Cell::Value),
+                ));
+                if cells.len() == IMAGE_CHUNK_ROWS {
+                    chunks.push(empty_packed_column(data_type).interleave_cells(&cells));
+                    cells.clear();
+                }
+            }
+            if !cells.is_empty() {
+                chunks.push(empty_packed_column(data_type).interleave_cells(&cells));
+            }
+            Arc::new(chunks)
+        }))
+    }
+}
+
 /// The first index in `0..len` for which `before` is false.
 fn partition_point(len: usize, before: impl Fn(usize) -> bool) -> usize {
     let (mut low, mut high) = (0, len);
@@ -558,6 +698,9 @@ impl LayerIndexSlot {
 #[derive(Clone)]
 pub(super) struct LayerRows {
     memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>,
+    /// The memtable's image, once a scan that names integer keys has
+    /// reached these rows; without it they are read from the map.
+    image: Option<Arc<MemtableImage>>,
     layer: Option<Layer>,
 }
 
@@ -574,7 +717,57 @@ impl LayerRows {
     pub(super) fn single(memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>) -> Self {
         Self {
             memtable,
+            image: None,
             layer: None,
+        }
+    }
+
+    /// Reads the memtable through `image` from here on, when its keys are
+    /// integers.
+    pub(super) fn attach_image(&mut self, image: &Arc<MemtableImage>) {
+        if self.image.is_none() && !self.memtable.is_empty() && image.keys(&self.memtable).is_some()
+        {
+            self.image = Some(Arc::clone(image));
+        }
+    }
+
+    fn image_keys(&self) -> Option<&ImageKeys> {
+        self.image.as_ref()?.keys.get()?.as_ref()
+    }
+
+    /// Whether the memtable is read through its image.
+    pub(super) fn has_image(&self) -> bool {
+        self.image.is_some()
+    }
+
+    /// The memtable's column at schema `position`, packed.
+    pub(super) fn image_column(
+        &self,
+        position: usize,
+        schema: &TableSchema,
+    ) -> Result<Arc<Vec<DecodedColumn>>, StoreError> {
+        let missing =
+            || StoreError::FormatLimit("a memtable image was read before it was built".into());
+        let column = schema.columns().get(position).ok_or_else(missing)?;
+        Ok(self.image.as_ref().ok_or_else(missing)?.column(
+            position,
+            column.data_type(),
+            &self.memtable,
+        ))
+    }
+
+    /// The key a cursor of these rows stopped at, as a key of the table.
+    pub(super) fn key_of(&self, key: SpanKey<'_>) -> Result<PrimaryKey, StoreError> {
+        match key {
+            SpanKey::Memtable(key) => Ok(key.clone()),
+            SpanKey::Index(entry) => self.index_key(entry),
+            SpanKey::Image(row) => {
+                let missing = || {
+                    StoreError::FormatLimit("a memtable image was read before it was built".into())
+                };
+                let template = self.memtable.keys().next().ok_or_else(missing)?;
+                primary_key_of(self.image_keys().ok_or_else(missing)?.key(row), template)
+            }
         }
     }
 
@@ -585,6 +778,7 @@ impl LayerRows {
     ) -> Self {
         Self {
             memtable,
+            image: None,
             layer: (!segments.is_empty()).then(|| Layer {
                 segments: Arc::new(segments),
                 index: None,
@@ -631,7 +825,7 @@ impl LayerRows {
     }
 
     /// A key the layer's index holds, as a key of the table.
-    pub(super) fn index_key(&self, index: usize) -> Result<PrimaryKey, StoreError> {
+    fn index_key(&self, index: usize) -> Result<PrimaryKey, StoreError> {
         let unresolved = || StoreError::FormatLimit("a layer was read before it resolved".into());
         let layer = self.layer.as_ref().ok_or_else(unresolved)?;
         let template = &layer.segments.first().ok_or_else(unresolved)?.min_key;
@@ -657,8 +851,15 @@ impl LayerRows {
                 Some((index, index.range(lo, hi)?))
             }
         };
+        let memtable = match self.image_keys() {
+            Some(image) => MemtableSide::Image(
+                image,
+                key_range(image.versions.len(), |row| image.key(row), lo, hi)?,
+            ),
+            None => MemtableSide::Map(self.memtable.range((lo.clone(), hi.clone())).peekable()),
+        };
         Ok(LayerCursor {
-            memtable: self.memtable.range((lo.clone(), hi.clone())).peekable(),
+            memtable,
             index,
             scratch: Vec::new(),
         })
@@ -671,11 +872,20 @@ pub(super) enum SpanKey<'a> {
     Memtable(&'a PrimaryKey),
     /// An entry of the layer's index.
     Index(usize),
+    /// A row of the memtable's image.
+    Image(usize),
+}
+
+/// The memtable's rows of a range: walked through its map, or a range of
+/// its image.
+enum MemtableSide<'a> {
+    Map(std::iter::Peekable<std::collections::btree_map::Range<'a, PrimaryKey, StoredRow>>),
+    Image(&'a ImageKeys, std::ops::Range<usize>),
 }
 
 /// [`LayerRows::range`]'s walk.
 pub(super) struct LayerCursor<'a> {
-    memtable: std::iter::Peekable<std::collections::btree_map::Range<'a, PrimaryKey, StoredRow>>,
+    memtable: MemtableSide<'a>,
     index: Option<(&'a LayerIndex, std::ops::Range<usize>)>,
     scratch: Vec<i128>,
 }
@@ -689,52 +899,94 @@ impl<'a> LayerCursor<'a> {
         }
     }
 
-    /// The parts of index entry `entry`'s key.
-    pub(super) fn index_key(&self, entry: usize) -> &'a [i128] {
-        self.index
-            .as_ref()
-            .map_or(&[], |(index, _)| (*index).key(entry))
+    /// The integer parts of a key held in arrays: an index entry's or an
+    /// image row's. A key still in the memtable's map has none here.
+    pub(super) fn parts(&self, key: SpanKey<'a>) -> Option<&'a [i128]> {
+        match (key, &self.memtable) {
+            (SpanKey::Index(entry), _) => self.index.as_ref().map(|(index, _)| (*index).key(entry)),
+            (SpanKey::Image(row), MemtableSide::Image(image, _)) => Some((*image).key(row)),
+            _ => None,
+        }
+    }
+
+    fn advance(memtable: &mut MemtableSide<'a>) {
+        match memtable {
+            MemtableSide::Map(rows) => {
+                rows.next();
+            }
+            MemtableSide::Image(_, range) => {
+                range.next();
+            }
+        }
     }
 
     /// The next row in key order and where its key is.
     pub(super) fn next(&mut self) -> Result<Option<(SpanKey<'a>, SpanRow<'a>)>, StoreError> {
+        // The memtable's next row: where its key is, its version, the row.
+        let head = match &mut self.memtable {
+            MemtableSide::Map(rows) => rows.peek().map(|&(key, row)| {
+                (
+                    SpanKey::Memtable(key),
+                    row.version(),
+                    Self::memtable_row(row),
+                )
+            }),
+            MemtableSide::Image(image, range) => (range.start < range.end).then(|| {
+                (
+                    SpanKey::Image(range.start),
+                    image.versions[range.start],
+                    image.row(range.start),
+                )
+            }),
+        };
         let Some((index, range)) = self.index.as_mut() else {
-            return Ok(self
-                .memtable
-                .next()
-                .map(|(key, row)| (SpanKey::Memtable(key), Self::memtable_row(row))));
+            Self::advance(&mut self.memtable);
+            return Ok(head.map(|(key, _, row)| (key, row)));
         };
         let index: &'a LayerIndex = index;
-        let Some(&(key, row)) = self.memtable.peek() else {
+        let Some((key, version, row)) = head else {
             return Ok(range
                 .next()
                 .map(|entry| (SpanKey::Index(entry), index.row(entry))));
         };
         if range.start >= range.end {
-            self.memtable.next();
-            return Ok(Some((SpanKey::Memtable(key), Self::memtable_row(row))));
-        }
-        self.scratch.clear();
-        if !push_key_parts(key, &mut self.scratch) {
-            return Err(StoreError::FormatLimit(
-                "the memtable overlay needs integer key parts".into(),
-            ));
+            Self::advance(&mut self.memtable);
+            return Ok(Some((key, row)));
         }
         let entry = range.start;
-        Ok(Some(match self.scratch.as_slice().cmp(index.key(entry)) {
+        let order = match (key, &self.memtable) {
+            (SpanKey::Image(at), MemtableSide::Image(image, _)) => {
+                image.key(at).cmp(index.key(entry))
+            }
+            (SpanKey::Memtable(primary), _) => {
+                self.scratch.clear();
+                if !push_key_parts(primary, &mut self.scratch) {
+                    return Err(StoreError::FormatLimit(
+                        "the memtable overlay needs integer key parts".into(),
+                    ));
+                }
+                self.scratch.as_slice().cmp(index.key(entry))
+            }
+            _ => {
+                return Err(StoreError::FormatLimit(
+                    "a memtable row lost its key".into(),
+                ));
+            }
+        };
+        Ok(Some(match order {
             std::cmp::Ordering::Less => {
-                self.memtable.next();
-                (SpanKey::Memtable(key), Self::memtable_row(row))
+                Self::advance(&mut self.memtable);
+                (key, row)
             }
             std::cmp::Ordering::Greater => {
                 range.next();
                 (SpanKey::Index(entry), index.row(entry))
             }
             std::cmp::Ordering::Equal => {
-                self.memtable.next();
+                Self::advance(&mut self.memtable);
                 range.next();
-                if row.version() > index.version(entry) {
-                    (SpanKey::Memtable(key), Self::memtable_row(row))
+                if version > index.version(entry) {
+                    (key, row)
                 } else {
                     (SpanKey::Index(entry), index.row(entry))
                 }
@@ -753,6 +1005,9 @@ pub(super) struct LiveCells<'a> {
     columns: Vec<Vec<DecodedColumn>>,
     /// Per live row, its row in its segment's columns.
     slots: Vec<u32>,
+    /// The memtable image's columns of `positions`, when a row is read
+    /// through it.
+    image: Vec<Arc<Vec<DecodedColumn>>>,
 }
 
 impl<'a> LiveCells<'a> {
@@ -802,11 +1057,20 @@ impl<'a> LiveCells<'a> {
             )?;
             columns.push(fetch.columns);
         }
+        let image = if rows.iter().any(|row| matches!(row, SpanRow::Image { .. })) {
+            positions
+                .iter()
+                .map(|position| layer.image_column(*position, schema))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
         Ok(Self {
             rows,
             positions,
             columns,
             slots,
+            image,
         })
     }
 
@@ -826,6 +1090,10 @@ impl<'a> LiveCells<'a> {
             SpanRow::Layer { segment, .. } => {
                 self.columns[segment as usize][column].cell(self.slots[row] as usize)
             }
+            SpanRow::Image { row } => self
+                .image
+                .get(column)
+                .map_or(Cell::Null, |cells| image_cell(cells, row as usize)),
         }
     }
 

@@ -188,6 +188,8 @@ pub(crate) struct RowAdmission<'a> {
     lookup: &'a IndexLookup,
     position: usize,
     texts: HashMap<&'a str, bool>,
+    /// The same memo for texts read packed, which no row lends.
+    packed_texts: HashMap<Vec<u8>, bool>,
 }
 
 impl<'a> RowAdmission<'a> {
@@ -197,6 +199,7 @@ impl<'a> RowAdmission<'a> {
             lookup,
             position,
             texts: HashMap::new(),
+            packed_texts: HashMap::new(),
         }
     }
 
@@ -206,8 +209,18 @@ impl<'a> RowAdmission<'a> {
     }
 
     /// Whether the scan can want a row holding `value` in that column.
-    pub(crate) fn admits_value(&self, value: &Value) -> bool {
-        self.lookup.admits(value)
+    pub(super) fn admits_cell(&mut self, cell: super::layer::Cell<'_>) -> bool {
+        let super::layer::Cell::Text(bytes) = cell else {
+            return self.lookup.admits(&cell.to_value());
+        };
+        if let Some(known) = self.packed_texts.get(bytes) {
+            return *known;
+        }
+        let admitted = self.lookup.admits(&cell.to_value());
+        if self.packed_texts.len() < ADMISSION_MEMO {
+            self.packed_texts.insert(bytes.to_vec(), admitted);
+        }
+        admitted
     }
 
     /// Whether the scan can want `row` (see [`IndexLookup::admits`]).

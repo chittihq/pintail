@@ -12,7 +12,7 @@ use std::{
 use pintail_types::{PrimaryKey, StoredRow};
 use rayon::prelude::*;
 
-use super::layer::{Cell, LayerRows, LiveCells, SpanKey, SpanRow, push_key_parts};
+use super::layer::{Cell, LayerRows, LiveCells, SpanKey, SpanRow, image_cell, push_key_parts};
 use super::{TableSnapshot, projected_scan_pool};
 use crate::{StoreError, segment, segment::ColumnDecode};
 
@@ -464,7 +464,7 @@ impl DecodedColumn {
 /// A column of no rows in the packed shape a segment decodes `data_type`
 /// to, for rows that never reached a segment to be interleaved into
 /// ([`DecodedColumn::interleave`] keeps it packed while the values fit).
-fn empty_packed_column(data_type: pintail_types::DataType) -> DecodedColumn {
+pub(super) fn empty_packed_column(data_type: pintail_types::DataType) -> DecodedColumn {
     use pintail_types::DataType;
     let validity = ColumnValidity::AllValid(0);
     match data_type {
@@ -2292,8 +2292,12 @@ impl ProjectedScanStream {
                     return self.advance_part();
                 };
                 let layered = rows.is_some();
-                let rows =
+                let mut rows =
                     rows.unwrap_or_else(|| LayerRows::single(self.snapshot.memtable.clone()));
+                // The key is named and an integer here, so the memtable is
+                // read as arrays: built once for these rows, by this scan
+                // or one before it.
+                rows.attach_image(&self.snapshot.memtable_image);
                 let mut sparse = vec![(segment.file_name.clone(), sparse)];
                 let mut segments = vec![segment];
                 // The overlay parts that follow under the same rows join
@@ -2379,8 +2383,12 @@ impl ProjectedScanStream {
                 });
             }
             ScanPart::MemtableOnly { lo, hi, rows } => {
-                self.overlay_rows =
+                let mut rows =
                     rows.unwrap_or_else(|| LayerRows::single(self.snapshot.memtable.clone()));
+                if self.overlay_key.is_some() {
+                    rows.attach_image(&self.snapshot.memtable_image);
+                }
+                self.overlay_rows = rows;
                 self.segments = Vec::new();
                 self.next_segment = 0;
                 self.memtable_cursor = Some((lo, hi));
@@ -2415,6 +2423,9 @@ impl ProjectedScanStream {
                 &self.snapshot.directory,
                 &self.snapshot.schema,
             )?;
+        if indexed {
+            rows.attach_image(&self.snapshot.memtable_image);
+        }
         if !indexed {
             pintail_log::log_debug!(
                 "store scan merges a layered cluster row by row: {}",
@@ -2545,6 +2556,13 @@ impl ProjectedScanStream {
         let mut live: Vec<SpanRow<'_>> = Vec::new();
         let mut last_key = None;
         let mut admission = self.row_admission();
+        // The lookup's column of the memtable's image, to judge its rows.
+        let admitted = match &admission {
+            Some(admission) if rows_source.has_image() => {
+                Some(rows_source.image_column(admission.position(), &self.snapshot.schema)?)
+            }
+            _ => None,
+        };
         let mut cursor = rows_source.range(&lo, &hi)?;
         while let Some((key, row)) = cursor.next()? {
             last_key = Some(key);
@@ -2554,6 +2572,13 @@ impl ProjectedScanStream {
                     if admission
                         .as_mut()
                         .is_some_and(|admission| !admission.admits(stored))
+                    {
+                        continue;
+                    }
+                }
+                SpanRow::Image { row } => {
+                    if let (Some(admission), Some(column)) = (admission.as_mut(), &admitted)
+                        && !admission.admits_cell(image_cell(column, row as usize))
                     {
                         continue;
                     }
@@ -2570,13 +2595,10 @@ impl ProjectedScanStream {
         drop(admission);
         // A walk that ran out of rows drained the part, tombstones and all.
         self.memtable_cursor = match last_key {
-            Some(key) if live.len() >= wanted => {
-                let key = match key {
-                    SpanKey::Memtable(key) => key.clone(),
-                    SpanKey::Index(entry) => rows_source.index_key(entry)?,
-                };
-                Some((std::ops::Bound::Excluded(key), hi.clone()))
-            }
+            Some(key) if live.len() >= wanted => Some((
+                std::ops::Bound::Excluded(rows_source.key_of(key)?),
+                hi.clone(),
+            )),
             _ => None,
         };
         if live.is_empty() {
@@ -3092,7 +3114,9 @@ impl ProjectedScanStream {
                             ));
                         }
                     }
-                    SpanKey::Index(entry) => rows.keys.extend_from_slice(cursor.index_key(entry)),
+                    held => rows
+                        .keys
+                        .extend_from_slice(cursor.parts(held).unwrap_or_default()),
                 }
                 if rows.keys.len() - before != key_parts {
                     return Err(StoreError::FormatLimit(
@@ -3723,7 +3747,10 @@ impl ProjectedScanStream {
         };
         // A layer row is judged by the one column the lookup reads.
         let live = rows.live();
-        let cells = if live.iter().any(|row| matches!(row, SpanRow::Layer { .. })) {
+        let cells = if live
+            .iter()
+            .any(|row| matches!(row, SpanRow::Layer { .. } | SpanRow::Image { .. }))
+        {
             Some(LiveCells::read(
                 &self.overlay_rows,
                 &self.snapshot.directory,
@@ -3740,9 +3767,9 @@ impl ProjectedScanStream {
             let wanted = match *row {
                 SpanRow::Mask => continue,
                 SpanRow::Row(stored) => admission.admits(stored),
-                SpanRow::Layer { .. } => cells
+                SpanRow::Layer { .. } | SpanRow::Image { .. } => cells
                     .as_ref()
-                    .is_none_or(|cells| admission.admits_value(&cells.cell(at, 0).to_value())),
+                    .is_none_or(|cells| admission.admits_cell(cells.cell(at, 0))),
             };
             at += 1;
             if !wanted {
@@ -4732,6 +4759,7 @@ impl ProjectedScanStream {
         let chunk = TableSnapshot {
             instance: self.snapshot.instance,
             memtable: Arc::new(BTreeMap::new()),
+            memtable_image: Arc::default(),
             memtable_oldest: None,
             manifest: Arc::new(manifest),
             directory: self.snapshot.directory.clone(),

@@ -8,7 +8,7 @@ pub(crate) mod side_index;
 mod snapshot;
 mod statistics;
 
-pub(crate) use layer::LayerIndexSlot;
+pub(crate) use layer::{LayerIndexSlot, MemtableImage};
 pub use scan::{
     ColumnValidity, DecodedColumn, PrewhereRanges, PrewhereSelect, ProjectedColumnChunk,
     ProjectedRow, ProjectedScan, ProjectedScanStream, ProjectedValueChunk, ScanStats, ValidityIter,
@@ -1712,6 +1712,7 @@ impl TableStore {
         TableSnapshot {
             instance: self.instance,
             memtable: self.memtable.snapshot(),
+            memtable_image: self.memtable.image(),
             memtable_oldest: self.memtable.oldest_version(),
             manifest: Arc::clone(&self.manifest),
             directory: self.directory.clone(),

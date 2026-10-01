@@ -32,6 +32,9 @@ pub struct TableSnapshot {
     /// The opening this snapshot came from; see `TableStore::instance`.
     pub(super) instance: u64,
     pub(super) memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>,
+    /// The image scans build of `memtable` and share (see
+    /// [`super::MemtableImage`]).
+    pub(super) memtable_image: Arc<super::MemtableImage>,
     /// No memtable row is older than this; `None` when it is empty. A
     /// bound, not always the oldest row: a replaced version can leave it
     /// lower, which only sends a caller to the exact check.
@@ -395,6 +398,7 @@ impl TableSnapshot {
             return Ok(Self {
                 instance: super::STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 memtable: memtable.snapshot(),
+                memtable_image: memtable.image(),
                 memtable_oldest: memtable.oldest_version(),
                 manifest,
                 directory,
@@ -415,6 +419,7 @@ impl TableSnapshot {
         Self {
             instance: super::STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             memtable: Arc::new(BTreeMap::new()),
+            memtable_image: Arc::default(),
             memtable_oldest: None,
             manifest: Arc::new(Manifest::empty(&schema)),
             directory: directory.into(),
