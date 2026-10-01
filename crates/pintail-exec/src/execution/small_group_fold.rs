@@ -25,7 +25,7 @@
 //! variance and a DISTINCT aggregate stay serial, because their partials
 //! would add in another order or merge through another path.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::BuildHasherDefault;
 
 use pintail_sql::AggregateFunction;
@@ -34,6 +34,7 @@ use rayon::prelude::*;
 
 use super::aggregate::{
     AggregateGroup, AggregateState, CompiledAggregate, GroupKeyHasher, aggregate_uses_float,
+    write_direct_groups_run,
 };
 use super::join::normalized_group_hash_key;
 use super::packed_fold::FoldRows;
@@ -48,6 +49,7 @@ use crate::array::ValidityMask;
 use crate::batch::TypedValues;
 use crate::collation::Collation;
 use crate::expression::CompiledExpr;
+use crate::spill;
 
 /// Most distinct keys the first batch may show for the fold to be chosen.
 /// Every group pays a fold call per aggregate per batch, so the fold earns
@@ -55,6 +57,10 @@ use crate::expression::CompiledExpr;
 const MAX_FIRST_BATCH_GROUPS: usize = 256;
 /// Rows the first batch must hold per distinct key.
 const MIN_ROWS_PER_GROUP: usize = 64;
+/// Most groups the fold keeps. Every batch pays a pass over all of them,
+/// and they are held in memory with no run to spill to, so past this the
+/// fold hands over to the general path.
+const MAX_GROUPS: usize = 16_384;
 /// Batches a parallel window holds per pool thread before it folds.
 const WINDOW_BATCHES_PER_THREAD: usize = 2;
 
@@ -401,6 +407,16 @@ struct Scratch {
     offsets: Vec<usize>,
 }
 
+/// Why a fold of a row range stopped.
+enum Stop {
+    /// The row range brought more groups than the fold keeps, or the memory
+    /// ceiling refused one. No state has been touched for the range, so
+    /// another path can fold it from its first row; the groups made for it
+    /// hold none of its rows.
+    NoRoom,
+    Failed(ExecError),
+}
+
 /// Folds the selected rows of `batch` within `range` into `groups`.
 #[allow(clippy::too_many_arguments)]
 fn fold_range(
@@ -414,7 +430,7 @@ fn fold_range(
     scratch: &mut Scratch,
     tally: &mut FoldTally,
     memory: &MemoryTracker,
-) -> Result<(), ExecError> {
+) -> Result<(), Stop> {
     let Scratch {
         selected,
         row_groups,
@@ -423,17 +439,25 @@ fn fold_range(
     } = scratch;
     selected.clear();
     for row in batch.selection().selected_rows_in(range) {
-        selected.push(
-            u32::try_from(row)
-                .map_err(|_| ExecError::InvalidBatch("a batch row past u32 for a fold"))?,
-        );
+        selected.push(u32::try_from(row).map_err(|_| {
+            Stop::Failed(ExecError::InvalidBatch("a batch row past u32 for a fold"))
+        })?);
     }
     if selected.is_empty() {
         return Ok(());
     }
+    // Every group of the range is resolved before any of its rows folds, so
+    // a ceiling met here leaves the states as they were.
     resolve_rows(
         key, column, batch, groups, collation, aggregates, selected, row_groups, memory,
-    )?;
+    )
+    .map_err(|error| match error {
+        ExecError::MemoryLimitExceeded { .. } => Stop::NoRoom,
+        error => Stop::Failed(error),
+    })?;
+    if groups.groups.len() > MAX_GROUPS {
+        return Err(Stop::NoRoom);
+    }
     // A counting sort by group keeps each group's rows in row order.
     let group_count = groups.groups.len();
     offsets.clear();
@@ -464,7 +488,8 @@ fn fold_range(
             &mut groups.groups[group].states,
             tally,
             memory,
-        )?;
+        )
+        .map_err(Stop::Failed)?;
     }
     Ok(())
 }
@@ -477,10 +502,92 @@ struct Parallelism {
     serial_windows: usize,
 }
 
+/// How far a window got.
+struct WindowEnd {
+    /// Batches of the window, from its front, that are folded in. The rest
+    /// are untouched.
+    folded: usize,
+    /// Partial groups of the folded batches that found no room in the
+    /// query's groups, in row order, each still holding its reservation.
+    leftovers: Vec<Groups>,
+}
+
+/// Merges the partials of a window into `groups` in row order, handing
+/// each one's reservation back as it lands. The partials that found no
+/// room come back, still holding theirs.
+fn merge_partials(
+    partials: Vec<(Groups, FoldTally)>,
+    groups: &mut Groups,
+    collation: Collation,
+    aggregates: &[CompiledAggregate],
+    tally: &mut FoldTally,
+    memory: &MemoryTracker,
+) -> Result<Vec<Groups>, ExecError> {
+    let mut leftovers = Vec::<Groups>::new();
+    let mut failure = None;
+    for (mut local, local_tally) in partials {
+        if failure.is_some() {
+            memory.release(local.reserved);
+            continue;
+        }
+        tally.folded += local_tally.folded;
+        tally.per_row += local_tally.per_row;
+        if !leftovers.is_empty() {
+            // Row order: once a partial is left over, so is every later one.
+            leftovers.push(local);
+            continue;
+        }
+        let mut rest = std::mem::take(&mut local.groups).into_iter();
+        let mut unplaced = None;
+        for group in rest.by_ref() {
+            let value = group.values.first().cloned().unwrap_or(Value::Null);
+            let target = match groups.resolve(value, collation, aggregates, memory) {
+                Ok(target) => target,
+                Err(ExecError::MemoryLimitExceeded { .. }) => {
+                    unplaced = Some(group);
+                    break;
+                }
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            };
+            let states = &mut groups.groups[target as usize].states;
+            for ((state, partial), aggregate) in states.iter_mut().zip(group.states).zip(aggregates)
+            {
+                if let Err(error) = state.merge(aggregate, partial, memory) {
+                    failure = Some(error);
+                    break;
+                }
+            }
+            if failure.is_some() {
+                break;
+            }
+        }
+        if let Some(group) = unplaced {
+            local.groups = std::iter::once(group).chain(rest).collect();
+            leftovers.push(local);
+        } else {
+            memory.release(local.reserved);
+        }
+    }
+    if let Some(error) = failure {
+        for local in leftovers {
+            memory.release(local.reserved);
+        }
+        return Err(error);
+    }
+    Ok(leftovers)
+}
+
 /// Folds a window of batches on the pool and merges the partials into
 /// `groups` in row order. A window where some batch's key has no quiet
 /// column form folds serially, so what the key raises is recorded once on
 /// the query's thread.
+///
+/// A memory ceiling met while groups are being made does not fail the
+/// window: it ends early, and [`WindowEnd`] says what is left to hand to a
+/// path that spills.
 #[allow(clippy::too_many_arguments)]
 fn fold_window(
     key: &CompiledExpr,
@@ -492,7 +599,7 @@ fn fold_window(
     tally: &mut FoldTally,
     parallelism: &mut Parallelism,
     memory: &MemoryTracker,
-) -> Result<(), ExecError> {
+) -> Result<WindowEnd, ExecError> {
     memory.check_interruption()?;
     let columns: Vec<Option<KeyColumn<'_>>> = window
         .par_iter()
@@ -500,9 +607,9 @@ fn fold_window(
         .collect();
     if columns.iter().any(Option::is_none) {
         parallelism.serial_windows += 1;
-        for batch in window {
+        for (index, batch) in window.iter().enumerate() {
             let column = key_column(key, batch);
-            fold_range(
+            match fold_range(
                 key,
                 column.as_ref().map(KeyColumn::get),
                 batch,
@@ -513,9 +620,21 @@ fn fold_window(
                 scratch,
                 tally,
                 memory,
-            )?;
+            ) {
+                Ok(()) => {}
+                Err(Stop::NoRoom) => {
+                    return Ok(WindowEnd {
+                        folded: index,
+                        leftovers: Vec::new(),
+                    });
+                }
+                Err(Stop::Failed(error)) => return Err(error),
+            }
         }
-        return Ok(());
+        return Ok(WindowEnd {
+            folded: window.len(),
+            leftovers: Vec::new(),
+        });
     }
     let plan = super::morsel::morsel_plan(
         window.iter().map(RecordBatch::row_count),
@@ -523,6 +642,10 @@ fn fold_window(
     );
     parallelism.windows += 1;
     parallelism.ranges += plan.len();
+    // What the partials reserve between here and their merge is theirs
+    // alone: their group entries, and whatever their states take - a text
+    // MIN keeps its value's bytes.
+    let before_partials = memory.used();
     let partials = plan
         .par_iter()
         .map(|(index, range)| {
@@ -540,53 +663,93 @@ fn fold_window(
                 &mut local_tally,
                 memory,
             );
-            // A failed partial hands back what it took before the error
-            // goes up.
+            // A stopped partial hands back what it took. Its groups are its
+            // own, so the ceiling met anywhere in it - a state's few bytes,
+            // refused because its neighbours' groups filled the budget -
+            // leaves the query's groups as untouched as a refused group does.
+            let result = match result {
+                Err(Stop::Failed(ExecError::MemoryLimitExceeded { .. })) => Err(Stop::NoRoom),
+                other => other,
+            };
             if result.is_err() {
                 memory.release(local.reserved);
             }
             result.map(|()| (local, local_tally))
         })
         .collect::<Vec<_>>();
-    let mut failure = None;
+    // One stopped range leaves the whole window unfolded: nothing has
+    // reached the query's groups yet, so every batch of it can go elsewhere.
+    let mut stop = None;
+    let mut complete = Vec::with_capacity(partials.len());
     for partial in partials {
-        let (local, local_tally) = match partial {
-            Ok(partial) => partial,
-            Err(error) => {
-                failure.get_or_insert(error);
-                continue;
+        match partial {
+            Ok(partial) => complete.push(partial),
+            Err(Stop::Failed(error)) => stop = Some(Stop::Failed(error)),
+            Err(Stop::NoRoom) => {
+                stop.get_or_insert(Stop::NoRoom);
             }
-        };
-        if failure.is_some() {
-            memory.release(local.reserved);
-            continue;
-        }
-        tally.folded += local_tally.folded;
-        tally.per_row += local_tally.per_row;
-        let reserved = local.reserved;
-        let merged = (|| {
-            for group in local.groups {
-                let mut values = group.values;
-                let value = values.pop().unwrap_or(Value::Null);
-                let target = groups.resolve(value, collation, aggregates, memory)?;
-                let states = &mut groups.groups[target as usize].states;
-                for ((state, partial), aggregate) in
-                    states.iter_mut().zip(group.states).zip(aggregates)
-                {
-                    state.merge(aggregate, partial, memory)?;
-                }
-            }
-            Ok(())
-        })();
-        memory.release(reserved);
-        if let Err(error) = merged {
-            failure.get_or_insert(error);
         }
     }
-    failure.map_or(Ok(()), Err)
+    if let Some(stop) = stop {
+        for (local, _) in complete {
+            memory.release(local.reserved);
+        }
+        // ...and what the dropped partials' states had reserved.
+        memory.release(memory.used().saturating_sub(before_partials));
+        return match stop {
+            Stop::Failed(error) => Err(error),
+            Stop::NoRoom => Ok(WindowEnd {
+                folded: 0,
+                leftovers: Vec::new(),
+            }),
+        };
+    }
+    let leftovers = merge_partials(complete, groups, collation, aggregates, tally, memory)?;
+    Ok(WindowEnd {
+        folded: window.len(),
+        leftovers,
+    })
+}
+
+/// What became of the fold.
+pub(super) enum Folded {
+    /// Every batch folded: the finished groups.
+    Finished(MaterializedRows),
+    /// The keys outgrew the fold. Its groups are closed runs the general
+    /// path's merge reads beside its own, and `pending` are batches it
+    /// pulled and did not fold, in input order.
+    HandedOver {
+        runs: Vec<spill::ClosedRun>,
+        pending: VecDeque<RecordBatch>,
+    },
+}
+
+/// Writes `groups` out as a run when it holds any, and empties it.
+fn close_groups(
+    groups: &mut Groups,
+    collation: Collation,
+    runs: &mut Vec<spill::ClosedRun>,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    if !groups.groups.is_empty() {
+        runs.push(write_direct_groups_run(
+            &mut groups.groups,
+            &[collation],
+            memory,
+        )?);
+    }
+    groups.index = HashMap::new();
+    Ok(())
 }
 
 /// Folds every batch of `input`, `first` included, by group.
+///
+/// The fold was chosen on its first batch, and what follows can differ: a
+/// quiet opening and then a key per row. Its groups stay in memory, so it
+/// stops and hands over ([`Folded::HandedOver`]) when it holds more groups
+/// than it folds well, when its groups take a quarter of the ceiling, or
+/// when the ceiling refuses a new group - rather than failing a query the
+/// general path answers by spilling.
 #[allow(clippy::too_many_lines)] // one pull loop: hold, fold, then finish
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_small_group_fold(
@@ -596,7 +759,7 @@ pub(super) fn build_small_group_fold(
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
     key_collation: Collation,
-) -> Result<MaterializedRows, ExecError> {
+) -> Result<Folded, ExecError> {
     let mut groups = Groups::new();
     let mut tally = FoldTally::default();
     let mut scratch = Scratch::default();
@@ -607,95 +770,119 @@ pub(super) fn build_small_group_fold(
     let mut window = Vec::<RecordBatch>::new();
     let mut window_reserved = 0_usize;
     let mut next = Some(first);
-    let flush = |window: &mut Vec<RecordBatch>,
-                 window_reserved: &mut usize,
-                 groups: &mut Groups,
-                 scratch: &mut Scratch,
-                 tally: &mut FoldTally,
-                 parallelism: &mut Parallelism|
-     -> Result<(), ExecError> {
-        if window.is_empty() {
-            return Ok(());
-        }
-        let result = fold_window(
-            key,
-            window,
-            groups,
-            key_collation,
-            aggregates,
-            scratch,
-            tally,
-            parallelism,
-            memory,
-        );
-        window.clear();
-        memory.release(*window_reserved);
-        *window_reserved = 0;
-        result
-    };
-    while let Some(batch) = match next.take() {
-        Some(batch) => Some(batch),
-        None => input.next_batch(memory)?,
-    } {
-        memory.check_interruption()?;
-        if batch.visible_row_count() == 0 {
-            continue;
-        }
-        if parallel {
+    // Bytes the query's groups hold - their entries and whatever their
+    // states reserved - measured around each fold.
+    let mut own = 0_usize;
+    let mut folded_batches = 0_usize;
+    let mut drained = false;
+    // Set when the fold stops: why, the batches it pulled and did not fold,
+    // and the partial groups that never reached the query's groups.
+    let mut handover: Option<(&'static str, Vec<RecordBatch>, Vec<Groups>)> = None;
+    while handover.is_none() && !drained {
+        // The next step's batches: a full window, the window cut short by
+        // the ceiling or the end of the input, or one batch alone.
+        let mut alone = None;
+        loop {
+            let batch = match next.take() {
+                Some(batch) => Some(batch),
+                None => input.next_batch(memory)?,
+            };
+            let Some(batch) = batch else {
+                drained = true;
+                break;
+            };
+            memory.check_interruption()?;
+            if batch.visible_row_count() == 0 {
+                continue;
+            }
+            if !parallel {
+                alone = Some(batch);
+                break;
+            }
             // A held batch is charged until its window folds; with no
             // room, the window folds now, and a batch that still does not
             // fit folds alone.
             let bytes = batch.estimated_bytes();
-            let mut held = memory.reserve(bytes).is_ok();
-            if !held {
-                flush(
-                    &mut window,
-                    &mut window_reserved,
-                    &mut groups,
-                    &mut scratch,
-                    &mut tally,
-                    &mut parallelism,
-                )?;
-                held = memory.reserve(bytes).is_ok();
-            }
-            if held {
+            if memory.reserve(bytes).is_ok() {
                 window_reserved = window_reserved.saturating_add(bytes);
                 window.push(batch);
                 if window.len() >= window_cap {
-                    flush(
-                        &mut window,
-                        &mut window_reserved,
-                        &mut groups,
-                        &mut scratch,
-                        &mut tally,
-                        &mut parallelism,
-                    )?;
+                    break;
                 }
-                continue;
+            } else if window.is_empty() {
+                alone = Some(batch);
+                break;
+            } else {
+                next = Some(batch);
+                break;
             }
         }
-        let column = key_column(key, &batch);
-        fold_range(
-            key,
-            column.as_ref().map(KeyColumn::get),
-            &batch,
-            0..batch.row_count(),
-            &mut groups,
-            key_collation,
-            aggregates,
-            &mut scratch,
-            &mut tally,
-            memory,
-        )?;
+        let before = memory.used();
+        let mut unfolded = Vec::new();
+        let mut leftovers = Vec::new();
+        if let Some(batch) = alone {
+            let column = key_column(key, &batch);
+            let folded = fold_range(
+                key,
+                column.as_ref().map(KeyColumn::get),
+                &batch,
+                0..batch.row_count(),
+                &mut groups,
+                key_collation,
+                aggregates,
+                &mut scratch,
+                &mut tally,
+                memory,
+            );
+            drop(column);
+            match folded {
+                Ok(()) => folded_batches += 1,
+                Err(Stop::NoRoom) => unfolded.push(batch),
+                Err(Stop::Failed(error)) => return Err(error),
+            }
+        } else if !window.is_empty() {
+            let end = fold_window(
+                key,
+                &window,
+                &mut groups,
+                key_collation,
+                aggregates,
+                &mut scratch,
+                &mut tally,
+                &mut parallelism,
+                memory,
+            );
+            let end = match end {
+                Ok(end) => end,
+                Err(error) => {
+                    memory.release(window_reserved);
+                    return Err(error);
+                }
+            };
+            folded_batches += end.folded;
+            unfolded = window.split_off(end.folded);
+            leftovers = end.leftovers;
+        }
+        let kept = leftovers
+            .iter()
+            .fold(0_usize, |sum, partial| sum.saturating_add(partial.reserved));
+        own = own.saturating_add(memory.used().saturating_sub(before).saturating_sub(kept));
+        window.clear();
+        memory.release(window_reserved);
+        window_reserved = 0;
+        let reason = if groups.groups.len() > MAX_GROUPS {
+            Some("more groups than it folds well")
+        } else if !unfolded.is_empty() || !leftovers.is_empty() {
+            Some("a batch brought more groups than it or the ceiling holds")
+        } else if own > memory.limit() / 4 {
+            Some("its groups hold a quarter of the ceiling")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            handover = Some((reason, unfolded, leftovers));
+        }
     }
-    flush(
-        &mut window,
-        &mut window_reserved,
-        &mut groups,
-        &mut scratch,
-        &mut tally,
-        &mut parallelism,
-    )?;
     let mode = if parallel {
         format!(
             "{} parallel windows over {} row ranges, {} serial windows",
@@ -704,6 +891,24 @@ pub(super) fn build_small_group_fold(
     } else {
         "serial: an aggregate whose partials do not merge exactly".to_owned()
     };
+    if let Some((reason, unfolded, leftovers)) = handover {
+        let held = groups.groups.len();
+        let mut runs = Vec::new();
+        close_groups(&mut groups, key_collation, &mut runs, memory)?;
+        memory.release(own);
+        for mut partial in leftovers {
+            close_groups(&mut partial, key_collation, &mut runs, memory)?;
+            memory.release(partial.reserved);
+        }
+        let mut pending = VecDeque::from(unfolded);
+        pending.extend(next);
+        super::ProfileNote::of(input).set(&format!(
+            "small-group column fold handed over after {folded_batches} batches: {reason}; \
+             {held} groups in {} runs, {mode}",
+            runs.len(),
+        ));
+        return Ok(Folded::HandedOver { runs, pending });
+    }
     super::ProfileNote::of(input).set(&format!(
         "small-group column fold: {} groups, {} aggregate-batches by column, {} per row, {mode}",
         groups.groups.len(),
@@ -720,10 +925,10 @@ pub(super) fn build_small_group_fold(
         memory.reserve(estimated_row_payload_bytes(&row))?;
         rows.push(row);
     }
-    Ok(MaterializedRows {
+    Ok(Folded::Finished(MaterializedRows {
         rows,
         position: 0,
         spilled: None,
         ready: None,
-    })
+    }))
 }

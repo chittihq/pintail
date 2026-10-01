@@ -106,6 +106,7 @@ mod settled_memo_identity;
 mod settled_memo_scale;
 mod side_index;
 mod side_index_text;
+mod small_group_handover;
 mod sort_determinism;
 mod spatial_parity;
 mod star_join_fold;

@@ -3951,7 +3951,7 @@ fn build_hash_aggregate_scan(
         if let Some(group_columns) = direct_columns {
             return build_direct_column_aggregate(
                 input,
-                None,
+                Resumed::default(),
                 &group_columns,
                 aggregates,
                 memory,
@@ -4211,6 +4211,14 @@ fn date_part_key_source(
     }
 }
 
+/// Where a grouped aggregate picks up: batches already pulled from the
+/// input, in order, and groups an earlier path closed into runs.
+#[derive(Default)]
+struct Resumed {
+    pending: std::collections::VecDeque<RecordBatch>,
+    runs: Vec<spill::ClosedRun>,
+}
+
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::too_many_arguments)]
 fn build_buffered_hash_aggregate(
@@ -4262,40 +4270,6 @@ fn build_buffered_hash_aggregate(
         // invisible: the profile shows only that it was slow.
         super::ProfileNote::of(input).set(&format!("small-group column fold declined: {reason}"));
     }
-    if let Some(Ok(())) = small_group {
-        return super::small_group_fold::build_small_group_fold(
-            input,
-            first_batch,
-            &group_by[0],
-            aggregates,
-            memory,
-            key_collations.first().copied().unwrap_or(collation),
-        );
-    }
-    // Too many groups for that fold, and a key whose packed units identify
-    // it - a DATE or DATETIME column, or an expression with a packed kernel
-    // such as `DATE(occurred_at)`: the units are the key of the streaming
-    // two-pass, a day number or a count as dense as the days the rows
-    // cover, in place of a value built, normalized and hashed per row.
-    if let [key] = group_by
-        && let Some(group_type) = super::two_pass::unit_key_type(key, &first_batch)
-        && let Some(lanes) = two_pass_lanes(aggregates, &first_batch)
-    {
-        super::ProfileNote::of(input).set("two-pass over the key's packed units");
-        let column = key
-            .column_index()
-            .unwrap_or_else(|| first_batch.columns().len());
-        return super::two_pass::build_unit_key_two_pass_aggregate(
-            input,
-            first_batch,
-            TwoPassKeySource::Int { column, group_type },
-            std::slice::from_ref(key),
-            &lanes,
-            aggregates,
-            memory,
-            key_collations.first().copied().unwrap_or(collation),
-        );
-    }
     let utf8_column = |column: &usize| {
         first_batch
             .column(*column)
@@ -4317,6 +4291,51 @@ fn build_buffered_hash_aggregate(
         }
         _ => false,
     };
+    // What the fold left when its keys outgrew it: its groups as closed
+    // runs, and the batches it pulled without folding. The path below takes
+    // both, so the answer is the one it would have given from the first row.
+    let mut resumed = Resumed::default();
+    if let Some(Ok(())) = small_group {
+        match super::small_group_fold::build_small_group_fold(
+            input,
+            first_batch,
+            &group_by[0],
+            aggregates,
+            memory,
+            key_collations.first().copied().unwrap_or(collation),
+        )? {
+            super::small_group_fold::Folded::Finished(rows) => return Ok(rows),
+            super::small_group_fold::Folded::HandedOver { runs, pending } => {
+                resumed = Resumed { pending, runs };
+            }
+        }
+    } else {
+        // Too many groups for that fold, and a key whose packed units identify
+        // it - a DATE or DATETIME column, or an expression with a packed kernel
+        // such as `DATE(occurred_at)`: the units are the key of the streaming
+        // two-pass, a day number or a count as dense as the days the rows
+        // cover, in place of a value built, normalized and hashed per row.
+        if let [key] = group_by
+            && let Some(group_type) = super::two_pass::unit_key_type(key, &first_batch)
+            && let Some(lanes) = two_pass_lanes(aggregates, &first_batch)
+        {
+            super::ProfileNote::of(input).set("two-pass over the key's packed units");
+            let column = key
+                .column_index()
+                .unwrap_or_else(|| first_batch.columns().len());
+            return super::two_pass::build_unit_key_two_pass_aggregate(
+                input,
+                first_batch,
+                TwoPassKeySource::Int { column, group_type },
+                std::slice::from_ref(key),
+                &lanes,
+                aggregates,
+                memory,
+                key_collations.first().copied().unwrap_or(collation),
+            );
+        }
+        resumed.pending.push_back(first_batch);
+    }
     if direct_eligible {
         // Single int-typed group columns take the sequential direct path:
         // its scalar index avoids the per-row Vec<Value> keys and the
@@ -4328,7 +4347,7 @@ fn build_buffered_hash_aggregate(
         // needs a partitioned design and its own experiment first.
         return build_direct_column_aggregate(
             input,
-            Some(first_batch),
+            resumed,
             direct_columns.expect("matched direct columns"),
             aggregates,
             memory,
@@ -4342,8 +4361,10 @@ fn build_buffered_hash_aggregate(
     // measured through used() snapshots around the sequential merge section
     // so state-internal reserves (distinct sets) are included.
     let mut groups_reserved = 0_usize;
-    let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
-    let mut first_batch = Some(first_batch);
+    let Resumed {
+        pending: mut first_batches,
+        runs: mut spill_runs,
+    } = resumed;
     let mut waves_debug = (0_usize, 0_usize);
     let per_row_upper = group_by
         .len()
@@ -4372,10 +4393,9 @@ fn build_buffered_hash_aggregate(
         let own_limit = memory.limit().saturating_sub(outside);
         let pressed = |used: usize| used.saturating_sub(outside) > own_limit.saturating_mul(3) / 4;
         while batches.len() < round {
-            let batch = if let Some(batch) = first_batch.take() {
-                Some(batch)
-            } else {
-                input.next_batch(memory)?
+            let batch = match first_batches.pop_front() {
+                Some(batch) => Some(batch),
+                None => input.next_batch(memory)?,
             };
             let Some(batch) = batch else {
                 break;
@@ -4395,7 +4415,7 @@ fn build_buffered_hash_aggregate(
                     // Merge what is buffered and let this batch open the
                     // next round, rather than failing a query whose map was
                     // just spilled to make room for exactly this.
-                    first_batch = Some(batch);
+                    first_batches.push_front(batch);
                     break;
                 }
                 Err(error) => return Err(error),
@@ -6411,7 +6431,7 @@ fn direct_groups_map(
 }
 
 /// Drains the direct path's groups into one closed, sorted run.
-fn write_direct_groups_run(
+pub(super) fn write_direct_groups_run(
     groups: &mut Vec<AggregateGroup>,
     key_collations: &[Collation],
     memory: &MemoryTracker,
@@ -6424,7 +6444,7 @@ fn write_direct_groups_run(
 #[allow(clippy::too_many_arguments)]
 fn build_direct_column_aggregate(
     input: &mut PullOperator,
-    mut first_batch: Option<RecordBatch>,
+    resumed: Resumed,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
@@ -6434,11 +6454,13 @@ fn build_direct_column_aggregate(
     // Single-int-column inputs with eligible lanes take the streaming
     // two-pass partitioned path (e13: 4.2-8.9x); ineligible aggregate
     // shapes fall through to the sequential scalar-index loop below.
-    let mut pending = std::collections::VecDeque::new();
-    if let Some(batch) = first_batch.take() {
-        pending.push_back(batch);
-    }
-    if matches!(*group_columns, [_] | [_, _]) {
+    let Resumed {
+        mut pending,
+        runs: mut spill_runs,
+    } = resumed;
+    // Groups already closed into runs merge with this path's at the end;
+    // the two-pass has no merge for them, so it is not taken then.
+    if spill_runs.is_empty() && matches!(*group_columns, [_] | [_, _]) {
         let head = match pending.pop_front() {
             Some(batch) => Some(batch),
             None => input.next_batch(memory)?,
@@ -6535,7 +6557,6 @@ fn build_direct_column_aggregate(
     // this tracker too, and handing those back on a spill would refund
     // memory the scan still owns and release it twice when it drops them.
     let mut map_reserved = 0_usize;
-    let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
     // Object aggregation still has no spill encoding.
     let spillable = aggregates
         .iter()
