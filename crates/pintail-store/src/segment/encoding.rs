@@ -520,6 +520,90 @@ pub(super) fn decoded_heap_upper_bound(
     Ok(heap_bytes)
 }
 
+/// The most entries a column's segment-wide dictionary holds before its
+/// blocks go back to dictionaries of their own.
+const COLUMN_DICTIONARY_ENTRIES: usize = 1024;
+
+/// The most bytes its entries hold together. A block lists the dictionary's
+/// leading entries whether it uses them or not, so long values repeated in
+/// runs - each block its own - would be written again by every later block.
+const COLUMN_DICTIONARY_BYTES: usize = 32 * 1024;
+
+/// One text column's dictionary across the blocks of a segment being
+/// written: every value takes the code of its first appearance in the
+/// segment and keeps it in every later block.
+///
+/// A block still carries its own dictionary and is read alone, but that
+/// dictionary is the leading entries of this one, so the codes of two
+/// blocks mean the same values. A reader assembling several blocks then
+/// copies codes instead of translating each one, where blocks that each
+/// numbered their values in their own order of appearance made it look
+/// every code up. A column with more values than the limit, or longer ones
+/// than the byte limit together, stops: its later blocks number their own
+/// values, as every block did before.
+#[derive(Default)]
+pub(super) struct ColumnDictionary {
+    positions: HashMap<Cell, u32>,
+    entries: Vec<Cell>,
+    /// Bytes of text the entries hold.
+    bytes: usize,
+    closed: bool,
+}
+
+impl ColumnDictionary {
+    /// Whether every one of `cells` already has a code here.
+    pub(super) fn holds_all(&self, cells: &[Cell]) -> bool {
+        !self.closed
+            && !cells.is_empty()
+            && cells.iter().all(|cell| self.positions.contains_key(cell))
+    }
+
+    pub(super) const fn is_open(&self) -> bool {
+        !self.closed
+    }
+
+    /// The dictionary payload of one block coded against the column, or
+    /// `None` once the column holds too many values.
+    pub(super) fn encode(&mut self, cells: &[Cell]) -> Result<Option<Vec<u8>>, StoreError> {
+        if self.closed {
+            return Ok(None);
+        }
+        let mut indices = Vec::with_capacity(cells.len());
+        let mut listed = 0_usize;
+        for cell in cells {
+            let index = if let Some(index) = self.positions.get(cell) {
+                *index
+            } else {
+                if let Cell::Utf8(text) = cell {
+                    self.bytes = self.bytes.saturating_add(text.len());
+                }
+                if self.entries.len() >= COLUMN_DICTIONARY_ENTRIES
+                    || self.bytes > COLUMN_DICTIONARY_BYTES
+                {
+                    self.closed = true;
+                    return Ok(None);
+                }
+                let index = u32::try_from(self.entries.len())
+                    .map_err(|_| StoreError::FormatLimit("dictionary exceeds u32::MAX".into()))?;
+                self.positions.insert(cell.clone(), index);
+                self.entries.push(cell.clone());
+                index
+            };
+            listed = listed.max(index as usize + 1);
+            indices.push(index);
+        }
+        let mut encoder = Encoder::new();
+        encoder.length(listed, "block dictionary")?;
+        for value in &self.entries[..listed] {
+            encode_cell(&mut encoder, value)?;
+        }
+        for index in indices {
+            encoder.u32(index);
+        }
+        Ok(Some(encoder.finish()))
+    }
+}
+
 fn encode_dictionary(encoder: &mut Encoder, cells: &[Cell]) -> Result<(), StoreError> {
     let mut positions = HashMap::new();
     let mut dictionary = Vec::new();

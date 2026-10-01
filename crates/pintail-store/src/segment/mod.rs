@@ -3233,10 +3233,16 @@ impl ColumnBuilder {
         };
         let translation = entries
             .iter()
-            .map(|entry| {
-                let existing = (0..dict_offsets.len() - 1).find(|index| {
-                    &dict_heap[dict_offsets[*index]..dict_offsets[index + 1]] == *entry
-                });
+            .enumerate()
+            .map(|(position, entry)| {
+                let at = |index: usize| &dict_heap[dict_offsets[index]..dict_offsets[index + 1]];
+                // Blocks coded against their column's dictionary list its
+                // entries in one order: the entry is where it was last time.
+                let existing = if position + 1 < dict_offsets.len() && at(position) == *entry {
+                    Some(position)
+                } else {
+                    (0..dict_offsets.len() - 1).find(|index| at(*index) == *entry)
+                };
                 if let Some(index) = existing {
                     u32::try_from(index).expect("chunk dictionary fits u32")
                 } else {
@@ -3265,6 +3271,27 @@ impl ColumnBuilder {
                 // change elsewhere in the crate made it ~40% slower.
                 let rows = raw.len() / 4;
                 let start = codes.len();
+                // Blocks that share their column's dictionary number their
+                // values as the chunk does: the codes are copied, and one
+                // comparison with the greatest of them is the bounds check.
+                if translation
+                    .iter()
+                    .enumerate()
+                    .all(|(index, code)| *code as usize == index)
+                {
+                    let mut greatest = 0_u32;
+                    codes.extend(raw.chunks_exact(4).map(|chunk| {
+                        let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                        greatest = greatest.max(code);
+                        code
+                    }));
+                    if rows > 0 && greatest as usize >= translation.len() {
+                        codes.truncate(start);
+                        return Err("dictionary index is out of bounds".to_owned());
+                    }
+                    validity.extend_valid(rows);
+                    return Ok(());
+                }
                 let mut in_bounds = true;
                 codes.extend(raw.chunks_exact(4).map(|chunk| {
                     let block_code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -3944,12 +3971,20 @@ fn write_column(
     // The blocks' own registers, merged: the column's sketch costs no
     // hashing beyond what each block's statistics already do.
     let mut sketch = crate::sketch::DistinctSketch::default();
+    let mut dictionary =
+        (spec.logical_type == LogicalType::Utf8).then(encoding::ColumnDictionary::default);
     for block in rows.chunks(block_rows) {
         let cells = block
             .iter()
             .map(|row| cell_for(spec, row))
             .collect::<Result<Vec<_>, _>>()?;
-        let registers = write_block(encoder, spec.logical_type, &cells, compression)?;
+        let registers = write_block(
+            encoder,
+            spec.logical_type,
+            &cells,
+            compression,
+            dictionary.as_mut(),
+        )?;
         sketch.merge(&crate::sketch::DistinctSketch::from_registers(registers));
     }
     Ok(sketch)
@@ -3961,6 +3996,7 @@ fn write_block(
     logical_type: LogicalType,
     cells: &[Cell],
     compression: Compression,
+    dictionary: Option<&mut encoding::ColumnDictionary>,
 ) -> Result<[u8; 64], StoreError> {
     let mut block = Encoder::new();
     block.length(cells.len(), "block row count")?;
@@ -3978,9 +4014,28 @@ fn write_block(
         }
     }
     block.bytes(&null_bitmap, "null bitmap")?;
-    let encoding = select_encoding(logical_type, &non_null);
+    let mut encoding = select_encoding(logical_type, &non_null);
+    // A text column codes its blocks against one dictionary while its
+    // values stay few: a block of one repeated value, or a short one whose
+    // values the column has already numbered, is coded like the rest, so a
+    // reader's column stays codes from block to block.
+    let coded = match dictionary {
+        Some(dictionary)
+            if encoding == Encoding::Dictionary
+                || (encoding == Encoding::RunLength && dictionary.is_open())
+                || dictionary.holds_all(&non_null) =>
+        {
+            dictionary.encode(&non_null)?
+        }
+        _ => None,
+    };
+    let uncompressed = if let Some(coded) = coded {
+        encoding = Encoding::Dictionary;
+        coded
+    } else {
+        encode_payload(logical_type, encoding, &non_null)?
+    };
     block.u8(encoding as u8);
-    let uncompressed = encode_payload(logical_type, encoding, &non_null)?;
     // Wide text (documents, long strings) is where one block's payload runs
     // to megabytes; a read of a handful of its rows would otherwise
     // decompress all of it.
@@ -5531,16 +5586,27 @@ fn decode_utf8_payload_into(
             }
         }
         Encoding::RunLength => {
-            builder.degrade_dictionary();
+            // A run is one value repeated: a column still in codes takes it
+            // as one more dictionary entry, where turning the whole chunk
+            // back into a string per row cost every block before it too.
+            let coded = builder.begin_dictionary_block(&[]).is_some();
+            if !coded {
+                builder.degrade_dictionary();
+            }
             let run_count = decoder.u32()? as usize;
             let mut runs_read = 0_usize;
             let mut run_remaining = 0_usize;
             let mut run_value: &[u8] = &[];
+            let mut run_code = 0_u32;
             for row in 0..row_count {
                 let in_range = ranges.contains(row);
                 if is_null(row) {
                     if in_range {
-                        builder.push(Cell::Null)?;
+                        if coded {
+                            builder.push_null_code()?;
+                        } else {
+                            builder.push(Cell::Null)?;
+                        }
                     }
                     continue;
                 }
@@ -5555,11 +5621,21 @@ fn decode_utf8_payload_into(
                     run_value = decoder.bytes()?;
                     validate(run_value)?;
                     runs_read += 1;
+                    if coded {
+                        run_code = builder
+                            .begin_dictionary_block(&[run_value])
+                            .and_then(|translation| translation.first().copied())
+                            .ok_or("run value in a non-dictionary column")?;
+                    }
                 }
                 run_remaining -= 1;
                 produced += 1;
                 if in_range {
-                    builder.push_utf8(run_value)?;
+                    if coded {
+                        builder.push_code(run_code)?;
+                    } else {
+                        builder.push_utf8(run_value)?;
+                    }
                 }
             }
             if run_remaining != 0 || runs_read != run_count {
