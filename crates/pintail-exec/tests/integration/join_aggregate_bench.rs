@@ -265,6 +265,11 @@ const KEY_CASES: &[(&str, &str)] = &[
          JOIN dims d ON f.dim_sparse = d.sparse GROUP BY d.zone ORDER BY total DESC, d.zone",
     ),
     (
+        "sparse key + extremes by dim text",
+        "SELECT d.zone, COUNT(*) AS cnt, MIN(f.amount) AS least, MAX(f.amount) AS most \
+         FROM facts f JOIN dims d ON f.dim_sparse = d.sparse GROUP BY d.zone ORDER BY d.zone",
+    ),
+    (
         "text key + group by dim text",
         "SELECT d.zone, COUNT(*) AS cnt, ROUND(SUM(f.amount), 2) AS total FROM facts f \
          JOIN dims d ON f.dim_tag = d.tag GROUP BY d.zone ORDER BY total DESC, d.zone",
