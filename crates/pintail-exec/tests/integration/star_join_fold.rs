@@ -345,12 +345,9 @@ fn an_integer_sum_takes_the_column_fold() {
             line.contains("column fold on") && !line.contains("row fold"),
             "{profile}"
         );
-        // An integer sum's range is checked as each morsel's total joins
-        // the state, so its totals are not carried across morsels.
-        assert!(
-            line.contains("totals opened per morsel: an integer sum"),
-            "{profile}"
-        );
+        // An integer sum's total is exact in 128 bits and joins the state
+        // as it is, so it is carried across morsels like any other lane.
+        assert!(line.contains("totals kept per worker"), "{profile}");
     }
 }
 

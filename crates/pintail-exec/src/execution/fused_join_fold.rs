@@ -695,19 +695,14 @@ pub(super) struct LanePool<'a> {
 
 impl<'a> LanePool<'a> {
     /// A pool for `keys` and `lanes`, or why the query keeps per-morsel
-    /// totals: an integer sum checks its range as each morsel's total joins
-    /// the state, and a set per worker has to fit an eighth of the ceiling.
+    /// totals: a set per worker has to fit an eighth of the ceiling. An
+    /// integer sum pools like any other lane: its total is exact in 128
+    /// bits and joins the state as it is, so no morsel's share is judged.
     pub(super) fn plan(
         keys: &'a UniqueKeyGroups,
         lanes: &'a [Lane],
         memory: &MemoryTracker,
     ) -> Result<Self, &'static str> {
-        if lanes
-            .iter()
-            .any(|lane| matches!(lane, Lane::IntegerSum { .. }))
-        {
-            return Err("an integer sum checks its range morsel by morsel");
-        }
         let workers = rayon::current_num_threads().max(1);
         if LaneTotals::bytes(keys, lanes.len()).saturating_mul(workers) > memory.limit() / 8 {
             return Err("a set of totals per worker is past an eighth of the memory ceiling");
