@@ -516,6 +516,30 @@ fn two_pass_groups_map(
     groups
 }
 
+/// The groups of one dense slot table, keyed as a spilled run keys them.
+fn dense_slot_groups(
+    slots: DenseGroupSlots,
+    keys: TwoPassKeySource,
+    intern: Option<&StringIntern>,
+    labels: &KeyDeclarations,
+    members: &KeyMembers,
+    collation: Collation,
+) -> HashMap<Vec<Value>, AggregateGroup> {
+    let mut groups = HashMap::new();
+    for (index, slot) in slots.into_iter().enumerate() {
+        let Some(states) = slot else { continue };
+        let (bits, null) = dense_slot_sentinel(keys, index);
+        let values = two_pass_key_values(keys, bits, null, intern, labels, members);
+        let key = values
+            .iter()
+            .cloned()
+            .map(|value| normalized_group_hash_key(value, collation).unwrap_or(Value::Null))
+            .collect::<Vec<_>>();
+        groups.insert(key, AggregateGroup { values, states });
+    }
+    groups
+}
+
 /// Everything the two-pass aggregate holds between flushes, so a spill can
 /// take it whole: the partition maps, the dense slots not yet unified into
 /// them, and the bytes charged for both.
@@ -544,8 +568,20 @@ fn two_pass_spill(
     collation: Collation,
     memory: &MemoryTracker,
 ) -> Result<(), ExecError> {
-    settle_dense(state.dense, state.pool, aggregates, memory)?;
+    // The workers' pooled partials go to disk as runs of their own. Merging
+    // them into the slots first unions every group's distinct sets in
+    // memory, at the moment the query is out of it; the merge of the runs
+    // unions them a group at a time instead.
+    let partials = std::mem::take(&mut state.pool.partials);
     if let Some(slots) = state.dense.take() {
+        for partial in partials {
+            let mut groups = dense_slot_groups(partial, keys, intern, labels, members, collation);
+            if !groups.is_empty() {
+                state
+                    .spill_runs
+                    .push(write_aggregate_spill_run(&mut groups, memory)?);
+            }
+        }
         fold_dense_into_maps(
             slots,
             keys,
@@ -556,6 +592,8 @@ fn two_pass_spill(
             state.group_reserved,
         )?;
     }
+    memory.release(state.pool.reserved);
+    state.pool.reserved = 0;
     if let IntRange::Active(range) = std::mem::replace(state.range, IntRange::Off) {
         fold_int_range_into_maps(
             &range,
@@ -616,8 +654,23 @@ fn pending_under_pressure(memory: &MemoryTracker, rows: usize, per_row_growth: u
 /// applies its window: the query past half the ceiling with groups to
 /// spill. The maps' charge is only part of what they hold, since distinct
 /// sets reserve through the states, so this looks at the whole query.
-fn two_pass_under_pressure(maps: &[GroupKeyMap], memory: &MemoryTracker) -> bool {
-    memory.used() > memory.limit() / 2 && maps.iter().any(|map| !map.is_empty())
+///
+/// Groups to spill are not only the maps': a query of few groups keeps all
+/// of them in the dense slots, the workers' pooled partials or the integer
+/// range, and each of those holds distinct sets of its own. Looking at the
+/// maps alone, such a query never spilled and its sets met the ceiling.
+fn two_pass_under_pressure(
+    maps: &[GroupKeyMap],
+    dense: Option<&DenseGroupSlots>,
+    range: &IntRange,
+    pool: &DensePool,
+    memory: &MemoryTracker,
+) -> bool {
+    memory.used() > memory.limit() / 2
+        && (maps.iter().any(|map| !map.is_empty())
+            || !pool.partials.is_empty()
+            || dense.is_some_and(|slots| slots.iter().any(Option::is_some))
+            || matches!(range, IntRange::Active(range) if range.rows > 0))
 }
 
 /// Spills before a flush when the budget is already under pressure, so
@@ -635,7 +688,13 @@ fn two_pass_relieve(
     collation: Collation,
     memory: &MemoryTracker,
 ) -> Result<(), ExecError> {
-    if two_pass_under_pressure(state.maps, memory) {
+    if two_pass_under_pressure(
+        state.maps,
+        state.dense.as_ref(),
+        state.range,
+        state.pool,
+        memory,
+    ) {
         two_pass_spill(
             state, keys, aggregates, partitions, intern, labels, members, collation, memory,
         )?;
@@ -1312,7 +1371,7 @@ fn streaming_two_pass(
                 )?;
                 window_rows = 0;
                 flushes += 1;
-                if two_pass_under_pressure(&maps, memory) {
+                if two_pass_under_pressure(&maps, dense.as_ref(), &range, &dense_pool, memory) {
                     two_pass_spill(
                         &mut TwoPassState {
                             maps: &mut maps,
@@ -1480,7 +1539,7 @@ fn streaming_two_pass(
             memory.release(bucket_reserved);
             bucket_reserved = 0;
             flushes += 1;
-            if two_pass_under_pressure(&maps, memory) {
+            if two_pass_under_pressure(&maps, dense.as_ref(), &range, &dense_pool, memory) {
                 two_pass_spill(
                     &mut TwoPassState {
                         maps: &mut maps,
@@ -1570,7 +1629,13 @@ fn streaming_two_pass(
         &mut group_reserved,
     )?;
     memory.release(bucket_reserved);
-    settle_dense(&mut dense, &mut dense_pool, aggregates, memory)?;
+    settle_dense(
+        &mut dense,
+        &mut dense_pool,
+        aggregates,
+        memory,
+        &mut group_reserved,
+    )?;
     if let Some(slots) = dense.take() {
         fold_dense_into_maps(
             slots,
@@ -2327,18 +2392,29 @@ fn drain_two_pass_window(
     }
     if let Some(slots) = dense.as_mut() {
         if dense_in_bounds(keys, intern_len) && dense_integer_window_in_bounds(window, keys) {
+            // What the slots' and the partials' states reserve while they
+            // fold - their distinct sets - belongs to the groups. Charged
+            // and never counted, it stayed charged after a spill had
+            // written those sets out, and the next window met a ceiling
+            // nothing could lower.
+            let before = memory.used();
+            let pooled = pool.reserved;
             // A date-part key indexes its slots directly, and can discover
             // mid-fold that a value has no slot; the text keys cannot.
-            if let TwoPassKeySource::DateParts { parts } = keys {
-                if dense_date_parts_window(window, parts, lanes, aggregates, slots, memory)? {
-                    window.clear();
-                    memory.release(*window_reserved);
-                    *window_reserved = 0;
-                    return Ok(());
-                }
-                // A year outside the table's window: fall through, unify what
-                // the slots hold and finish on the scatter path.
-            } else if dense_text_window(window, keys, lanes, aggregates, slots, pool, memory)? {
+            let folded = if let TwoPassKeySource::DateParts { parts } = keys {
+                // On a year outside the table's window: fall through, unify
+                // what the slots hold and finish on the scatter path.
+                dense_date_parts_window(window, parts, lanes, aggregates, slots, memory)
+            } else {
+                dense_text_window(window, keys, lanes, aggregates, slots, pool, memory)
+            };
+            *group_reserved = group_reserved.saturating_add(
+                memory
+                    .used()
+                    .saturating_sub(before)
+                    .saturating_sub(pool.reserved.saturating_sub(pooled)),
+            );
+            if folded? {
                 window.clear();
                 memory.release(*window_reserved);
                 *window_reserved = 0;
@@ -2348,7 +2424,7 @@ fn drain_two_pass_window(
         // The intern table outgrew the dense domain: unify what the dense
         // slots hold into the partition maps and continue on the classic
         // scatter path for the rest of the stream.
-        settle_dense(dense, pool, aggregates, memory)?;
+        settle_dense(dense, pool, aggregates, memory, group_reserved)?;
         let slots = dense.take().expect("checked above");
         fold_dense_into_maps(
             slots,
@@ -3674,14 +3750,18 @@ struct DensePool {
 }
 
 /// Merges the pool's partials into the dense slots, which every reader of
-/// the slots must see whole.
+/// the slots must see whole. What the merged states reserve on the way - a
+/// distinct set growing to the union of two - is added to `group_reserved`,
+/// so a spill hands it back with the groups.
 fn settle_dense(
     dense: &mut Option<DenseGroupSlots>,
     pool: &mut DensePool,
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
+    group_reserved: &mut usize,
 ) -> Result<(), ExecError> {
     let partials = std::mem::take(&mut pool.partials);
+    let before = memory.used();
     let outcome = (|| {
         if let Some(slots) = dense.as_mut() {
             for partial in partials {
@@ -3690,6 +3770,7 @@ fn settle_dense(
         }
         Ok(())
     })();
+    *group_reserved = group_reserved.saturating_add(memory.used().saturating_sub(before));
     memory.release(pool.reserved);
     pool.reserved = 0;
     outcome

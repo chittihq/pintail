@@ -33,6 +33,7 @@ mod distinct_unit_keys;
 mod enum_empty_member;
 mod enum_ordinal;
 mod fanout_join_aggregates;
+mod few_groups_wide_distinct;
 mod filter_kernels;
 mod filter_once_cost;
 mod fused_join_lanes;
