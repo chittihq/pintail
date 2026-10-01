@@ -410,6 +410,46 @@ fn aggregates_without_a_lane_keep_the_row_fold() {
     );
 }
 
+/// The row fold keeps its states per worker for the whole probe when no
+/// aggregate's answer depends on the order its rows are folded in, opens
+/// them per morsel when one does, and says which on the join's line.
+#[test]
+fn the_row_fold_says_how_it_kept_its_states() {
+    let fixture = Fixture::new();
+    for (select, group, kept) in [
+        (
+            "SELECT d.id, COUNT(*), MIN(f.amount), MAX(f.amount), SUM(f.amount), \
+             AVG(f.amount), SUM(f.flag), MAX(d.id) FROM facts f",
+            "d.id",
+            "states kept per worker",
+        ),
+        (
+            "SELECT d.id, COUNT(*), MAX(d.zone), MIN(f.amount) FROM facts f",
+            "d.id",
+            "states opened per morsel: an extreme of text",
+        ),
+        (
+            "SELECT d.zone, COUNT(*), MIN(f.amount), MAX(d.id) FROM facts f",
+            "d.zone",
+            "states kept per worker",
+        ),
+    ] {
+        for join in ["JOIN", "LEFT JOIN"] {
+            let join = format!("{join} dims d ON f.dim_id = d.id");
+            let rest = format!("GROUP BY {group} ORDER BY {group}");
+            let fused_sql = format!("{select} {join} {rest}");
+            let (fused, profile) = fixture.run(&fused_sql);
+            assert!(
+                fused_join_line(&profile).is_some_and(|line| line.contains(kept)),
+                "{profile}"
+            );
+            let (twin, _) = fixture.run(&format!("{select} {join} AND f.id + d.id > 0 {rest}"));
+            assert_eq!(fused, twin, "{fused_sql}");
+            assert!(!fused.is_empty());
+        }
+    }
+}
+
 /// A LEFT join keeps the probe rows that match nothing - NULL keys, gaps,
 /// keys past either end - in one group whose build columns are NULL.
 #[test]

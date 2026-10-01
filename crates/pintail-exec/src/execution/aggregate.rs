@@ -22,7 +22,8 @@ use crate::BatchStream as _;
 
 use super::distinct_keys::{TextKeys, UnitKind};
 use super::fused_join_fold::{
-    Lane, LanePool, LaneScales, LaneTotals, UniqueKeyGroups, fold_morsel, plan_lanes,
+    GroupStates, Lane, LanePool, LaneScales, LaneTotals, StatePool, UniqueKeyGroups, fold_morsel,
+    plan_lanes,
 };
 use super::join::{
     BuildRow, JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
@@ -5858,6 +5859,22 @@ fn build_fused_inner_join_aggregate(
         .as_ref()
         .and_then(|pool| pool.as_ref().err().copied());
     let lane_pool = lane_pool.and_then(Result::ok);
+    // The row fold's states likewise, where no aggregate's answer depends
+    // on the order its rows are folded in.
+    //
+    // Only over a flat integer build. A probe that builds a key per row -
+    // a text key's collation weights - measured slower with kept states
+    // than with a morsel's own: 4M probe rows on a 36-character key ran in
+    // 1.7 to 3.8 s kept against 1.1 s per morsel at a thousand groups, the
+    // difference mostly in the kernel, for a reason not yet found.
+    let group_slots = plan.values.len() + usize::from(outer);
+    let state_pool = if join.build.is_dense() {
+        StatePool::plan(group_slots, aggregates, memory)
+    } else {
+        Err("a join key that is not a packed integer column")
+    };
+    let per_morsel_states = state_pool.as_ref().err().copied();
+    let state_pool = state_pool.ok();
     // Morsels the column fold took; any other went to the row fold because
     // one of its batch columns was not in a representation a lane reads.
     let lane_morsels = std::sync::atomic::AtomicUsize::new(0);
@@ -5903,18 +5920,32 @@ fn build_fused_inner_join_aggregate(
     } else {
         0
     };
-    // A plan with many groups makes each morsel expensive to open, so the
-    // morsel count bends to what a quarter of the ceiling can hold.
-    let morsel_limit = (memory.limit() / 4)
-        .checked_div(per_morsel_upper)
-        .unwrap_or(usize::MAX)
-        .clamp(1, default_morsel_limit());
+    // Whether every morsel folds into totals or states a worker keeps for
+    // the whole probe: no morsel then opens a copy of the groups, so a
+    // round is charged for none and may hold as many morsels as it likes.
+    // (A round used to reserve a copy per morsel whether or not one was
+    // opened: 26 KB a group on eight threads, 1.7 GiB for 67,000 groups.)
+    let every_morsel_pooled =
+        state_pool.is_some() && (unique_keys.is_none() || lane_pool.is_some());
+    // Otherwise a plan with many groups makes each morsel expensive to
+    // open, so the morsel count bends to what a quarter of the ceiling can
+    // hold.
+    let morsel_limit = if every_morsel_pooled {
+        default_morsel_limit()
+    } else {
+        (memory.limit() / 4)
+            .checked_div(per_morsel_upper)
+            .unwrap_or(usize::MAX)
+            .clamp(1, default_morsel_limit())
+    };
     // The groups are the build side's, so their count is known before a probe
     // row is read. When one morsel's copy of them outgrows a quarter of the
     // ceiling, no round fits: the fold asked for a copy per batch and failed
     // with a memory error under ceilings several times what the general
     // operator answers the query in. Nothing has been pulled from the probe
     // side yet, so the built state goes back to that operator instead.
+    // Kept totals do not change this: the groups they reach still become
+    // one such copy when the probe ends.
     if per_morsel_upper > memory.limit() / 4 {
         memory.release(unique_reserved);
         note.set(
@@ -5953,10 +5984,14 @@ fn build_fused_inner_join_aggregate(
             .map(RecordBatch::visible_row_count)
             .sum::<usize>();
         let morsels = split_into_morsels_bounded(&batches, morsel_limit);
-        let local_upper = morsels
-            .len()
-            .saturating_mul(per_morsel_upper)
-            .saturating_add(selected_rows.saturating_mul(per_row_upper));
+        // A morsel that folds into a worker's kept totals or states opens
+        // no copy of the groups; those sets are charged as they open.
+        let local_upper = if every_morsel_pooled {
+            0
+        } else {
+            morsels.len().saturating_mul(per_morsel_upper)
+        }
+        .saturating_add(selected_rows.saturating_mul(per_row_upper));
         memory.reserve(local_upper)?;
         let partials = morsels
             .par_iter()
@@ -5981,6 +6016,7 @@ fn build_fused_inner_join_aggregate(
                         unique_keys.as_ref(),
                         &plan,
                         pooled.flatten(),
+                        state_pool.as_ref(),
                         memory,
                     )
                 };
@@ -6011,6 +6047,7 @@ fn build_fused_inner_join_aggregate(
     // the map exactly as a morsel's groups do - so labels that normalize
     // equal, and an outer join's NULL group beside a NULL label, still merge.
     let pool_reserved = lane_pool.as_ref().map_or(0, LanePool::reserved);
+    let mut kept_groups = Vec::new();
     if let (Some(pool), Some((_, lanes))) = (lane_pool, unique_keys.as_ref())
         && let Some((totals, scales)) = pool.finish()?
     {
@@ -6032,10 +6069,40 @@ fn build_fused_inner_join_aggregate(
             totals.apply(lanes, &scales, index, &mut states)?;
             reached.push(AggregateGroup { values, states });
         }
-        let partial = fold_touched_join_groups(reached, group_collation, aggregates, memory)?;
-        merge_fused_join_partial(&mut groups, partial, aggregates, 0, memory)?;
-        memory.release(per_morsel_upper);
+        kept_groups.push(reached);
     }
+    // And the row fold's states, the same way.
+    let states_reserved = state_pool.as_ref().map_or(0, StatePool::reserved);
+    if let Some(pool) = state_pool
+        && let Some(states) = pool.finish(memory)?
+    {
+        memory.reserve(per_morsel_upper)?;
+        kept_groups.push(states.into_reached(|index| {
+            plan.values
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| vec![Value::Null; group_columns.len()])
+        }));
+    }
+    let kept_reserved = kept_groups.len().saturating_mul(per_morsel_upper);
+    // The plan already holds one group per value that is equal under the
+    // collation, so when the kept groups are the whole answer - no morsel
+    // left groups of its own, one fold reached them all - and nothing in
+    // them can still fall together, they are the result as they stand.
+    // Keying a hundred thousand of them by their normalized values, twice,
+    // to find that none collide cost more than the probe that reached them.
+    let finished_groups = if groups.is_empty()
+        && kept_groups.len() == 1
+        && plan_groups_stay_apart(&plan.values, group_collation, outer)
+    {
+        kept_groups.pop()
+    } else {
+        for reached in kept_groups {
+            let partial = fold_touched_join_groups(reached, group_collation, aggregates, memory)?;
+            merge_fused_join_partial(&mut groups, partial, aggregates, 0, memory)?;
+        }
+        None
+    };
 
     if std::env::var_os("PINTAIL_PHASE_TIMING").is_some() {
         eprintln!(
@@ -6046,9 +6113,14 @@ fn build_fused_inner_join_aggregate(
         );
     }
     if note.is_active() {
+        use std::fmt::Write as _;
+        // How the row fold kept its states, wherever a morsel took it.
+        let row_states = per_morsel_states.map_or_else(
+            || ", states kept per worker".to_owned(),
+            |reason| format!(", states opened per morsel: {reason}"),
+        );
         let fold = row_fold_reason.map_or_else(
             || {
-                use std::fmt::Write as _;
                 let mut fold = format!(
                     "column fold on {} of {} morsels",
                     lane_morsels.into_inner(),
@@ -6060,12 +6132,16 @@ fn build_fused_inner_join_aggregate(
                         let _ = write!(fold, ", totals opened per morsel: {reason}");
                     }
                 }
-                for (reason, morsels) in declined_morsels.into_inner().unwrap_or_default() {
+                let declined = declined_morsels.into_inner().unwrap_or_default();
+                for (reason, morsels) in &declined {
                     let _ = write!(fold, "; row fold on {morsels}: {reason}");
+                }
+                if !declined.is_empty() {
+                    fold.push_str(&row_states);
                 }
                 fold
             },
-            |reason| format!("row fold: {reason}"),
+            |reason| format!("row fold: {reason}{row_states}"),
         );
         note.set(&format!(
             "fused into the aggregate above; its inputs ran directly; {fold}"
@@ -6075,9 +6151,35 @@ fn build_fused_inner_join_aggregate(
     memory.release(
         build_reserved
             .saturating_add(unique_reserved)
-            .saturating_add(pool_reserved),
+            .saturating_add(pool_reserved)
+            .saturating_add(states_reserved),
     );
-    Ok(Some(finish_aggregate_groups(groups.into_values(), memory)?))
+    let rows = match finished_groups {
+        Some(finished) => finish_aggregate_groups(finished.into_iter(), memory)?,
+        None => finish_aggregate_groups(groups.into_values(), memory)?,
+    };
+    memory.release(kept_reserved);
+    Ok(Some(rows))
+}
+
+/// Whether no two groups of a join's resolved plan can become one once
+/// their values are normalized for grouping, so the plan's groups are the
+/// result's.
+///
+/// The plan keys its groups by the same collation weights the grouping
+/// normalizes to, with three exceptions it leaves to the normalizing merge:
+/// `unicode_ci`, whose grouping trims trailing spaces by another rule than
+/// its weights; a float or an averaged decimal, whose plan key is its exact
+/// spelling; and an outer join's group of unmatched rows beside a build
+/// group whose values are all NULL.
+fn plan_groups_stay_apart(values: &[Vec<Value>], collation: Collation, outer: bool) -> bool {
+    let may_fall_together = |group: &Vec<Value>| {
+        group
+            .iter()
+            .any(|value| matches!(value, Value::Float64(_) | Value::DecimalAverage(_)))
+            || (outer && group.iter().all(|value| matches!(value, Value::Null)))
+    };
+    collation != Collation::Utf8mb4UnicodeCi && !values.iter().any(may_fall_together)
 }
 
 /// Merges one partial set of a fused join's groups into `groups`, charging
@@ -6193,32 +6295,55 @@ fn build_local_fused_join_groups(
     unique_keys: Option<&(UniqueKeyGroups, Vec<Lane>)>,
     plan: &JoinGroupPlan,
     pool_declined: Option<&'static str>,
+    state_pool: Option<&StatePool<'_>>,
     parent_memory: &MemoryTracker,
 ) -> Result<FusedMorselGroups, ExecError> {
-    // Groups are fixed by the build side: start with the resolved set and
-    // index into it, so the probe loop never hashes or compares group
-    // values (the Q8 profile's dominant cost).
-    let mut groups = plan
-        .values
-        .iter()
-        .map(|values| AggregateGroup {
-            values: values.clone(),
-            states: aggregates.iter().map(AggregateState::new).collect(),
-        })
-        .collect::<Vec<_>>();
-    // An outer join's unmatched rows fold into one more group, past the
-    // build-side ones, whose group columns are NULL.
-    let null_group = outer_group_width.map(|width| {
-        groups.push(AggregateGroup {
-            values: vec![Value::Null; width],
-            states: aggregates.iter().map(AggregateState::new).collect(),
-        });
-        groups.len() - 1
-    });
-    let mut touched = vec![false; groups.len()];
+    // Groups are fixed by the build side: their states are indexed by the
+    // group's position in the resolved set, so the probe loop never hashes
+    // or compares group values (the Q8 profile's dominant cost). An outer
+    // join's unmatched rows fold into one more group, past the build-side
+    // ones, whose group columns are NULL.
+    let null_group = outer_group_width.map(|_| plan.values.len());
+    let group_slots = plan.values.len() + usize::from(null_group.is_some());
     let memory = parent_memory.unbounded_worker();
     let batch = morsel.batch;
-    // Probe through the dense table when the left key is a packed integer
+    // The column fold with totals of this morsel alone, where the query
+    // has lanes but keeps no totals per worker.
+    let mut own_states = None;
+    let declined = match (pool_declined, unique_keys) {
+        (Some(reason), _) => Some(reason),
+        (None, Some((keys, lanes))) => {
+            let scales = LaneScales::new(lanes.len());
+            let mut kept = LaneTotals::new(keys, lanes.len());
+            let declined = fold_morsel(morsel, left_key, keys, lanes, &scales, &mut kept, &memory)?;
+            if declined.is_none() {
+                let mut states = GroupStates::new(group_slots, aggregates);
+                for index in 0..group_slots {
+                    if kept.rows(index) > 0 {
+                        kept.apply(lanes, &scales, index, states.reach(index))?;
+                    }
+                }
+                own_states = Some(states);
+            }
+            declined
+        }
+        (None, None) => Some("no column fold planned"),
+    };
+    // The row fold: into a worker's kept states where the query keeps
+    // them, into states of this morsel alone otherwise.
+    let (mut states, pooled) = match own_states {
+        Some(states) => (states, false),
+        None => match state_pool {
+            Some(pool) => (pool.take(parent_memory)?, true),
+            None => (GroupStates::new(group_slots, aggregates), false),
+        },
+    };
+    if states.groups() != group_slots {
+        return Err(ExecError::InvalidPhysicalPlan(
+            "a fused join fold has other groups than its plan",
+        ));
+    }
+    // Probe through the flat table when the left key is a packed integer
     // column; Integer key mode guarantees those physical variants, and NULL
     // rows skip exactly as normalized_join_key's None does.
     let left_typed = build
@@ -6233,29 +6358,6 @@ fn build_local_fused_join_groups(
                 crate::batch::TypedValues::Int64(_) | crate::batch::TypedValues::UInt64(_)
             )
         });
-    let declined = match (pool_declined, unique_keys) {
-        (Some(reason), _) => Some(reason),
-        (None, Some((keys, lanes))) => {
-            let scales = LaneScales::new(lanes.len());
-            let mut kept = LaneTotals::new(keys, lanes.len());
-            let declined = fold_morsel(morsel, left_key, keys, lanes, &scales, &mut kept, &memory)?;
-            if declined.is_none() {
-                if groups.len() != plan.values.len() + usize::from(null_group.is_some()) {
-                    return Err(ExecError::InvalidPhysicalPlan(
-                        "a fused join fold has other groups than its key table",
-                    ));
-                }
-                for (index, group) in groups.iter_mut().enumerate() {
-                    if kept.rows(index) > 0 {
-                        touched[index] = true;
-                        kept.apply(lanes, &scales, index, &mut group.states)?;
-                    }
-                }
-            }
-            declined
-        }
-        (None, None) => Some("no column fold planned"),
-    };
     let rows = declined.is_some().then(|| morsel.selected_rows());
     for (offset, row) in rows.into_iter().flatten().enumerate() {
         if offset % 1024 == 0 {
@@ -6312,9 +6414,8 @@ fn build_local_fused_join_groups(
         match (found, null_group) {
             (Some((matches, indexes)), _) => {
                 for (right, group_index) in matches.iter().zip(indexes) {
-                    touched[*group_index] = true;
                     fold_joined_row(
-                        &mut groups[*group_index].states,
+                        states.reach(*group_index),
                         aggregates,
                         batch,
                         row,
@@ -6326,9 +6427,8 @@ fn build_local_fused_join_groups(
                 }
             }
             (None, Some(null_group)) => {
-                touched[null_group] = true;
                 fold_joined_row(
-                    &mut groups[null_group].states,
+                    states.reach(null_group),
                     aggregates,
                     batch,
                     row,
@@ -6341,11 +6441,18 @@ fn build_local_fused_join_groups(
             (None, None) => {}
         }
     }
+    // A worker's kept states leave when the probe ends, not with the morsel.
+    if pooled {
+        if let Some(pool) = state_pool {
+            pool.give_back(states);
+        }
+        return Ok((HashMap::new(), declined));
+    }
     // Uniform by construction: the fused path is gated to keys that share
     // one collation before it is attempted.
     //
     // Only groups a probe row actually TOUCHED leave this batch: the plan
-    // pre-seeds one slot per build-side group so the probe loop can index
+    // has one slot per build-side group so the probe loop can index
     // instead of hash, and emitting the untouched slots invented zero-count
     // groups an INNER join must not have (sakila: every language appeared
     // with COUNT 0 beside English's 1000).
@@ -6354,11 +6461,12 @@ fn build_local_fused_join_groups(
     // plain collect() dropped every earlier slot's states whenever two
     // build spellings folded to one key, silently losing their rows'
     // aggregates (#258's vanished red/RED group).
-    let touched_groups = groups
-        .into_iter()
-        .zip(touched)
-        .filter_map(|(group, touched)| touched.then_some(group))
-        .collect::<Vec<_>>();
+    let touched_groups = states.into_reached(|index| {
+        plan.values
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| vec![Value::Null; outer_group_width.unwrap_or_default()])
+    });
     let folded = fold_touched_join_groups(touched_groups, group_collation, aggregates, &memory)?;
     Ok((folded, declined))
 }

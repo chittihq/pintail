@@ -762,3 +762,261 @@ impl<'a> LanePool<'a> {
         Ok(Some((total, self.scales)))
     }
 }
+
+/// Aggregate states of every group of the plan, group after group, and
+/// which groups a probe row reached.
+///
+/// The row fold used to open with a copy of every build-side group's values
+/// and a fresh set of states, and close by turning the groups a row reached
+/// into a map under the collation - all sized by the build side's groups,
+/// for every morsel. The states alone are kept here, indexed by the group's
+/// position in the plan, and a group's values are copied when the fold
+/// ends, for the groups that were reached.
+pub(super) struct GroupStates {
+    width: usize,
+    states: Vec<AggregateState>,
+    touched: Vec<bool>,
+}
+
+impl GroupStates {
+    /// Bytes one of these holds for `groups` groups.
+    pub(super) fn bytes(groups: usize, aggregates: usize) -> usize {
+        groups.saturating_mul(
+            aggregates
+                .saturating_mul(size_of::<AggregateState>())
+                .saturating_add(size_of::<bool>()),
+        )
+    }
+
+    pub(super) fn new(groups: usize, aggregates: &[CompiledAggregate]) -> Self {
+        let mut states = Vec::with_capacity(groups.saturating_mul(aggregates.len()));
+        for _ in 0..groups {
+            states.extend(aggregates.iter().map(AggregateState::new));
+        }
+        Self {
+            width: aggregates.len(),
+            states,
+            touched: vec![false; groups],
+        }
+    }
+
+    pub(super) fn groups(&self) -> usize {
+        self.touched.len()
+    }
+
+    /// `group`'s states, marked as reached.
+    #[inline]
+    pub(super) fn reach(&mut self, group: usize) -> &mut [AggregateState] {
+        self.touched[group] = true;
+        &mut self.states[group * self.width..(group + 1) * self.width]
+    }
+
+    /// Merges another set's reached groups into this one's.
+    fn absorb(
+        &mut self,
+        other: Self,
+        aggregates: &[CompiledAggregate],
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if self.width != other.width || self.touched.len() != other.touched.len() {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "fused join states of two shapes",
+            ));
+        }
+        let mut theirs = other.states.into_iter();
+        for (group, touched) in other.touched.into_iter().enumerate() {
+            if !touched {
+                theirs.by_ref().take(self.width).for_each(drop);
+                continue;
+            }
+            for ((state, other), aggregate) in self
+                .reach(group)
+                .iter_mut()
+                .zip(theirs.by_ref())
+                .zip(aggregates)
+            {
+                state.merge(aggregate, other, memory)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The reached groups in plan order, each with `values(its index)`.
+    pub(super) fn into_reached(
+        self,
+        mut values: impl FnMut(usize) -> Vec<pintail_types::Value>,
+    ) -> Vec<super::aggregate::AggregateGroup> {
+        let mut states = self.states.into_iter();
+        let mut reached = Vec::new();
+        for (group, touched) in self.touched.into_iter().enumerate() {
+            let states = states.by_ref().take(self.width).collect::<Vec<_>>();
+            if touched {
+                reached.push(super::aggregate::AggregateGroup {
+                    values: values(group),
+                    states,
+                });
+            }
+        }
+        reached
+    }
+}
+
+/// Why a query's row fold opens its states morsel by morsel, when it must.
+///
+/// States kept per worker see the morsels in whatever order the pool hands
+/// them out, and are merged once at the end, so only aggregates whose
+/// answer cannot depend on that order are kept that way: counts, exact
+/// integer and decimal sums and averages, and the smallest or largest value of a type
+/// whose equal values are identical. The others keep today's fixed order -
+/// each morsel's states merged in morsel order.
+fn order_sensitive(aggregate: &CompiledAggregate) -> Option<&'static str> {
+    use pintail_types::DataType;
+    match aggregate.function {
+        AggregateFunction::Sum | AggregateFunction::Average if aggregate_uses_float(aggregate) => {
+            Some("a float sum or average rounds in the order its rows are added")
+        }
+        // An integer sum's state keeps its exact total, past 64 bits and
+        // back, and is judged when the group is finished: it ends the same
+        // however its rows were split. (The column fold's integer lane is
+        // another matter - it checks each morsel's total - and keeps its
+        // totals per morsel.)
+        AggregateFunction::Sum => match aggregate.data_type {
+            Some(DataType::Decimal { .. } | DataType::Int64 | DataType::UInt64) => None,
+            _ => Some("a sum that is neither an integer nor a decimal"),
+        },
+        // A count, and an average the guard above left: an exact one.
+        AggregateFunction::Count | AggregateFunction::Average => None,
+        AggregateFunction::Minimum | AggregateFunction::Maximum => match aggregate.input_type {
+            Some(
+                DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Decimal { .. }
+                | DataType::Date32
+                | DataType::DateTime64 { .. }
+                | DataType::Time64 { .. }
+                | DataType::Year,
+            ) => None,
+            _ => {
+                Some("an extreme of text or floats shows whichever of its equal values came first")
+            }
+        },
+        _ => Some("an aggregate that depends on the order of its rows"),
+    }
+}
+
+/// Per-worker states of the row fold, kept for a whole query as
+/// [`LanePool`] keeps the column fold's totals. A set belongs to the pool
+/// thread that opened it and only that thread folds into it.
+pub(super) struct StatePool<'a> {
+    groups: usize,
+    aggregates: &'a [CompiledAggregate],
+    /// One slot per pool thread, then one for any other caller.
+    slots: Vec<Mutex<Option<GroupStates>>>,
+    /// Sets that found their slot taken when they came back.
+    spare: Mutex<Vec<GroupStates>>,
+    reserved: AtomicUsize,
+}
+
+impl<'a> StatePool<'a> {
+    /// A pool for `groups` groups, or why the query opens states per
+    /// morsel: an aggregate whose answer depends on the order its rows are
+    /// folded in, or a set per worker past an eighth of the ceiling.
+    pub(super) fn plan(
+        groups: usize,
+        aggregates: &'a [CompiledAggregate],
+        memory: &MemoryTracker,
+    ) -> Result<Self, &'static str> {
+        if let Some(reason) = aggregates.iter().find_map(order_sensitive) {
+            return Err(reason);
+        }
+        let workers = rayon::current_num_threads().max(1);
+        if GroupStates::bytes(groups, aggregates.len()).saturating_mul(workers) > memory.limit() / 8
+        {
+            return Err("a set of states per worker is past an eighth of the memory ceiling");
+        }
+        Ok(Self {
+            groups,
+            aggregates,
+            slots: (0..=workers).map(|_| Mutex::new(None)).collect(),
+            spare: Mutex::new(Vec::new()),
+            reserved: AtomicUsize::new(0),
+        })
+    }
+
+    /// The calling thread's slot.
+    fn slot(&self) -> &Mutex<Option<GroupStates>> {
+        let last = self.slots.len() - 1;
+        &self.slots[rayon::current_thread_index().map_or(last, |index| index.min(last))]
+    }
+
+    /// The calling thread's set, or a new one charged to `memory`. A set
+    /// is no larger than the states one morsel opened for itself before,
+    /// which every round charged for each of its morsels up front; a
+    /// ceiling that refuses one set refused that round.
+    pub(super) fn take(&self, memory: &MemoryTracker) -> Result<GroupStates, ExecError> {
+        let kept = self
+            .slot()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(kept) = kept {
+            return Ok(kept);
+        }
+        let bytes = GroupStates::bytes(self.groups, self.aggregates.len());
+        memory.reserve(bytes)?;
+        self.reserved.fetch_add(bytes, Ordering::Relaxed);
+        Ok(GroupStates::new(self.groups, self.aggregates))
+    }
+
+    /// Returns the set the calling thread took.
+    pub(super) fn give_back(&self, states: GroupStates) {
+        let mut slot = self
+            .slot()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(states);
+        } else {
+            drop(slot);
+            self.spare
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(states);
+        }
+    }
+
+    /// Bytes charged for the sets opened so far.
+    pub(super) fn reserved(&self) -> usize {
+        self.reserved.load(Ordering::Relaxed)
+    }
+
+    /// Every worker's states merged into one set; `None` when no morsel
+    /// folded into the pool.
+    pub(super) fn finish(self, memory: &MemoryTracker) -> Result<Option<GroupStates>, ExecError> {
+        let mut sets = self
+            .slots
+            .into_iter()
+            .filter_map(|slot| {
+                slot.into_inner()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            })
+            .chain(
+                self.spare
+                    .into_inner()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+        let Some(mut total) = sets.next() else {
+            return Ok(None);
+        };
+        for set in sets {
+            total.absorb(set, self.aggregates, memory)?;
+        }
+        Ok(Some(total))
+    }
+}
