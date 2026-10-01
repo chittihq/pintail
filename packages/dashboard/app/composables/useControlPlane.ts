@@ -450,46 +450,36 @@ export function useControlPlane() {
   /// The update endpoint replaces the record, and omitting the table lists used
   /// to clear them; they are omitted deliberately here now that omission means
   /// unchanged.
-  /// Every mutation shares one contract: retry the supervisor's busy
-  /// window (the job slot is held through every replication cycle, so
-  /// first clicks frequently land on a transient 409), toast the failure
-  /// loudly if it persists, and report success so callers can gate their
-  /// follow-up work. It returns a boolean rather than throwing because
-  /// most callers are template @click handlers, where a rethrow is an
-  /// unhandled rejection, not a signal. The alternative was seven buttons
-  /// that looked dead - their failures went to a page-level banner nobody
-  /// watches.
+  /// Every mutation shares one contract: ask once, say so if the answer is
+  /// slow, toast a refusal in the server's own words, and report success so
+  /// callers can gate their follow-up work.
+  ///
+  /// The server queues an operator's action ahead of the replication loop
+  /// and answers when it has the database's job slot, so there is nothing to
+  /// retry here. This used to repeat the call every two seconds for three
+  /// minutes behind one "queued" toast; on a database whose replication
+  /// never let go of the slot, every attempt was refused and the button
+  /// simply spun. A refusal now names what is running and for how long.
+  ///
+  /// It returns a boolean rather than throwing because most callers are
+  /// template @click handlers, where a rethrow is an unhandled rejection,
+  /// not a signal.
   async function mutate(label: string, action: () => Promise<unknown>): Promise<boolean> {
+    const waiting = setTimeout(
+      () => toast(`${label} is waiting for the running replication cycle to hand over`),
+      1500,
+    )
     try {
-      let announced = false
-      for (let attempt = 0; ; attempt += 1) {
-        try {
-          await action()
-          return true
-        } catch (failure) {
-          // Only the job-slot 409 is a transient worth waiting out, and on a
-          // production mirror a replication cycle can hold that slot for
-          // minutes - so the wait is LONG, and it is announced immediately:
-          // a silent retry loop reads as a dead button. Every other 409
-          // ("resume the database first") is a permanent answer and fails
-          // fast with the server's own words.
-          const busy = failure instanceof ApiFailure
-            && failure.status === 409
-            && failure.message.includes('job slot')
-          if (!busy || attempt >= 90) throw failure
-          if (!announced) {
-            announced = true
-            toast(`${label} queued - the replication job holding this database finishes first`)
-          }
-          await new Promise((resolve) => setTimeout(resolve, 2000))
-        }
-      }
+      await action()
+      return true
     } catch (failure) {
       if (!expiredSession(failure)) {
         error.value = messageOf(failure)
         toast(`${label} failed: ${messageOf(failure)}`)
       }
       return false
+    } finally {
+      clearTimeout(waiting)
     }
   }
 
@@ -547,31 +537,23 @@ export function useControlPlane() {
   }
 
   async function runTableAction(databaseId: string, table: TableSummary, action: 'resync' | 'reconcile' | 'pause' | 'resume') {
-    // The supervisor holds the per-database job lock for the whole of every
-    // replication cycle, so a click frequently lands on a 409 that clears
-    // itself within seconds. Retrying briefly is the e2e harness's codified
-    // behavior for this endpoint; without it the click died silently into a
-    // page-level error nobody was looking at, and Resync read as
-    // unresponsive. Anything still failing after the window toasts loudly.
+    // Asked once: the server admits a table action behind at most the
+    // running replication cycle, and a refusal names what holds the
+    // database, which is toasted below.
+    const waiting = setTimeout(
+      () => toast(`${table.name} ${action} is waiting for the running replication cycle to hand over`),
+      1500,
+    )
     try {
-      for (let attempt = 0; ; attempt += 1) {
-        try {
-          const answer = await request<{ recopy?: boolean }>(
+      const answer = await request<{ recopy?: boolean }>(
             `/databases/${encodeURIComponent(databaseId)}/tables/${encodeURIComponent(table.name)}/${action}`,
             { method: 'POST' },
           )
-          if (action === 'resume') {
+      if (action === 'resume') {
             toast(answer.recopy
               ? `${table.name} resumed; changes were skipped while paused, so it is being recopied`
               : `${table.name} resumed; replication picks it up on the next cycle`)
-            return
-          }
-          break
-        } catch (failure) {
-          const busy = failure instanceof ApiFailure && failure.status === 409
-          if (!busy || attempt >= 14) throw failure
-          await new Promise((resolve) => setTimeout(resolve, 2000))
-        }
+        return
       }
       if (action === 'resync') {
         toast(`${table.name} resnapshot accepted; other tables keep replicating`)
@@ -584,6 +566,8 @@ export function useControlPlane() {
       error.value = messageOf(failure)
       toast(`${table.name} ${action} failed: ${messageOf(failure)}`)
       throw failure
+    } finally {
+      clearTimeout(waiting)
     }
   }
 

@@ -187,8 +187,8 @@ const resetting = ref(false)
 async function confirmReset() {
   if (!database.value || resetting.value) return
   // The dialog closes at the moment of intent; from here the Reset button's
-  // working state and the queued/accepted toasts carry the progress. Holding
-  // the dialog open through a minutes-long job-slot wait read as a hang.
+  // working state and the toasts carry the progress. The server cancels
+  // whatever holds the database and answers within seconds.
   resetOpen.value = false
   resetting.value = true
   try {
@@ -286,6 +286,10 @@ function describeTable(table: TableSummary) {
         <Button :disabled="resnapshotting" @click="resnapshot"><LoaderCircle v-if="resnapshotting" class="animate-spin" /><RefreshCw v-else /> Resnapshot</Button>
       </div>
     </header>
+
+    <p v-if="(resetting || resnapshotting) && snapshot?.job" data-testid="job-holder" class="text-muted-foreground mb-3 text-sm">
+      Waiting for {{ snapshot.job.claim }} (running for {{ snapshot.job.seconds }}s) to hand over this database.
+    </p>
 
     <Card v-if="copyProgress" data-testid="copy-progress" class="mb-4 grid gap-2 p-4">
       <div class="flex flex-wrap items-center justify-between gap-3">

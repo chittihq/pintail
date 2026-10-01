@@ -257,6 +257,26 @@ async function main() {
   const sql = async (statement: string) => {
     await mysqlConnection!.query(statement)
   }
+  // Keeps the source writing for as long as `during` runs, so the action
+  // under test meets a database whose replication cycle always has work.
+  // The writes come in pairs that cancel out, leaving every later check's
+  // figures as they were.
+  const underLiveWrites = async <T>(during: () => Promise<T>): Promise<T> => {
+    let stop = false
+    const writer = (async () => {
+      while (!stop) {
+        await sql(`UPDATE events SET amount = amount + 1 WHERE id = 1`)
+        await sql(`UPDATE events SET amount = amount - 1 WHERE id = 1`)
+        await Bun.sleep(10)
+      }
+    })()
+    try {
+      return await during()
+    } finally {
+      stop = true
+      await writer
+    }
+  }
   await sql(`USE ${DATABASE}`)
   await sql(`CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail'`)
   await sql(
@@ -734,25 +754,16 @@ async function main() {
     // Resnapshot must actually re-run rather than merely being acknowledged,
     // so this waits for the mirror to reach streaming again.
     //
-    // Retried, because the control plane holds ONE job slot per database and
-    // answers 409 while a supervisor cycle owns it. That is correct server
-    // behaviour - two concurrent snapshots of one mirror would be worse - so
-    // the click is repeated until it lands rather than the rejection being
-    // treated as a failure.
-    const resnapshotDeadline = Date.now() + 90_000
-    for (;;) {
+    // One click, under live writes. The control plane holds one job slot per
+    // database and the supervisor takes it for every replication cycle; the
+    // click used to be refused whenever a cycle held it, and this check
+    // repeated it until one landed. On a source busy enough that cycles
+    // never let go, none ever did. The server now admits the click behind
+    // at most the running cycle, so a single click has to be accepted.
+    await underLiveWrites(async () => {
       await page!.getByRole('button', { name: 'Resnapshot' }).click()
-      const accepted = await page!
-        .getByText('Resnapshot accepted')
-        .waitFor({ timeout: 10_000 })
-        .then(() => true)
-        .catch(() => false)
-      if (accepted) break
-      if (Date.now() > resnapshotDeadline) {
-        throw new Error('resnapshot was refused for 90s - the job slot never freed')
-      }
-      await Bun.sleep(3_000)
-    }
+      await page!.getByText('Resnapshot accepted').waitFor({ timeout: 40_000 })
+    })
     const deadline = Date.now() + 120_000
     for (;;) {
       await page!.getByRole('link', { name: 'Databases', exact: true }).click()
@@ -790,10 +801,10 @@ async function main() {
   })
 
   await check('Reset mirror confirms, shows copy progress, and returns to streaming', async () => {
-    // The reported experience: on a busy production mirror the click landed
-    // on a silently retried 409 and the copy ran with no visible progress -
-    // "nothing is happening". The contract now: confirming the dialog gives
-    // immediate feedback (a queued or accepted toast), a page-level copy
+    // The reported experience: on a busy mirror the click was refused for as
+    // long as replication held the database and the copy ran with no visible
+    // progress - "nothing is happening". The contract now: confirming the
+    // dialog is accepted within seconds, a page-level copy
     // progress strip appears while tables are rewritten, and the mirror
     // returns to streaming.
     await page!.getByRole('link', { name: 'Databases', exact: true }).click()
@@ -801,19 +812,15 @@ async function main() {
     await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
     await page!.getByRole('tab', { name: 'settings' }).click()
     await page!.getByTestId('reset-mirror').waitFor({ timeout: 15_000 })
-    await page!.getByTestId('reset-mirror').click()
-    await page!.getByRole('dialog').getByRole('button', { name: 'Reset mirror' }).click()
-    // Immediate feedback: either the accept toast, or the queued toast when
-    // a supervision cycle holds the job slot at this instant.
-    await page!
-      .getByText(/Mirror reset; a fresh snapshot is running|Reset queued/)
-      .first()
-      .waitFor({ timeout: 30_000 })
-    // A queued reset has not started yet: the old streaming badge cannot
-    // prove completion. Wait for acceptance, then load a fresh view so the
-    // next check cannot race this reset and resync a table being removed.
-    await page!.getByText('Mirror reset; a fresh snapshot is running')
-      .waitFor({ timeout: 180_000 })
+    // Under live writes, and accepted on the one click: the reset cancels
+    // whatever holds the database rather than waiting for a gap between
+    // replication cycles that a busy source never leaves.
+    await underLiveWrites(async () => {
+      await page!.getByTestId('reset-mirror').click()
+      await page!.getByRole('dialog').getByRole('button', { name: 'Reset mirror' }).click()
+      await page!.getByText('Mirror reset; a fresh snapshot is running')
+        .waitFor({ timeout: 40_000 })
+    })
     await page!.reload()
     await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
 

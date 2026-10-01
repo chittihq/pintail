@@ -183,6 +183,8 @@ export interface SnapshotStatus {
   database_id: string
   state: string
   effective_mode: string | null
+  /// What holds the database's one job slot right now, if anything.
+  job?: { claim: string, seconds: number } | null
   tables: Array<{
     name: string
     state: string
