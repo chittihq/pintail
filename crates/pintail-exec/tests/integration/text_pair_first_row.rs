@@ -65,21 +65,44 @@ fn render(value: &Value) -> String {
 }
 
 fn run(sql: &str) -> Vec<Vec<String>> {
+    answer(
+        ROWS,
+        |id| {
+            let (state, kind, mark, n) = row(id);
+            (
+                state.to_owned(),
+                kind.map(str::to_owned),
+                mark.to_owned(),
+                n,
+            )
+        },
+        sql,
+    )
+    .0
+}
+
+/// The statement's rows, sorted, over a table of `rows` rows built by
+/// `make`, and what its operators noted of the path they took.
+fn answer(
+    rows: u64,
+    make: impl Fn(u64) -> (String, Option<String>, String, i64),
+    sql: &str,
+) -> (Vec<Vec<String>>, String) {
     let directory = tempfile::tempdir().expect("directory");
     let mut table =
         TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("table");
     table
         .bulk_ingest_snapshot(
-            (1..=ROWS)
+            (1..=rows)
                 .map(|id| {
-                    let (state, kind, mark, n) = row(id);
+                    let (state, kind, mark, n) = make(id);
                     StoredRow::new(
                         PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
                         vec![
                             Value::UInt64(id),
-                            Value::Utf8(state.to_owned()),
-                            kind.map_or(Value::Null, |kind| Value::Utf8(kind.to_owned())),
-                            Value::Utf8(mark.to_owned()),
+                            Value::Utf8(state),
+                            kind.map_or(Value::Null, Value::Utf8),
+                            Value::Utf8(mark),
                             Value::Int64(n),
                         ],
                         id,
@@ -93,7 +116,7 @@ fn run(sql: &str) -> Vec<Vec<String>> {
         TableId::new(1),
         "tickets",
         schema(),
-        TableStatistics::with_row_count(ROWS),
+        TableStatistics::with_row_count(rows),
     )
     .expect("entry")
     .with_key_columns([1])
@@ -114,7 +137,8 @@ fn run(sql: &str) -> Vec<Vec<String>> {
     )
     .expect("plan");
     let mut execution =
-        Execution::start(physical, &provider, 1 << 30, Collation::default()).expect("start");
+        Execution::start_profiled(physical, &provider, 1 << 30, None, Collation::default())
+            .expect("start");
     let mut rows = Vec::new();
     while let Some(batch) = execution
         .next_batch()
@@ -136,7 +160,15 @@ fn run(sql: &str) -> Vec<Vec<String>> {
         }
     }
     rows.sort();
-    rows
+    let notes = execution
+        .profile()
+        .expect("profile")
+        .operators
+        .iter()
+        .filter_map(|operator| operator.note.clone())
+        .collect::<Vec<_>>()
+        .join("; ");
+    (rows, notes)
 }
 
 /// The groups of `(first, second)` over the rows from `from` on, each with
@@ -248,5 +280,108 @@ fn distinct_over_two_text_columns_shows_each_rows_own_spellings() {
                 .map(|(state, kind, ..)| vec![state, kind])
                 .collect()
         )
+    );
+}
+
+/// Two text keys of a few classes fold by class - a table indexed by the
+/// two class ids - rather than by cutting and hashing every row: a state
+/// by a kind is a dozen groups however many rows hold them.
+#[test]
+fn two_text_keys_of_few_classes_fold_by_class() {
+    let make = |id| {
+        let (state, kind, mark, n) = row(id);
+        (
+            state.to_owned(),
+            kind.map(str::to_owned),
+            mark.to_owned(),
+            n,
+        )
+    };
+    for sql in [
+        "SELECT state, kind, COUNT(*), SUM(n) FROM tickets GROUP BY state, kind",
+        "SELECT DISTINCT state, mark FROM tickets",
+    ] {
+        let (_, notes) = answer(ROWS, make, sql);
+        assert!(
+            notes.contains(&format!("{ROWS} rows folded by text class")),
+            "{sql}: {notes}"
+        );
+    }
+}
+
+/// Keys that start as a few classes and grow past what the table by class
+/// holds: the groups folded by class move to the hashed fold and go on
+/// there, each still showing its own first row's spellings and counting
+/// every row once.
+#[test]
+fn text_keys_that_outgrow_the_table_by_class_keep_their_groups() {
+    const MANY: u64 = 300_000;
+    let make = |id: u64| {
+        if id <= 200_000 {
+            let (state, kind, mark, n) = row(id);
+            (
+                state.to_owned(),
+                kind.map(str::to_owned),
+                mark.to_owned(),
+                n,
+            )
+        } else {
+            // Ninety states by seventy kinds, each in two spellings, and the
+            // early rows' classes among them.
+            let state = match id % 90 {
+                0 => "OPEN".to_owned(),
+                1 => "closed".to_owned(),
+                other if id.is_multiple_of(2) => format!("s{other}"),
+                other => format!("S{other}"),
+            };
+            let kind = match id % 70 {
+                0 => "B".to_owned(),
+                other if id.is_multiple_of(3) => format!("k{other}"),
+                other => format!("K{other}"),
+            };
+            (state, Some(kind), "x".to_owned(), row(id).3)
+        }
+    };
+    let fold = |text: &Option<String>| text.as_deref().map(str::to_lowercase);
+    let mut groups = BTreeMap::new();
+    for id in 1..=MANY {
+        let (state, kind, _, n) = make(id);
+        let group = groups
+            .entry((Some(state.to_lowercase()), fold(&kind)))
+            .or_insert((
+                state,
+                kind.unwrap_or_else(|| "NULL".to_owned()),
+                0_u64,
+                0_i64,
+            ));
+        group.2 += 1;
+        group.3 += n;
+    }
+    let (rows, notes) = answer(
+        MANY,
+        make,
+        "SELECT state, kind, COUNT(*), SUM(n) FROM tickets GROUP BY state, kind",
+    );
+    assert_eq!(
+        rows,
+        sorted(
+            groups
+                .into_values()
+                .map(|(state, kind, count, sum)| vec![
+                    state,
+                    kind,
+                    count.to_string(),
+                    sum.to_string()
+                ])
+                .collect()
+        ),
+        "{notes}"
+    );
+    // Some rows by class, the rest hashed.
+    assert!(notes.contains("rows folded by text class"), "{notes}");
+    assert!(!notes.contains(" 0 rows folded by text class"), "{notes}");
+    assert!(
+        !notes.contains(&format!("{MANY} rows folded by text class")),
+        "{notes}"
     );
 }

@@ -15,6 +15,20 @@
 //! partition shares a group with another: the result is the partitions one
 //! after the other, with no merge.
 //!
+//! Text keys with few classes skip the cut and the hash altogether. A
+//! state by a kind is a few dozen groups over millions of rows: cutting
+//! those rows into partitions and probing a table per row costs several
+//! times what indexing an array by the two class ids does. While every key
+//! is text carried by dictionary code and the classes met multiply to a
+//! small table ([`DENSE_SLOTS`]), rows fold straight into that table, each
+//! slot a group in the same words a partition's table holds plus the
+//! ordinal of the first row that reached it. Workers fold their own copy
+//! and the copies merge by taking the totals together and the spellings of
+//! the earlier row, so a group still shows its own first row's spellings.
+//! The moment a batch arrives without codes, or the classes outgrow the
+//! table, its groups move into the partitions' tables and the fold goes on
+//! as above.
+//!
 //! Only aggregates whose rows reduce to an exact, order-free total fold
 //! here ([`PackedLane`]); a query with any other aggregate keeps the path it
 //! had, and the profile says which one declined.
@@ -35,8 +49,8 @@ use super::aggregate::{
 use super::join::{normalized_group_hash_key, normalized_group_text};
 use super::morsel::{Morsel, default_morsel_limit, morsel_plan};
 use super::two_pass::{
-    FINALIZE_CHARGE_SLICE, PackedCell, PackedLane, ReadyColumn, ReadyColumns, TwoPassLane,
-    aggregate_lanes, derived_temporal_units, labelled_text_value, lane_readers,
+    FINALIZE_CHARGE_SLICE, LaneReader, PackedCell, PackedLane, ReadyColumn, ReadyColumns,
+    TwoPassLane, aggregate_lanes, derived_temporal_units, labelled_text_value, lane_readers,
     merge_partial_labels, packed_lane, two_pass_key_value, units_fit_a_lane,
 };
 use super::{ExecError, HASH_ENTRY_OVERHEAD, MaterializedRows, MemoryTracker, PullOperator};
@@ -69,6 +83,14 @@ const MAX_KEY_COLUMNS: usize = 16;
 /// Aggregates a query folds here: one NULL bit each in the high half of a
 /// cut row's second word.
 const MAX_LANES: usize = 32;
+
+/// Most slots the dense table of text keys holds: the product of each
+/// key's classes plus one for its NULL.
+const DENSE_SLOTS: usize = 4_096;
+
+/// A dictionary of at most this many entries is interned whole, used by
+/// the batch's rows or not.
+const WHOLE_DICTIONARY: usize = 16;
 
 /// Low half of a cut row's second word: the key's NULL bits.
 const KEY_NULLS: u64 = 0xFFFF_FFFF;
@@ -599,6 +621,33 @@ impl Table {
         Ok(())
     }
 
+    /// Takes a whole group, key and totals, that no group here shares a
+    /// key with.
+    fn adopt(
+        &mut self,
+        plan: &PackedGroupPlan,
+        group: &[u64],
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if self.groups * 2 >= self.slots.len() {
+            self.grow_slots(plan, memory)?;
+        }
+        if self.groups >= u32::MAX as usize - 1 {
+            return Err(ExecError::InvalidBatch("a partition outgrew its group ids"));
+        }
+        self.reserve_group(plan.group_stride, memory)?;
+        let hash = key_hash(group[0], &group[1..=plan.keys()]);
+        let mask = self.slots.len() - 1;
+        let mut at = slot_start(hash, mask);
+        while self.slots[at] != 0 {
+            at = (at + 1) & mask;
+        }
+        self.words.extend_from_slice(group);
+        self.slots[at] = (slot_tag(hash) << 32) | (self.groups as u64 + 1);
+        self.groups += 1;
+        Ok(())
+    }
+
     /// Folds one cut row into its group, creating the group if it is new.
     #[inline]
     fn fold(
@@ -686,6 +735,329 @@ impl Table {
     }
 }
 
+/// The groups of text keys with few classes, indexed by class instead of
+/// hashed: slot `sum(share(key) * weight(key))`, a key's share its class id
+/// plus one, or zero for NULL.
+struct DenseGroups {
+    /// Slots along each key: the classes met so far and one for NULL.
+    dims: Vec<usize>,
+    /// A slot's words: the ordinal of its first row plus one (zero while
+    /// the slot is empty), then the group as a partition's table holds it.
+    words: Vec<u64>,
+    /// Rows folded so far, which numbers the next window's rows.
+    rows: u64,
+    reserved: usize,
+}
+
+/// The slots `dims` multiply to, when they fit the dense table.
+fn dense_slots(dims: &[usize]) -> Option<usize> {
+    dims.iter()
+        .try_fold(1_usize, |slots, dim| slots.checked_mul(*dim))
+        .filter(|slots| *slots <= DENSE_SLOTS)
+}
+
+/// The weight of each key's share in a slot's index, last key fastest.
+fn dense_weights(dims: &[usize]) -> Vec<usize> {
+    let mut weights = vec![1_usize; dims.len()];
+    for index in (0..dims.len().saturating_sub(1)).rev() {
+        weights[index] = weights[index + 1] * dims[index + 1];
+    }
+    weights
+}
+
+/// The rows of a morsel a fold reads: all of them, where the loops run over
+/// the columns' own slices, or the ones the selection keeps.
+enum Picked {
+    Span(Range<usize>),
+    Rows(Vec<usize>),
+}
+
+impl Picked {
+    fn len(&self) -> usize {
+        match self {
+            Self::Span(span) => span.len(),
+            Self::Rows(rows) => rows.len(),
+        }
+    }
+
+    #[inline]
+    fn row(&self, index: usize) -> usize {
+        match self {
+            Self::Span(span) => span.start + index,
+            Self::Rows(rows) => rows[index],
+        }
+    }
+}
+
+/// Folds one morsel's selected rows into `words`, a dense table laid out
+/// by `dims`. `first_ordinal` is the ordinal of the batch's row zero.
+///
+/// A pass per key adds its share to each row's slot; a pass counts the
+/// rows of each slot; a pass per aggregate adds into totals held by slot
+/// alone. Only then are the table's words touched, once per group met.
+#[allow(clippy::too_many_lines)]
+fn fold_dense_rows(
+    plan: &PackedGroupPlan,
+    prepared: &Prepared,
+    rows: Range<usize>,
+    first_ordinal: u64,
+    dims: &[usize],
+    words: &mut [u64],
+) -> Result<(), ExecError> {
+    const LOST: &str = "packed group key lost its dictionary codes";
+    /// A share no slot reaches: a dictionary code no row was interned for.
+    const NO_SHARE: u32 = u32::MAX;
+    let batch = &prepared.batch;
+    let selection = batch.selection();
+    let picked = if selection.count_in(rows.clone()) == rows.len() {
+        Picked::Span(rows)
+    } else {
+        Picked::Rows(selection.selected_rows_in(rows).collect())
+    };
+    let keys = plan.keys();
+    let stride = 1 + plan.group_stride;
+    let table_slots = words.len() / stride;
+    let weights = dense_weights(dims);
+    let mut slots: Vec<u32> = Vec::new();
+    let mut columns = Vec::with_capacity(keys);
+    for (index, column) in plan.columns.iter().enumerate() {
+        let Some((TypedValues::Utf8(strings), validity)) =
+            batch.column(*column).and_then(crate::ColumnVector::typed)
+        else {
+            return Err(ExecError::InvalidBatch(LOST));
+        };
+        let (Some((codes, _)), TextCells::Codes(ids)) =
+            (strings.dictionary(), &prepared.text[index])
+        else {
+            return Err(ExecError::InvalidBatch(LOST));
+        };
+        let shares = ids
+            .iter()
+            .map(|packed| {
+                if *packed == u64::MAX {
+                    NO_SHARE
+                } else {
+                    u32::try_from((slot_start(packed >> 32, usize::MAX) + 1) * weights[index])
+                        .unwrap_or(NO_SHARE)
+                }
+            })
+            .collect::<Vec<_>>();
+        let share = |code: u32| shares.get(code as usize).copied().unwrap_or(NO_SHARE);
+        match &picked {
+            Picked::Span(span) if validity.no_nulls() => {
+                let codes = codes
+                    .get(span.clone())
+                    .ok_or(ExecError::InvalidBatch(LOST))?;
+                if index == 0 {
+                    slots.extend(codes.iter().map(|code| share(*code)));
+                } else {
+                    for (slot, code) in slots.iter_mut().zip(codes) {
+                        *slot = slot.saturating_add(share(*code));
+                    }
+                }
+            }
+            _ => {
+                if index == 0 {
+                    slots.resize(picked.len(), 0);
+                }
+                for (at, slot) in slots.iter_mut().enumerate() {
+                    let row = picked.row(at);
+                    if validity.is_valid(row) {
+                        *slot = slot.saturating_add(share(codes[row]));
+                    }
+                }
+            }
+        }
+        columns.push((codes, validity, ids));
+    }
+    // Rows by slot; a slot past the table is a code that was never interned.
+    let mut hits = vec![0_u64; table_slots];
+    for slot in &slots {
+        let Some(hit) = hits.get_mut(*slot as usize) else {
+            return Err(ExecError::InvalidBatch(LOST));
+        };
+        *hit += 1;
+    }
+    // The first row to reach an empty slot gives the group its key and
+    // spellings. Rows arrive in scan order, so within this morsel that is
+    // the earliest; the search ends once every new group has its row.
+    let mut unplaced = hits
+        .iter()
+        .zip(words.chunks_exact(stride))
+        .filter(|(hit, group)| **hit > 0 && group[0] == 0)
+        .count();
+    for (at, slot) in slots.iter().enumerate() {
+        if unplaced == 0 {
+            break;
+        }
+        let from = *slot as usize * stride;
+        let group = &mut words[from..from + stride];
+        if group[0] != 0 {
+            continue;
+        }
+        unplaced -= 1;
+        let row = picked.row(at);
+        group[0] = first_ordinal + row as u64 + 1;
+        for (index, (codes, validity, ids)) in columns.iter().enumerate() {
+            if validity.is_valid(row) {
+                let interned = ids[codes[row] as usize];
+                group[2 + index] = interned >> 32;
+                group[2 + keys + index] = interned & KEY_NULLS;
+            } else {
+                group[1] |= 1 << index;
+            }
+        }
+    }
+    let totals_at = 2 + keys + plan.texts();
+    let readers = lane_readers(batch, &plan.lanes);
+    for (lane, (packed, reader)) in plan.packed.iter().zip(&readers).enumerate() {
+        let at = totals_at + plan.cell_offsets[lane];
+        match packed {
+            PackedLane::Count => {
+                for (group, hit) in words.chunks_exact_mut(stride).zip(&hits) {
+                    group[at] += *hit;
+                }
+            }
+            PackedLane::Present => {
+                let mut present = vec![0_u64; table_slots];
+                for (index, slot) in slots.iter().enumerate() {
+                    present[*slot as usize] += u64::from(reader.bits(picked.row(index)).is_some());
+                }
+                for (group, present) in words.chunks_exact_mut(stride).zip(&present) {
+                    group[at] += *present;
+                }
+            }
+            PackedLane::Sum { .. } | PackedLane::IntegerSum | PackedLane::Average { .. } => {
+                // A morsel's units cannot overflow the wide total they are
+                // gathered in; the group's own total is checked below.
+                let mut sums = vec![0_i128; table_slots];
+                // The packed values of the morsel's rows, when it is every
+                // row and none is NULL.
+                let span: Option<&[i64]> = match (&picked, reader) {
+                    (
+                        Picked::Span(span),
+                        LaneReader::Units(DecimalUnits::Narrow(values), validity),
+                    ) if validity.no_nulls() => values.get(span.clone()),
+                    (Picked::Span(span), LaneReader::Int64(values, validity))
+                        if validity.no_nulls() =>
+                    {
+                        values.get(span.clone())
+                    }
+                    _ => None,
+                };
+                let counted = if let Some(values) = span {
+                    for (slot, value) in slots.iter().zip(values) {
+                        sums[*slot as usize] += i128::from(*value);
+                    }
+                    None
+                } else {
+                    let mut counted = vec![0_u64; table_slots];
+                    for (index, slot) in slots.iter().enumerate() {
+                        if let Some(bits) = reader.bits(picked.row(index)) {
+                            sums[*slot as usize] += i128::from(signed(bits));
+                            counted[*slot as usize] += 1;
+                        }
+                    }
+                    Some(counted)
+                };
+                let valued = counted.as_ref().unwrap_or(&hits);
+                for ((group, sum), rows) in words.chunks_exact_mut(stride).zip(&sums).zip(valued) {
+                    if *rows > 0 {
+                        let cell = &mut group[at..at + 3];
+                        let total = total_of(cell)
+                            .checked_add(*sum)
+                            .ok_or(ExecError::NumericOverflow)?;
+                        set_total(cell, total);
+                        cell[2] += *rows;
+                    }
+                }
+            }
+            PackedLane::Minimum { .. } | PackedLane::Maximum { .. } => {
+                let least = matches!(packed, PackedLane::Minimum { .. });
+                for (index, slot) in slots.iter().enumerate() {
+                    if let Some(bits) = reader.bits(picked.row(index)) {
+                        let cell = &mut words[*slot as usize * stride + at..];
+                        let better = if least {
+                            signed(bits) < signed(cell[0])
+                        } else {
+                            signed(bits) > signed(cell[0])
+                        };
+                        if cell[1] == 0 || better {
+                            cell[0] = bits;
+                        }
+                        cell[1] += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Merges one dense slot into another holding the same group: the totals
+/// together, and the key and spellings of whichever saw its first row
+/// earlier. An empty `into` takes `from` whole.
+fn merge_dense_slot(
+    plan: &PackedGroupPlan,
+    into: &mut [u64],
+    from: &[u64],
+) -> Result<(), ExecError> {
+    if from[0] == 0 {
+        return Ok(());
+    }
+    if into[0] == 0 {
+        into.copy_from_slice(from);
+        return Ok(());
+    }
+    let totals_at = 2 + plan.keys() + plan.texts();
+    if from[0] < into[0] {
+        into[..totals_at].copy_from_slice(&from[..totals_at]);
+    }
+    for (lane, packed) in plan.packed.iter().enumerate() {
+        let at = totals_at + plan.cell_offsets[lane];
+        let (cell, other) = (&mut into[at..], &from[at..]);
+        match packed {
+            PackedLane::Count | PackedLane::Present => cell[0] += other[0],
+            PackedLane::Sum { .. } | PackedLane::IntegerSum | PackedLane::Average { .. } => {
+                let total = total_of(cell)
+                    .checked_add(total_of(other))
+                    .ok_or(ExecError::NumericOverflow)?;
+                set_total(cell, total);
+                cell[2] += other[2];
+            }
+            PackedLane::Minimum { .. } => {
+                if other[1] > 0 && (cell[1] == 0 || signed(other[0]) < signed(cell[0])) {
+                    cell[0] = other[0];
+                }
+                cell[1] += other[1];
+            }
+            PackedLane::Maximum { .. } => {
+                if other[1] > 0 && (cell[1] == 0 || signed(other[0]) > signed(cell[0])) {
+                    cell[0] = other[0];
+                }
+                cell[1] += other[1];
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Merges two dense tables of one layout; an empty vector is no table.
+fn merge_dense(
+    plan: &PackedGroupPlan,
+    mut into: Vec<u64>,
+    from: Vec<u64>,
+) -> Result<Vec<u64>, ExecError> {
+    if into.is_empty() {
+        return Ok(from);
+    }
+    let stride = 1 + plan.group_stride;
+    for (into, from) in into.chunks_exact_mut(stride).zip(from.chunks_exact(stride)) {
+        merge_dense_slot(plan, into, from)?;
+    }
+    Ok(into)
+}
+
 /// A group's totals for one lane, as the cell every packed fold commits.
 fn packed_cell(lane: PackedLane, cell: &[u64]) -> PackedCell {
     match lane {
@@ -764,9 +1136,141 @@ struct PackedGroupFold<'a> {
     by_row_reserved: usize,
     by_row_batches: usize,
     spill_runs: Vec<spill::ClosedRun>,
+    /// The dense table, while every batch has kept to it.
+    dense: Option<DenseGroups>,
+    /// Rows the dense table folded, for the profile.
+    dense_rows: u64,
 }
 
 impl PackedGroupFold<'_> {
+    /// Folds the window into the dense table: every worker into a copy of
+    /// its own, the copies merged, and the result merged into what earlier
+    /// windows left.
+    fn flush_dense(&mut self) -> Result<(), ExecError> {
+        self.relieve()?;
+        let Some(dense) = self.dense.as_mut() else {
+            return Ok(());
+        };
+        let plan = self.plan;
+        let stride = 1 + plan.group_stride;
+        let slots = dense_slots(&dense.dims).ok_or(ExecError::InvalidBatch(
+            "the dense group table outgrew its slots",
+        ))?;
+        let len = slots * stride;
+        let window = &self.window;
+        let mut first_ordinals = Vec::with_capacity(window.len());
+        let mut ordinal = dense.rows;
+        for held in window {
+            first_ordinals.push(ordinal);
+            ordinal += held.batch.row_count() as u64;
+        }
+        let pieces = morsel_plan(
+            window.iter().map(|held| held.batch.row_count()),
+            default_morsel_limit(),
+        );
+        let dims = dense.dims.as_slice();
+        let folded = pieces
+            .par_iter()
+            .try_fold(Vec::new, |mut words: Vec<u64>, (index, rows)| {
+                if words.is_empty() {
+                    words = vec![0_u64; len];
+                }
+                fold_dense_rows(
+                    plan,
+                    &window[*index],
+                    rows.clone(),
+                    first_ordinals[*index],
+                    dims,
+                    &mut words,
+                )?;
+                Ok::<_, ExecError>(words)
+            })
+            .try_reduce(Vec::new, |into, from| merge_dense(plan, into, from))?;
+        // Earlier windows' groups, laid out again if a key met new classes.
+        if dense.words.len() != len {
+            let bytes = len * size_of::<u64>();
+            self.memory.reserve(bytes)?;
+            let weights = dense_weights(&dense.dims);
+            let mut words = vec![0_u64; len];
+            for group in dense
+                .words
+                .chunks_exact(stride)
+                .filter(|group| group[0] != 0)
+            {
+                let slot: usize = (0..plan.keys())
+                    .map(|index| {
+                        if group[1] & (1 << index) == 0 {
+                            (slot_start(group[2 + index], usize::MAX) + 1) * weights[index]
+                        } else {
+                            0
+                        }
+                    })
+                    .sum();
+                words[slot * stride..(slot + 1) * stride].copy_from_slice(group);
+            }
+            self.memory.release(dense.reserved);
+            dense.reserved = bytes;
+            dense.words = words;
+        }
+        for (into, from) in dense
+            .words
+            .chunks_exact_mut(stride)
+            .zip(folded.chunks_exact(stride))
+        {
+            merge_dense_slot(plan, into, from)?;
+        }
+        self.dense_rows += ordinal - dense.rows;
+        dense.rows = ordinal;
+        Ok(())
+    }
+
+    /// Moves the dense table's groups into the partitions' tables, where
+    /// every other step of the fold expects to find a group.
+    fn pour_dense(&mut self) -> Result<(), ExecError> {
+        let Some(dense) = self.dense.as_mut() else {
+            return Ok(());
+        };
+        let plan = self.plan;
+        let words = std::mem::take(&mut dense.words);
+        self.memory.release(dense.reserved);
+        dense.reserved = 0;
+        for slot in words.chunks_exact(1 + plan.group_stride) {
+            if slot[0] == 0 {
+                continue;
+            }
+            let group = &slot[1..];
+            let hash = key_hash(group[0], &group[1..=plan.keys()]);
+            self.tables[partition_of(hash)].adopt(plan, group, self.memory)?;
+        }
+        Ok(())
+    }
+
+    /// Whether the batch about to join the window keeps to the dense
+    /// table: its text keys by dictionary code, and the classes met so far
+    /// few enough. When it does not, what the table holds moves to the
+    /// partitions' tables and the fold is the hashed one from here on.
+    fn settle_dense(&mut self, text: &[TextCells]) -> Result<(), ExecError> {
+        let Some(dense) = self.dense.as_mut() else {
+            return Ok(());
+        };
+        let dims = self
+            .interns
+            .iter()
+            .map(|intern| intern.classes.len() + 1)
+            .collect::<Vec<_>>();
+        let coded = text
+            .iter()
+            .all(|cells| matches!(cells, TextCells::Codes(_)));
+        if coded && dense_slots(&dims).is_some() {
+            dense.dims = dims;
+            return Ok(());
+        }
+        self.flush()?;
+        self.pour_dense()?;
+        self.dense = None;
+        Ok(())
+    }
+
     /// Notes what the text key columns declare, as each batch arrives: a
     /// later batch may be the first to carry the whole declaration.
     fn note_declarations(&mut self, batch: &RecordBatch) {
@@ -817,19 +1321,32 @@ impl PackedGroupFold<'_> {
             let cells = if let Some((codes, entries)) = strings.dictionary() {
                 // Only the entries a selected row carries, as the rows meet
                 // them: a dictionary also lists spellings no row of this
-                // query holds.
+                // query holds. A short dictionary is interned whole instead:
+                // walking every row to learn which of a handful of entries
+                // it uses costs more than a few classes no row reaches.
                 let mut ids = vec![u64::MAX; entries.len()];
-                for row in batch.selection().selected_rows() {
-                    if !validity.is_valid(row) {
-                        continue;
+                if entries.len() <= WHOLE_DICTIONARY {
+                    for (id, entry) in ids.iter_mut().zip(entries.iter()) {
+                        *id = intern.intern(entry, self.memory)?;
                     }
-                    let code = usize::try_from(codes[row])
-                        .map_err(|_| ExecError::InvalidBatch("dictionary code is out of bounds"))?;
-                    let slot = ids
-                        .get_mut(code)
-                        .ok_or(ExecError::InvalidBatch("dictionary code is out of bounds"))?;
-                    if *slot == u64::MAX {
-                        *slot = intern.intern(&entries[code], self.memory)?;
+                } else {
+                    for row in batch.selection().selected_rows() {
+                        if !validity.is_valid(row) {
+                            continue;
+                        }
+                        let code = usize::try_from(codes[row]).map_err(|_| {
+                            ExecError::InvalidBatch("dictionary code is out of bounds")
+                        })?;
+                        // Not `ok_or`: the error would be built and dropped
+                        // for every row that has none.
+                        let Some(slot) = ids.get_mut(code) else {
+                            return Err(ExecError::InvalidBatch(
+                                "dictionary code is out of bounds",
+                            ));
+                        };
+                        if *slot == u64::MAX {
+                            *slot = intern.intern(&entries[code], self.memory)?;
+                        }
                     }
                 }
                 TextCells::Codes(ids)
@@ -855,6 +1372,12 @@ impl PackedGroupFold<'_> {
 
     fn holds_groups(&self) -> bool {
         self.tables.iter().any(|table| table.groups > 0)
+            || self.dense.as_ref().is_some_and(|dense| {
+                dense
+                    .words
+                    .chunks_exact(1 + self.plan.group_stride)
+                    .any(|slot| slot[0] != 0)
+            })
     }
 
     fn key_output(&self) -> KeyOutput<'_> {
@@ -870,6 +1393,7 @@ impl PackedGroupFold<'_> {
     /// them, leaving the tables empty: the form a spilled run is written
     /// in, and the one a group folded row by row merges with.
     fn drain_groups(&mut self) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
+        self.pour_dense()?;
         let keys = self.plan.keys();
         let stride = self.plan.group_stride;
         let totals_at = 1 + keys + self.plan.texts();
@@ -974,6 +1498,16 @@ impl PackedGroupFold<'_> {
         if self.window.is_empty() {
             return Ok(());
         }
+        if self.dense.is_some() {
+            self.flush_dense()?;
+            // A spill on the way in may have ended nothing: the window is
+            // folded either way.
+            self.window.clear();
+            self.window_rows = 0;
+            self.memory.release(self.window_reserved);
+            self.window_reserved = 0;
+            return Ok(());
+        }
         let physical: usize = self.window.iter().map(|held| held.batch.row_count()).sum();
         let pieces = morsel_plan(
             self.window.iter().map(|held| held.batch.row_count()),
@@ -1018,6 +1552,7 @@ impl PackedGroupFold<'_> {
         }
         self.note_declarations(&batch);
         let text = self.intern_text(&batch)?;
+        self.settle_dense(&text)?;
         let bytes = batch.estimated_bytes();
         if self.memory.reserve(bytes).is_err() {
             self.flush()?;
@@ -1061,6 +1596,7 @@ impl PackedGroupFold<'_> {
     /// The finished groups of every table as columns, a partition at a
     /// time, each table's bytes handed back as its groups are finished.
     fn finish_columns(&mut self) -> Result<MaterializedRows, ExecError> {
+        self.pour_dense()?;
         let plan = self.plan;
         let keys = plan.keys();
         let stride = plan.group_stride;
@@ -1210,6 +1746,13 @@ pub(super) fn build_packed_group_aggregate(
         by_row_reserved: 0,
         by_row_batches: 0,
         spill_runs: Vec::new(),
+        dense: (plan.keys() >= 2 && plan.texts() == plan.keys()).then(|| DenseGroups {
+            dims: vec![1; plan.keys()],
+            words: Vec::new(),
+            rows: 0,
+            reserved: 0,
+        }),
+        dense_rows: 0,
     };
     let debug = std::env::var_os("PINTAIL_AGG_DEBUG").is_some();
     let started = std::time::Instant::now();
@@ -1242,9 +1785,22 @@ pub(super) fn build_packed_group_aggregate(
     if note.is_active() {
         let groups: usize = fold.tables.iter().map(|table| table.groups).sum();
         let held: usize = fold.tables.iter().map(|table| table.reserved).sum();
+        let dense = fold.dense.as_ref().map_or_else(String::new, |dense| {
+            format!(
+                ", {} groups in a dense table of {} slots by text class",
+                dense
+                    .words
+                    .chunks_exact(1 + plan.group_stride)
+                    .filter(|slot| slot[0] != 0)
+                    .count(),
+                dense.words.len() / (1 + plan.group_stride)
+            )
+        });
         note.set(&format!(
             "packed-key fold: {groups} groups resident in {held} bytes over {PARTITIONS} \
-             partitions, {} spill runs, {} batches folded row by row",
+             partitions{dense}, {} rows folded by text class, {} spill runs, {} batches \
+             folded row by row",
+            fold.dense_rows,
             fold.spill_runs.len(),
             fold.by_row_batches
         ));
