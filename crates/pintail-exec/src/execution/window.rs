@@ -389,7 +389,11 @@ fn columnar_window(
             }
             let mut key_batch = RecordBatch::new(batch.row_count(), columns)?;
             key_batch.set_selection(batch.selection().clone())?;
-            for row in batch.selection().selected_rows() {
+            key_batches.push(key_batch);
+        }
+        intern_text_partitions(window.partition.len(), &mut key_batches, collation)?;
+        for key_batch in &key_batches {
+            for row in key_batch.selection().selected_rows() {
                 let values = key_batch
                     .columns()
                     .iter()
@@ -405,9 +409,14 @@ fn columnar_window(
             // Charged after the rows are read: reading a typed column by row
             // materializes its values, which the batch then holds as well.
             memory.reserve(key_batch.estimated_bytes())?;
-            key_batches.push(key_batch);
         }
-        let order = columnar_order(window, key_batches, &offsets, memory, collation)?;
+        let order = match small_partition_order(window, &keys, memory, collation)? {
+            Some(order) => {
+                drop(key_batches);
+                order
+            }
+            None => columnar_order(window, key_batches, &offsets, memory, collation)?,
+        };
         let result = compute_window_column(window, &keys, row_count, &order, memory, collation)?;
         // The computed column is held, beside the keys at first, until every
         // output batch has copied its share out of it.
@@ -442,6 +451,189 @@ fn columnar_window(
     drop(results);
     memory.release(results_bytes);
     Ok(Some(output))
+}
+
+/// Replaces each text partition key column with a number per distinct
+/// value under `collation`, NULL staying NULL.
+///
+/// A window only needs rows of one partition to be adjacent and its values
+/// go back to the rows in arrival order, so which partition comes first is
+/// never seen. Ordering partitions by their text built a collation sort key
+/// per row and compared the texts again at every partition boundary; a
+/// number per distinct value sorts and compares as an integer. Two texts
+/// share a number exactly when the collation holds them equal: by their
+/// printable-ASCII ranks where the collation has them and every value is
+/// printable ASCII, by their collation sort keys otherwise. A column that
+/// is not plain text is left as it is.
+fn intern_text_partitions(
+    partitions: usize,
+    key_batches: &mut [RecordBatch],
+    collation: Collation,
+) -> Result<(), ExecError> {
+    use crate::batch::Cell;
+    for position in 0..partitions {
+        if !key_batches.iter().all(|batch| {
+            batch
+                .column(position)
+                .is_some_and(|column| column.data_type() == DataType::Utf8)
+        }) {
+            continue;
+        }
+        // The cell's text, `None` for NULL; `Err` for a cell that is not
+        // plain text.
+        let text_of = |cell: Cell<'_>| -> Result<Option<Vec<u8>>, ()> {
+            match cell {
+                Cell::Null | Cell::Value(Value::Null) => Ok(None),
+                Cell::Text(text) => Ok(Some(text.to_vec())),
+                Cell::Value(Value::Utf8(text)) => Ok(Some(text.as_bytes().to_vec())),
+                _ => Err(()),
+            }
+        };
+        // The rank form holds only when every value is printable ASCII: a
+        // text outside it can equal one inside it (an accented letter and
+        // its base), and the two forms' keys are not comparable.
+        let ranks = super::ungrouped_fold::printable_ascii_ranks(collation).filter(|_| {
+            key_batches.iter().all(|batch| {
+                let column = &batch.columns()[position];
+                batch.selection().selected_rows().all(|row| {
+                    column.with_cell(row, |cell| match cell {
+                        Cell::Text(text) => text.iter().all(|byte| (0x20..0x7f).contains(byte)),
+                        Cell::Value(Value::Utf8(text)) => {
+                            text.bytes().all(|byte| (0x20..0x7f).contains(&byte))
+                        }
+                        _ => true,
+                    })
+                })
+            })
+        });
+        let mut ids: std::collections::HashMap<Vec<u8>, u64> = std::collections::HashMap::new();
+        let mut replaced = Vec::with_capacity(key_batches.len());
+        let mut declined = false;
+        'batches: for batch in key_batches.iter() {
+            let column = &batch.columns()[position];
+            let mut values = vec![Value::Null; batch.row_count()];
+            for row in batch.selection().selected_rows() {
+                let Ok(text) = column.with_cell(row, text_of) else {
+                    declined = true;
+                    break 'batches;
+                };
+                let Some(mut key) = text else {
+                    continue;
+                };
+                if let Some(ranks) = ranks {
+                    for byte in &mut key {
+                        *byte = ranks[usize::from(*byte)];
+                    }
+                } else {
+                    let Ok(text) = std::str::from_utf8(&key) else {
+                        return Err(ExecError::InvalidBatch("window key text is not UTF-8"));
+                    };
+                    key = super::join::collation_sort_key(text, collation);
+                }
+                let next = ids.len() as u64;
+                values[row] = Value::UInt64(*ids.entry(key).or_insert(next));
+            }
+            replaced.push(values);
+        }
+        if declined {
+            continue;
+        }
+        for (batch, values) in key_batches.iter_mut().zip(replaced) {
+            let mut columns = batch.columns().to_vec();
+            columns[position] = ColumnVector::new(DataType::UInt64, values)?;
+            let mut interned = RecordBatch::new(batch.row_count(), columns)?;
+            interned.set_selection(batch.selection().clone())?;
+            *batch = interned;
+        }
+    }
+    Ok(())
+}
+
+/// Rows per partition, on average, up to which a window's rows are ordered
+/// partition by partition rather than by one sort over every key.
+const SMALL_PARTITION_ROWS: usize = 8;
+
+/// The window's rows in (partition, order) order when it partitions by one
+/// integer key (a text key arrives here as its interned number) into many
+/// small partitions: the rows are grouped by that key, in arrival order,
+/// and each partition of more than one row is then ordered by the window's
+/// order keys with the row sort's own comparison, ties in arrival order.
+///
+/// One sort over every key builds a packed key per row from every order
+/// column, a collation key for each text one among them, though a
+/// partition of one row never compares anything and a partition of two
+/// compares once. `None` when the window has no single integer partition
+/// key or its partitions are large, where the one sort is the faster.
+fn small_partition_order(
+    window: &CompiledWindow,
+    keys: &[Vec<Value>],
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<Option<Vec<usize>>, ExecError> {
+    if window.partition.len() != 1 || keys.is_empty() {
+        return Ok(None);
+    }
+    memory.reserve(
+        keys.len()
+            .saturating_mul(size_of::<usize>() + size_of::<(u8, u64)>()),
+    )?;
+    // NULL is a partition of its own; a signed and an unsigned value that
+    // are the same number are the same partition.
+    let mut partitions = Vec::with_capacity(keys.len());
+    for row in keys {
+        partitions.push(match row.first() {
+            Some(Value::Null) => (0_u8, 0_u64),
+            Some(Value::UInt64(value)) => (2, *value),
+            Some(Value::Int64(value)) => (if *value < 0 { 1 } else { 2 }, value.cast_unsigned()),
+            _ => return Ok(None),
+        });
+    }
+    let mut order = (0..keys.len()).collect::<Vec<_>>();
+    order.sort_by_key(|row| partitions[*row]);
+    let count = 1 + order
+        .windows(2)
+        .filter(|pair| partitions[pair[0]] != partitions[pair[1]])
+        .count();
+    if keys.len() / count > SMALL_PARTITION_ROWS {
+        return Ok(None);
+    }
+    let order_key = |ascending: bool, nulls_first: bool, decimal: bool| BoundOrderKey {
+        value_kind: if decimal {
+            pintail_sql::OrderValueKind::Decimal
+        } else {
+            pintail_sql::OrderValueKind::Ordinary
+        },
+        index: 0,
+        ascending,
+        nulls_first,
+        collation: None,
+    };
+    let compare_rows = |left: &usize, right: &usize| {
+        for (position, (_, ascending, nulls_first, decimal)) in window.order.iter().enumerate() {
+            let ordering = compare_sort_values(
+                &keys[*left][1 + position],
+                &keys[*right][1 + position],
+                order_key(*ascending, *nulls_first, *decimal),
+                collation,
+            );
+            if ordering != Ordering::Equal {
+                return ordering;
+            }
+        }
+        Ordering::Equal
+    };
+    let mut start = 0;
+    while start < order.len() {
+        let mut end = start + 1;
+        while end < order.len() && partitions[order[end]] == partitions[order[start]] {
+            end += 1;
+        }
+        if end - start > 1 && !window.order.is_empty() {
+            order[start..end].sort_by(compare_rows);
+        }
+        start = end;
+    }
+    Ok(Some(order))
 }
 
 /// One window key over `batch` as a column: from the batch kernels where
