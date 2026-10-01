@@ -403,6 +403,9 @@ fn batch(rng: &mut Rng, rows: usize) -> RecordBatch {
 struct Tally {
     bound: usize,
     kernel_columns: usize,
+    /// Bound expressions and kernel columns per generator: numeric, text,
+    /// predicate.
+    families: [(usize, usize); 3],
     compared_values: usize,
     failures: Vec<String>,
 }
@@ -465,8 +468,17 @@ fn every_kernel_answer_is_row_evaluations_answer() {
         let Some((expression, data_type)) = compile(&catalog, &sql) else {
             continue;
         };
-        let batch = batch(&mut rng, 48);
+        // Mostly 48 rows, and every eighth batch at an edge of a mask word.
+        let rows = match usize::try_from(case % 8).expect("small") {
+            edge if edge < WORD_EDGE_ROWS.len() && (case / 8) % 2 == 1 => WORD_EDGE_ROWS[edge],
+            _ => 48,
+        };
+        let batch = batch(&mut rng, rows);
+        let before = (tally.bound, tally.kernel_columns);
         check(&mut tally, &sql, &expression, data_type, &batch);
+        let family = &mut tally.families[usize::try_from(case % 3).expect("small")];
+        family.0 += tally.bound - before.0;
+        family.1 += tally.kernel_columns - before.1;
     }
     assert!(
         tally.failures.is_empty(),
@@ -481,8 +493,133 @@ fn every_kernel_answer_is_row_evaluations_answer() {
         tally.kernel_columns,
         tally.bound
     );
+    // ...and one that stops reaching one family's kernels hides behind the
+    // others in the total. Measured at the default seed: 26%, 34% and 25%.
+    for ((name, floor), (bound, kernels)) in [("numeric", 20), ("text", 27), ("predicate", 20)]
+        .into_iter()
+        .zip(tally.families)
+    {
+        assert!(
+            kernels * 100 >= bound * floor,
+            "only {kernels} of {bound} {name} expressions reached a kernel, under {floor}%"
+        );
+    }
     eprintln!(
-        "kernel differential: {} bound, {} kernel columns, {} values compared",
-        tally.bound, tally.kernel_columns, tally.compared_values
+        "kernel differential: {} bound, {} kernel columns, {} values compared, per family \
+         (numeric, text, predicate) {:?}",
+        tally.bound, tally.kernel_columns, tally.compared_values, tally.families
     );
+}
+
+/// Row counts on either side of a 64-row mask word, and of two.
+const WORD_EDGE_ROWS: [usize; 7] = [1, 63, 64, 65, 127, 128, 129];
+
+/// Expressions whose kernel takes every batch of the generated data today,
+/// one per kernel family. A family that stops being reached shows here by
+/// name, where the generated run would only lose a few percent of coverage.
+const KERNEL_FAMILIES: &[&str] = &[
+    // Exact and approximate arithmetic.
+    "i / j",
+    "d + i",
+    "w + d",
+    "d * d",
+    "w - w",
+    "FLOOR(f)",
+    "CEILING(d)",
+    "TRUNCATE(d, 2)",
+    // Conditionals.
+    "COALESCE(i, j)",
+    "IF(i < j, i, j)",
+    "CASE WHEN i < j THEN d ELSE w END",
+    "COALESCE(s, g)",
+    // Text.
+    "LENGTH(s)",
+    "UPPER(s)",
+    "LOWER(g)",
+    "CONCAT(s, g)",
+    "SUBSTRING(s, 1, 2)",
+    "TRIM(s)",
+    "REPLACE(s, 'a', 'b')",
+    "CAST(i AS CHAR)",
+    // Comparisons and their combinations.
+    "i = j",
+    "i < 5",
+    "u >= 3",
+    "d <=> w",
+    "s < 'b'",
+    "dt < ts",
+    "ts >= '2024-01-01'",
+    "i BETWEEN 1 AND 5",
+    "i IN (1, 2, 3)",
+    "s IS NULL",
+    "i IS NULL",
+    "ts IS NOT NULL",
+    "s LIKE 'a%'",
+    "(i < j AND u > 3)",
+    "(i < j OR s IS NULL)",
+    "(NOT i = j)",
+    // Temporal readings.
+    "DATE(ts)",
+    "YEAR(dt)",
+    "HOUR(ts)",
+    "DATE_FORMAT(ts, '%Y-%m')",
+    "DATEDIFF(ts, dt)",
+];
+
+/// Expressions no kernel takes today: row evaluation answers them. One that
+/// gains a kernel moves to [`KERNEL_FAMILIES`], so that its answers at the
+/// word edges are compared from then on.
+const ROW_FAMILIES: &[&str] = &[
+    "i DIV j",
+    "i % j",
+    "f + i",
+    "f * f",
+    "u + u",
+    "f <> 1.5",
+    "i = s",
+    "tm < '10:00:00'",
+];
+
+/// Integer arithmetic takes a batch only when no row of it leaves the type:
+/// one row alone seldom does, and a generated batch of 63 always holds one.
+const OVERFLOW_DECLINING: &[&str] = &["i + j", "i - j", "i * j", "-i", "ABS(i)"];
+
+#[test]
+fn each_family_takes_or_declines_at_the_word_edges_as_it_does_today() {
+    let catalog = catalog();
+    let mut wrong = Vec::new();
+    let mut compared = 0;
+    for (family, expected) in KERNEL_FAMILIES
+        .iter()
+        .map(|sql| (sql, Some(true)))
+        .chain(ROW_FAMILIES.iter().map(|sql| (sql, Some(false))))
+        .chain(OVERFLOW_DECLINING.iter().map(|sql| (sql, None)))
+    {
+        let (expression, data_type) =
+            compile(&catalog, family).unwrap_or_else(|| panic!("{family} does not bind"));
+        for seed in 1_u64..=4 {
+            for rows in WORD_EDGE_ROWS {
+                let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+                let batch = batch(&mut rng, rows);
+                let mut tally = Tally::default();
+                check(&mut tally, family, &expression, data_type, &batch);
+                compared += tally.compared_values;
+                wrong.append(&mut tally.failures);
+                let taken = tally.kernel_columns == 1;
+                let expected = expected.unwrap_or(rows == 1 && taken);
+                if expected != taken {
+                    wrong.push(format!(
+                        "{family} over {rows} rows (seed {seed}): {}",
+                        if taken {
+                            "a kernel took it; list it with the kernel families"
+                        } else {
+                            "no kernel took it"
+                        }
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert!(compared > 0, "no kernel answer was compared");
 }
