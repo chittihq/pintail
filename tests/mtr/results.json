@@ -5,18 +5,18 @@
   "ref": "99960bf74fa919347e4f4e3ca47672f333d6e91f",
   "mysqlVersion": "8.4.11",
   "provenance": {
-    "sourceCommit": "9638532b1cbb3548b7ba134dd2e0cda14198b99c",
+    "sourceCommit": "e5cbf0a5ac0337190923dd5e0c058def4b97be9e",
     "sourceDirty": false,
-    "binarySha256": "0cd4d9f57aed4dbf5429ab1df95f580af7f8e30c84ee5506594a438895232e87"
+    "binarySha256": "59f3089c2f3a9f24705e9d52a2a65d068ec65cc31d4aeea5c0d5a842a9c5b10e"
   },
-  "artifacts": "validate-out/mtr/runs/muoq1s7k-47472",
-  "measuredAt": "2026-09-30T23:15:31.104Z",
+  "artifacts": "validate-out/mtr/runs/mupvti0t-123044",
+  "measuredAt": "2026-10-01T18:45:06.747Z",
   "totals": {
-    "exact": 9192,
-    "compared": 9302,
+    "exact": 9268,
+    "compared": 9378,
     "queries": 20617,
     "replayed": 23119,
-    "notCompared": 13817
+    "notCompared": 13741
   },
   "results": [
     {
@@ -600,9 +600,9 @@
       "statements": 564,
       "counts": {
         "exact": 181,
-        "mismatch": 0,
+        "mismatch": 1,
         "name-mismatch": 0,
-        "pintail-error": 15,
+        "pintail-error": 14,
         "mysql-error": 0,
         "tainted": 15,
         "setup": 85,
@@ -622,7 +622,6 @@
         "Error: sql parser error: Expected: ), found: int at Line: _, Column: _": 1,
         "Error: unsupported expression: isnull(date(NULL))": 1,
         "Error: sql parser error: Expected: ), found: binary at Line: _, Column: _": 2,
-        "Error: unsupported expression: INTERVAL _ DAY": 1,
         "Error: unsupported expression: STRCMP(a, b)": 1,
         "INSERT: Error: only literal values are supported in INSERT, got _": 3
       }
@@ -1581,10 +1580,10 @@
       "file": "ctype_binary",
       "statements": 862,
       "counts": {
-        "exact": 151,
+        "exact": 154,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 16,
+        "pintail-error": 13,
         "mysql-error": 0,
         "tainted": 35,
         "setup": 231,
@@ -1605,9 +1604,6 @@
         "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 1,
         "Error: unsupported expression: MATCH (a) AGAINST (_)": 1,
         "Error: unsupported expression: ST_IsSimple(ST_GeomFromText(_))": 1,
-        "Error: unsupported expression: period_add(_, _)": 1,
-        "Error: unsupported expression: period_diff(_, _)": 1,
-        "Error: unsupported expression: microsecond(_)": 1,
         "Error: unknown column DATE": 1,
         "Error: unsupported expression: export_set(_, _, _, _, _)": 1,
         "Error: unsupported expression: ltrim(_)": 1,
@@ -1696,10 +1692,10 @@
       "file": "ctype_cp1251",
       "statements": 922,
       "counts": {
-        "exact": 151,
+        "exact": 154,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 16,
+        "pintail-error": 13,
         "mysql-error": 0,
         "tainted": 47,
         "setup": 236,
@@ -1722,9 +1718,6 @@
         "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 1,
         "Error: unsupported expression: MATCH (a) AGAINST (_)": 1,
         "Error: unsupported expression: ST_IsSimple(ST_GeomFromText(_))": 1,
-        "Error: unsupported expression: period_add(_, _)": 1,
-        "Error: unsupported expression: period_diff(_, _)": 1,
-        "Error: unsupported expression: microsecond(_)": 1,
         "Error: unknown column DATE": 1,
         "Error: unsupported expression: export_set(_, _, _, _, _)": 1,
         "Error: unsupported expression: ltrim(_)": 1,
@@ -2508,10 +2501,10 @@
       "file": "ctype_ucs",
       "statements": 1347,
       "counts": {
-        "exact": 248,
+        "exact": 251,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 35,
+        "pintail-error": 32,
         "mysql-error": 0,
         "tainted": 96,
         "setup": 300,
@@ -2546,9 +2539,6 @@
         "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 1,
         "Error: unsupported expression: MATCH (a) AGAINST (_)": 1,
         "Error: unsupported expression: ST_IsSimple(ST_GeomFromText(_))": 1,
-        "Error: unsupported expression: period_add(_, _)": 1,
-        "Error: unsupported expression: period_diff(_, _)": 1,
-        "Error: unsupported expression: microsecond(_)": 1,
         "Error: unknown column DATE": 1,
         "Error: unsupported expression: export_set(_, _, _, _, _)": 1,
         "Error: unsupported expression: ltrim(_)": 1,
@@ -2965,10 +2955,10 @@
       "file": "ctype_utf8",
       "statements": 1816,
       "counts": {
-        "exact": 311,
+        "exact": 314,
         "mismatch": 2,
         "name-mismatch": 0,
-        "pintail-error": 45,
+        "pintail-error": 42,
         "mysql-error": 0,
         "tainted": 119,
         "setup": 567,
@@ -3005,9 +2995,6 @@
         "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 1,
         "Error: unsupported expression: MATCH (a) AGAINST (_)": 1,
         "Error: unsupported expression: ST_IsSimple(ST_GeomFromText(_))": 1,
-        "Error: unsupported expression: period_add(_, _)": 1,
-        "Error: unsupported expression: period_diff(_, _)": 1,
-        "Error: unsupported expression: microsecond(_)": 1,
         "Error: unknown column DATE": 1,
         "Error: unsupported expression: export_set(_, _, _, _, _)": 1,
         "Error: unsupported expression: ltrim(_)": 1,
@@ -3117,10 +3104,10 @@
       "file": "date_formats",
       "statements": 120,
       "counts": {
-        "exact": 35,
-        "mismatch": 0,
+        "exact": 54,
+        "mismatch": 1,
         "name-mismatch": 0,
-        "pintail-error": 27,
+        "pintail-error": 7,
         "mysql-error": 0,
         "tainted": 6,
         "setup": 19,
@@ -3137,10 +3124,7 @@
         "Error: unknown column TIME": 1,
         "Error: unknown column DATETIME": 1,
         "Error: unknown column TIMESTAMP": 1,
-        "Error: unsupported expression: microsecond(_)": 1,
-        "Error: unsupported expression: TIME_FORMAT(_, _)": 12,
         "Error: unknown column datetime": 1,
-        "Error: unsupported expression: TIME_FORMAT(NULL, _)": 7,
         "PREPARED: Error: unknown column DATE": 2
       }
     },
@@ -4817,10 +4801,10 @@
       "file": "func_date_add",
       "statements": 62,
       "counts": {
-        "exact": 12,
+        "exact": 24,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 13,
+        "pintail-error": 1,
         "mysql-error": 0,
         "tainted": 1,
         "setup": 5,
@@ -4834,11 +4818,7 @@
       },
       "errorClasses": {
         "INSERT: Error: only literal values are supported in INSERT, got _": 1,
-        "Error: unsupported expression: ADDDATE(_, REPEAT(_, _))": 1,
-        "Error: unsupported expression: INTERVAL _ DAY": 6,
-        "Error: unsupported expression: INTERVAL _ HOUR": 6,
-        "PREPARED: Error: unsupported expression: INTERVAL _ DAY": 3,
-        "PREPARED: Error: unsupported expression: INTERVAL _ HOUR": 3
+        "Error: numeric expression overflow": 1
       }
     },
     {
@@ -5023,7 +5003,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: unsupported expression: FROM_UNIXTIME(date, _)": 2,
+        "Error: Incorrect parameter count in the call to native function _": 2,
         "Error: invalid use of group function: min(_)": 4,
         "PREPARED: Error: INSERT needs VALUES": 1
       }
@@ -5447,10 +5427,10 @@
       "file": "func_sapdb",
       "statements": 88,
       "counts": {
-        "exact": 69,
+        "exact": 74,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 8,
+        "pintail-error": 3,
         "mysql-error": 0,
         "tainted": 3,
         "setup": 4,
@@ -5465,10 +5445,6 @@
       "errorClasses": {
         "Error: unsupported expression: date_add(_, INTERVAL _ MICROSECOND)": 1,
         "Error: unsupported expression: date_sub(_, INTERVAL _ MICROSECOND)": 1,
-        "Error: unsupported expression: adddate(_, _)": 1,
-        "Error: unsupported expression: subdate(_, _)": 1,
-        "Error: unsupported expression: microsecond(_)": 2,
-        "Error: unsupported expression: microsecond(_._)": 1,
         "Error: sql parser error: Expected: an identifier after AS, found: _ at Line: _, Column: _": 1
       }
     },
@@ -5599,14 +5575,7 @@
         "Error: unknown column DATE": 1,
         "Error: unsupported expression: LOAD_FILE(a)": 1,
         "Error: unsupported expression: QUOTE(t1__32.a)": 1,
-        "Error: unsupported expression: format(_._, _, NULL)": 1,
-        "Error: unsupported expression: format(_._, _, _)": 9,
-        "Error: unsupported expression: format(_._, _, fmt)": 2,
-        "Error: unsupported expression: format(_, _, fmt)": 1,
-        "Error: unsupported expression: format(-_, _, fmt)": 4,
-        "Error: unsupported expression: format(_, _, _)": 1,
-        "Error: unsupported expression: FORMAT(_._, _, _)": 1,
-        "Error: unsupported expression: FORMAT(12333e-_, _, _)": 1,
+        "Error: Incorrect parameter count in the call to native function _": 20,
         "Error: unknown column 0b111111111111111111111111111111111111111111111111111": 1,
         "Error: sql parser error: Expected: ), found: CHARSET at Line: _, Column: _": 3,
         "Error: unsupported expression: LTRIM(-_ ^ (_ XOR -_))": 1,
@@ -5651,10 +5620,10 @@
       "file": "func_time",
       "statements": 599,
       "counts": {
-        "exact": 317,
-        "mismatch": 2,
+        "exact": 335,
+        "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 43,
+        "pintail-error": 27,
         "mysql-error": 1,
         "tainted": 12,
         "setup": 97,
@@ -5667,10 +5636,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: unsupported expression: period_add(_, -_)": 1,
-        "Error: unsupported expression: from_unixtime(unix_timestamp(_), _)": 1,
-        "Error: unsupported expression: yearweek(_, _)": 7,
-        "Error: unsupported expression: time_format(_, _)": 5,
+        "Error: Incorrect parameter count in the call to native function _": 1,
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 2,
         "Error: unsupported expression: CHARSET(DAYNAME(_))": 1,
         "Error: unsupported expression: CHARSET(MONTHNAME(_))": 1,
@@ -5683,9 +5649,7 @@
         "Error: unsupported expression: timestampdiff(SQL_TSI_SECOND, _, _)": 1,
         "Error: numeric expression overflow": 14,
         "INSERT: Error: only literal values are supported in INSERT, got _": 1,
-        "Error: unsupported expression: TIME_FORMAT(SEC_TO_TIME(a), _)": 1,
         "Error: unknown column TIME": 1,
-        "Error: unsupported expression: INTERVAL _ HOUR": 2,
         "Error: unsupported expression: timestampadd(microsecond, _.212208e+_, _)": 1
       }
     },
@@ -7904,10 +7868,10 @@
       "file": "lead_lag",
       "statements": 269,
       "counts": {
-        "exact": 37,
+        "exact": 39,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 20,
+        "pintail-error": 18,
         "mysql-error": 0,
         "tainted": 111,
         "setup": 32,
@@ -7934,9 +7898,7 @@
         "INSERT: Error: only literal values are supported in INSERT, got _": 2,
         "Error: unsupported expression: PERCENT_RANK() OVER (ORDER BY i)": 1,
         "Error: unsupported expression: PERCENT_RANK() OVER (ORDER BY i ROWS BETWEEN _ PRECEDING AN": 3,
-        "Error: unsupported query clause: window frame on LEAD(a, _, _) OVER (ORDER BY a ROWS BETWE": 2,
-        "Error: unsupported expression: ADDDATE(LEAD(NULL, _, DATE _) OVER (ORDER BY NULL), _)": 1,
-        "Error: unsupported expression: ADDDATE(LEAD(DATE _, _) OVER (ORDER BY NULL), _)": 1
+        "Error: unsupported query clause: window frame on LEAD(a, _, _) OVER (ORDER BY a ROWS BETWE": 2
       }
     },
     {
@@ -8077,8 +8039,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: unsupported expression: format(_._, _, _)": 2,
-        "Error: unsupported expression: format(_, _, _)": 1
+        "Error: Incorrect parameter count in the call to native function _": 3
       }
     },
     {
@@ -13382,10 +13343,10 @@
       "file": "time_truncate_fractional",
       "statements": 288,
       "counts": {
-        "exact": 34,
+        "exact": 36,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 2,
+        "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 21,
         "setup": 190,
@@ -13399,8 +13360,6 @@
       },
       "errorClasses": {
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 1,
-        "Error: unsupported expression: MICROSECOND(a)": 1,
-        "Error: unsupported expression: MICROSECOND(CAST(_._ AS DATETIME(_)))": 1,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP(_) is not supported on a local table": 3
       }
     },
@@ -13408,10 +13367,10 @@
       "file": "time_truncate_fractional_strict",
       "statements": 288,
       "counts": {
-        "exact": 34,
+        "exact": 36,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 2,
+        "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 21,
         "setup": 186,
@@ -13425,8 +13384,6 @@
       },
       "errorClasses": {
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 1,
-        "Error: unsupported expression: MICROSECOND(a)": 1,
-        "Error: unsupported expression: MICROSECOND(CAST(_._ AS DATETIME(_)))": 1,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP(_) is not supported on a local table": 3
       }
     },
@@ -13434,10 +13391,10 @@
       "file": "time_zone",
       "statements": 264,
       "counts": {
-        "exact": 58,
+        "exact": 60,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 2,
+        "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 39,
         "setup": 44,
@@ -13454,7 +13411,6 @@
         "DDL: Error: Invalid default value for _": 2,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 2,
         "PREPARED: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
-        "Error: unsupported expression: TO_SECONDS(_)": 2,
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 6
       }
     },
@@ -13929,7 +13885,7 @@
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 1,
         "PREPARED: Error: Unknown prepared statement handler (stmt1)": 1,
         "Error: numeric expression overflow": 1,
-        "Error: unsupported expression: format(truncate(_, -_), _, _)": 1,
+        "Error: Incorrect parameter count in the call to native function _": 1,
         "INSERT: Error: Incorrect value _ for column _: expected a number": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: SIGNED at Line: ": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ( at Line: _, Co": 2,
@@ -14088,10 +14044,10 @@
       "file": "type_temporal_fractional",
       "statements": 1195,
       "counts": {
-        "exact": 155,
+        "exact": 157,
         "mismatch": 1,
         "name-mismatch": 0,
-        "pintail-error": 2,
+        "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 91,
         "setup": 627,
@@ -14107,9 +14063,7 @@
         "INSERT: Error: only literal values are supported in INSERT, got _": 4,
         "INSERT: Error: Incorrect value _ for column _: expected a time": 3,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP(_) is not supported on a local table": 1,
-        "DDL: Error: sql parser error: Expected: end of statement, found: PARTITION at Line: _, Column: ": 2,
-        "Error: unsupported expression: MICROSECOND(a)": 1,
-        "Error: unsupported expression: MICROSECOND(CAST(_._ AS TIME(_)))": 1
+        "DDL: Error: sql parser error: Expected: end of statement, found: PARTITION at Line: _, Column: ": 2
       }
     },
     {
@@ -14586,7 +14540,7 @@
         "Error: unsupported expression: coercibility(@a := _latin2 _)": 1,
         "Error: unsupported expression: collation(@a := _latin2 _ COLLATE latin2_bin)": 1,
         "Error: unsupported expression: coercibility(@a := _latin2 _ COLLATE latin2_bin)": 1,
-        "Error: unsupported expression: comparing text across collations latin2_bin, latin2_general": 1,
+        "Error: Illegal mix of collations (latin2_bin,EXPLICIT) and (latin2_general_ci,EXPLICIT) fo": 1,
         "Error: unsupported expression: coercibility(@v)": 1,
         "Error: unsupported expression: coercibility(@v1)": 1,
         "Error: unsupported expression: @v := @v := sum(_)": 1,
