@@ -2316,6 +2316,40 @@ impl AggregateState {
     #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     pub(super) fn finish(self, memory: &MemoryTracker) -> Result<Value, ExecError> {
         let decimal_total = self.decimal_total;
+        // A DISTINCT sum or average of doubles adds the distinct values in
+        // ascending order, whatever order the rows met them in: a double
+        // sum depends on its order, and this is the one `MySQL` adds in.
+        if let Some(DistinctSeen::Values(distinct)) = &self.seen
+            && matches!(
+                self.value,
+                AggregateValue::Sum(Some(Value::Float64(_))) | AggregateValue::Average { .. }
+            )
+        {
+            memory.reserve(distinct.len().saturating_mul(std::mem::size_of::<f64>()))?;
+            let mut ascending = distinct
+                .iter()
+                .map(|value| match value {
+                    Value::Float64(number) => Some(number.get()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(ascending) = &mut ascending
+                && !ascending.is_empty()
+            {
+                ascending.sort_unstable_by(f64::total_cmp);
+                let total = ascending.iter().sum::<f64>();
+                if !total.is_finite() {
+                    return Err(ExecError::NumericOverflow);
+                }
+                #[allow(clippy::cast_precision_loss)]
+                return Ok(match self.value {
+                    AggregateValue::Average { .. } => {
+                        Value::float64(total / ascending.len() as f64)
+                    }
+                    _ => Value::float64(total),
+                });
+            }
+        }
         Ok(match self.value {
             AggregateValue::Count(count) => Value::UInt64(count),
             AggregateValue::JsonObjectAgg { members } if members.is_empty() => Value::Null,

@@ -583,6 +583,7 @@ pub fn cases() -> Vec<OracleCase> {
         OracleCase { sql_mode: "", family: "boundary composition", sql: "SELECT SUM(a.u), COUNT(*) FROM bounds a JOIN bounds b ON b.id = a.id".into(), ordered: true },
         OracleCase { sql_mode: "", family: "boundary composition", sql: "SELECT SUM(DISTINCT u), SUM(DISTINCT n) FROM bounds WHERE id <> 1".into(), ordered: true },
         OracleCase { sql_mode: "", family: "boundary composition", sql: "SELECT SUM(t.s) FROM (SELECT id % 2 AS k, SUM(u) AS s FROM bounds GROUP BY k) t".into(), ordered: true },
+        OracleCase { sql_mode: "", family: "boundary composition", sql: "SELECT SUM(DISTINCT approx), AVG(DISTINCT approx) FROM bounds".into(), ordered: true },
         OracleCase { sql_mode: "", family: "boundary result transport", sql: "SELECT NULL, 'NULL', '', X'00', X'FF', X'FE'".into(), ordered: true },
         OracleCase { sql_mode: "", family: "boundary result transport", sql: "SELECT 'a\\tb', 'a\\nb', '__PINTAIL_CASE_1__'".into(), ordered: true },
         OracleCase { sql_mode: "", family: "boundary result transport", sql: "SELECT SUBSTRING('abc', -9)".into(), ordered: true },

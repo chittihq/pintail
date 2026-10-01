@@ -546,3 +546,43 @@ fn decimal_total(row: &[Value]) -> Option<i128> {
         .filter_map(|value| value.text()?.parse::<i128>().ok())
         .find(|total| *total > 100)
 }
+
+/// The distinct readings of the rows `keep` selects, added in ascending
+/// order: their sum and how many there are.
+fn distinct_reading_total(keep: impl Fn(u64) -> bool) -> (f64, usize) {
+    let mut distinct: Vec<f64> = (0..ROWS).filter(|id| keep(*id)).map(reading_of).collect();
+    distinct.sort_unstable_by(f64::total_cmp);
+    distinct.dedup_by(|left, right| left.to_bits() == right.to_bits());
+    (distinct.iter().sum(), distinct.len())
+}
+
+#[test]
+#[allow(clippy::cast_precision_loss)]
+fn a_distinct_double_sum_adds_its_values_in_ascending_order() {
+    let fixture = fixture();
+    let (total, count) = distinct_reading_total(|_| true);
+    let rows = run(
+        &fixture,
+        "SELECT SUM(DISTINCT reading), AVG(DISTINCT reading) FROM parts",
+    );
+    assert_eq!(double_of(&rows[0][0]).to_bits(), total.to_bits());
+    assert_eq!(
+        double_of(&rows[0][1]).to_bits(),
+        (total / count as f64).to_bits()
+    );
+    let grouped = run(
+        &fixture,
+        "SELECT crate, SUM(DISTINCT reading), AVG(DISTINCT reading) FROM parts \
+         GROUP BY crate ORDER BY crate",
+    );
+    assert_eq!(grouped.len(), usize::try_from(CRATES).expect("small"));
+    for (group, row) in (0..CRATES).zip(&grouped) {
+        let (total, count) = distinct_reading_total(|id| id % CRATES == group);
+        assert_eq!(double_of(&row[1]).to_bits(), total.to_bits(), "{group}");
+        assert_eq!(
+            double_of(&row[2]).to_bits(),
+            (total / count as f64).to_bits(),
+            "{group}"
+        );
+    }
+}

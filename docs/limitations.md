@@ -256,9 +256,8 @@ stays readable as a list of things to fix.
   can differ from it from the fifth decimal place on.
 - A double `SUM`, `AVG`, `STDDEV` or `VARIANCE` can differ from MySQL in its
   last digits where MySQL reads the rows in an order of its own:
-  `SUM(DISTINCT ...)` and `AVG(DISTINCT ...)` (MySQL adds the distinct
-  values in its own order), `WITH ROLLUP` and other groupings MySQL sorts
-  first, and a join MySQL reorders. A group spilled to disk under the
+  `WITH ROLLUP` and other groupings MySQL sorts first, and a join MySQL
+  reorders. A group spilled to disk under the
   memory ceiling is combined from its runs' partial results, not row by
   row.
 - A grace join partition that cannot be reduced by hashing replays its
