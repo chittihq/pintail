@@ -1364,6 +1364,9 @@ pub struct ProjectedScanStream {
     /// The scan predicates' value bounds, consulted against each direct
     /// block's stored extremes on the filter-first path.
     pub(super) value_bounds: Vec<segment::ColumnBounds>,
+    /// The scan predicates that read one text column each, asked of the
+    /// distinct values a direct block holds on the filter-first path.
+    pub(super) text_filters: Vec<segment::TextValueFilter>,
     /// Whether filter-first rounds judge every slice or a sample of them.
     pub(super) prewhere_sample: PrewhereSample,
 }
@@ -3396,6 +3399,10 @@ impl ProjectedScanStream {
     /// scan's value bounds cannot rule out, and how many blocks they rule
     /// out; `None` when no bound applies or none is ruled out.
     ///
+    /// A text predicate rules a block out when it accepts none of the
+    /// distinct values the block holds, and no NULL where the block has
+    /// one.
+    ///
     /// A block is ruled out when, for some bound, its stored extremes lie
     /// wholly outside the bound or every row of it is NULL (a NULL satisfies
     /// no range or equality comparison). Every bound comes from a top-level
@@ -3405,17 +3412,31 @@ impl ProjectedScanStream {
     /// Only the direct filter-first path asks: its rows are the segment's
     /// own, unshadowed by any other segment. An overlay's memtable rows are
     /// interleaved after the segment rows are chosen, whatever this skips.
+    #[allow(clippy::too_many_lines)]
     fn value_candidate_ranges(
         &self,
         segment: &segment::SegmentMeta,
         start: usize,
         end: usize,
     ) -> Result<Option<ValueCandidates>, StoreError> {
-        if self.value_bounds.is_empty() || start >= end {
+        if (self.value_bounds.is_empty() && self.text_filters.is_empty()) || start >= end {
             return Ok(None);
         }
-        let mut blocks: Option<std::sync::Arc<Vec<segment::BlockExtremes>>> = None;
+        // The blocks' row spans, from the first directory that answers, and
+        // whether each may still hold a row the predicates keep.
+        let mut spans: Option<Vec<(usize, usize)>> = None;
         let mut keep: Vec<bool> = Vec::new();
+        // Every column of a segment is cut at the same rows; a directory
+        // that disagrees proves nothing.
+        let mut aligned = |found: Vec<(usize, usize)>, keep: &mut Vec<bool>| -> bool {
+            if let Some(first) = &spans {
+                *first == found
+            } else {
+                *keep = vec![true; found.len()];
+                spans = Some(found);
+                true
+            }
+        };
         for bound in &self.value_bounds {
             if bound.lower.is_none() && bound.upper.is_none() {
                 continue;
@@ -3430,19 +3451,14 @@ impl ProjectedScanStream {
             else {
                 continue;
             };
-            if let Some(first) = &blocks {
-                // Every column of a segment is cut at the same rows; a
-                // directory that disagrees proves nothing.
-                if first.len() != extremes.len()
-                    || first
-                        .iter()
-                        .zip(extremes.iter())
-                        .any(|(left, right)| (left.start, left.end) != (right.start, right.end))
-                {
-                    return Ok(None);
-                }
-            } else {
-                keep = vec![true; extremes.len()];
+            if !aligned(
+                extremes
+                    .iter()
+                    .map(|block| (block.start, block.end))
+                    .collect(),
+                &mut keep,
+            ) {
+                return Ok(None);
             }
             for (flag, block) in keep.iter_mut().zip(extremes.iter()) {
                 let ruled_out = match block.range {
@@ -3456,18 +3472,55 @@ impl ProjectedScanStream {
                     *flag = false;
                 }
             }
-            if blocks.is_none() {
-                blocks = Some(extremes);
+        }
+        for filter in &self.text_filters {
+            let Some(held) = segment::block_text_values(
+                &self.snapshot.directory,
+                segment,
+                &self.snapshot.schema,
+                filter.column_id,
+            )?
+            else {
+                continue;
+            };
+            if !aligned(
+                held.blocks
+                    .iter()
+                    .map(|block| (block.start, block.end))
+                    .collect(),
+                &mut keep,
+            ) {
+                return Ok(None);
+            }
+            // The predicate is asked once per distinct value of the
+            // segment, never per block or row.
+            let mut admitted = [0_u64; 4];
+            for (position, value) in held.values.iter().enumerate() {
+                if (filter.admits)(Some(value)) {
+                    admitted[position / 64] |= 1 << (position % 64);
+                }
+            }
+            let admits_null = (filter.admits)(None);
+            for (flag, block) in keep.iter_mut().zip(held.blocks.iter()) {
+                let any = block
+                    .held
+                    .iter()
+                    .zip(&admitted)
+                    .any(|(held, admitted)| held & admitted != 0);
+                let null_passes = admits_null && block.nulls;
+                if !any && !null_passes {
+                    *flag = false;
+                }
             }
         }
-        let Some(blocks) = blocks else {
+        let Some(spans) = spans else {
             return Ok(None);
         };
         let mut candidates: Vec<std::ops::Range<usize>> = Vec::new();
         let mut skipped = 0_usize;
-        for (block, kept) in blocks.iter().zip(&keep) {
-            let lo = block.start.max(start);
-            let hi = block.end.min(end);
+        for ((block_start, block_end), kept) in spans.iter().zip(&keep) {
+            let lo = (*block_start).max(start);
+            let hi = (*block_end).min(end);
             if lo >= hi {
                 continue;
             }
@@ -3750,6 +3803,13 @@ impl ProjectedScanStream {
     pub fn sample_prewhere(&mut self, sample: bool) {
         self.prewhere_sample.on = sample;
         *self.prewhere_sample.resumed.get_mut() = false;
+    }
+
+    /// Sets the predicates that each read one text column, so the
+    /// filter-first path skips the direct blocks holding no value they
+    /// accept. Every one must be a top-level conjunct of the scan's filter.
+    pub fn set_text_filters(&mut self, filters: Vec<segment::TextValueFilter>) {
+        self.text_filters = filters;
     }
 
     /// Sets the side-index request (see

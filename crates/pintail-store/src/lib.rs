@@ -24,7 +24,7 @@ pub use publication::{
 };
 pub use segment::{
     BoundDomain, ColumnBounds, ColumnDecode, ColumnSma, NativeUnits, SegmentSmas, SmaExtremes,
-    SmaSum, sync_directory,
+    SmaSum, TextAdmits, TextValueFilter, sync_directory,
 };
 pub use sketch::DistinctSketch;
 pub use store::GroupedFoldSpan;

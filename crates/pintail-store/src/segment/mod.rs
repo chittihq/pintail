@@ -2912,6 +2912,263 @@ fn read_block_extremes(
     Ok(Some(blocks))
 }
 
+/// A scan predicate over one text column, as the store can ask it of a
+/// value without knowing the comparison: whether a row holding the value
+/// could pass. The executor answers under the column's own collation, so a
+/// block is skipped exactly when the filter above would reject every row
+/// of it.
+#[derive(Clone)]
+pub struct TextValueFilter {
+    /// Stable schema column id the predicate reads.
+    pub column_id: u32,
+    /// Whether a row holding this value (`None` for NULL) could pass.
+    pub admits: std::sync::Arc<TextAdmits>,
+}
+
+/// The question a [`TextValueFilter`] asks of one value.
+pub type TextAdmits = dyn Fn(Option<&str>) -> bool + Send + Sync;
+
+impl std::fmt::Debug for TextValueFilter {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TextValueFilter")
+            .field("column_id", &self.column_id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The most distinct values of one column of a segment a value directory
+/// holds; a column with more has none.
+const BLOCK_TEXT_VALUES: usize = 256;
+
+/// Which of a segment column's few distinct values each block holds.
+pub(crate) struct BlockTextValues {
+    /// The column's distinct values in the segment.
+    pub(crate) values: Vec<String>,
+    pub(crate) blocks: Vec<BlockTextSet>,
+}
+
+/// One block's rows and the values among them.
+pub(crate) struct BlockTextSet {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    /// Bit `n` set: some row holds `values[n]`.
+    pub(crate) held: [u64; BLOCK_TEXT_VALUES / 64],
+    /// Whether some row is NULL.
+    pub(crate) nulls: bool,
+}
+
+type TextValuesKey = (VerifiedKey, u32);
+type TextValuesSlot =
+    std::sync::Arc<std::sync::Mutex<Option<Option<std::sync::Arc<BlockTextValues>>>>>;
+
+#[derive(Default)]
+struct BlockTextValuesCache {
+    entries: HashMap<TextValuesKey, TextValuesSlot>,
+    bytes: usize,
+}
+
+fn block_text_values_cache() -> &'static std::sync::Mutex<BlockTextValuesCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<BlockTextValuesCache>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(BlockTextValuesCache::default()))
+}
+
+/// The distinct values each block of one text column of a segment holds,
+/// so a scan can skip the blocks holding none a predicate accepts: the
+/// value a filter names is usually one of a handful, and min/max bounds say
+/// nothing about text under a collation.
+///
+/// `None` when the column is absent from the segment, is not stored as
+/// text, or holds more than a few hundred distinct values. The directory
+/// is not stored: the first scan to ask reads the column once (a dictionary
+/// block gives up its values without building a row), and the answer is
+/// kept per segment identity and schema generation, as the block extremes
+/// are. A segment is immutable, so the answer cannot go stale.
+pub(crate) fn block_text_values(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+    column_id: u32,
+) -> Result<Option<std::sync::Arc<BlockTextValues>>, StoreError> {
+    const CACHE_BYTES: usize = 16 * 1024 * 1024;
+    let path = directory.join(&meta.file_name);
+    let Some(key) = verified_key(&path, meta, schema).map(|key| (key, column_id)) else {
+        return Ok(
+            read_block_text_values(directory, meta, schema, column_id)?.map(std::sync::Arc::new)
+        );
+    };
+    let slot = block_text_values_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entries
+        .entry(key.clone())
+        .or_default()
+        .clone();
+    let mut answer = slot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(found) = answer.as_ref() {
+        return Ok(found.clone());
+    }
+    // A failed read leaves the slot empty for the next scan to retry.
+    let values =
+        read_block_text_values(directory, meta, schema, column_id)?.map(std::sync::Arc::new);
+    *answer = Some(values.clone());
+    drop(answer);
+    let bytes = values.as_ref().map_or(0, |found| {
+        found.blocks.capacity() * size_of::<BlockTextSet>()
+            + found
+                .values
+                .iter()
+                .map(|value| value.len() + size_of::<String>())
+                .sum::<usize>()
+    }) + size_of::<TextValuesKey>()
+        + key.0.0.as_os_str().len();
+    let mut cache = block_text_values_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if cache.bytes.saturating_add(bytes) > CACHE_BYTES || cache.entries.len() > 16_384 {
+        // Readers holding a slot keep it; the map starts over.
+        cache.entries.clear();
+        cache.bytes = 0;
+    }
+    cache.bytes += bytes;
+    Ok(values)
+}
+
+#[allow(clippy::too_many_lines)]
+fn read_block_text_values(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+    column_id: u32,
+) -> Result<Option<BlockTextValues>, StoreError> {
+    let path = directory.join(&meta.file_name);
+    verify(directory, meta, schema)?;
+    let Some(schema_column) = schema
+        .columns()
+        .iter()
+        .find(|column| column.id() == column_id)
+    else {
+        return Ok(None);
+    };
+    if schema_column.data_type() != DataType::Utf8 {
+        return Ok(None);
+    }
+    let mut decoder = FileDecoder::open(&path)?;
+    let header = read_segment_columns_header(&path, &mut decoder, meta, schema)?;
+    let layout = projected_layout(&path, meta, schema, &mut decoder, &header)?;
+    let Some(column) = layout.iter().find(|column| column.id == column_id) else {
+        return Ok(None);
+    };
+    if column.logical_type != LogicalType::Utf8 {
+        return Ok(None);
+    }
+    let used = AtomicUsize::new(0);
+    let budget = ScanMemoryBudget::new(&used, usize::MAX);
+    let mut values: Vec<String> = Vec::new();
+    let mut index: HashMap<Vec<u8>, usize> = HashMap::new();
+    let mut blocks = Vec::with_capacity(column.blocks.len());
+    for block in &column.blocks {
+        decoder
+            .seek_to(block.offset)
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        let rows = block.end - block.start;
+        let mut builder = ColumnBuilder::new(LogicalType::Utf8, rows);
+        let read = read_file_block_utf8_into(
+            &path,
+            &mut decoder,
+            &budget,
+            Utf8Sink {
+                builder: &mut builder,
+                ranges: RangeCursor::new(vec![(0, rows)]),
+            },
+            rows,
+        )?;
+        if read.row_count != rows {
+            return Err(corrupt_here(
+                &path,
+                &decoder,
+                "column block row count mismatch",
+            ));
+        }
+        let mut set = BlockTextSet {
+            start: block.start,
+            end: block.end,
+            held: [0; BLOCK_TEXT_VALUES / 64],
+            nulls: false,
+        };
+        let mut hold = |bytes: &[u8], set: &mut BlockTextSet| -> bool {
+            let position = if let Some(position) = index.get(bytes) {
+                *position
+            } else {
+                let Ok(text) = std::str::from_utf8(bytes) else {
+                    return false;
+                };
+                if values.len() == BLOCK_TEXT_VALUES {
+                    return false;
+                }
+                values.push(text.to_owned());
+                index.insert(bytes.to_vec(), values.len() - 1);
+                values.len() - 1
+            };
+            set.held[position / 64] |= 1 << (position % 64);
+            true
+        };
+        match &builder {
+            ColumnBuilder::DictUtf8 {
+                dict_heap,
+                dict_offsets,
+                codes,
+                validity,
+            } => {
+                let mut carried = vec![false; dict_offsets.len() - 1];
+                match validity {
+                    Validity::AllValid(_) => {
+                        for code in codes {
+                            carried[*code as usize] = true;
+                        }
+                    }
+                    Validity::Bits(bits) => {
+                        for (code, valid) in codes.iter().zip(bits) {
+                            if *valid {
+                                carried[*code as usize] = true;
+                            } else {
+                                set.nulls = true;
+                            }
+                        }
+                    }
+                }
+                for (code, _) in carried.iter().enumerate().filter(|(_, carried)| **carried) {
+                    if !hold(
+                        &dict_heap[dict_offsets[code]..dict_offsets[code + 1]],
+                        &mut set,
+                    ) {
+                        return Ok(None);
+                    }
+                }
+            }
+            ColumnBuilder::Utf8 {
+                heap,
+                offsets,
+                validity,
+            } => {
+                for (row, valid) in validity.iter().enumerate() {
+                    if !valid {
+                        set.nulls = true;
+                    } else if !hold(&heap[offsets[row]..offsets[row + 1]], &mut set) {
+                        return Ok(None);
+                    }
+                }
+            }
+            _ => return Ok(None),
+        }
+        blocks.push(set);
+    }
+    Ok(Some(BlockTextValues { values, blocks }))
+}
+
 /// Packed columns produced by [`read_projected_columns`].
 pub(crate) struct ProjectedColumnFetch {
     pub(crate) columns: Vec<DecodedColumn>,

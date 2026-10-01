@@ -589,7 +589,12 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             // memtable overlaps be decoded directly with the superseded rows
             // masked by those columns, instead of merged row by row.
             stream.enable_memtable_overlay(&scan.table.key_column_ids);
-            let prewhere = build_prewhere_spec(scan, snapshot, self.collation);
+            let text_filters = text_value_filters(scan, snapshot, self.collation);
+            let prewhere =
+                build_prewhere_spec(scan, snapshot, self.collation, !text_filters.is_empty());
+            if prewhere.is_some() {
+                stream.set_text_filters(text_filters);
+            }
             pintail_store::side_index_note(|| {
                 format!(
                     "scan table={} predicates={} filter_first={} lookup={:?}",
@@ -2218,12 +2223,152 @@ fn narrow_first_predicates<'a>(
     }
 }
 
+/// Whether `expr` reads nothing but constants and the column `column_id`
+/// of the scanned table, through shapes whose answer depends on the
+/// column's value alone.
+fn reads_only_column(expr: &BoundExpr, scan: &Scan, column_id: u32) -> bool {
+    match &expr.kind {
+        BoundExprKind::Column(column) => {
+            !column.outer
+                && column.table_id == scan.table.table_id
+                && column.database_id == scan.table.database_id
+                && column.column_id == column_id
+        }
+        BoundExprKind::Literal(_) => true,
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => reads_only_column(expr, scan, column_id),
+        BoundExprKind::Binary { left, right, .. } => {
+            reads_only_column(left, scan, column_id) && reads_only_column(right, scan, column_id)
+        }
+        BoundExprKind::Scalar { args, .. } => args
+            .iter()
+            .all(|argument| reads_only_column(argument, scan, column_id)),
+        _ => false,
+    }
+}
+
+/// The scan's predicates that each read one text column, as questions the
+/// store can ask of a value: would a row holding it pass. A low-cardinality
+/// text column - a state, a kind - holds a handful of values per segment,
+/// so the store asks once per value and skips every block holding none
+/// that passes.
+///
+/// The answer is the predicate itself evaluated over the value under the
+/// plan's collation, so equality, lists, negation, patterns and functions
+/// of the column all decide blocks exactly as the filter decides rows. A
+/// predicate that cannot be evaluated that way admits every value.
+#[allow(clippy::too_many_lines)]
+fn text_value_filters(
+    scan: &Scan,
+    snapshot: &TableSnapshot,
+    collation: Collation,
+) -> Vec<pintail_store::TextValueFilter> {
+    let mut filters = Vec::new();
+    for predicate in &scan.predicates {
+        let mut ids = Vec::new();
+        collect_predicate_columns(predicate, &mut ids);
+        ids.sort_unstable();
+        ids.dedup();
+        let [column_id] = ids.as_slice() else {
+            continue;
+        };
+        if !reads_only_column(predicate, scan, *column_id)
+            || crate::optimizer::is_volatile(predicate)
+        {
+            continue;
+        }
+        let Some(column) = snapshot
+            .schema()
+            .columns()
+            .iter()
+            .find(|column| column.id() == *column_id)
+        else {
+            continue;
+        };
+        if column.data_type() != pintail_types::DataType::Utf8
+            || column.enum_labels().is_some()
+            || column.set_members().is_some()
+        {
+            continue;
+        }
+        let layout = [pintail_sql::BoundColumn {
+            database_id: scan.table.database_id,
+            table_id: scan.table.table_id,
+            column_id: *column_id,
+            relation_name: predicate_relation_name(predicate)
+                .unwrap_or_else(|| scan.table.table_name.clone()),
+            name: column.name().to_owned(),
+            data_type: column.data_type(),
+            nullable: column.is_nullable(),
+            collation: column.collation().map(str::to_owned),
+            enum_labels: None,
+            geometry: false,
+            timestamp: false,
+            binary_width: column.binary_width(),
+            bit_width: column.bit_width(),
+            float_decimals: column.float_decimals(),
+            outer: false,
+            using_shadowed: false,
+        }];
+        let Ok(compiled) = crate::expression::CompiledExpr::compile(predicate, &layout, collation)
+        else {
+            continue;
+        };
+        let answers = Mutex::new(std::collections::HashMap::<Option<String>, bool>::new());
+        let admits = move |value: Option<&str>| {
+            let key = value.map(str::to_owned);
+            if let Some(known) = answers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(&key)
+            {
+                return *known;
+            }
+            let passes = || -> Option<bool> {
+                let vector = crate::ColumnVector::new(
+                    pintail_types::DataType::Utf8,
+                    vec![key.clone().map_or(Value::Null, Value::Utf8)],
+                )
+                .ok()?;
+                let batch = RecordBatch::new(1, vec![vector]).ok()?;
+                // The filter's own kernels first, then the row evaluation
+                // the Filter operator falls back to for the rest.
+                let mask = match compiled.evaluate_filter_mask(&batch).ok()? {
+                    Some(mask) => Some(mask),
+                    None => compiled.evaluate_quiet_mask(&batch),
+                };
+                match mask {
+                    Some(mask) => Some(mask.count() > 0),
+                    None => {
+                        crate::expression::predicate_truth(&compiled.evaluate(&batch, 0).ok()?).ok()
+                    }
+                }
+            };
+            // An evaluation that fails or declines proves nothing: the
+            // value stays, and the filter above decides its rows.
+            let answer = passes().unwrap_or(true);
+            answers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(key, answer);
+            answer
+        };
+        filters.push(pintail_store::TextValueFilter {
+            column_id: *column_id,
+            admits: Arc::new(admits),
+        });
+    }
+    filters
+}
+
 /// Builds the filter-first spec for a scan: every predicate must reference
 /// only projected columns and compile against the predicate-subset layout.
 fn build_prewhere_spec(
     scan: &Scan,
     snapshot: &TableSnapshot,
     collation: Collation,
+    skips_by_value: bool,
 ) -> Option<PrewhereSpec> {
     if scan.predicates.is_empty() {
         return None;
@@ -2302,8 +2447,11 @@ fn build_prewhere_spec(
     // A scan that projects nothing beyond its predicate columns has nothing
     // to decode second - unless the side index can name its rows, when the
     // predicate columns themselves decode for those rows alone.
+    // Nor when a text predicate can rule whole blocks out by the values
+    // they hold: the filter-first read is where blocks are skipped.
+    let reads_selectively = exact_ranges || skips_by_value;
     if predicate_ids.len() >= scan.projected_column_ids.len()
-        && !exact_ranges
+        && !reads_selectively
         && !(pintail_store::side_index_enabled()
             && predicate_index_lookup(scan, snapshot, collation).is_some())
     {
