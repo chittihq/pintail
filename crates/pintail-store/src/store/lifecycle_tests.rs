@@ -1467,3 +1467,165 @@ mod resumed_copy {
         assert_eq!(files, 3, "the dropped copies are swept from disk");
     }
 }
+
+fn wide_schema() -> TableSchema {
+    TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "body", DataType::Utf8, false),
+        ],
+    )
+    .unwrap()
+}
+
+fn wide_row(id: u64, body: &str, version: u64, deleted: bool) -> StoredRow {
+    StoredRow::new(
+        PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap(),
+        vec![
+            pintail_types::Value::UInt64(id),
+            pintail_types::Value::Utf8(body.into()),
+        ],
+        version,
+        deleted,
+    )
+}
+
+fn segment_files(directory: &Path) -> usize {
+    std::fs::read_dir(directory)
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "ptseg")
+        })
+        .count()
+}
+
+/// One batch whose log record would pass the replay limit, and a process
+/// that dies before any flush. The record used to be written and then
+/// refused as corrupt by the next open, which made the table unopenable.
+#[test]
+fn a_batch_past_the_log_record_limit_survives_a_death_before_any_flush() {
+    let directory = tempfile::tempdir().unwrap();
+    let options = StoreOptions {
+        // Nothing here flushes by size: the batch must be recoverable from
+        // what the ingest itself made durable.
+        memtable_bytes: usize::MAX,
+        background_compaction: false,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), wide_schema(), options).unwrap();
+    table
+        .ingest_cdc(vec![wide_row(1_000, "before", 1, false)])
+        .unwrap();
+    let body = "x".repeat(1 << 20);
+    let rows = (1..=140_u64)
+        .map(|id| wide_row(id, &body, 2 + id, false))
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().map(StoredRow::estimated_bytes).sum::<usize>() > crate::wal::MAX_RECORD_LENGTH
+    );
+    table.ingest_cdc(rows).unwrap();
+    assert_eq!(table.snapshot().scan().unwrap().len(), 141);
+    // No flush, no checkpoint: the handle goes as it would under SIGKILL.
+    drop(table);
+
+    let reopened = TableStore::open(directory.path(), wide_schema(), options).unwrap();
+    assert_eq!(reopened.snapshot().scan().unwrap().len(), 141);
+    let log = std::fs::metadata(directory.path().join(WAL_FILE))
+        .unwrap()
+        .len();
+    assert!(
+        log < 1 << 20,
+        "the oversized batch went through the log: {log} bytes"
+    );
+}
+
+/// Staged pieces are invisible until published, vanish with the process
+/// that staged them, and are not published twice when a transaction whose
+/// publication survived a crash is replayed.
+#[test]
+fn staged_rows_are_all_or_nothing_and_a_replay_adds_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        compaction_fan_in: 64,
+        ..StoreOptions::default()
+    };
+    let transaction = || {
+        let mut rows = (1..=50_u64)
+            .map(|id| wide_row(id, "staged", 10 + id, false))
+            .collect::<Vec<_>>();
+        // The transaction rewrites one of its own rows and deletes another.
+        rows.push(wide_row(7, "rewritten", 70, false));
+        rows.push(wide_row(9, "", 71, true));
+        rows
+    };
+    let mut table = TableStore::open(directory.path(), wide_schema(), options).unwrap();
+    table
+        .ingest_cdc(vec![wide_row(9, "older", 1, false)])
+        .unwrap();
+    let (first, second) = {
+        let mut rows = transaction();
+        let second = rows.split_off(20);
+        (rows, second)
+    };
+    table.stage_cdc(first.clone()).unwrap();
+    assert!(table.has_staged());
+    assert_eq!(
+        table.snapshot().scan().unwrap().len(),
+        1,
+        "a staged piece is visible before its publication"
+    );
+    assert_eq!(
+        table.applied_version(),
+        1,
+        "a staged piece counted as applied before its publication"
+    );
+    // The process dies between two pieces of the transaction.
+    drop(table);
+
+    let mut table = TableStore::open(directory.path(), wide_schema(), options).unwrap();
+    assert!(!table.has_staged());
+    assert_eq!(table.snapshot().scan().unwrap().len(), 1);
+    assert_eq!(
+        table.applied_version(),
+        1,
+        "the replay of the transaction would be dropped as already applied"
+    );
+    assert_eq!(
+        segment_files(directory.path()),
+        1,
+        "the open left an unpublished piece behind"
+    );
+
+    table.stage_cdc(first.clone()).unwrap();
+    assert_eq!(table.applied_version(), 1);
+    table.stage_cdc(second.clone()).unwrap();
+    assert_eq!(table.publish_staged().unwrap(), 2);
+    assert_eq!(table.applied_version(), 71);
+    let visible = table.snapshot().scan().unwrap();
+    assert_eq!(visible.len(), 49, "fifty rows, one of them deleted");
+    assert!(
+        visible
+            .iter()
+            .any(|row| { row.values()[1] == pintail_types::Value::Utf8("rewritten".into()) })
+    );
+    let published = segment_files(directory.path());
+    drop(table);
+
+    // The crash came after the publication and before the checkpoint: the
+    // stream replays the same transaction, in the same pieces.
+    let mut table = TableStore::open(directory.path(), wide_schema(), options).unwrap();
+    assert_eq!(table.applied_version(), 71);
+    table.stage_cdc(first).unwrap();
+    table.stage_cdc(second).unwrap();
+    assert!(!table.has_staged(), "a replayed piece was staged again");
+    assert_eq!(table.publish_staged().unwrap(), 0);
+    assert_eq!(table.snapshot().scan().unwrap().len(), 49);
+    assert_eq!(segment_files(directory.path()), published);
+}

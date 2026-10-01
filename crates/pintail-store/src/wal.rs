@@ -17,7 +17,13 @@ const MAGIC: &[u8; 5] = b"PTWAL";
 const FORMAT_VERSION: u8 = 1;
 const HEADER_LENGTH: usize = MAGIC.len() + 1;
 const CHECKSUM_LENGTH: usize = size_of::<u64>();
-const MAX_RECORD_LENGTH: usize = 128 * 1024 * 1024;
+/// The longest record payload the writer puts in the log: recovery reads
+/// the log whole, so its records stay short. [`Wal::append_encoded`] writes
+/// nothing for a payload past this, and a table that owns its log stores
+/// such a batch as segments instead. Recovery itself replays any complete
+/// record whose checksum holds, including longer ones an earlier writer
+/// left.
+pub(crate) const MAX_RECORD_LENGTH: usize = 128 * 1024 * 1024;
 /// Reserved `table_id` marking a transaction-commit record; real tables
 /// never carry this id.
 const COMMIT_TABLE_SENTINEL: u64 = u64::MAX;
@@ -108,12 +114,28 @@ impl Wal {
         schema: &TableSchema,
         rows: &[StoredRow],
     ) -> Result<(), StoreError> {
+        let payload = encode_batch(sequence, table_id, schema, rows)?;
+        self.append_encoded(&payload)
+    }
+
+    /// Appends one record already encoded by [`encode_batch`].
+    ///
+    /// A payload past [`MAX_RECORD_LENGTH`] is refused before a byte of it
+    /// is written. The limit was once enforced on replay alone: the record
+    /// was accepted, and any restart that found it still in the log refused
+    /// the table as corrupt.
+    pub(crate) fn append_encoded(&mut self, payload: &[u8]) -> Result<(), StoreError> {
         pintail_failpoint::hit("store.wal.append")
             .map_err(|error| StoreError::io("append WAL record", error))?;
-        let payload = encode_batch(sequence, table_id, schema, rows)?;
+        if payload.len() > MAX_RECORD_LENGTH {
+            return Err(StoreError::FormatLimit(format!(
+                "a WAL record of {} bytes exceeds the {MAX_RECORD_LENGTH} the log replays",
+                payload.len()
+            )));
+        }
         let length = u32::try_from(payload.len())
             .map_err(|_| StoreError::FormatLimit("WAL record exceeds u32::MAX".into()))?;
-        let checksum = xxh3_64(&payload);
+        let checksum = xxh3_64(payload);
 
         let record_offset = self
             .file
@@ -127,14 +149,14 @@ impl Wal {
                     remaining,
                 },
                 length,
-                &payload,
+                payload,
                 checksum,
             )
         } else {
-            write_record(&mut self.file, length, &payload, checksum)
+            write_record(&mut self.file, length, payload, checksum)
         };
         #[cfg(not(test))]
-        let write_result = write_record(&mut self.file, length, &payload, checksum);
+        let write_result = write_record(&mut self.file, length, payload, checksum);
         if let Err(write_error) = write_result {
             self.rollback_failed_append(record_offset, &write_error)?;
             return Err(StoreError::io("append WAL record", write_error));
@@ -295,7 +317,7 @@ fn write_record(
     writer.write_all(&checksum.to_le_bytes())
 }
 
-fn encode_batch(
+pub(crate) fn encode_batch(
     sequence: u64,
     table_id: u64,
     schema: &TableSchema,
@@ -449,12 +471,10 @@ fn recover(file: &mut File, truncate_torn_tail: bool) -> Result<Recovery, StoreE
         if record_end > bytes.len() {
             break;
         }
-        if length > MAX_RECORD_LENGTH {
-            return Err(StoreError::corrupt_wal(
-                record_offset,
-                format!("record length {length} exceeds limit"),
-            ));
-        }
+        // No limit on the length here. A complete record whose checksum
+        // holds is one a writer produced, and refusing the long ones left a
+        // table that had accepted such a batch unable to open again. The
+        // writer keeps its records short; recovery replays what it finds.
 
         let payload = &bytes[position..position + length];
         position += length;
@@ -590,6 +610,64 @@ mod tests {
         let (_, recovery) = Wal::open(&path, WalSync::Always).expect("recover retry");
         assert_eq!(recovery.batches.len(), 1);
         assert_eq!(recovery.batches[0].sequence, 1);
+    }
+
+    #[test]
+    fn a_complete_record_past_the_writers_limit_is_replayed() {
+        // What a writer without the limit left behind: one record of more
+        // than 128 MiB, complete and checksummed, then a torn one.
+        let schema = TableSchema::new(1, vec![Column::new(1, "value", DataType::Utf8, false)])
+            .expect("schema");
+        let long = encode_batch(
+            1,
+            7,
+            &schema,
+            &[row(&"x".repeat(super::MAX_RECORD_LENGTH + 1), 1)],
+        )
+        .expect("long payload");
+        let torn = encode_batch(2, 7, &schema, &[row("torn", 2)]).expect("torn payload");
+        let mut bytes = [MAGIC.as_slice(), &[FORMAT_VERSION]].concat();
+        append_complete(&mut bytes, &long);
+        let valid_length = bytes.len();
+        append_complete(&mut bytes, &torn);
+        bytes.truncate(bytes.len() - 5);
+
+        let mut file = tempfile::tempfile().expect("temporary WAL");
+        file.write_all(&bytes).expect("write simulated WAL");
+        let recovery = recover(&mut file, true).expect("the long record replays");
+        assert_eq!(recovery.batches.len(), 1);
+        assert_eq!(recovery.last_sequence, 1);
+        assert_eq!(
+            file.metadata().expect("WAL metadata").len(),
+            u64::try_from(valid_length).expect("valid length"),
+            "the torn tail after it is still cut off"
+        );
+    }
+
+    #[test]
+    fn a_record_past_the_limit_is_refused_before_it_is_written() {
+        let directory = tempfile::tempdir().expect("temporary WAL directory");
+        let path = directory.path().join("database.wal");
+        let schema = TableSchema::new(1, vec![Column::new(1, "value", DataType::Utf8, false)])
+            .expect("schema");
+        let (mut wal, _) = Wal::open(&path, WalSync::Always).expect("open WAL");
+        wal.append(1, 7, &schema, &[row("kept", 1)])
+            .expect("ordinary append");
+        let length = wal.file.metadata().expect("WAL metadata").len();
+        let oversized = row(&"x".repeat(super::MAX_RECORD_LENGTH + 1), 2);
+        let error = wal
+            .append(2, 7, &schema, &[oversized])
+            .expect_err("a record past the replay limit must be refused");
+        assert!(matches!(error, StoreError::FormatLimit(_)), "{error}");
+        assert_eq!(
+            wal.file.metadata().expect("WAL metadata").len(),
+            length,
+            "the refused record left bytes in the log"
+        );
+        drop(wal);
+
+        let (_, recovery) = Wal::open(&path, WalSync::Always).expect("the log still replays");
+        assert_eq!(recovery.batches.len(), 1);
     }
 
     fn append_complete(bytes: &mut Vec<u8>, payload: &[u8]) {

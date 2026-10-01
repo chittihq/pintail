@@ -43,6 +43,15 @@ use crate::{
 };
 
 const WAL_FILE: &str = "table.wal";
+/// Row bytes past which one batch is stored as segments rather than through
+/// the log and the memtable. Both of those hold a batch whole, so a batch of
+/// any size cost its size in memory twice over, and one whose record passed
+/// the log's replay limit could not be recovered at all.
+const DIRECT_INGEST_BYTES: usize = 32 * 1024 * 1024;
+/// Row bytes one staged segment holds.
+const STAGED_SEGMENT_BYTES: usize = 32 * 1024 * 1024;
+/// Segment IDs set aside each time staging runs out of them.
+const STAGED_SEGMENT_IDS: u64 = 1024;
 
 #[derive(Clone, Copy)]
 enum AppendKeyPolicy {
@@ -451,6 +460,12 @@ pub struct TableStore {
     last_background_error: Option<String>,
     /// Set by whoever must not wait for this table's merges to finish.
     merge_yield: Arc<std::sync::atomic::AtomicBool>,
+    /// Segments written for a batch too large for the log and not yet
+    /// named by a manifest: no reader sees them, and an open that finds
+    /// them sweeps them as orphans.
+    staged: Vec<segment::SegmentMeta>,
+    /// Segment IDs reserved for staging and not yet used.
+    staged_ids: std::ops::Range<u64>,
 }
 
 /// One background size-tier merge in flight.
@@ -726,6 +741,8 @@ impl TableStore {
             background: None,
             last_background_error: None,
             merge_yield: Arc::default(),
+            staged: Vec::new(),
+            staged_ids: 0..0,
         })
     }
 
@@ -1005,23 +1022,7 @@ impl TableStore {
                         );
                     }
                 }
-                AppendKeyPolicy::Preserve => {
-                    for row in &rows {
-                        let [KeyPart::UInt64(row_id)] = row.key().parts() else {
-                            return Err(StoreError::FormatLimit(
-                                "CDC append key must contain one UInt64 component".to_owned(),
-                            ));
-                        };
-                        if *row_id == 0 {
-                            return Err(StoreError::FormatLimit(
-                                "CDC append key must be non-zero".to_owned(),
-                            ));
-                        }
-                        self.next_append_row_id = self
-                            .next_append_row_id
-                            .max(row_id.checked_add(1).ok_or(StoreError::SequenceOverflow)?);
-                    }
-                }
+                AppendKeyPolicy::Preserve => self.preserve_append_keys(&rows)?,
             }
         }
 
@@ -1041,9 +1042,38 @@ impl TableStore {
             // segments, as a fold of one key range does.
             self.spawn_background_merge()?;
         }
+        // A table that owns its log can store a batch as segments instead.
+        // It does for one too large to hold twice in memory, and for one
+        // whose record the log would refuse to replay.
+        let direct = self.truncate_wal_on_flush && !self.options.transactional;
+        let payload = if direct
+            && rows
+                .iter()
+                .try_fold(0_usize, |bytes, row| {
+                    let bytes = bytes.saturating_add(row.estimated_bytes());
+                    (bytes <= DIRECT_INGEST_BYTES).then_some(bytes)
+                })
+                .is_none()
+        {
+            None
+        } else {
+            let payload = crate::wal::encode_batch(sequence, self.table_id, &self.schema, &rows)?;
+            (!direct || payload.len() <= crate::wal::MAX_RECORD_LENGTH).then_some(payload)
+        };
+        let Some(payload) = payload else {
+            let accepted_rows = rows.len();
+            self.stage_rows(rows)?;
+            self.publish_staged()?;
+            return Ok(IngestOutcome {
+                sequence: self.last_sequence,
+                accepted_rows,
+                visible_rows: accepted_rows,
+                should_flush: false,
+            });
+        };
         let _published = self.publication.publishing();
-        self.wal
-            .append(sequence, self.table_id, &self.schema, &rows)?;
+        self.wal.append_encoded(&payload)?;
+        drop(payload);
 
         let accepted_rows = rows.len();
         let visible_rows = rows
@@ -1064,6 +1094,236 @@ impl TableStore {
             visible_rows,
             should_flush,
         })
+    }
+
+    fn preserve_append_keys(&mut self, rows: &[StoredRow]) -> Result<(), StoreError> {
+        for row in rows {
+            let [KeyPart::UInt64(row_id)] = row.key().parts() else {
+                return Err(StoreError::FormatLimit(
+                    "CDC append key must contain one UInt64 component".to_owned(),
+                ));
+            };
+            if *row_id == 0 {
+                return Err(StoreError::FormatLimit(
+                    "CDC append key must be non-zero".to_owned(),
+                ));
+            }
+            self.next_append_row_id = self
+                .next_append_row_id
+                .max(row_id.checked_add(1).ok_or(StoreError::SequenceOverflow)?);
+        }
+        Ok(())
+    }
+
+    /// Writes part of one CDC batch as segments no reader sees yet.
+    ///
+    /// A source transaction larger than memory arrives here a bounded piece
+    /// at a time; [`Self::publish_staged`] then makes every piece visible in
+    /// one manifest swap, so a reader sees the whole transaction on this
+    /// table or none of it. Nothing staged survives a restart: the files are
+    /// named by no manifest, and the next open sweeps them. The rows must be
+    /// newer than everything the table holds, as a CDC batch's are; the
+    /// memtable is flushed before the first piece so that stays true of it.
+    ///
+    /// Like [`Self::ingest_cdc_in_order`], this drops a row at or below the
+    /// highest version the table has applied: a stream reading again what
+    /// the table already holds. Staging does not move that version. The
+    /// publication does, in the manifest swap that makes the pieces visible,
+    /// so the table has applied a staged transaction entirely or not at all
+    /// and a replay after a death in between stages every piece again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid rows or append keys, on a table that
+    /// shares its log or commits local transactions, or when a segment
+    /// cannot be written.
+    pub fn stage_cdc(&mut self, mut rows: Vec<StoredRow>) -> Result<(), StoreError> {
+        if !self.truncate_wal_on_flush || self.options.transactional {
+            return Err(StoreError::FormatLimit(
+                "staging requires a table that owns its log".to_owned(),
+            ));
+        }
+        let applied = self.applied_version();
+        rows.retain(|row| row.version() > applied);
+        for row in &rows {
+            self.schema.validate_row(row)?;
+        }
+        if self.schema.key_mode() == KeyMode::AppendRowId {
+            self.preserve_append_keys(&rows)?;
+        }
+        self.stage_rows(rows)
+    }
+
+    /// Whether pieces staged by [`Self::stage_cdc`] await publication.
+    #[must_use]
+    pub fn has_staged(&self) -> bool {
+        !self.staged.is_empty()
+    }
+
+    /// Removes everything staged and not published.
+    pub fn discard_staged(&mut self) {
+        for meta in self.staged.drain(..) {
+            // Best effort: a file left behind is an orphan the next open
+            // sweeps, and its ID is never handed out again.
+            let _ = std::fs::remove_file(self.directory.join(&meta.file_name));
+        }
+    }
+
+    fn stage_rows(&mut self, mut rows: Vec<StoredRow>) -> Result<(), StoreError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        if self.staged.is_empty() {
+            // Scans take the memtable's version of a key as the newest, so
+            // nothing older may stay there once newer rows sit in segments.
+            self.flush()?;
+        }
+        rows.sort_by(|left, right| {
+            left.key()
+                .cmp(right.key())
+                .then_with(|| left.version().cmp(&right.version()))
+        });
+        let mut piece: Vec<StoredRow> = Vec::new();
+        let mut piece_bytes = 0_usize;
+        for row in rows {
+            if let Some(previous) = piece.last_mut()
+                && previous.key() == row.key()
+            {
+                // Sorted by version within a key: the later one stands.
+                *previous = row;
+                continue;
+            }
+            if piece_bytes >= STAGED_SEGMENT_BYTES {
+                self.stage_segment(&piece)?;
+                piece.clear();
+                piece_bytes = 0;
+            }
+            piece_bytes = piece_bytes.saturating_add(row.estimated_bytes());
+            piece.push(row);
+        }
+        self.stage_segment(&piece)
+    }
+
+    fn stage_segment(&mut self, rows: &[StoredRow]) -> Result<(), StoreError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        if self.staged_ids.is_empty() {
+            // Reserved through a manifest publish, as a background merge
+            // reserves its own: a flush or a merge between here and the
+            // publication then never hands out an ID a staged file holds.
+            let base = self.manifest.next_segment_id;
+            let mut next_manifest = self.manifest.as_ref().clone();
+            next_manifest.generation = next_manifest
+                .generation
+                .checked_add(1)
+                .ok_or(StoreError::SequenceOverflow)?;
+            next_manifest.next_segment_id = base
+                .checked_add(STAGED_SEGMENT_IDS)
+                .ok_or(StoreError::SequenceOverflow)?;
+            let _published = self.publication.publishing();
+            manifest::publish(&self.directory, &next_manifest)?;
+            self.staged_ids = base..next_manifest.next_segment_id;
+            self.manifest = Arc::new(next_manifest);
+        }
+        let id = self.staged_ids.start;
+        self.staged_ids.start += 1;
+        let unique_keys = rows.iter().all(|row| !row.is_deleted());
+        let segment = segment::write(
+            &self.directory,
+            id,
+            &self.schema,
+            rows,
+            self.options.block_rows,
+            segment::Compression::AdaptiveLz4,
+            unique_keys,
+        )?;
+        self.staged.push(segment);
+        Ok(())
+    }
+
+    /// Publishes every staged piece in one manifest swap. Returns how many
+    /// segments joined the table.
+    ///
+    /// A piece whose bytes the table already holds is dropped rather than
+    /// published twice: that is the replay of a transaction whose first
+    /// publication a crash followed before the stream's checkpoint moved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the manifest cannot be published; the staged
+    /// pieces are discarded and nothing of them is visible.
+    pub fn publish_staged(&mut self) -> Result<usize, StoreError> {
+        if self.staged.is_empty() {
+            return Ok(0);
+        }
+        let staged = std::mem::take(&mut self.staged);
+        let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.generation = next_manifest
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.epoch = next_manifest
+            .epoch
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        // The highest version the table has applied moves with the pieces,
+        // in the same swap: before it none of them counts as applied, after
+        // it all of them do.
+        let applied = if self.options.transactional {
+            self.commit_version
+        } else {
+            staged
+                .iter()
+                .map(|segment| segment.max_version)
+                .fold(self.commit_version, u64::max)
+        };
+        next_manifest.committed_version = applied;
+        let mut repeated = Vec::new();
+        let mut published = 0;
+        for segment in staged {
+            let path = self.directory.join(&segment.file_name);
+            let mut held = false;
+            for meta in &self.manifest.segments {
+                if same_segment_span(meta, &segment)
+                    && same_file_contents(&self.directory.join(&meta.file_name), &path)?
+                {
+                    held = true;
+                    break;
+                }
+            }
+            if held {
+                repeated.push(path);
+            } else {
+                next_manifest.segments.push(segment);
+                published += 1;
+            }
+        }
+        if published > 0 {
+            let _published = self.publication.publishing();
+            if let Err(error) = manifest::publish(&self.directory, &next_manifest) {
+                for segment in next_manifest.segments.iter().rev().take(published) {
+                    let _ = std::fs::remove_file(self.directory.join(&segment.file_name));
+                }
+                return Err(error);
+            }
+            self.manifest = Arc::new(next_manifest);
+            self.commit_version = applied;
+        }
+        for path in repeated {
+            let _ = std::fs::remove_file(path);
+        }
+        // A flush adds one segment and takes one compaction step; this
+        // added several, and with merges running inline one step would
+        // leave the table a few segments further behind every time.
+        if !self.options.background_compaction {
+            for _ in 0..published {
+                self.advance_compaction()?;
+            }
+        }
+        self.advance_compaction()?;
+        self.reclaim_obsolete_segments()?;
+        Ok(published)
     }
 
     /// Synchronizes accepted WAL bytes under the checkpoint policy.
@@ -1347,6 +1607,13 @@ impl TableStore {
             row_count: rows.len(),
             segment_path,
         })
+    }
+
+    /// Row bytes held in memory and in the log, not yet in a segment: what
+    /// the next open of this table has to replay.
+    #[must_use]
+    pub fn unflushed_bytes(&self) -> usize {
+        self.memtable.estimated_bytes()
     }
 
     pub(crate) fn has_pending_rows(&self) -> bool {
