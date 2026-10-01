@@ -73,6 +73,16 @@ pub(super) enum TwoPassLane {
     Temporal { column: usize, data_type: DataType },
 }
 
+/// Most digits a decimal can declare and still have every value's scaled
+/// units fit the signed 64 bits a lane carries.
+const LANE_DECIMAL_DIGITS: u8 = 18;
+
+/// Whether every value of a decimal declared with `precision` digits has
+/// scaled units a lane can carry.
+fn units_fit_a_lane(precision: u8) -> bool {
+    precision <= LANE_DECIMAL_DIGITS
+}
+
 /// The text a temporal unit of `data_type` spells.
 fn temporal_unit_text(units: i128, data_type: DataType) -> Option<String> {
     let units = i64::try_from(units).ok()?;
@@ -197,11 +207,15 @@ pub(super) fn two_pass_lanes(
                             // SUM and exact AVG both ride the packed-units
                             // lane; the per-row apply branches on the
                             // aggregate function.
-                            DataType::Decimal { scale, .. }
+                            DataType::Decimal { precision, scale }
                                 if aggregate.function == AggregateFunction::Sum
                                     || decimal_average_scale(aggregate).is_some() =>
                             {
-                                Some(TwoPassLane::DecimalUnits {
+                                // The lane carries i64 units. A column
+                                // declared wider can hold a value that does
+                                // not fit them, and a lane has no way to
+                                // say so: the row would read as NULL.
+                                units_fit_a_lane(precision).then_some(TwoPassLane::DecimalUnits {
                                     column,
                                     scale,
                                     float_output: aggregate_uses_float(aggregate),
@@ -222,8 +236,11 @@ pub(super) fn two_pass_lanes(
                         return derived_temporal_units(batch, column)
                             .map(|_| TwoPassLane::Temporal { column, data_type });
                     }
-                    if let DataType::Decimal { scale, .. } = batch.column(column)?.data_type() {
-                        return Some(TwoPassLane::ExtremeDecimal { column, scale });
+                    if let DataType::Decimal { precision, scale } =
+                        batch.column(column)?.data_type()
+                    {
+                        return units_fit_a_lane(precision)
+                            .then_some(TwoPassLane::ExtremeDecimal { column, scale });
                     }
                     matches!(
                         storage,
@@ -1927,10 +1944,8 @@ fn two_pass_scatter_strings(
     };
     if let Some((codes, dict_values)) = strings.dictionary() {
         let readers = lane_readers(batch, lanes);
-        let translation = dict_values
-            .iter()
-            .map(|value| intern.intern(value.as_bytes(), memory))
-            .collect::<Result<Vec<_>, _>>()?;
+        let translation =
+            intern_carried_entries(batch, codes, validity, dict_values, intern, memory)?;
         for row in batch.selection().selected_rows() {
             let key_null = !validity.is_valid(row);
             let key_bits = if key_null {
@@ -2004,10 +2019,14 @@ fn string_key_reader<'a>(
     let reader = if let Some((codes, dict_values)) = strings.dictionary() {
         StringKeyReader::Dict {
             codes,
-            translation: dict_values
-                .iter()
-                .map(|value| intern.intern(value.as_bytes(), memory))
-                .collect::<Result<Vec<_>, _>>()?,
+            translation: intern_carried_entries(
+                batch,
+                codes,
+                validity,
+                dict_values,
+                intern,
+                memory,
+            )?,
         }
     } else {
         StringKeyReader::Plain {
@@ -2034,22 +2053,68 @@ fn prepare_text_translations(
         let vector = batch.column(*column).ok_or(ExecError::InvalidBatch(
             "grouping column is outside the input batch",
         ))?;
-        let Some((crate::batch::TypedValues::Utf8(strings), _)) = vector.typed() else {
+        let Some((crate::batch::TypedValues::Utf8(strings), validity)) = vector.typed() else {
             return Err(ExecError::InvalidBatch(
                 "string two-pass key column lost its typed projection",
             ));
         };
-        let Some((_, dict_values)) = strings.dictionary() else {
+        let Some((codes, dict_values)) = strings.dictionary() else {
             return Ok(None);
         };
-        prepared.push(
-            dict_values
-                .iter()
-                .map(|value| intern.intern(value.as_bytes(), memory))
-                .collect::<Result<Vec<_>, _>>()?,
-        );
+        prepared.push(intern_carried_entries(
+            batch,
+            codes,
+            validity,
+            dict_values,
+            intern,
+            memory,
+        )?);
     }
     Ok(Some(prepared))
+}
+
+/// The id of a dictionary code no selected row carries. No row reads it;
+/// one below the maximum so the dense tables' `id + 1` still has a value
+/// to reject.
+const NO_INTERN_ID: u64 = u64::MAX - 1;
+
+/// Interns the dictionary entries `batch`'s selected rows carry, in the
+/// order those rows first show them, and returns each code's id.
+///
+/// The intern keeps the first spelling it meets of every set the collation
+/// calls equal, and that spelling is the one the group displays. Interning
+/// the dictionary front to back let an entry no selected row carries - a
+/// row the filter dropped - name the group: `GROUP BY name` over rows
+/// holding only `Å` answered `A`, a spelling absent from the result's
+/// input. A code no selected row carries keeps [`NO_INTERN_ID`].
+fn intern_carried_entries(
+    batch: &RecordBatch,
+    codes: &[u32],
+    validity: &crate::array::ValidityMask,
+    dict_values: &[String],
+    intern: &mut StringIntern,
+    memory: &MemoryTracker,
+) -> Result<Vec<u64>, ExecError> {
+    let mut translation = vec![NO_INTERN_ID; dict_values.len()];
+    let mut missing = dict_values.len();
+    for row in batch.selection().selected_rows() {
+        if missing == 0 {
+            // Every entry has its id: the usual end, a few rows in.
+            break;
+        }
+        if !validity.is_valid(row) {
+            continue;
+        }
+        let code = usize::try_from(codes[row]).expect("dict code fits usize");
+        let slot = translation
+            .get_mut(code)
+            .ok_or(ExecError::InvalidBatch("dictionary code is out of bounds"))?;
+        if *slot == NO_INTERN_ID {
+            *slot = intern.intern(dict_values[code].as_bytes(), memory)?;
+            missing -= 1;
+        }
+    }
+    Ok(translation)
 }
 
 /// Scatters string keys from prepared (read-only) translations: no intern
