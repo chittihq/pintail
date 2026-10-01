@@ -416,6 +416,68 @@ fn interval_cases(push: &mut impl FnMut(&'static str, &'static str, String)) {
             ),
         );
     }
+    // Text read as a TIME: a date alone is a number read as HHMMSS, a date
+    // and time needs a space between the two to be one, a day count needs
+    // two characters after it, and whatever follows the time is dropped.
+    for text in [
+        "2024-00-15",
+        "2024-01-15",
+        "10:20:30abc",
+        "1 2",
+        "+10:20:30",
+        "2024-13-45",
+        "0000-00-00",
+        "2024-01-15T10:20:30",
+        "5 5",
+        "10:20:",
+        ":10:20",
+        "10::20",
+        "1 :2",
+        "10 20 30",
+        "10-20-30",
+        "1000-01-01",
+        "2024-01-15 10:20:30",
+        "2024-02-30 10:00:00",
+        "34 22:00:00",
+        "-1 02:03:04",
+        "839:00:00",
+        "00:60:00",
+        "1e3",
+    ] {
+        for sql_mode in [super::oracle_transport::DEFAULT_MODE, "ALLOW_INVALID_DATES"] {
+            push(
+                sql_mode,
+                "text read as a time",
+                format!(
+                    "SELECT TIME('{text}'), TIME_TO_SEC('{text}'),                      TIME_FORMAT('{text}', '%H:%i:%s'), TIMEDIFF('{text}', '01:00:00'),                      CAST('{text}' AS TIME), SUBTIME('01:00:00', '{text}')"
+                ),
+            );
+        }
+    }
+    // Under ALLOW_INVALID_DATES a day past its month's end converts as the
+    // day it runs into, with six fraction digits.
+    for sql_mode in [super::oracle_transport::DEFAULT_MODE, "ALLOW_INVALID_DATES"] {
+        push(
+            sql_mode,
+            "convert_tz of a day past its month",
+            "SELECT CONVERT_TZ('2024-02-30 10:00:00', '+00:00', '+05:30'),              CONVERT_TZ('2024-02-31', '+00:00', '+05:30'),              CONVERT_TZ('2024-04-31 23:59:59.5', '+00:00', '-08:00'),              CONVERT_TZ('2023-02-29 12:00:00', '+00:00', '+00:00'),              CONVERT_TZ('2024-00-15', '+00:00', '+05:30'),              CONVERT_TZ('2024-01-15 10:20:30', '+00:00', '+05:30')"
+                .to_owned(),
+        );
+    }
+    // A period is YYMM or YYYYMM; a fraction rounds and text is read by
+    // its digits.
+    push(
+        "",
+        "period arithmetic",
+        "SELECT PERIOD_ADD(202401, 1), PERIOD_ADD(2401, -13), PERIOD_ADD(6912, 1),          PERIOD_ADD(7001, 0), PERIOD_ADD(202401, 1.5), PERIOD_ADD(202401.6, 0),          PERIOD_ADD('202401', 25), PERIOD_ADD(202401, NULL), PERIOD_ADD(NULL, 1),          PERIOD_ADD(999912, 1), PERIOD_ADD(1, -1), PERIOD_DIFF(202401, 199912),          PERIOD_DIFF(2401, 7001), PERIOD_DIFF(6912, 7001), PERIOD_DIFF('2401', 202401),          PERIOD_DIFF(202401, NULL)"
+            .to_owned(),
+    );
+    push(
+        "",
+        "period arithmetic",
+        "SELECT id, PERIOD_ADD(202400 + id, id), PERIOD_DIFF(202400 + id, 199900 + id)          FROM bounds WHERE id BETWEEN 1 AND 12 ORDER BY id"
+            .to_owned(),
+    );
     // A TIME where a date is read is the statement's date at that time;
     // measured against CURDATE() the answer does not depend on the day.
     push(
