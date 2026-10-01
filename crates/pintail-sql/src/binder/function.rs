@@ -103,6 +103,23 @@ fn literal_text(value: &Value) -> Option<&str> {
     }
 }
 
+/// Whether `name` is a function the scalar match binds by its argument
+/// count. The names are read from the match itself - every arm of the form
+/// `"NAME" if ...` - so a function added there is known here.
+fn takes_counted_arguments(name: &str) -> bool {
+    static NAMES: std::sync::LazyLock<std::collections::BTreeSet<&'static str>> =
+        std::sync::LazyLock::new(|| {
+            include_str!("function.rs")
+                .lines()
+                .filter_map(|line| {
+                    let (name, guard) = line.trim_start().strip_prefix('"')?.split_once('"')?;
+                    guard.starts_with(" if ").then_some(name)
+                })
+                .collect()
+        });
+    NAMES.contains(name)
+}
+
 /// The fractional digits of a text literal that spells a TIME rather than a
 /// date or datetime, or None when the argument is anything else.
 pub(super) fn time_literal_precision(argument: &BoundExpr) -> Option<u8> {
@@ -744,6 +761,7 @@ pub(super) fn bind_scalar_function(
         "HOUR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Hour),
         "MINUTE" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Minute),
         "SECOND" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Second),
+        "MICROSECOND" if args.len() == 1 => ScalarFunction::ExtractMicros { leading: None },
         "DATE_FORMAT" if args.len() == 2 => ScalarFunction::DateFormat,
         "TIME_FORMAT" if args.len() == 2 => ScalarFunction::TimeFormat,
         "DATEDIFF" if args.len() == 2 => ScalarFunction::DateDiff,
@@ -762,6 +780,11 @@ pub(super) fn bind_scalar_function(
                 crate::CompoundUnit::from_function_name(name)
                     .ok_or_else(|| BindError::UnsupportedExpression(function.to_string()))?,
             )
+        }
+        // A function this match knows, called with a number of arguments
+        // none of its arms takes.
+        name if takes_counted_arguments(name) => {
+            return Err(BindError::ParameterCount(name.to_owned()));
         }
         _ => return Err(BindError::UnsupportedExpression(function.to_string())),
     };

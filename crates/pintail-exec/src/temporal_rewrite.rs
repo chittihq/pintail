@@ -213,6 +213,25 @@ pub(crate) fn rewrite_predicate(expr: BoundExpr) -> BoundExpr {
                 },
             }
         }
+        // `a <=> b` arrives as `COALESCE(a IS NULL AND b IS NULL OR a = b,
+        // FALSE)`: the equality inside is a comparison like any other.
+        BoundExprKind::Scalar {
+            function: ScalarFunction::Coalesce,
+            mut args,
+        } if args.len() == 2
+            && matches!(args[1].kind, BoundExprKind::Literal(Value::Boolean(false)))
+            && args[0].data_type == Some(DataType::Boolean) =>
+        {
+            let either = args.remove(0);
+            args.insert(0, rewrite_predicate(either));
+            BoundExpr {
+                kind: BoundExprKind::Scalar {
+                    function: ScalarFunction::Coalesce,
+                    args,
+                },
+                ..expr
+            }
+        }
         kind => {
             let expr = BoundExpr { kind, ..expr };
             let expr = rewrite_timestamp_constant(&expr).unwrap_or(expr);

@@ -929,8 +929,9 @@ pub(super) struct TextTime {
     pub seconds: u64,
     /// The fraction digits as written.
     pub fraction: String,
-    /// Whether the text was a full date and time, whose clock this is.
-    pub datetime: bool,
+    /// The year, month and day when the text was a full date and time,
+    /// whose clock this is. A month or day may be zero.
+    pub calendar: Option<[u32; 3]>,
 }
 
 /// Reads text as a TIME the way `MySQL` does.
@@ -956,73 +957,14 @@ pub(super) fn text_time_of(text: &str) -> Option<TextTime> {
             DatetimeText::Duration => {}
         }
     }
-    let bytes = body.as_bytes();
-    let end = bytes.len();
-    let is_digit = |at: usize| bytes.get(at).is_some_and(u8::is_ascii_digit);
-    let number = |position: &mut usize| -> Option<u64> {
-        let mut value = 0_u64;
-        while is_digit(*position) {
-            value = value
-                .checked_mul(10)?
-                .checked_add(u64::from(bytes[*position] - b'0'))?;
-            *position += 1;
-        }
-        u32::try_from(value).is_ok().then_some(value)
-    };
-    let mut position = 0;
-    let value = number(&mut position)?;
-    let end_of_number = position;
-    while bytes.get(position).is_some_and(u8::is_ascii_whitespace) {
-        position += 1;
-    }
-    // Days, hours, minutes, seconds.
-    let mut fields = [0_u64; 4];
-    let mut next = if end - position > 1 && position != end_of_number && is_digit(position) {
-        fields[0] = value;
-        1
-    } else if end - position > 1 && bytes[position] == b':' && is_digit(position + 1) {
-        fields[1] = value;
-        position += 1;
-        2
-    } else {
-        fields[1] = value / 10_000;
-        fields[2] = value / 100 % 100;
-        fields[3] = value % 100;
-        4
-    };
-    while next < 4 {
-        fields[next] = number(&mut position)?;
-        next += 1;
-        if next == 4 || end - position < 2 || bytes[position] != b':' || !is_digit(position + 1) {
-            break;
-        }
-        position += 1;
-    }
-    let mut fraction = String::new();
-    if bytes.get(position) == Some(&b'.') && is_digit(position + 1) {
-        position += 1;
-        while is_digit(position) {
-            fraction.push(char::from(bytes[position]));
-            position += 1;
-        }
-    } else if end - position == 1 && bytes[position] == b'.' {
-        position += 1;
-    }
-    let exponent = bytes
-        .get(position)
-        .is_some_and(|byte| byte.eq_ignore_ascii_case(&b'e'))
-        && (is_digit(position + 1)
-            || (matches!(bytes.get(position + 1), Some(b'+' | b'-')) && is_digit(position + 2)));
-    if exponent || position == 0 || fields[2] > 59 || fields[3] > 59 {
-        return None;
-    }
+    let duration = pintail_types::read_duration_text(body)?;
     Some(TextTime {
         negative,
-        hours: fields[0] * 24 + fields[1],
-        minutes: fields[2],
-        seconds: fields[3],
-        fraction,
-        datetime: false,
+        hours: duration.hours,
+        minutes: duration.minutes,
+        seconds: duration.seconds,
+        fraction: duration.fraction.to_owned(),
+        calendar: None,
     })
 }
 
@@ -1041,6 +983,11 @@ fn datetime_clock(body: &str) -> DatetimeText {
     let trimmed = body.trim_end();
     let whole = trimmed.split('.').next().unwrap_or(trimmed);
     let compact = whole.bytes().all(|byte| byte.is_ascii_digit());
+    // Fewer than twelve digits are a number read as HHMMSS, whatever
+    // follows the point.
+    if compact && whole.len() < 12 {
+        return DatetimeText::Duration;
+    }
     if !compact {
         // The date is three fields, and a space ends it.
         let Some((date, _)) = trimmed.split_once(|character: char| character.is_ascii_whitespace())
@@ -1052,29 +999,69 @@ fn datetime_clock(body: &str) -> DatetimeText {
             return DatetimeText::Duration;
         }
     }
-    let clock = |hours: u32, minutes: u32, seconds: u32, micros: u32| TextTime {
-        negative: false,
-        hours: u64::from(hours),
-        minutes: u64::from(minutes),
-        seconds: u64::from(seconds),
-        fraction: format!("{micros:06}"),
-        datetime: true,
+    let clock = |calendar: [u32; 3], hours: u32, minutes: u32, seconds: u32, micros: u32| {
+        DatetimeText::Clock(TextTime {
+            negative: false,
+            hours: u64::from(hours),
+            minutes: u64::from(minutes),
+            seconds: u64::from(seconds),
+            fraction: format!("{micros:06}"),
+            calendar: Some(calendar),
+        })
     };
     if let Ok(value) = parse_mysql_datetime(trimmed) {
-        return DatetimeText::Clock(clock(
+        return clock(
+            [
+                u32::try_from(value.year()).unwrap_or(0),
+                value.month(),
+                value.day(),
+            ],
             value.hour(),
             value.minute(),
             value.second(),
             value.and_utc().timestamp_subsec_micros(),
-        ));
+        );
     }
-    // A zero month or day still has its clock.
-    match stored_calendar(trimmed) {
-        Some([_, month, day, hour, minute, second, micros]) if month == 0 || day == 0 => {
-            DatetimeText::Clock(clock(hour, minute, second, micros))
-        }
-        _ => DatetimeText::NoCalendar,
+    // A zero month or day still has its clock, however much of the clock
+    // is written.
+    partial_calendar_clock(trimmed).map_or(
+        DatetimeText::NoCalendar,
+        |[year, month, day, hour, minute, second, micros]| {
+            clock([year, month, day], hour, minute, second, micros)
+        },
+    )
+}
+
+/// `YYYY-MM-DD H[:M[:S[.f]]]` with a zero month or day: its fields.
+fn partial_calendar_clock(text: &str) -> Option<[u32; 7]> {
+    let (date, time) = text.split_once(|character: char| character.is_ascii_whitespace())?;
+    let number = |field: &str| -> Option<u32> {
+        (!field.is_empty() && field.len() <= 4 && field.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| field.parse().ok())
+            .flatten()
+    };
+    let mut fields = date.split('-');
+    let (year, month, day) = (
+        number(fields.next()?)?,
+        number(fields.next()?)?,
+        number(fields.next()?)?,
+    );
+    if fields.next().is_some() || month > 12 || day > 31 || (month != 0 && day != 0) {
+        return None;
     }
+    let (clock, fraction) = time.trim().split_once('.').unwrap_or((time.trim(), ""));
+    if fraction.len() > 6 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let mut parts = clock.split(':');
+    let hour = number(parts.next()?)?;
+    let minute = parts.next().map_or(Some(0), number)?;
+    let second = parts.next().map_or(Some(0), number)?;
+    if parts.next().is_some() || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let micros = format!("{fraction:0<6}").parse().ok()?;
+    Some([year, month, day, hour, minute, second, micros])
 }
 
 /// The date and time `MySQL` reads from an integer given where a date is

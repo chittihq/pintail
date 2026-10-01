@@ -2547,6 +2547,15 @@ fn evaluate_eager_scalar_inner(
             temporal::extract_time(&values[0], leading, trailing).map(Value::Int64)
         }
         ScalarFunction::ExtractMicros { leading } => {
+            // The microseconds of text are those of the TIME it reads as.
+            if leading.is_none()
+                && let Value::Utf8(text) = &values[0]
+                && written_text(argument_types, 0)
+            {
+                return Ok(cast_text_time(text, 6)
+                    .and_then(|time| time.rsplit_once('.')?.1.parse::<i64>().ok())
+                    .map_or(Value::Null, Value::Int64));
+            }
             temporal::extract_micros(&values[0], leading).map(Value::Int64)
         }
         ScalarFunction::Spatial(function) => spatial::evaluate(function, values),
@@ -3755,6 +3764,14 @@ fn evaluate_eager_scalar_inner(
                         | DataType::UInt64
                 )
             );
+            // The hour, minute and second of text are those of the TIME it
+            // reads as.
+            if matches!(part, DatePart::Hour | DatePart::Minute | DatePart::Second)
+                && let Value::Utf8(text) = &values[0]
+                && written_text(argument_types, 0)
+            {
+                return Ok(text_clock_part(text, part));
+            }
             let part_value = match temporal::date_part_of(&values[0], integer, part) {
                 Ok(value) => value,
                 Err(error) => {
@@ -4173,61 +4190,7 @@ fn evaluate_eager_scalar_inner(
             Ok(Value::UInt64(mysql_yearweek(value, mode)))
         }
         ScalarFunction::PeriodAdd | ScalarFunction::PeriodDiff => {
-            // A period is YYMM or YYYYMM. Both arguments are read as
-            // integers; the unsigned 64-bit month count wraps as MySQL's does.
-            let name = if matches!(function, ScalarFunction::PeriodAdd) {
-                "period_add"
-            } else {
-                "period_diff"
-            };
-            let integer = |index: usize| {
-                let value = &values[index];
-                let argument_type = argument_types.get(index).copied().flatten();
-                // A fraction rounds; text is read by its integer prefix.
-                if let Some(rounded) = rounded_integer_operand(value, argument_type) {
-                    return mysql_i64(&rounded);
-                }
-                match value {
-                    // An unsigned value past the signed range reads as its
-                    // two's-complement negative, which is no period.
-                    Value::UInt64(number) => Ok(i64::from_ne_bytes(number.to_ne_bytes())),
-                    Value::Utf8(_) | Value::Binary(_) => {
-                        mysql_i64(&cast_scalar(value, Some(DataType::Int64))?)
-                    }
-                    other => mysql_i64(other),
-                }
-            };
-            let valid = |period: i64| period > 0 && (1..=12).contains(&(period % 100));
-            let months = |period: i64| {
-                let period = u64::try_from(period).unwrap_or(0);
-                let year = match period / 100 {
-                    year @ 0..=69 => year + 2000,
-                    year @ 70..=99 => year + 1900,
-                    year => year,
-                };
-                year.wrapping_mul(12).wrapping_add(period % 100).wrapping_sub(1)
-            };
-            let first = integer(0)?;
-            let second = integer(1)?;
-            if !valid(first) || (matches!(function, ScalarFunction::PeriodDiff) && !valid(second)) {
-                return Err(ExecError::WrongArguments(name));
-            }
-            if matches!(function, ScalarFunction::PeriodDiff) {
-                let difference = months(first).wrapping_sub(months(second));
-                return Ok(Value::Int64(i64::from_ne_bytes(difference.to_ne_bytes())));
-            }
-            let moved = months(first).wrapping_add(u64::from_ne_bytes(second.to_ne_bytes()));
-            let period = if moved == 0 {
-                0
-            } else {
-                let year = match moved / 12 {
-                    year @ 0..=69 => year + 2000,
-                    year @ 70..=99 => year + 1900,
-                    year => year,
-                };
-                year.wrapping_mul(100).wrapping_add(moved % 12 + 1)
-            };
-            Ok(Value::Int64(i64::from_ne_bytes(period.to_ne_bytes())))
+            period_arithmetic(function, values, argument_types)
         }
         ScalarFunction::TimeToSec => {
             let text = scalar_string(&values[0])?;
@@ -4278,6 +4241,12 @@ fn evaluate_eager_scalar_inner(
                 1
             };
             let total = left.micros + sign * right.micros;
+            // A TIME past the type's range is the range's end, whole.
+            let total = if left.datetime {
+                total
+            } else {
+                total.clamp(-MAX_TIME_MICROS, MAX_TIME_MICROS)
+            };
             let fsp = if matches!(
                 argument_types.first(),
                 Some(Some(DataType::Time64 { .. } | DataType::Date32 | DataType::DateTime64 { .. }))
@@ -5047,6 +5016,105 @@ fn datediff_date(text: &str, allow_invalid: bool) -> Result<chrono::NaiveDate, E
 /// 30th. `MySQL` computes with such a stored value as the day it runs into -
 /// March 1st - whatever the session's mode, while the same text written as
 /// a literal follows the mode and is usually refused.
+/// `PERIOD_ADD` and `PERIOD_DIFF`. A period is YYMM or YYYYMM. Both
+/// arguments are read as integers, and the unsigned 64-bit month count
+/// wraps as `MySQL`'s does.
+#[inline(never)]
+fn period_arithmetic(
+    function: ScalarFunction,
+    values: &[Value],
+    argument_types: &[Option<DataType>],
+) -> Result<Value, ExecError> {
+    // A period is YYMM or YYYYMM. Both arguments are read as
+    // integers; the unsigned 64-bit month count wraps as MySQL's does.
+    let name = if matches!(function, ScalarFunction::PeriodAdd) {
+        "period_add"
+    } else {
+        "period_diff"
+    };
+    let integer = |index: usize| {
+        let value = &values[index];
+        let argument_type = argument_types.get(index).copied().flatten();
+        // A fraction rounds; text is read by its integer prefix.
+        if let Some(rounded) = rounded_integer_operand(value, argument_type) {
+            return mysql_i64(&rounded);
+        }
+        match value {
+            // An unsigned value past the signed range reads as its
+            // two's-complement negative, which is no period.
+            Value::UInt64(number) => Ok(i64::from_ne_bytes(number.to_ne_bytes())),
+            Value::Utf8(_) | Value::Binary(_) => {
+                mysql_i64(&cast_scalar(value, Some(DataType::Int64))?)
+            }
+            other => mysql_i64(other),
+        }
+    };
+    let valid = |period: i64| period > 0 && (1..=12).contains(&(period % 100));
+    let months = |period: i64| {
+        let period = u64::try_from(period).unwrap_or(0);
+        let year = match period / 100 {
+            year @ 0..=69 => year + 2000,
+            year @ 70..=99 => year + 1900,
+            year => year,
+        };
+        year.wrapping_mul(12)
+            .wrapping_add(period % 100)
+            .wrapping_sub(1)
+    };
+    let first = integer(0)?;
+    let second = integer(1)?;
+    if !valid(first) || (matches!(function, ScalarFunction::PeriodDiff) && !valid(second)) {
+        return Err(ExecError::WrongArguments(name));
+    }
+    if matches!(function, ScalarFunction::PeriodDiff) {
+        let difference = months(first).wrapping_sub(months(second));
+        return Ok(Value::Int64(i64::from_ne_bytes(difference.to_ne_bytes())));
+    }
+    let moved = months(first).wrapping_add(u64::from_ne_bytes(second.to_ne_bytes()));
+    let period = if moved == 0 {
+        0
+    } else {
+        let year = match moved / 12 {
+            year @ 0..=69 => year + 2000,
+            year @ 70..=99 => year + 1900,
+            year => year,
+        };
+        year.wrapping_mul(100).wrapping_add(moved % 12 + 1)
+    };
+    Ok(Value::Int64(i64::from_ne_bytes(period.to_ne_bytes())))
+}
+
+/// The hour, minute or second of the TIME that text reads as; NULL when
+/// it reads as none.
+#[inline(never)]
+fn text_clock_part(text: &str, part: DatePart) -> Value {
+    // The fraction is dropped, not rounded.
+    let Some(time) = cast_text_time(text, 6) else {
+        return Value::Null;
+    };
+    let whole = time
+        .split_once('.')
+        .map_or(time.as_str(), |(whole, _)| whole);
+    let mut fields = whole.trim_start_matches('-').split(':');
+    let mut field = || fields.next().and_then(|field| field.parse::<i64>().ok());
+    let (hour, minute, second) = (field(), field(), field());
+    match part {
+        DatePart::Hour => hour,
+        DatePart::Minute => minute,
+        _ => second,
+    }
+    .map_or(Value::Null, Value::Int64)
+}
+
+/// Whether the argument is text as it was written or stored, not a
+/// temporal or a number rendered as text.
+fn written_text(argument_types: &[Option<DataType>], index: usize) -> bool {
+    matches!(
+        argument_types.get(index).copied().flatten(),
+        None | Some(DataType::Utf8 | DataType::Binary)
+    )
+}
+
 fn stored_temporal(argument_types: &[Option<DataType>], index: usize) -> bool {
     matches!(
         argument_types.get(index).copied().flatten(),
@@ -5876,22 +5944,40 @@ fn cast_decimal_integer(value: &Value, target: DataType) -> Result<Value, ExecEr
 /// and clamped to the type's range.
 fn cast_text_time(text: &str, fsp: u8) -> Option<String> {
     let time = temporal::text_time_of(text)?;
-    format_mysql_time(
+    let rendered = format_mysql_time(
         time.negative,
         time.hours,
         time.minutes,
         time.seconds,
         &time.fraction,
         fsp,
-    )
+    )?;
+    // A written minus sign survives a zero: `-0` is `-00:00:00`.
+    Some(if time.negative && !rendered.starts_with('-') {
+        format!("-{rendered}")
+    } else {
+        rendered
+    })
 }
 
 /// Text read as the TIME or DATETIME argument of `ADDTIME`, `SUBTIME` and
 /// `TIMEDIFF`.
 fn text_temporal_micros(text: &str) -> Option<TemporalMicros> {
     let time = temporal::text_time_of(text)?;
-    if time.datetime {
-        return parse_temporal_micros(text);
+    if let Some([year, month, day]) = time.calendar {
+        // A date and time counts from the day MySQL's day numbering gives
+        // it, which a zero month or day and the zero date all have.
+        let days = temporal::calc_daynr(year, month, day) - TO_DAYS_EPOCH_OFFSET;
+        let seconds = i128::from(days) * 86_400
+            + i128::from(time.hours * 3_600 + time.minutes * 60 + time.seconds);
+        let fsp = text.trim().rsplit_once('.').map_or(0, |(_, fraction)| {
+            u8::try_from(fraction.len().min(6)).unwrap_or(6)
+        });
+        return Some(TemporalMicros {
+            micros: seconds * 1_000_000 + i128::from(time.fraction.parse::<u32>().ok()?),
+            datetime: true,
+            fsp,
+        });
     }
     let fsp = u8::try_from(time.fraction.len().min(6)).unwrap_or(6);
     let rendered = format_mysql_time(

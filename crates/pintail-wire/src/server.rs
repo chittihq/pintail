@@ -3977,6 +3977,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
             SqlRejection::InvalidJsonPath => ErrorKind::ErInvalidJsonPath,
             SqlRejection::CharacterConversion => ErrorKind::ErCannotConvertString,
             SqlRejection::WrongArguments => ErrorKind::ErWrongArguments,
+            SqlRejection::ParameterCount => ErrorKind::ErWrongParamcountToNativeFct,
             SqlRejection::BinaryBitwiseLength => ErrorKind::ErInvalidBitwiseOperandsSize,
             SqlRejection::BinaryBitwiseAggregateWidth => {
                 ErrorKind::ErInvalidBitwiseAggregateOperandsSize
@@ -5252,6 +5253,7 @@ mod tests {
             (SqlRejection::AmbiguousColumn, 1052, *b"23000"),
             (SqlRejection::UngroupedColumn, 1055, *b"42000"),
             (SqlRejection::GroupFunctionMisplaced, 1111, *b"HY000"),
+            (SqlRejection::ParameterCount, 1582, *b"42000"),
             (SqlRejection::OutOfRange, 1690, *b"22003"),
         ];
         for (rejection, errno, sqlstate) in expectations {

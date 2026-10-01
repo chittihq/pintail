@@ -282,6 +282,9 @@ pub enum ErrorKind {
     ErWrongFieldWithGroup = 1055,
     /// 1690: numeric evaluation left the declared result type's range.
     ErDataOutOfRange = 1690,
+    /// 1582: a built-in function was called with the wrong number of
+    /// arguments.
+    ErWrongParamcountToNativeFct = 1582,
     /// 1111: a group function was used where no aggregation scope exists.
     ErInvalidGroupFuncUse = 1111,
     /// 1050: `CREATE TABLE` named a table that already exists.
@@ -335,6 +338,7 @@ impl ErrorKind {
             Self::ErAccessDeniedError | Self::ErDbaccessDeniedError => b"28000",
             Self::ErBadDbError
             | Self::ErParseError
+            | Self::ErWrongParamcountToNativeFct
             | Self::ErSyntaxError
             | Self::ErOptionPreventsStatement
             | Self::ErWrongFieldWithGroup

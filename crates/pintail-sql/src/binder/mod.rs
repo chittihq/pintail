@@ -1018,6 +1018,60 @@ impl<'catalog> Binder<'catalog> {
                 ensure_supported_text_collation(&[&item.expr])?;
             }
         }
+        // DISTINCT over a session-zone reading of a TIMESTAMP keeps one row
+        // per instant, as MySQL does: in the hour a zone repeats, two
+        // instants read as the same wall clock and are still two rows. The
+        // reading alone would merge them, so the query groups by its select
+        // list with the stored column in the reading's place. Under
+        // NO_ZERO_DATE or NO_ZERO_IN_DATE MySQL removes duplicates by the
+        // wall clock instead, which is what the reading does.
+        let mode = crate::session_parse_mode();
+        let by_instant = distinct
+            && !mode.no_zero_date
+            && !mode.no_zero_in_date
+            && group_by.is_empty()
+            && aggregates.is_empty()
+            && windows.is_empty()
+            && having.is_none()
+            && projection.iter().any(|item| {
+                item.expr
+                    .session_timestamp_source()
+                    .is_some_and(|source| matches!(source.kind, BoundExprKind::Column(_)))
+            })
+            && projection
+                .iter()
+                .all(|item| item.expr.data_type != Some(DataType::Json));
+        if by_instant {
+            for item in &mut projection {
+                let key = item.expr.clone().instant_key();
+                let index = group_by
+                    .iter()
+                    .position(|group| *group == key)
+                    .unwrap_or_else(|| {
+                        group_by.push(key.clone());
+                        group_by.len() - 1
+                    });
+                let reference = BoundExpr {
+                    kind: BoundExprKind::GroupKey(index),
+                    data_type: key.data_type,
+                    nullable: key.nullable,
+                };
+                if key == item.expr {
+                    item.expr = reference;
+                } else if let BoundExprKind::Scalar { args, .. } = &mut item.expr.kind {
+                    args[0] = reference;
+                }
+            }
+        }
+        let distinct = distinct && !by_instant;
+        // COUNT(DISTINCT) counts instants under the same modes.
+        if !mode.no_zero_date && !mode.no_zero_in_date {
+            for aggregate in &mut aggregates {
+                if aggregate.distinct && aggregate.function == AggregateFunction::Count {
+                    aggregate.expr = aggregate.expr.take().map(BoundExpr::instant_key);
+                }
+            }
+        }
         Ok(BoundQuery {
             // Overwritten by bind() once the whole query is known.
             text_collation: DEFAULT_TEXT_COLLATION,
@@ -2662,7 +2716,7 @@ impl<'catalog> Binder<'catalog> {
         table_name: String,
         relation_name: String,
         column_names: &[String],
-        input: BoundQuery,
+        mut input: BoundQuery,
     ) -> BoundTable {
         let table_id = self.next_derived_id.get();
         self.next_derived_id.set(table_id.saturating_sub(1));
@@ -2675,6 +2729,25 @@ impl<'catalog> Binder<'catalog> {
             .projection
             .len()
             .saturating_sub(input.hidden_sort_columns);
+        // A TIMESTAMP leaves a derived table as the instant it stores and
+        // is read in the session's zone by whoever selects it, so ordering,
+        // grouping and comparing outside still see instants. Branches of a
+        // set operation must agree on what they carry, and keep the reading.
+        let mut instants = vec![false; visible];
+        if input.union_all.is_empty() && input.set_ops.is_empty() && input.recursive.is_none() {
+            for (index, projection) in input.projection.iter_mut().take(visible).enumerate() {
+                let stored = projection.expr.session_timestamp_source().filter(|source| {
+                    matches!(
+                        source.kind,
+                        BoundExprKind::Column(_) | BoundExprKind::GroupKey(_)
+                    )
+                });
+                if let Some(stored) = stored.cloned() {
+                    projection.expr = stored;
+                    instants[index] = true;
+                }
+            }
+        }
         let columns = input
             .projection
             .iter()
@@ -2694,7 +2767,7 @@ impl<'catalog> Binder<'catalog> {
                 collation: input.result_collation(&projection.expr),
                 enum_labels: None,
                 geometry: false,
-                timestamp: false,
+                timestamp: instants[index],
                 binary_width: input.result_binary_width(&projection.expr),
                 bit_width: input.result_bit_width(&projection.expr),
                 float_decimals: projection.expr.numeric_decimals(&input.aggregates),
@@ -9102,6 +9175,9 @@ pub enum BindError {
     /// A group function appeared where no aggregation scope exists
     /// (WHERE, JOIN ON, or inside another aggregate's arguments).
     GroupFunctionMisplaced(String),
+    /// A built-in function was called with a number of arguments it does
+    /// not take; the function's name.
+    ParameterCount(String),
     /// GROUP BY and HAVING have an invalid combination.
     InvalidGrouping(String),
     /// A row filter does not have `MySQL` truth-value semantics.
@@ -9118,6 +9194,7 @@ pub enum BindError {
 }
 
 impl fmt::Display for BindError {
+    #[allow(clippy::too_many_lines)] // one arm per variant
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedStatement(value) => {
@@ -9200,6 +9277,10 @@ impl fmt::Display for BindError {
             Self::GroupFunctionMisplaced(expression) => {
                 write!(formatter, "invalid use of group function: {expression}")
             }
+            Self::ParameterCount(name) => write!(
+                formatter,
+                "Incorrect parameter count in the call to native function '{name}'"
+            ),
             Self::UngroupedColumn(column) => {
                 write!(
                     formatter,

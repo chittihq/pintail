@@ -212,6 +212,9 @@ pub enum SqlRejection {
     SubqueryRows,
     /// 3143: a JSON path expression does not parse.
     InvalidJsonPath,
+    /// 1582: a built-in function was called with the wrong number of
+    /// arguments.
+    ParameterCount,
     /// 1210: a function's arguments have no answer.
     WrongArguments,
     /// 3513: binary bitwise operands have unequal lengths.
@@ -1793,6 +1796,7 @@ fn query_bind_error(error: &pintail_sql::BindError) -> QueryError {
             SqlRejection::UngroupedColumn
         }
         BindError::GroupFunctionMisplaced(_) => SqlRejection::GroupFunctionMisplaced,
+        BindError::ParameterCount(_) => SqlRejection::ParameterCount,
         _ => return QueryError::Invalid(error.to_string()),
     };
     QueryError::Rejected {
