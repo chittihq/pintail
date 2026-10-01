@@ -3,7 +3,10 @@
 
 use std::{
     collections::{BTreeMap, VecDeque},
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 
 use pintail_types::{KeyPart, PrimaryKey, StoredRow};
@@ -1376,6 +1379,32 @@ pub struct ProjectedScanStream {
     /// The scan predicates' value bounds, consulted against each direct
     /// block's stored extremes on the filter-first path.
     pub(super) value_bounds: Vec<segment::ColumnBounds>,
+    /// Whether filter-first rounds judge every slice or a sample of them.
+    pub(super) prewhere_sample: PrewhereSample,
+}
+
+/// While a filter keeps nearly every row of the slices it judges, judging
+/// costs more than it saves: the predicate columns decode apart from the
+/// rest and the selector runs, to keep everything. A sampled scan sends one
+/// slice in [`Self::EVERY`] through the selector and decodes the others
+/// whole, as if it had none. The first sampled slice the selector restricts
+/// puts every later slice of the round back under it, so a table whose
+/// filter keeps all of one stretch and little of the next loses a few
+/// slices at the boundary and not the rest of the scan.
+#[derive(Debug, Default)]
+pub(super) struct PrewhereSample {
+    /// Set by the reader between rounds.
+    on: bool,
+    /// Slices offered so far, across rounds, so a scan reading one slice a
+    /// round samples as sparsely as a wide one.
+    turn: AtomicUsize,
+    /// A sampled slice of this round was restricted.
+    resumed: AtomicBool,
+}
+
+impl PrewhereSample {
+    /// While sampling, one slice in this many is judged.
+    const EVERY: usize = 8;
 }
 
 pub(super) struct MergedProjectedStream {
@@ -2846,6 +2875,36 @@ impl ProjectedScanStream {
         memory_limit: usize,
         prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
     ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
+        let sample = &self.prewhere_sample;
+        let Some((predicate_ids, select)) = prewhere.filter(|_| sample.on) else {
+            return self.decode_slice_judged(slice, memory_limit, prewhere);
+        };
+        if !sample.resumed.load(Ordering::Relaxed)
+            && !sample
+                .turn
+                .fetch_add(1, Ordering::Relaxed)
+                .is_multiple_of(PrewhereSample::EVERY)
+        {
+            // Unjudged: the slice decodes whole. An overlay still removes
+            // the rows the memtable supersedes; that mask is its own.
+            return self.decode_slice_judged(slice, memory_limit, None);
+        }
+        let select = |columns: &[DecodedColumn], row_count: usize| {
+            let kept = select(columns, row_count)?;
+            if kept.is_some() {
+                sample.resumed.store(true, Ordering::Relaxed);
+            }
+            Ok(kept)
+        };
+        self.decode_slice_judged(slice, memory_limit, Some((predicate_ids, &select)))
+    }
+
+    fn decode_slice_judged(
+        &self,
+        slice: &DirectSlice,
+        memory_limit: usize,
+        prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+    ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
         if self.overlay.is_some() {
             return self.decode_overlay_slice(slice, memory_limit, prewhere);
         }
@@ -3627,6 +3686,17 @@ impl ProjectedScanStream {
             prefiltered,
             column_decode,
         })
+    }
+
+    /// Chooses how the next filter-first rounds judge their slices: every
+    /// one (`false`, the default), or one in a few with the rest decoded
+    /// whole until a judged slice is restricted (`true`). A reader turns
+    /// sampling on after a round whose selector restricted nothing and off
+    /// after one that did; the answers are the same either way, since a
+    /// slice decoded whole is one the selector was allowed to keep whole.
+    pub fn sample_prewhere(&mut self, sample: bool) {
+        self.prewhere_sample.on = sample;
+        *self.prewhere_sample.resumed.get_mut() = false;
     }
 
     /// Sets the side-index request (see

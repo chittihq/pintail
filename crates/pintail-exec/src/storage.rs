@@ -1151,6 +1151,14 @@ struct SnapshotStream {
     grouped: Option<crate::execution::GroupedFoldInput>,
 }
 
+/// Why a judged chunk decodes whole.
+enum Unrestricted {
+    /// The predicates kept nearly every row.
+    Dense,
+    /// Nothing answered the predicates over the packed columns.
+    Unanswered,
+}
+
 /// Direct-segment slices a prefetch round asks for per scan thread.
 const SLICES_PER_SCAN_THREAD: usize = 4;
 /// Below this much remaining budget a prefetch round takes one slice.
@@ -1441,22 +1449,26 @@ impl BatchStream for SnapshotStream {
                 // a few hundred bytes with an empty group map.
                 let chunk_budget = (available_memory / 2).saturating_sub(batch_overhead);
                 let (chunks, abandon_prewhere) = if let Some(spec) = &self.prewhere {
-                    let unproductive = AtomicUsize::new(0);
-                    let productive = AtomicUsize::new(0);
+                    let judged = AtomicUsize::new(0);
+                    let dense = AtomicUsize::new(0);
+                    let unanswered = AtomicUsize::new(0);
                     let exact_ranges =
                         spec.predicate_ids.len() > 1 && spec.predicate_ids == stream.column_ids();
                     let select = |columns: &[DecodedColumn], row_count: usize| {
-                        let ranges = prewhere_ranges(spec, columns, row_count, exact_ranges);
-                        match &ranges {
-                            Ok(None) => {
-                                unproductive.fetch_add(1, Ordering::Relaxed);
-                            }
-                            Ok(Some(_)) => {
-                                productive.fetch_add(1, Ordering::Relaxed);
-                            }
-                            Err(_) => {}
-                        }
-                        ranges
+                        judged.fetch_add(1, Ordering::Relaxed);
+                        Ok(
+                            match prewhere_ranges(spec, columns, row_count, exact_ranges)? {
+                                Ok(ranges) => Some(ranges),
+                                Err(Unrestricted::Dense) => {
+                                    dense.fetch_add(1, Ordering::Relaxed);
+                                    None
+                                }
+                                Err(Unrestricted::Unanswered) => {
+                                    unanswered.fetch_add(1, Ordering::Relaxed);
+                                    None
+                                }
+                            },
+                        )
                     };
                     let chunks = stream
                         .next_column_chunks_filtered(
@@ -1466,14 +1478,28 @@ impl BatchStream for SnapshotStream {
                             &select,
                         )
                         .map_err(|error| ExecError::Source(error.to_string()))?;
-                    // A written segment's slice is judged twice, its rows
-                    // and the changed rows over them, so the round proves
-                    // the predicate useless only when no judgement kept
-                    // less than everything.
-                    let abandon = !chunks.is_empty()
-                        && productive.load(Ordering::Relaxed) == 0
-                        && unproductive.load(Ordering::Relaxed) >= chunks.len();
-                    (chunks, abandon)
+                    let judged = judged.load(Ordering::Relaxed);
+                    let dense = dense.load(Ordering::Relaxed);
+                    let unanswered = unanswered.load(Ordering::Relaxed);
+                    if judged > 0 {
+                        // Every judged chunk kept nearly all of its rows
+                        // and no block was ruled out by its extremes: this
+                        // stretch of the table decodes whole. The share a
+                        // filter keeps belongs to the stretch, not to the
+                        // table, so one chunk in a few is still judged and
+                        // the selection returns where rows start failing.
+                        // A side-index lookup names its rows before any
+                        // chunk is judged and is never sampled.
+                        let skipped = chunks
+                            .iter()
+                            .any(|chunk| chunk.stats().blocks_value_skipped() > 0);
+                        stream.sample_prewhere(
+                            dense + unanswered == judged
+                                && !skipped
+                                && stream.index_lookup().is_none(),
+                        );
+                    }
+                    (chunks, judged > 0 && unanswered == judged)
                 } else {
                     (
                         stream
@@ -1483,9 +1509,14 @@ impl BatchStream for SnapshotStream {
                     )
                 };
                 if abandon_prewhere {
-                    // Once a complete prefetch proves the predicate cannot
-                    // skip useful ranges, probing later segments only repeats
-                    // the decode and comparison work before the full scan.
+                    // No judged chunk's predicates could be answered over
+                    // the packed columns at all. That is a property of the
+                    // predicates, not of the rows, so later segments would
+                    // only repeat it. A round that kept nearly every row
+                    // says nothing of the next one and does not end here:
+                    // a table whose early segments all pass a filter and
+                    // whose recent ones mostly fail it used to decode the
+                    // recent ones whole for the sake of the early ones.
                     self.prewhere = None;
                 }
                 if chunks.is_empty() {
@@ -2719,8 +2750,8 @@ fn runtime_mask(
 }
 
 /// Evaluates the compiled predicates over one chunk's predicate columns and
-/// returns the surviving row ranges exactly, or `None` when the chunk
-/// cannot or need not be restricted.
+/// returns the surviving row ranges exactly, or why the chunk cannot or
+/// need not be restricted.
 ///
 /// The ranges are the mask's own runs, never merged across rejected rows.
 /// Merging runs less than a block apart used to turn any scattered filter
@@ -2735,7 +2766,7 @@ fn prewhere_ranges(
     columns: &[DecodedColumn],
     row_count: usize,
     exact_ranges: bool,
-) -> Result<Option<pintail_store::PrewhereRanges>, String> {
+) -> Result<Result<pintail_store::PrewhereRanges, Unrestricted>, String> {
     /// A chunk keeping at least this share of its rows (in percent)
     /// decodes whole: the selection would save almost nothing.
     const DENSE_PERCENT: usize = 90;
@@ -2757,18 +2788,18 @@ fn prewhere_ranges(
         (mask, runtime) => mask.or(runtime),
     };
     let Some(mask) = combined else {
-        return Ok(None);
+        return Ok(Err(Unrestricted::Unanswered));
     };
     let selected = mask.count();
     if selected == 0 {
-        return Ok(Some(pintail_store::PrewhereRanges {
+        return Ok(Ok(pintail_store::PrewhereRanges {
             ranges: Vec::new(),
             exact: true,
             mask: None,
         }));
     }
     if selected.saturating_mul(100) >= row_count.saturating_mul(DENSE_PERCENT) {
-        return Ok(None);
+        return Ok(Err(Unrestricted::Dense));
     }
     let exact = spec.complete && !spec.predicates.is_empty() && predicates_applied;
     // Rows kept in runs of a row or two - a range filter on a column that
@@ -2776,7 +2807,7 @@ fn prewhere_ranges(
     // mask itself is a few thousand words, and a direct segment read
     // places the other columns from it.
     if mask.len() == row_count && mask.run_count() * MASK_RUN_WORDS > row_count.div_ceil(64) {
-        return Ok(Some(pintail_store::PrewhereRanges {
+        return Ok(Ok(pintail_store::PrewhereRanges {
             ranges: Vec::new(),
             exact,
             mask: Some(mask.into_words()),
@@ -2792,7 +2823,7 @@ fn prewhere_ranges(
             ranges.pop();
         }
     }
-    Ok(Some(pintail_store::PrewhereRanges {
+    Ok(Ok(pintail_store::PrewhereRanges {
         ranges,
         exact,
         mask: None,
@@ -5745,6 +5776,69 @@ mod tests {
         assert!(
             stats.blocks_decoded <= 40,
             "only the first eight-segment prefetch may pay the predicate probe; got {stats:?}"
+        );
+    }
+
+    #[test]
+    fn prewhere_selects_again_where_later_segments_reject_rows() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = schema();
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open table");
+        // The first half passes the filter whole; the second half keeps one
+        // row in a hundred.
+        for start in (1_u64..=64_000).step_by(1000) {
+            table
+                .bulk_ingest_snapshot(
+                    (start..start + 1000)
+                        .map(|key| {
+                            if key <= 32_000 || key.is_multiple_of(100) {
+                                row(key, &format!("value-{key}"))
+                            } else {
+                                row(key, "late")
+                            }
+                        })
+                        .collect(),
+                )
+                .expect("bulk snapshot segment");
+        }
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(17);
+        let entry = TableEntry::new(
+            table_id,
+            "events",
+            schema,
+            TableStatistics::with_row_count(64_000),
+        )
+        .expect("table entry");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database entry");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+
+        // Under a tight ceiling the scan reads one segment a round, so which
+        // segments are judged does not depend on the machine's width.
+        let values = execute_values_with_limit(
+            "SELECT id, name FROM events WHERE name != 'late'",
+            &catalog,
+            &provider,
+            32 * 1024 * 1024,
+        );
+        assert_eq!(values.len(), 32_000 + 320);
+        assert_eq!(values.first(), Some(&Value::UInt64(1)));
+        assert_eq!(values.last(), Some(&Value::UInt64(64_000)));
+
+        let stats = provider
+            .scan_stats(database_id, table_id)
+            .expect("physical scan stats");
+        assert_eq!(stats.segments_read, 64);
+        // Decoding every row of both columns is 128,000 values. The dense
+        // half decodes whole; of the sparse half only the segments up to
+        // the first judged one do.
+        assert!(
+            stats.values_decoded < 110_000,
+            "the sparse half must be read through the selection; got {stats:?}"
         );
     }
 

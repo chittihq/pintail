@@ -34,6 +34,7 @@ mod enum_empty_member;
 mod enum_ordinal;
 mod fanout_join_aggregates;
 mod few_groups_wide_distinct;
+mod filter_first_phases;
 mod filter_kernels;
 mod filter_once_cost;
 mod fused_join_lanes;
