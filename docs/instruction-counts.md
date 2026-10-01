@@ -82,16 +82,16 @@ at code placement, the branch predictor and the machine before the logic.
 
 ## How repeatable it is
 
-Three runs of one binary agree to within 0.1% on 14 of the 26 cases and
-within 0.31% on the rest, except the full-table count: it executes about
-160,000 instructions, and the 1,600 that vary are 1% of it. Treat a
+Three runs of one binary agree to within 0.1% on 19 of the 26 cases and
+within 0.23% on the rest, except the full-table count: it executes about
+160,000 instructions, and the few hundred that vary are 0.3% of it. Treat a
 difference under half a percent as no difference. Three things move a
 count between runs of the same binary:
 
 - **Hash tables seeded at random.** The engine's `std` hash sets and maps
-  take a fresh seed per process, so the same keys probe differently. One
-  such set in the aggregate's choice of path accounted for the whole
-  spread of the case examined.
+  take a fresh seed per process, so the same keys probe differently. The
+  set the aggregate's choice of path counted keys in was one, and the
+  whole spread of the windowed cases; it has a fixed hasher now.
 - **Waiting threads.** A worker looks for work a few rounds before it
   sleeps, and how many rounds depends on when the other thread hands over.
   A few thousand instructions.
