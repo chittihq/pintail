@@ -123,6 +123,7 @@ mod subquery_scaling;
 mod temporal_predicate_rewrite;
 mod text_extreme_folds;
 mod text_grouping_scale;
+mod text_key_lookup;
 mod text_range_predicates;
 mod timestamp_session_zone;
 mod top_k_sort;
