@@ -116,7 +116,7 @@ fn valid_count(rows: &FoldRows<'_>, validity: &ValidityMask) -> u64 {
         rows.len()
     } else {
         match rows {
-            FoldRows::Span(span) => span.clone().filter(|row| validity.is_valid(*row)).count(),
+            FoldRows::Span(span) => validity.count_valid_in(span.clone()),
             FoldRows::Picked(picked) => picked
                 .iter()
                 .filter(|row| validity.is_valid(**row as usize))
@@ -140,10 +140,23 @@ fn for_valid<T: Copy>(
                 for (row, value) in span.clone().zip(&values[span.clone()]) {
                     each(row, *value);
                 }
-            } else {
-                for row in span.clone() {
-                    if validity.is_valid(row) {
+            } else if !span.is_empty() {
+                // A validity word at a time: a word with no NULL runs the
+                // plain loop over its rows, and any other visits its set
+                // bits, lowest first, so the rows still arrive in order.
+                for index in span.start / 64..=(span.end - 1) / 64 {
+                    let mut bits = validity.word_within(index, span);
+                    let base = index * 64;
+                    if bits == u64::MAX {
+                        for (offset, value) in values[base..base + 64].iter().enumerate() {
+                            each(base + offset, *value);
+                        }
+                        continue;
+                    }
+                    while bits != 0 {
+                        let row = base + bits.trailing_zeros() as usize;
                         each(row, values[row]);
+                        bits &= bits - 1;
                     }
                 }
             }

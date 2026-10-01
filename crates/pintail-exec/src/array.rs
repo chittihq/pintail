@@ -93,6 +93,35 @@ impl ValidityMask {
         }
     }
 
+    /// The validity word at `index` with only the bits of `rows` left set:
+    /// the valid rows of `rows` that fall in that word.
+    #[must_use]
+    pub(crate) fn word_within(&self, index: usize, rows: &std::ops::Range<usize>) -> u64 {
+        let base = index * 64;
+        let low = rows.start.saturating_sub(base).min(64);
+        let high = rows.end.saturating_sub(base).min(64);
+        if low >= high {
+            return 0;
+        }
+        let below_high = if high == 64 {
+            u64::MAX
+        } else {
+            (1_u64 << high) - 1
+        };
+        self.word(index) & below_high & !((1_u64 << low) - 1)
+    }
+
+    /// Count of valid rows among `rows`, a word at a time.
+    #[must_use]
+    pub(crate) fn count_valid_in(&self, rows: std::ops::Range<usize>) -> usize {
+        if self.words.is_none() || rows.is_empty() {
+            return rows.len();
+        }
+        (rows.start / 64..=(rows.end - 1) / 64)
+            .map(|index| self.word_within(index, &rows).count_ones() as usize)
+            .sum()
+    }
+
     /// Count of valid rows.
     #[must_use]
     pub fn count_valid(&self) -> usize {
