@@ -1934,3 +1934,42 @@ dispatch already gives the kernels their AVX2 copies. Re-measure once the
 batch-at-a-time scan and aggregation loops call these kernels. Moving the
 baseline to x86-64-v2, which adds `popcnt` and is near-universal, is the
 cheaper next step to measure then.
+
+**Build target, re-measured after the batched loops (2026-10-01): still
+generic.** The scan, filter and aggregation loops now run a batch at a
+time, so the same engine commit was built three ways - generic,
+`-C target-cpu=x86-64-v2` and `-C target-cpu=x86-64-v3` - and run on the
+20M-row engine track (result memo off) against one replica, each build in
+a container under the benchmark's limits (8 CPUs, 8 GB). Three rounds
+rotated which build went first; every query ran twice to warm and fifteen
+times measured per round, through the HTTP query endpoint. Every answer
+was identical across builds and rounds. The figures are the median and
+the minimum in ms over the 45 runs, and the server's CPU time per run in
+ms:
+
+| Query | generic | x86-64-v2 | x86-64-v3 |
+|---|---|---|---|
+| Q2 | 6.9 / 5.4 / 31 | 6.7 / 5.5 / 31 | 6.5 / 5.1 / 30 |
+| Q3 | 20.4 / 18.8 / 119 | 20.2 / 18.8 / 119 | 20.1 / 18.8 / 117 |
+| Q4 | 29.9 / 27.0 / 176 | 28.4 / 26.8 / 173 | 28.0 / 26.3 / 169 |
+| Q5 | 14.8 / 13.0 / 79 | 14.6 / 13.5 / 82 | 13.6 / 12.9 / 76 |
+| Q6 | 52.8 / 46.1 / 295 | 47.6 / 43.6 / 285 | 47.2 / 44.1 / 281 |
+| Q7 | 35.3 / 31.0 / 213 | 34.3 / 30.8 / 220 | 33.4 / 30.2 / 213 |
+| Q8 | 31.1 / 29.3 / 159 | 32.7 / 28.2 / 163 | 31.3 / 29.1 / 161 |
+
+Q6 is the one query that moves beyond the run-to-run spread: both wider
+targets take about 10% off its median and 4-5% off its minimum and CPU
+time. Q4 and Q5 gain 5-8% at the median under v3 and 1-3% at the minimum;
+Q2, Q3, Q7 and Q8 sit inside the spread at either target, and the Q6 loss
+the earlier v3 measurement showed is gone. v2 gives most of what v3 gives
+on Q6 and nothing measurable elsewhere. Neither is a reason to give up a
+binary that starts on any x86-64 machine: the kernels already dispatch to
+AVX2 at run time, and what is left for a wider baseline is a few percent
+on one query. The next thing worth measuring is the Q6 path itself
+(grouping by a high-cardinality key, then a top-k), to find which loop
+gains from `popcnt` or wider vectors and give that loop a dispatched
+kernel instead.
+
+The three binaries came from the pinned toolchain on the measuring box and
+ran in a plain base image, not the release image; the comparison is
+between targets, not against published release figures.
