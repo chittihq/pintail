@@ -26,6 +26,11 @@ fn schema() -> TableSchema {
 
 /// Rows and whether each output column still reports as a `TIMESTAMP`.
 fn run(sql: &str, zone: Option<&str>) -> (Vec<Vec<String>>, Vec<bool>) {
+    run_over(sql, zone, false)
+}
+
+/// [`run`], over a table that also holds a zero `TIMESTAMP` when `zero`.
+fn run_over(sql: &str, zone: Option<&str>, zero: bool) -> (Vec<Vec<String>>, Vec<bool>) {
     let directory = tempfile::tempdir().expect("directory");
     let mut store =
         TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("store");
@@ -45,8 +50,14 @@ fn run(sql: &str, zone: Option<&str>) -> (Vec<Vec<String>>, Vec<bool>) {
                     Some("2024-03-10 07:00:00"),
                 ),
                 (3, None, None),
+                (
+                    4,
+                    Some("0000-00-00 00:00:00.000000"),
+                    Some("0000-00-00 00:00:00"),
+                ),
             ]
             .into_iter()
+            .filter(|(id, _, _)| zero || *id != 4)
             .map(|(id, ts, dt)| {
                 StoredRow::new(
                     PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
@@ -152,5 +163,41 @@ fn a_timestamp_column_reads_in_the_session_time_zone() {
         let (rows, timestamps) = run("SELECT ts FROM t WHERE id = 1", zone);
         assert_eq!(rows, [["2024-03-10 06:59:59.500000"]], "{zone:?}");
         assert_eq!(timestamps, [true]);
+    }
+}
+
+/// A zero `TIMESTAMP` is no instant: `MySQL` shows it unchanged in every
+/// session zone, where a conversion has no calendar day to move.
+#[test]
+fn a_zero_timestamp_reads_as_zero_in_every_session_zone() {
+    for zone in [
+        None,
+        Some("+00:00"),
+        Some("+05:30"),
+        Some("-11:00"),
+        Some("+14:00"),
+        Some("America/New_York"),
+        Some("Europe/Berlin"),
+    ] {
+        assert_eq!(
+            run_over("SELECT ts, dt FROM t WHERE id = 4", zone, true).0,
+            [["0000-00-00 00:00:00.000000", "0000-00-00 00:00:00"]],
+            "{zone:?}"
+        );
+        assert_eq!(
+            run_over("SELECT COUNT(ts), MIN(ts) FROM t", zone, true).0,
+            [["3", "0000-00-00 00:00:00.000000"]],
+            "{zone:?}"
+        );
+        assert_eq!(
+            run_over("SELECT id FROM t WHERE ts IS NULL", zone, true).0,
+            [["3"]],
+            "{zone:?}"
+        );
+        assert_eq!(
+            run_over("SELECT id FROM t ORDER BY ts, id LIMIT 2", zone, true).0,
+            [["3"], ["4"]],
+            "{zone:?}"
+        );
     }
 }

@@ -4324,6 +4324,12 @@ fn evaluate_eager_scalar_inner(
                 return Ok(Value::Null);
             }
             let text = scalar_string(&values[0])?;
+            // The zero TIMESTAMP is no instant, and every session zone reads
+            // it as it is stored. Converted, it had no calendar day to move
+            // and came back NULL.
+            if text.starts_with("0000-00-00") {
+                return Ok(Value::Utf8(text));
+            }
             let zone = scalar_string(&values[1])?;
             Ok(convert_tz(&text, "+00:00", &zone).map_or(Value::Null, Value::Utf8))
         }
