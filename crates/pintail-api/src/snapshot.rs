@@ -37,6 +37,10 @@ use crate::{
 /// How often the supervisor retries the fresh copy a reset is waiting on.
 const RESET_RETRY_GAP: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// How long a finished copy keeps the job slot to catch up on the stream
+/// before leaving the rest to the replication cycle.
+const HANDOFF_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[derive(Deserialize)]
 pub(crate) struct SnapshotRequest {
     #[serde(default)]
@@ -818,6 +822,13 @@ async fn handoff_replication(
                 targets,
                 CdcOptions {
                     blocking: false,
+                    // The copy is done and the position is durable after
+                    // every commit; what is left of a long backlog is the
+                    // replication cycle's to apply. Unbounded, this ran for
+                    // as long as the source outran it, holding the job
+                    // slot as "a full snapshot" well after the last table
+                    // had been copied.
+                    max_duration: Some(HANDOFF_BUDGET),
                     new_table_root: Some(root),
                     new_table_includes,
                     new_table_excludes,
