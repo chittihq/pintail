@@ -6156,16 +6156,27 @@ fn build_local_fused_join_groups(
                 None
             }
         } else {
-            match normalized_join_key(left_key.evaluate(batch, row)?, key_mode)?
-                .and_then(|key| build.get(&key))
-            {
-                Some(matches) => {
-                    let indexes = plan.bucket(matches).ok_or(ExecError::InvalidPhysicalPlan(
-                        "probe matched a bucket outside the resolved group plan",
-                    ))?;
-                    Some((matches, indexes))
-                }
-                None => None,
+            let key = normalized_join_key(left_key.evaluate(batch, row)?, key_mode)?;
+            // A dense build's buckets are known by position, not by
+            // address, however the probe key was read. A key computed per
+            // row (`ON d.id = f.code % 40`) reached the address lookup,
+            // which a dense build never fills, and failed the query.
+            match key.as_ref().and_then(|key| build.dense_get(key)) {
+                Some((flat_index, matches)) => dense_group_indexes
+                    .get(flat_index)
+                    .copied()
+                    .flatten()
+                    .map(|indexes| (matches, indexes)),
+                None => match key.and_then(|key| build.get(&key)) {
+                    Some(matches) => {
+                        let indexes =
+                            plan.bucket(matches).ok_or(ExecError::InvalidPhysicalPlan(
+                                "probe matched a bucket outside the resolved group plan",
+                            ))?;
+                        Some((matches, indexes))
+                    }
+                    None => None,
+                },
             }
         };
         match (found, null_group) {

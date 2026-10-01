@@ -511,3 +511,18 @@ fn semi_and_anti_joins_count_what_the_keys_say() {
         assert_eq!(rows, vec![format!("UInt64({expected})")], "{sql}");
     }
 }
+
+/// A probe key computed per row reaches the dense build by position, as a
+/// plain column does: the build keeps no bucket addresses to look it up by.
+#[test]
+fn a_computed_probe_key_reaches_a_dense_build() {
+    let fixture = Fixture::new();
+    for key in ["f.dim_id + 0", "f.dim_id % 1000000"] {
+        agree(
+            &fixture,
+            "SELECT d.zone, COUNT(*), COUNT(f.amount), SUM(f.amount) FROM facts f",
+            &format!("JOIN dims d ON {key} = d.id"),
+            "GROUP BY d.zone ORDER BY d.zone",
+        );
+    }
+}
