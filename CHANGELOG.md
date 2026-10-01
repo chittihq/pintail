@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.7-rc2] - 2026-10-02
+
+Replication that survives very large transactions, kills and schema
+changes without recopying tables; tables with text or composite keys read
+in place after writes; correlated subqueries answered for a batch of rows
+at once; column-at-a-time aggregation across more shapes; closer MySQL
+parity for dates, times, sums and case mapping; and workspace and TLS
+hardening.
+
 ### Security
 
 - A node told to require TLS on the MySQL wire port (`PINTAIL_WIRE_REQUIRE_TLS`)
