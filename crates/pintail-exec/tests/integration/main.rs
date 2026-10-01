@@ -84,6 +84,7 @@ mod ordered_group_limit;
 mod ordinal_keys_under_writes;
 mod out_of_range_diagnostics;
 mod overlay_filter_model;
+mod packed_group_keys;
 mod packed_lane_folds;
 mod packed_predicate_kernels;
 mod pairs_fixture;

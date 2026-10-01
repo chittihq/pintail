@@ -4563,6 +4563,32 @@ fn build_buffered_hash_aggregate(
                 key_collations.first().copied().unwrap_or(collation),
             );
         }
+        // A composite key, or one sparse integer key, whose aggregates all
+        // reduce to exact totals: the key packs into fixed-width cells and
+        // the rows fold into per-partition tables with no merge after.
+        if let Some(columns) = direct_columns {
+            match super::packed_group::PackedGroupPlan::of(
+                columns,
+                aggregates,
+                &first_batch,
+                key_collations,
+            ) {
+                Ok(plan) => {
+                    return super::packed_group::build_packed_group_aggregate(
+                        input,
+                        first_batch,
+                        &plan,
+                        aggregates,
+                        memory,
+                        key_collations,
+                    );
+                }
+                Err(reason) => {
+                    super::ProfileNote::of(input)
+                        .set(&format!("packed-key fold declined: {reason}"));
+                }
+            }
+        }
         resumed.pending.push_back(first_batch);
     }
     if direct_eligible {
@@ -4912,13 +4938,13 @@ fn build_buffered_hash_aggregate(
 /// The error and, when the failure struck *before* the entry touched the
 /// map, the entry itself so the caller can spill and retry it; `None`
 /// means a mid-merge failure that cannot be replayed.
-type MergeGroupFailure = (ExecError, Option<(Vec<Value>, AggregateGroup)>);
+pub(super) type MergeGroupFailure = (ExecError, Option<(Vec<Value>, AggregateGroup)>);
 
 /// Merges one partial group into the live map. A memory failure *before*
 /// the entry touches the map hands the entry back (`Some`) so the caller
 /// can spill and retry it; a failure while merging states cannot be
 /// replayed and returns `None`.
-fn merge_partial_group(
+pub(super) fn merge_partial_group(
     groups: &mut HashMap<Vec<Value>, AggregateGroup>,
     key: Vec<Value>,
     partial_group: AggregateGroup,
@@ -6633,7 +6659,7 @@ fn build_local_dictionary_groups(
     Ok(Some(groups))
 }
 
-fn build_local_direct_groups(
+pub(super) fn build_local_direct_groups(
     morsel: &Morsel<'_>,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
@@ -6780,7 +6806,7 @@ fn build_local_expression_groups(
     Ok(groups)
 }
 
-fn finish_aggregate_groups(
+pub(super) fn finish_aggregate_groups(
     groups: impl ExactSizeIterator<Item = AggregateGroup>,
     memory: &MemoryTracker,
 ) -> Result<MaterializedRows, ExecError> {

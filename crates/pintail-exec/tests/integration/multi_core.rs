@@ -121,10 +121,13 @@ fn a_parallel_aggregate_keeps_several_cores_busy() {
             SnapshotScanProvider::new([(DatabaseId::new(1), TableId::new(1), &snapshot)])
                 .expect("provider");
         // A fresh constant each run, so no remembered answer can stand in
-        // for the execution being measured.
+        // for the execution being measured. The text MIN keeps the query on
+        // the morsel rounds this watches: without it the packed-key fold
+        // answers in a few milliseconds, too little work for a tick count
+        // to say anything on a busy host.
         let sql = format!(
-            "SELECT grp, status, COUNT(*) AS n, SUM(amount) AS total FROM facts \
-             WHERE amount >= {threshold} GROUP BY grp, status"
+            "SELECT grp, status, COUNT(*) AS n, SUM(amount) AS total, MIN(status) AS low \
+             FROM facts WHERE amount >= {threshold} GROUP BY grp, status"
         );
         let bound = Binder::new(&catalog, Some("app"))
             .bind(&parse_statement(&sql).expect("parse"))

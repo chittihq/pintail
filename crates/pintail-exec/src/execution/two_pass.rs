@@ -30,7 +30,7 @@ use crate::expression::CompiledExpr;
 use crate::{RecordBatch, expression::mysql_f64};
 
 /// Finished-row bytes a finalizing partition gathers before charging them.
-const FINALIZE_CHARGE_SLICE: usize = 256 << 10;
+pub(super) const FINALIZE_CHARGE_SLICE: usize = 256 << 10;
 
 /// Per-aggregate scatter payload for the two-pass partitioned aggregate.
 #[derive(Clone, Copy)]
@@ -79,7 +79,7 @@ const LANE_DECIMAL_DIGITS: u8 = 18;
 
 /// Whether every value of a decimal declared with `precision` digits has
 /// scaled units a lane can carry.
-fn units_fit_a_lane(precision: u8) -> bool {
+pub(super) fn units_fit_a_lane(precision: u8) -> bool {
     precision <= LANE_DECIMAL_DIGITS
 }
 
@@ -96,7 +96,7 @@ fn temporal_unit_text(units: i128, data_type: DataType) -> Option<String> {
 /// The packed units of a DATE or DATETIME column whose text is the units'
 /// own canonical spelling, which is what lets a lane or a key carry the
 /// units alone and format them back.
-fn derived_temporal_units(
+pub(super) fn derived_temporal_units(
     batch: &RecordBatch,
     column: usize,
 ) -> Option<(&[i64], &crate::array::ValidityMask)> {
@@ -145,7 +145,6 @@ fn decimal_units_at_scale(value: &Value, scale: u8) -> Option<i128> {
     }
 }
 
-#[allow(clippy::too_many_lines)] // one arm per aggregate kind
 pub(super) fn two_pass_lanes(
     aggregates: &[CompiledAggregate],
     batch: &RecordBatch,
@@ -154,6 +153,16 @@ pub(super) fn two_pass_lanes(
         // One mask bit per lane plus the key bit.
         return None;
     }
+    aggregate_lanes(aggregates, batch)
+}
+
+/// The lane of every aggregate, however many there are: the scatter's mask
+/// byte bounds [`two_pass_lanes`], not what a lane can carry.
+#[allow(clippy::too_many_lines)] // one arm per aggregate kind
+pub(super) fn aggregate_lanes(
+    aggregates: &[CompiledAggregate],
+    batch: &RecordBatch,
+) -> Option<Vec<TwoPassLane>> {
     aggregates
         .iter()
         .map(|aggregate| {
@@ -313,7 +322,7 @@ fn two_pass_key_bits(value: &Value) -> Option<(u64, bool)> {
     }
 }
 
-fn two_pass_key_value(bits: u64, null: bool, data_type: DataType) -> Value {
+pub(super) fn two_pass_key_value(bits: u64, null: bool, data_type: DataType) -> Value {
     if null {
         return Value::Null;
     }
@@ -368,7 +377,7 @@ type KeyMembers = [Option<std::sync::Arc<Vec<String>>>; 2];
 /// Two label tables rebuilt from observed ordinals, as one: every slot
 /// either batch filled. An unfilled slot is an empty string, so a filled
 /// one wins; where both filled a slot they hold the same label.
-fn merge_partial_labels(
+pub(super) fn merge_partial_labels(
     held: std::sync::Arc<Vec<String>>,
     seen: &std::sync::Arc<Vec<String>>,
 ) -> std::sync::Arc<Vec<String>> {
@@ -401,7 +410,17 @@ fn interned_key_value(
     labels: Option<&(std::sync::Arc<Vec<String>>, bool)>,
     members: Option<&std::sync::Arc<Vec<String>>>,
 ) -> Value {
-    let text = intern.values[usize::try_from(id).expect("intern id fits usize")].clone();
+    let text = &intern.values[usize::try_from(id).expect("intern id fits usize")];
+    labelled_text_value(text, labels, members)
+}
+
+/// A text group key as a value: an ENUM key with its declaration index and
+/// a SET key with its member bitmask, anything undeclared a plain string.
+pub(super) fn labelled_text_value(
+    text: &str,
+    labels: Option<&(std::sync::Arc<Vec<String>>, bool)>,
+    members: Option<&std::sync::Arc<Vec<String>>>,
+) -> Value {
     let ordinal = if let Some((labels, exhaustive)) = labels {
         // An empty label resolves only against a complete table: a gappy
         // reconstruction keeps unseen slots as empty strings, and neither
@@ -411,7 +430,7 @@ fn interned_key_value(
             .then(|| {
                 labels
                     .iter()
-                    .position(|declared| declared == &text)
+                    .position(|declared| declared.as_str() == text)
                     .and_then(|position| u64::try_from(position + 1).ok())
             })
             .flatten()
@@ -431,10 +450,10 @@ fn interned_key_value(
         None
     };
     ordinal.map_or_else(
-        || Value::Utf8(text.clone()),
+        || Value::Utf8(text.to_owned()),
         |index| Value::Enum {
             index,
-            label: text.clone(),
+            label: text.to_owned(),
         },
     )
 }
@@ -2446,7 +2465,10 @@ impl LaneReader<'_> {
     }
 }
 
-fn lane_readers<'a>(batch: &'a RecordBatch, lanes: &'a [TwoPassLane]) -> Vec<LaneReader<'a>> {
+pub(super) fn lane_readers<'a>(
+    batch: &'a RecordBatch,
+    lanes: &'a [TwoPassLane],
+) -> Vec<LaneReader<'a>> {
     use crate::batch::TypedValues;
     lanes
         .iter()
@@ -3065,6 +3087,15 @@ pub(super) struct ReadyColumns {
 }
 
 impl ReadyColumns {
+    /// Finished groups a fold built a column at a time.
+    pub(super) const fn from_columns(len: usize, columns: Vec<ReadyColumn>) -> Self {
+        Self {
+            len,
+            columns,
+            settled: None,
+        }
+    }
+
     /// A settled-memo entry's rows, served as the batches it keeps.
     pub(super) fn settled(entry: std::sync::Arc<SettledRows>) -> Self {
         Self {
@@ -3580,7 +3611,7 @@ pub(super) enum UnitText {
 /// can fail here, and no row it would refuse can be taken.
 const PACKED_AVERAGE_MAX_DIGITS: u8 = 19;
 
-fn packed_lane(lane: &TwoPassLane, aggregate: &CompiledAggregate) -> Option<PackedLane> {
+pub(super) fn packed_lane(lane: &TwoPassLane, aggregate: &CompiledAggregate) -> Option<PackedLane> {
     match *lane {
         TwoPassLane::CountStar => Some(PackedLane::Count),
         TwoPassLane::DecimalUnits {

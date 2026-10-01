@@ -16,6 +16,7 @@ mod memo;
 mod morsel;
 mod order;
 mod packed_fold;
+mod packed_group;
 mod points;
 mod small_group_fold;
 mod sort;
