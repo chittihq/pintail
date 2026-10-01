@@ -2504,6 +2504,25 @@ pub(crate) mod budget_serial {
     }
 }
 
+/// Whether a value of this type is held entirely in its own cell, with no
+/// text or bytes beside it.
+const fn holds_no_heap(data_type: DataType) -> bool {
+    matches!(
+        data_type,
+        DataType::Boolean
+            | DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64
+            | DataType::Float32
+            | DataType::Float64
+    )
+}
+
 fn aggregate_regex_memory_upper_bound(aggregate: &BoundAggregate) -> usize {
     aggregate
         .expr
@@ -5090,17 +5109,36 @@ impl PullOperator {
                     .iter()
                     .zip(&passthrough)
                     .filter(|(_, position)| position.is_none())
-                    .map(|((expression, _), _)| expression)
+                    .map(|(expression, _)| expression)
                     .collect::<Vec<_>>();
                 let batch_bytes = batch.estimated_bytes();
+                // An expression is evaluated a row at a time, and what one
+                // row's evaluation allocates is gone before the next row's
+                // begins: its working memory is the largest row's, once.
+                // What outlives the row is its result, a value per row
+                // counted below, plus that value's own text where the
+                // result is not a number. Adding every row's working
+                // memory together instead charged a checksum over twenty
+                // columns several kilobytes a row for a column of integers,
+                // and a batch of a hundred thousand rows asked for more
+                // than the whole ceiling.
                 let expression_memory = computed
                     .iter()
-                    .map(|expression| {
-                        batch
-                            .selection()
-                            .selected_rows()
-                            .map(|row| expression.allocation_upper_bound(&batch, row))
-                            .fold(0_usize, usize::saturating_add)
+                    .map(|(expression, data_type)| {
+                        let keeps_text = !data_type.is_some_and(holds_no_heap);
+                        let (working, kept) = batch.selection().selected_rows().fold(
+                            (0_usize, 0_usize),
+                            |(working, kept), row| {
+                                let bound = expression.allocation_upper_bound(&batch, row);
+                                let text = if keeps_text {
+                                    expression.result_text_upper_bound(&batch, row).min(bound)
+                                } else {
+                                    0
+                                };
+                                (working.max(bound), kept.saturating_add(text))
+                            },
+                        );
+                        working.saturating_add(kept)
                     })
                     .fold(0_usize, usize::saturating_add);
                 let projected_memory = size_of::<RecordBatch>()

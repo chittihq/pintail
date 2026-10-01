@@ -134,6 +134,7 @@ mod ungrouped_column_fold;
 mod unit_key_lanes;
 mod wide_decimal_parity;
 mod wide_integer_comparison_typing;
+mod wide_row_checksum;
 mod window_frame_scaling;
 mod window_hidden_order;
 mod windowed_aggregate_bench;

@@ -1777,6 +1777,11 @@ impl CompiledExpr {
         }
     }
 
+    /// Upper bound on the text one row's result keeps once it is a value.
+    pub(crate) fn result_text_upper_bound(&self, batch: &RecordBatch, row: usize) -> usize {
+        self.string_value_upper_bound(batch, row)
+    }
+
     #[allow(clippy::too_many_lines)] // a flat per-function bound table reads best unsplit
     fn string_value_upper_bound(&self, batch: &RecordBatch, row: usize) -> usize {
         match self {
