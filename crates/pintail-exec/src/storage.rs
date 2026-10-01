@@ -1442,12 +1442,19 @@ impl BatchStream for SnapshotStream {
                 let chunk_budget = (available_memory / 2).saturating_sub(batch_overhead);
                 let (chunks, abandon_prewhere) = if let Some(spec) = &self.prewhere {
                     let unproductive = AtomicUsize::new(0);
+                    let productive = AtomicUsize::new(0);
                     let exact_ranges =
                         spec.predicate_ids.len() > 1 && spec.predicate_ids == stream.column_ids();
                     let select = |columns: &[DecodedColumn], row_count: usize| {
                         let ranges = prewhere_ranges(spec, columns, row_count, exact_ranges);
-                        if matches!(ranges, Ok(None)) {
-                            unproductive.fetch_add(1, Ordering::Relaxed);
+                        match &ranges {
+                            Ok(None) => {
+                                unproductive.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Ok(Some(_)) => {
+                                productive.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(_) => {}
                         }
                         ranges
                     };
@@ -1459,8 +1466,13 @@ impl BatchStream for SnapshotStream {
                             &select,
                         )
                         .map_err(|error| ExecError::Source(error.to_string()))?;
-                    let abandon =
-                        !chunks.is_empty() && unproductive.load(Ordering::Relaxed) == chunks.len();
+                    // A written segment's slice is judged twice, its rows
+                    // and the changed rows over them, so the round proves
+                    // the predicate useless only when no judgement kept
+                    // less than everything.
+                    let abandon = !chunks.is_empty()
+                        && productive.load(Ordering::Relaxed) == 0
+                        && unproductive.load(Ordering::Relaxed) >= chunks.len();
                     (chunks, abandon)
                 } else {
                     (

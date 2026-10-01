@@ -171,8 +171,11 @@ impl Fixture {
 
 const ROOMY: usize = 512 * 1024 * 1024;
 /// Enough for a build of the facts that match forty dimensions, not for a
-/// build of every fact.
-const TIGHT: usize = 24 * 1024 * 1024;
+/// build of every fact. The facts sit in the memtable, and a scan hands
+/// its rows up packed: every fact fits in 20 MiB (it took more than 24
+/// while they came as row values), so the ceiling that tells the two
+/// builds apart sits below that.
+const TIGHT: usize = 16 * 1024 * 1024;
 
 /// Facts pointing at dimensions of group 3, computed from the generators.
 fn expected_group_3() -> (u64, i64, u64) {

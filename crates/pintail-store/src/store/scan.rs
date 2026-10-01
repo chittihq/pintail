@@ -254,54 +254,127 @@ pub(super) enum ScanPart {
     },
 }
 
-/// Rows resolved to one per key, newest winning, in key order.
-pub(super) type LayerRows = Arc<BTreeMap<PrimaryKey, StoredRow>>;
+/// The rows an overlay reads, one per key in key order: a map resolved to
+/// one row per key, and optionally the memtable over it, read together with
+/// the greater version of a key winning.
+///
+/// A layered cluster's newer segments resolve to a map that stays true for
+/// as long as those files exist, so it is kept between scans; the memtable
+/// changes with every write, and copying its rows into that map made every
+/// scan open pay for both.
+#[derive(Clone)]
+pub(super) struct LayerRows {
+    resolved: Arc<BTreeMap<PrimaryKey, StoredRow>>,
+    over: Option<Arc<BTreeMap<PrimaryKey, StoredRow>>>,
+}
+
+impl LayerRows {
+    /// One map of rows already resolved to one per key.
+    pub(super) fn single(resolved: Arc<BTreeMap<PrimaryKey, StoredRow>>) -> Self {
+        Self {
+            resolved,
+            over: None,
+        }
+    }
+
+    /// `resolved` under the rows of `over`.
+    pub(super) fn under(
+        resolved: Arc<BTreeMap<PrimaryKey, StoredRow>>,
+        over: Arc<BTreeMap<PrimaryKey, StoredRow>>,
+    ) -> Self {
+        if resolved.is_empty() {
+            return Self::single(over);
+        }
+        Self {
+            resolved,
+            over: (!over.is_empty()).then_some(over),
+        }
+    }
+
+    /// Whether `other` reads the very same maps.
+    fn same_source(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.resolved, &other.resolved)
+            && match (&self.over, &other.over) {
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+
+    /// The rows of a searchable key range (see
+    /// [`bound_range_is_searchable`]), in key order.
+    pub(super) fn range(
+        &self,
+        bounds: (std::ops::Bound<PrimaryKey>, std::ops::Bound<PrimaryKey>),
+    ) -> LayerRange<'_> {
+        LayerRange {
+            over: self
+                .over
+                .as_ref()
+                .map(|over| over.range(bounds.clone()).peekable()),
+            resolved: self.resolved.range(bounds).peekable(),
+        }
+    }
+}
+
+type MapRange<'a> =
+    std::iter::Peekable<std::collections::btree_map::Range<'a, PrimaryKey, StoredRow>>;
+
+/// [`LayerRows::range`]'s iterator.
+pub(super) struct LayerRange<'a> {
+    resolved: MapRange<'a>,
+    over: Option<MapRange<'a>>,
+}
+
+impl<'a> Iterator for LayerRange<'a> {
+    type Item = (&'a PrimaryKey, &'a StoredRow);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let Some(over) = self.over.as_mut() else {
+            return self.resolved.next();
+        };
+        match (self.resolved.peek(), over.peek()) {
+            (Some((under_key, _)), Some((over_key, _))) => match under_key.cmp(over_key) {
+                std::cmp::Ordering::Less => self.resolved.next(),
+                std::cmp::Ordering::Greater => over.next(),
+                std::cmp::Ordering::Equal => {
+                    let under = self.resolved.next()?;
+                    let above = over.next()?;
+                    // The greater version wins, and the resolved row on a
+                    // tie, as when the two were resolved into one map.
+                    Some(if above.1.version() > under.1.version() {
+                        above
+                    } else {
+                        under
+                    })
+                }
+            },
+            (Some(_), None) => self.resolved.next(),
+            (None, _) => over.next(),
+        }
+    }
+}
 
 /// The overlay part in progress: the segment's block boundaries, so a slice
 /// knows the key span it covers and which memtable rows belong to it.
+///
+/// Consecutive overlay parts under the same rows are served as one, each
+/// segment with its own boundaries: a part per segment handed the decoders
+/// one segment's slices per round, so a table of small segments decoded a
+/// few slices wide however many threads were idle.
 pub(super) struct OverlayState {
-    sparse: Vec<(u64, PrimaryKey)>,
+    sparse: Vec<(String, Vec<(u64, PrimaryKey)>)>,
 }
 
-/// Whether `key` lies within the inclusive/exclusive bound pair.
-/// Row-major values as one column chunk, charged to `memory_limit`.
-fn values_chunk(
-    columns: Vec<Vec<pintail_types::Value>>,
-    row_count: usize,
-    memory_limit: usize,
-) -> Result<ProjectedColumnChunk, StoreError> {
-    let retained_bytes = size_of::<ProjectedColumnChunk>()
-        .saturating_add(
-            columns
-                .capacity()
-                .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
-        )
-        .saturating_add(
-            columns
-                .iter()
-                .map(|values| {
-                    values
-                        .capacity()
-                        .saturating_mul(size_of::<pintail_types::Value>())
-                        .saturating_add(values.iter().map(pintail_types::Value::heap_bytes).sum())
-                })
-                .sum(),
-        );
-    if retained_bytes > memory_limit {
-        return Err(StoreError::MemoryLimitExceeded {
-            used: 0,
-            requested: retained_bytes,
-            limit: memory_limit,
-        });
+impl OverlayState {
+    /// The block boundaries of `segment`; none for a segment not in the part.
+    fn sparse_of(&self, segment: &segment::SegmentMeta) -> &[(u64, PrimaryKey)] {
+        self.sparse
+            .iter()
+            .find(|(file_name, _)| *file_name == segment.file_name)
+            .map(|(_, sparse)| sparse.as_slice())
+            .unwrap_or_default()
     }
-    Ok(ProjectedColumnChunk {
-        prefiltered: false,
-        columns: columns.into_iter().map(DecodedColumn::Values).collect(),
-        row_count,
-        stats: ScanStats::default(),
-        retained_bytes,
-        column_decode: Vec::new(),
-    })
 }
 
 /// The integer at `row` of a decoded key column, whatever shape the decode
@@ -457,6 +530,45 @@ impl DecodedColumn {
             },
             Self::Values(values) => Self::Values(interleave_values(values, inserts)),
         }
+    }
+}
+
+/// A column of no rows in the packed shape a segment decodes `data_type`
+/// to, for rows that never reached a segment to be interleaved into
+/// ([`DecodedColumn::interleave`] keeps it packed while the values fit).
+fn empty_packed_column(data_type: pintail_types::DataType) -> DecodedColumn {
+    use pintail_types::DataType;
+    let validity = ColumnValidity::AllValid(0);
+    match data_type {
+        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
+            DecodedColumn::Int64 {
+                values: Vec::new(),
+                validity,
+            }
+        }
+        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
+            DecodedColumn::UInt64 {
+                values: Vec::new(),
+                validity,
+            }
+        }
+        DataType::Float64 => DecodedColumn::Float64 {
+            bits: Vec::new(),
+            validity,
+        },
+        DataType::Utf8 => DecodedColumn::Utf8 {
+            heap: Vec::new(),
+            offsets: vec![0],
+            validity,
+        },
+        other => match segment::NativeUnits::for_data_type(other) {
+            Some(units) => DecodedColumn::NativeUnits {
+                units,
+                values: Vec::new(),
+                validity,
+            },
+            None => DecodedColumn::Values(Vec::new()),
+        },
     }
 }
 
@@ -631,6 +743,58 @@ fn interleave_values(
     out
 }
 
+/// The memtable rows of one slice's key span, in key order: every key's
+/// integer parts side by side in one allocation (`parts` per row) and, for a
+/// live row, the row itself (a tombstone carries `None`: it only masks).
+///
+/// A key vector per row made a span of a hundred thousand changed rows a
+/// hundred thousand allocations before the first comparison.
+pub(super) struct SpanRows<'a> {
+    parts: usize,
+    keys: Vec<i128>,
+    rows: Vec<Option<&'a StoredRow>>,
+}
+
+impl<'a> SpanRows<'a> {
+    fn new(parts: usize) -> Self {
+        Self {
+            parts: parts.max(1),
+            keys: Vec::new(),
+            rows: Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    fn from_rows(rows: &[(Vec<i128>, Option<&'a StoredRow>)]) -> Self {
+        let mut span = Self::new(rows.first().map_or(1, |(key, _)| key.len()));
+        for (key, row) in rows {
+            span.keys.extend_from_slice(key);
+            span.rows.push(*row);
+        }
+        span
+    }
+
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    fn key(&self, index: usize) -> &[i128] {
+        &self.keys[index * self.parts..(index + 1) * self.parts]
+    }
+
+    fn is_live(&self, index: usize) -> bool {
+        self.rows[index].is_some()
+    }
+
+    fn live(&self) -> Vec<&'a StoredRow> {
+        self.rows.iter().filter_map(|row| *row).collect()
+    }
+}
+
 /// The integer key of `row` compared with a memtable key, part by part.
 fn compare_row_key(key_columns: &[&DecodedColumn], row: usize, key: &[i128]) -> std::cmp::Ordering {
     for (column, part) in key_columns.iter().zip(key) {
@@ -647,13 +811,29 @@ fn compare_row_key(key_columns: &[&DecodedColumn], row: usize, key: &[i128]) -> 
     std::cmp::Ordering::Equal
 }
 
-/// One walk over the slice's rows (sorted by key, one row per key) and the
-/// memtable's rows for the same span (sorted the same way): the positions
-/// of the segment rows a memtable key supersedes, and for each live memtable
-/// row its position in the output that interleaves it with the surviving
-/// rows, which are the kept rows not superseded before it plus the memtable
-/// rows placed before it.
-/// Rows the memtable supersedes, found by looking up each of its keys
+/// Where one live memtable row of a slice goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Placement {
+    /// Over the segment row it supersedes, at that row's index in the
+    /// decoded chunk: the chunk keeps its length and its other rows stay
+    /// where they are.
+    Replace(usize),
+    /// At this position of the finished chunk: a key the segment does not
+    /// hold, or one whose segment row the scan's filter had already dropped.
+    Insert(usize),
+}
+
+/// What the memtable's rows for a slice's span do to the chunk decoded for
+/// it (the segment rows the scan's filter kept, in key order).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct OverlayEdits {
+    /// Chunk rows a tombstone supersedes, ascending.
+    deletes: Vec<usize>,
+    /// One per live memtable row, in key order.
+    placements: Vec<Placement>,
+}
+
+/// The edits found by looking each memtable key up in the segment's keys
 /// rather than by walking the segment.
 ///
 /// The walk below costs the segment whatever changed, so a table that took
@@ -667,8 +847,8 @@ fn searched_overlay_positions(
     key_columns: &[&DecodedColumn],
     row_count: usize,
     kept: Option<&[std::ops::Range<usize>]>,
-    memtable: &[(Vec<i128>, Option<&StoredRow>)],
-) -> (Vec<usize>, Vec<usize>) {
+    memtable: &SpanRows<'_>,
+) -> OverlayEdits {
     // Kept rows before a position, from the ranges rather than by counting:
     // a prefix sum over the ranges answers it in a binary search.
     let prefix: Vec<usize> = kept
@@ -717,29 +897,27 @@ fn searched_overlay_positions(
         Err(low)
     };
 
-    let mut excluded = Vec::new();
-    let mut inserts = Vec::new();
-    // Excluded rows already passed that were kept: the walk never counts an
-    // excluded row as a survivor, so neither does this.
-    let mut excluded_kept = 0_usize;
-    for (key, row) in memtable {
-        // The walk counts survivors strictly before the row it is looking
-        // at, and never counts an excluded row, so this row's own exclusion
-        // is added only after its insert position is decided.
-        let (position, excludes_this_row) = match search(key) {
-            Ok(found) => {
-                excluded.push(found);
-                (found, usize::from(is_kept(found)))
-            }
-            Err(insertion) => (insertion, 0),
+    let mut edits = OverlayEdits::default();
+    let mut inserted = 0_usize;
+    for index in 0..memtable.len() {
+        let (position, superseded) = match search(memtable.key(index)) {
+            Ok(found) => (found, is_kept(found)),
+            Err(insertion) => (insertion, false),
         };
-        if row.is_some() {
-            let survivors_before = kept_before(position).saturating_sub(excluded_kept);
-            inserts.push(survivors_before + inserts.len());
+        let chunk_row = kept_before(position);
+        match (memtable.is_live(index), superseded) {
+            (true, true) => edits.placements.push(Placement::Replace(chunk_row)),
+            (true, false) => {
+                edits.placements.push(Placement::Insert(
+                    chunk_row.saturating_sub(edits.deletes.len()) + inserted,
+                ));
+                inserted += 1;
+            }
+            (false, true) => edits.deletes.push(chunk_row),
+            (false, false) => {}
         }
-        excluded_kept += excludes_this_row;
     }
-    (excluded, inserts)
+    edits
 }
 
 /// One row in two hundred: past this share of the segment, looking each
@@ -754,18 +932,62 @@ fn searched_overlay_positions(
 /// than where the two are level.
 const SEARCHED_OVERLAY_SHARE: usize = 200;
 
+/// The edits the memtable's rows for a slice's span make to the chunk
+/// decoded for it. `key_columns` hold the keys of the `row_count` segment
+/// rows the scan's filter judged (sorted, one row per key), `kept` the rows
+/// of those it kept (`None`: all), which are the chunk's rows in order, and
+/// `memtable` the span's rows sorted the same way.
+///
+/// A live memtable row whose key a kept segment row holds replaces that row
+/// where it stands. A tombstone for one deletes it. Every other live row is
+/// inserted, at the position that keeps the finished chunk in key order:
+/// the kept rows before it that no tombstone removes, plus the rows
+/// inserted before it. That includes a row whose segment version the filter
+/// dropped - the filter runs again above, on the row's newer values.
 fn overlay_positions(
     key_columns: &[&DecodedColumn],
     row_count: usize,
     kept: Option<&[std::ops::Range<usize>]>,
-    memtable: &[(Vec<i128>, Option<&StoredRow>)],
-) -> (Vec<usize>, Vec<usize>) {
+    memtable: &SpanRows<'_>,
+) -> OverlayEdits {
     if memtable.len().saturating_mul(SEARCHED_OVERLAY_SHARE) <= row_count {
         return searched_overlay_positions(key_columns, row_count, kept, memtable);
     }
-    let mut excluded = Vec::new();
-    let mut inserts = Vec::new();
-    let mut survivors_before = 0_usize;
+    // A single key column that decoded packed is compared straight from its
+    // values: asking each row which shape its column has costs more than the
+    // comparison it leads to.
+    if let ([column], 1) = (key_columns, memtable.parts) {
+        match column {
+            DecodedColumn::UInt64 { values, .. } if values.len() >= row_count => {
+                return walked_overlay_positions(row_count, kept, memtable, |row, next| {
+                    i128::from(values[row]).cmp(&memtable.keys[next])
+                });
+            }
+            DecodedColumn::Int64 { values, .. } if values.len() >= row_count => {
+                return walked_overlay_positions(row_count, kept, memtable, |row, next| {
+                    i128::from(values[row]).cmp(&memtable.keys[next])
+                });
+            }
+            _ => {}
+        }
+    }
+    walked_overlay_positions(row_count, kept, memtable, |row, next| {
+        compare_row_key(key_columns, row, memtable.key(next))
+    })
+}
+
+/// The walk of [`overlay_positions`], with `compare` ordering segment row
+/// `row` against memtable row `next`.
+fn walked_overlay_positions(
+    row_count: usize,
+    kept: Option<&[std::ops::Range<usize>]>,
+    memtable: &SpanRows<'_>,
+    compare: impl Fn(usize, usize) -> std::cmp::Ordering,
+) -> OverlayEdits {
+    let mut edits = OverlayEdits::default();
+    // Kept rows passed so far: the chunk index of the next kept row.
+    let mut chunk_row = 0_usize;
+    let mut inserted = 0_usize;
     let mut range_index = 0_usize;
     let mut is_kept = |row: usize| -> bool {
         let Some(ranges) = kept else { return true };
@@ -779,46 +1001,262 @@ fn overlay_positions(
     let mut row = 0_usize;
     let mut next = 0_usize;
     while row < row_count && next < memtable.len() {
-        match compare_row_key(key_columns, row, &memtable[next].0) {
+        match compare(row, next) {
             std::cmp::Ordering::Less => {
-                if is_kept(row) {
-                    survivors_before += 1;
-                }
+                chunk_row += usize::from(is_kept(row));
                 row += 1;
             }
             std::cmp::Ordering::Equal => {
-                // The memtable's version replaces the segment's, at the
-                // segment row's place (or is gone, for a tombstone).
-                excluded.push(row);
-                if memtable[next].1.is_some() {
-                    inserts.push(survivors_before + inserts.len());
+                let superseded = is_kept(row);
+                match (memtable.is_live(next), superseded) {
+                    (true, true) => edits.placements.push(Placement::Replace(chunk_row)),
+                    (true, false) => {
+                        edits.placements.push(Placement::Insert(
+                            chunk_row - edits.deletes.len() + inserted,
+                        ));
+                        inserted += 1;
+                    }
+                    (false, true) => edits.deletes.push(chunk_row),
+                    (false, false) => {}
                 }
-                is_kept(row);
+                chunk_row += usize::from(superseded);
                 row += 1;
                 next += 1;
             }
             std::cmp::Ordering::Greater => {
                 // A key the segment does not hold: an insert.
-                if memtable[next].1.is_some() {
-                    inserts.push(survivors_before + inserts.len());
+                if memtable.is_live(next) {
+                    edits.placements.push(Placement::Insert(
+                        chunk_row - edits.deletes.len() + inserted,
+                    ));
+                    inserted += 1;
                 }
                 next += 1;
             }
         }
     }
-    while row < row_count {
-        if is_kept(row) {
-            survivors_before += 1;
-        }
-        row += 1;
-    }
     while next < memtable.len() {
-        if memtable[next].1.is_some() {
-            inserts.push(survivors_before + inserts.len());
+        if memtable.is_live(next) {
+            edits.placements.push(Placement::Insert(
+                chunk_row - edits.deletes.len() + inserted,
+            ));
+            inserted += 1;
         }
         next += 1;
     }
-    (excluded, inserts)
+    edits
+}
+
+/// `validity` with the rows at `patches` set to whether their new value is
+/// non-null; an all-valid column stays a count while every patch is valid.
+fn patch_validity<T>(validity: ColumnValidity, patches: &[(usize, Option<T>)]) -> ColumnValidity {
+    if matches!(validity, ColumnValidity::AllValid(_))
+        && patches.iter().all(|(_, value)| value.is_some())
+    {
+        return validity;
+    }
+    let mut flags = validity.into_bytes();
+    for (at, value) in patches {
+        flags[*at] = value.is_some();
+    }
+    ColumnValidity::Bytes(flags)
+}
+
+/// `values` with typed `patches` written over the rows they name.
+fn patch_typed<T: Copy + Default>(
+    mut values: Vec<T>,
+    validity: ColumnValidity,
+    patches: &[(usize, Option<T>)],
+) -> (Vec<T>, ColumnValidity) {
+    for (at, value) in patches {
+        values[*at] = value.unwrap_or_default();
+    }
+    (values, patch_validity(validity, patches))
+}
+
+/// Plain values with `patches` written over the rows they name.
+fn patch_values(
+    mut values: Vec<pintail_types::Value>,
+    patches: &[(usize, &pintail_types::Value)],
+) -> Vec<pintail_types::Value> {
+    for (at, value) in patches {
+        values[*at] = (*value).clone();
+    }
+    values
+}
+
+/// A text arena with `texts` in place of the rows they name (ascending); a
+/// null spans zero bytes. The arena is rebuilt: a replacement of another
+/// length moves every row after it.
+fn patch_text(
+    heap: &[u8],
+    offsets: &[usize],
+    validity: ColumnValidity,
+    texts: &[(usize, Option<&[u8]>)],
+) -> DecodedColumn {
+    let rows = offsets.len().saturating_sub(1);
+    let added = texts
+        .iter()
+        .map(|(_, text)| text.map_or(0, <[u8]>::len))
+        .sum::<usize>();
+    let mut out = Vec::with_capacity(heap.len() + added);
+    let mut bounds = Vec::with_capacity(rows + 1);
+    bounds.push(0);
+    let mut next = 0;
+    for row in 0..rows {
+        if next < texts.len() && texts[next].0 == row {
+            if let Some(bytes) = texts[next].1 {
+                out.extend_from_slice(bytes);
+            }
+            next += 1;
+        } else {
+            out.extend_from_slice(&heap[offsets[row]..offsets[row + 1]]);
+        }
+        bounds.push(out.len());
+    }
+    DecodedColumn::Utf8 {
+        heap: out,
+        offsets: bounds,
+        validity: patch_validity(validity, texts),
+    }
+}
+
+impl DecodedColumn {
+    /// This column with `patches` written over the rows they name
+    /// (ascending, in bounds), its length unchanged. Fixed-width columns
+    /// are patched where they stand when every new value is of their type
+    /// or null; a text arena is rebuilt; any other column, or a mismatched
+    /// value, becomes plain values.
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn replace_rows(self, patches: &[(usize, &pintail_types::Value)]) -> Self {
+        if patches.is_empty() {
+            return self;
+        }
+        match self {
+            Self::Int64 { values, validity } => {
+                match typed_inserts(patches, |value| match value {
+                    pintail_types::Value::Int64(value) => Some(Some(*value)),
+                    pintail_types::Value::Null => Some(None),
+                    _ => None,
+                }) {
+                    Some(typed) => {
+                        let (values, validity) = patch_typed(values, validity, &typed);
+                        Self::Int64 { values, validity }
+                    }
+                    None => Self::Values(patch_values(
+                        Self::Int64 { values, validity }.into_values(),
+                        patches,
+                    )),
+                }
+            }
+            Self::UInt64 { values, validity } => {
+                match typed_inserts(patches, |value| match value {
+                    pintail_types::Value::UInt64(value) => Some(Some(*value)),
+                    pintail_types::Value::Null => Some(None),
+                    _ => None,
+                }) {
+                    Some(typed) => {
+                        let (values, validity) = patch_typed(values, validity, &typed);
+                        Self::UInt64 { values, validity }
+                    }
+                    None => Self::Values(patch_values(
+                        Self::UInt64 { values, validity }.into_values(),
+                        patches,
+                    )),
+                }
+            }
+            Self::Float64 { bits, validity } => {
+                match typed_inserts(patches, |value| match value {
+                    pintail_types::Value::Float64(value) => Some(Some(value.get().to_bits())),
+                    pintail_types::Value::Null => Some(None),
+                    _ => None,
+                }) {
+                    Some(typed) => {
+                        let (bits, validity) = patch_typed(bits, validity, &typed);
+                        Self::Float64 { bits, validity }
+                    }
+                    None => Self::Values(patch_values(
+                        Self::Float64 { bits, validity }.into_values(),
+                        patches,
+                    )),
+                }
+            }
+            Self::NativeUnits {
+                units,
+                values,
+                validity,
+            } => {
+                match typed_inserts(patches, |value| match value {
+                    pintail_types::Value::Utf8(text) => units.parse_exact(text).map(Some),
+                    pintail_types::Value::Null => Some(None),
+                    _ => None,
+                }) {
+                    Some(typed) => {
+                        let (values, validity) = patch_typed(values, validity, &typed);
+                        Self::NativeUnits {
+                            units,
+                            values,
+                            validity,
+                        }
+                    }
+                    None => Self::Values(patch_values(
+                        Self::NativeUnits {
+                            units,
+                            values,
+                            validity,
+                        }
+                        .into_values(),
+                        patches,
+                    )),
+                }
+            }
+            Self::DictionaryUtf8 {
+                dict_heap,
+                dict_offsets,
+                codes,
+                validity,
+            } => match text_inserts(patches) {
+                Some(texts) => {
+                    let (dict_heap, dict_offsets, typed) =
+                        dictionary_codes(dict_heap, dict_offsets, &texts);
+                    let (codes, validity) = patch_typed(codes, validity, &typed);
+                    Self::DictionaryUtf8 {
+                        dict_heap,
+                        dict_offsets,
+                        codes,
+                        validity,
+                    }
+                }
+                None => Self::Values(patch_values(
+                    Self::DictionaryUtf8 {
+                        dict_heap,
+                        dict_offsets,
+                        codes,
+                        validity,
+                    }
+                    .into_values(),
+                    patches,
+                )),
+            },
+            Self::Utf8 {
+                heap,
+                offsets,
+                validity,
+            } => match text_inserts(patches) {
+                Some(texts) => patch_text(&heap, &offsets, validity, &texts),
+                None => Self::Values(patch_values(
+                    Self::Utf8 {
+                        heap,
+                        offsets,
+                        validity,
+                    }
+                    .into_values(),
+                    patches,
+                )),
+            },
+            Self::Values(values) => Self::Values(patch_values(values, patches)),
+        }
+    }
 }
 
 /// `ranges` with the ascending `excluded` positions cut out.
@@ -1870,8 +2308,39 @@ impl ProjectedScanStream {
                     });
                     return self.advance_part();
                 };
-                self.overlay_rows = rows.unwrap_or_else(|| self.snapshot.memtable.clone());
-                self.segments = vec![segment];
+                let layered = rows.is_some();
+                let rows =
+                    rows.unwrap_or_else(|| LayerRows::single(self.snapshot.memtable.clone()));
+                let mut sparse = vec![(segment.file_name.clone(), sparse)];
+                let mut segments = vec![segment];
+                // The overlay parts that follow under the same rows join
+                // this one, so their slices decode in the same rounds.
+                while let Some(ScanPart::Overlay {
+                    segment: next,
+                    rows: next_rows,
+                }) = self.parts.front()
+                {
+                    let same_rows = match next_rows {
+                        Some(next_rows) => layered && next_rows.same_source(&rows),
+                        None => !layered,
+                    };
+                    if !same_rows {
+                        break;
+                    }
+                    let Ok(next_sparse) =
+                        segment::read_sparse_index(&self.snapshot.directory, next)
+                    else {
+                        break;
+                    };
+                    let Some(ScanPart::Overlay { segment: next, .. }) = self.parts.pop_front()
+                    else {
+                        break;
+                    };
+                    sparse.push((next.file_name.clone(), next_sparse));
+                    segments.push(next);
+                }
+                self.overlay_rows = rows;
+                self.segments = segments;
                 self.next_segment = 0;
                 self.overlay = Some(OverlayState { sparse });
             }
@@ -1927,7 +2396,8 @@ impl ProjectedScanStream {
                 });
             }
             ScanPart::MemtableOnly { lo, hi, rows } => {
-                self.overlay_rows = rows.unwrap_or_else(|| self.snapshot.memtable.clone());
+                self.overlay_rows =
+                    rows.unwrap_or_else(|| LayerRows::single(self.snapshot.memtable.clone()));
                 self.segments = Vec::new();
                 self.next_segment = 0;
                 self.memtable_cursor = Some((lo, hi));
@@ -2007,13 +2477,40 @@ impl ProjectedScanStream {
         &mut self,
         memory_limit: usize,
     ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
+        Ok(self.next_memtable_chunks(1, memory_limit)?.pop())
+    }
+
+    /// Up to `max_chunks` chunks of memtable-resident rows for a gap part,
+    /// in key order, within `memory_limit` together; empty when the part is
+    /// drained.
+    ///
+    /// The rows are walked once, in order, and the chunks built from them
+    /// side by side: a table that took a few hundred thousand inserts past
+    /// its segments otherwise hands them up a few thousand rows per call,
+    /// one call after another, while the scan's other threads wait.
+    #[allow(clippy::too_many_lines)]
+    fn next_memtable_chunks(
+        &mut self,
+        max_chunks: usize,
+        memory_limit: usize,
+    ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
         const MAX_MEMTABLE_CHUNK_ROWS: usize = 8 * 1024;
+        /// Below this allowance the part is handed up a chunk at a time, as
+        /// it always was: under a tight ceiling the operators above need
+        /// the room more than the scan needs width, and a round of several
+        /// chunks is rows they have to hold before the first is consumed.
+        const WIDE_ROUND_BYTES: usize = 64 << 20;
+        let max_chunks = if memory_limit < WIDE_ROUND_BYTES {
+            1
+        } else {
+            max_chunks
+        };
         let Some((lo, hi)) = self.memtable_cursor.clone() else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         if !bound_range_is_searchable(&lo, &hi) {
             self.memtable_cursor = None;
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let projection = self
             .column_ids
@@ -2029,10 +2526,12 @@ impl ProjectedScanStream {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let max_chunks = max_chunks.max(1);
+        let chunk_limit = memory_limit / max_chunks;
         let chunk_rows = if projection.is_empty() {
             MAX_MEMTABLE_CHUNK_ROWS
         } else {
-            memory_limit
+            chunk_limit
                 .checked_div(
                     projection
                         .len()
@@ -2042,15 +2541,17 @@ impl ProjectedScanStream {
                 .unwrap_or(0)
                 .clamp(1, MAX_MEMTABLE_CHUNK_ROWS)
         };
-        let mut columns = projection
-            .iter()
-            .map(|_| Vec::new())
-            .collect::<Vec<Vec<pintail_types::Value>>>();
-        let mut row_count = 0usize;
+        // The live rows first, then each projected column built from them in
+        // the packed shape a segment of the same type decodes to: a chunk of
+        // plain values sends every consumer above it down its row-at-a-time
+        // path, for however many rows were inserted past the segments.
+        let rows_source = self.overlay_rows.clone();
+        let wanted = chunk_rows.saturating_mul(max_chunks);
+        let mut live: Vec<&StoredRow> = Vec::new();
         let mut last_key = None;
         let mut admission = self.row_admission();
-        for (key, row) in self.overlay_rows.range((lo, hi.clone())) {
-            last_key = Some(key.clone());
+        for (key, row) in rows_source.range((lo.clone(), hi.clone())) {
+            last_key = Some(key);
             if row.is_deleted()
                 || admission
                     .as_mut()
@@ -2058,29 +2559,73 @@ impl ProjectedScanStream {
             {
                 continue;
             }
-            for (column, position) in columns.iter_mut().zip(&projection) {
-                column.push(row.values()[*position].clone());
-            }
-            row_count += 1;
-            if row_count >= chunk_rows {
+            live.push(row);
+            if live.len() >= wanted {
                 break;
             }
         }
-        match last_key {
-            Some(key) => {
-                self.memtable_cursor = Some((std::ops::Bound::Excluded(key), hi));
+        drop(admission);
+        // A walk that ran out of rows drained the part, tombstones and all.
+        self.memtable_cursor = match last_key {
+            Some(key) if live.len() >= wanted => {
+                Some((std::ops::Bound::Excluded(key.clone()), hi.clone()))
             }
-            None => self.memtable_cursor = None,
+            _ => None,
+        };
+        if live.is_empty() {
+            return Ok(Vec::new());
         }
-        if row_count == 0 {
-            // A window that held only tombstones: continue into the next
-            // window, or finish the part when the range is drained.
-            if self.memtable_cursor.is_some() {
-                return self.next_memtable_chunk(memory_limit);
+        let schema = &self.snapshot.schema;
+        let build = |rows: &[&StoredRow]| -> Result<ProjectedColumnChunk, StoreError> {
+            let columns = projection
+                .iter()
+                .map(|position| {
+                    let inserts = rows
+                        .iter()
+                        .enumerate()
+                        .map(|(at, row)| (at, &row.values()[*position]))
+                        .collect::<Vec<_>>();
+                    empty_packed_column(schema.columns()[*position].data_type())
+                        .interleave(&inserts)
+                })
+                .collect::<Vec<_>>();
+            let retained_bytes = size_of::<ProjectedColumnChunk>()
+                .saturating_add(
+                    columns
+                        .capacity()
+                        .saturating_mul(size_of::<DecodedColumn>()),
+                )
+                .saturating_add(columns.iter().map(DecodedColumn::retained_bytes).sum());
+            if retained_bytes > chunk_limit {
+                return Err(StoreError::MemoryLimitExceeded {
+                    used: 0,
+                    requested: retained_bytes,
+                    limit: chunk_limit,
+                });
             }
-            return Ok(None);
+            Ok(ProjectedColumnChunk {
+                prefiltered: false,
+                columns,
+                row_count: rows.len(),
+                stats: ScanStats::default(),
+                retained_bytes,
+                column_decode: Vec::new(),
+            })
+        };
+        let chunks: Result<Vec<ProjectedColumnChunk>, StoreError> = if live.len() <= chunk_rows {
+            build(&live).map(|chunk| vec![chunk])
+        } else {
+            projected_scan_pool()?.install(|| live.par_chunks(chunk_rows).map(build).collect())
+        };
+        match chunks {
+            // Chunks that share the allowance may not fit where one that
+            // has it whole does.
+            Err(StoreError::MemoryLimitExceeded { .. }) if max_chunks > 1 => {
+                self.memtable_cursor = Some((lo, hi));
+                self.next_memtable_chunks(1, memory_limit)
+            }
+            other => other,
         }
-        values_chunk(columns, row_count, memory_limit).map(Some)
     }
 
     /// Decodes several independently visible segments concurrently.
@@ -2126,7 +2671,16 @@ impl ProjectedScanStream {
         if !self.pending.is_empty() {
             return Ok(self.pending.drain(..).collect());
         }
-        if self.merge.is_some() || self.memtable_cursor.is_some() || self.direct_range.is_some() {
+        if self.merge.is_none() && self.memtable_cursor.is_some() {
+            let chunks = self.next_memtable_chunks(max_chunks, memory_limit)?;
+            if !chunks.is_empty() {
+                return Ok(chunks);
+            }
+            // Drained: on to the next part.
+            self.memtable_cursor = None;
+            return self.next_column_chunks_inner(max_chunks, memory_limit, prewhere);
+        }
+        if self.merge.is_some() || self.direct_range.is_some() {
             return Ok(self.next_column_chunk(memory_limit)?.into_iter().collect());
         }
         self.fill_direct_slices(max_chunks.max(1))?;
@@ -2224,7 +2778,6 @@ impl ProjectedScanStream {
     /// Halves an overlay slice at the block boundary nearest its middle;
     /// `None` when it is a single block.
     fn split_overlay_slice(&self, slice: &DirectSlice) -> Option<(DirectSlice, DirectSlice)> {
-        let sparse = &self.overlay.as_ref()?.sparse;
         let (segment, start_row, end_row) = match slice {
             DirectSlice::Whole(segment) => (segment, 0, segment.row_count),
             DirectSlice::Range {
@@ -2233,6 +2786,7 @@ impl ProjectedScanStream {
                 end_row,
             } => (segment, *start_row, *end_row),
         };
+        let sparse = self.overlay.as_ref()?.sparse_of(segment);
         let middle = start_row + (end_row - start_row) / 2;
         let boundary = sparse
             .iter()
@@ -2331,11 +2885,6 @@ impl ProjectedScanStream {
         slice: &DirectSlice,
     ) -> (std::ops::Bound<PrimaryKey>, std::ops::Bound<PrimaryKey>) {
         use std::ops::Bound::{Excluded, Included};
-        let sparse = self
-            .overlay
-            .as_ref()
-            .map(|state| state.sparse.as_slice())
-            .unwrap_or_default();
         match slice {
             DirectSlice::Whole(segment) => (
                 Included(segment.min_key.clone()),
@@ -2346,6 +2895,11 @@ impl ProjectedScanStream {
                 start_row,
                 end_row,
             } => {
+                let sparse = self
+                    .overlay
+                    .as_ref()
+                    .map(|state| state.sparse_of(segment))
+                    .unwrap_or_default();
                 let lo = sparse
                     .iter()
                     .find(|(row, _)| *row == *start_row)
@@ -2386,10 +2940,10 @@ impl ProjectedScanStream {
                 .decode_slice_plain(slice, memory_limit, prewhere)
                 .map(|chunk| vec![chunk]);
         }
-        let live = memtable
-            .iter()
-            .filter_map(|(_, row)| *row)
-            .collect::<Vec<_>>();
+        if let Some((predicate_ids, select)) = prewhere.filter(|(ids, _)| !ids.is_empty()) {
+            self.mask_unselected_live_rows(&mut memtable, predicate_ids, select)?;
+        }
+        let live = memtable.live();
         // The overlay's own working set comes out of the slice's allowance
         // before the decode: the memtable keys, the live-row list, and the
         // positions and ranges the mask can produce at worst (one per row).
@@ -2406,7 +2960,7 @@ impl ProjectedScanStream {
                 key_ids
                     .len()
                     .saturating_mul(size_of::<i128>())
-                    .saturating_add(size_of::<(Vec<i128>, Option<&StoredRow>)>()),
+                    .saturating_add(size_of::<Option<&StoredRow>>()),
             )
             .saturating_add(live.len().saturating_mul(size_of::<&StoredRow>()))
             .saturating_add(
@@ -2433,11 +2987,16 @@ impl ProjectedScanStream {
             })
             .collect::<Vec<_>>();
         let caller = prewhere;
-        // Where each live memtable row belongs among the surviving segment
-        // rows, so the chunk comes out in key order: a consumer that takes
-        // the first value it meets for a group (as the source does, in key
-        // order) must meet the same one.
-        let insert_positions = std::sync::Mutex::new(Vec::new());
+        // What the memtable's rows do to the rows the decode keeps. The
+        // decode itself is left alone: the selector answers what the scan's
+        // own filter answers, so a slice with no filter decodes whole, in
+        // the bulk paths, and the edits are applied to the finished chunk -
+        // an updated row written over the one it supersedes, a deleted one
+        // closed up, an inserted one placed by key. Cutting each superseded
+        // row out of the decode instead split it into as many ranges as rows
+        // had changed, decoded value by value, and then copied every column
+        // again to put the new versions back.
+        let edits = std::sync::Mutex::new(None);
         let select = |columns: &[DecodedColumn], row_count: usize| {
             let kept = match caller {
                 Some((caller_ids, select)) => select(&columns[..caller_ids.len()], row_count)?
@@ -2448,52 +3007,35 @@ impl ProjectedScanStream {
                 .iter()
                 .map(|index| &columns[*index])
                 .collect::<Vec<_>>();
-            let (excluded, positions) = overlay_positions(
+            *edits
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(overlay_positions(
                 &key_columns,
                 row_count,
                 kept.as_ref().map(|kept| kept.ranges.as_slice()),
                 &memtable,
-            );
-            *insert_positions
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = positions;
-            if excluded.is_empty() {
-                return Ok(kept);
-            }
-            // Removing superseded rows keeps an exact selection exact; the
-            // live memtable rows interleaved afterwards clear the mark.
-            let (ranges, exact) = kept.map_or_else(
-                || (std::iter::once(0..row_count).collect(), false),
-                |kept| (kept.ranges, kept.exact),
-            );
-            Ok(Some(PrewhereRanges {
-                ranges: subtract_positions(ranges, &excluded),
-                exact,
-                mask: None,
-            }))
+            ));
+            Ok(kept)
         };
         let segment_chunk = self.decode_slice_plain(slice, decode_limit, Some((&ids, &select)))?;
-        if live.is_empty() {
-            return Ok(vec![segment_chunk]);
-        }
-        let positions = insert_positions
+        let edits = edits
             .into_inner()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.interleave_live_rows(segment_chunk, &positions, &live, decode_limit)
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .ok_or_else(|| {
+                StoreError::FormatLimit("the memtable overlay could not place its rows".into())
+            })?;
+        self.apply_overlay_edits(segment_chunk, &edits, &live, decode_limit)
             .map(|chunk| vec![chunk])
     }
 
-    /// The memtable rows of a slice's key span in key order, each as its
-    /// key's integer parts and, for a live row, the row itself (a tombstone
-    /// carries `None`: it only masks).
-    #[allow(clippy::type_complexity)]
+    /// The memtable rows of a slice's key span in key order.
     fn overlay_span_rows(
         &self,
         slice: &DirectSlice,
         key_parts: usize,
-    ) -> Result<Vec<(Vec<i128>, Option<&StoredRow>)>, StoreError> {
+    ) -> Result<SpanRows<'_>, StoreError> {
         let span = self.overlay_slice_span(slice);
-        let mut rows = Vec::new();
+        let mut rows = SpanRows::new(key_parts);
         if bound_range_is_searchable(&span.0, &span.1) {
             for (key, row) in self.overlay_rows.range(span) {
                 if key.parts().len() != key_parts {
@@ -2501,9 +3043,8 @@ impl ProjectedScanStream {
                         "the memtable overlay's key has a different number of parts".into(),
                     ));
                 }
-                let mut parts = Vec::with_capacity(key_parts);
                 for part in key.parts() {
-                    parts.push(match part {
+                    rows.keys.push(match part {
                         KeyPart::Int64(value) => i128::from(*value),
                         KeyPart::UInt64(value) => i128::from(*value),
                         _ => {
@@ -2513,26 +3054,49 @@ impl ProjectedScanStream {
                         }
                     });
                 }
-                rows.push((parts, (!row.is_deleted()).then_some(row)));
+                rows.rows.push((!row.is_deleted()).then_some(row));
             }
         }
         Ok(rows)
     }
 
-    /// The segment chunk with the live memtable rows placed at `positions`
-    /// (one per row, ascending, indexing the output) in every projected
-    /// column.
-    fn interleave_live_rows(
+    /// The segment chunk with the memtable's edits applied to every
+    /// projected column: live rows written over the rows they supersede,
+    /// deleted rows closed up, and the remaining live rows placed at their
+    /// positions in the finished chunk, which stays in key order - a
+    /// consumer that takes the first value it meets for a group (as the
+    /// source does, in key order) must meet the same one.
+    fn apply_overlay_edits(
         &self,
         segment_chunk: ProjectedColumnChunk,
-        positions: &[usize],
+        edits: &OverlayEdits,
         live: &[&StoredRow],
         decode_limit: usize,
     ) -> Result<ProjectedColumnChunk, StoreError> {
-        if positions.len() != live.len() {
-            return Err(StoreError::FormatLimit(
-                "the memtable overlay could not place its rows".into(),
-            ));
+        let misplaced =
+            || StoreError::FormatLimit("the memtable overlay could not place its rows".into());
+        if edits.placements.len() != live.len() {
+            return Err(misplaced());
+        }
+        if edits.deletes.is_empty() && live.is_empty() {
+            return Ok(segment_chunk);
+        }
+        let ProjectedColumnChunk {
+            columns,
+            row_count,
+            stats,
+            retained_bytes: _,
+            prefiltered,
+            column_decode,
+        } = segment_chunk;
+        let in_chunk = |row: &usize| *row < row_count;
+        if !edits.deletes.iter().all(in_chunk)
+            || !edits.placements.iter().all(|placement| match placement {
+                Placement::Replace(row) => in_chunk(row),
+                Placement::Insert(_) => true,
+            })
+        {
+            return Err(misplaced());
         }
         let projection = self
             .column_ids
@@ -2548,23 +3112,34 @@ impl ProjectedScanStream {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let ProjectedColumnChunk {
-            columns,
-            row_count,
-            stats,
-            retained_bytes: _,
-            prefiltered: _,
-            column_decode,
-        } = segment_chunk;
+        let survivors = row_count - edits.deletes.len();
+        let surviving = if edits.deletes.is_empty() {
+            Vec::new()
+        } else {
+            subtract_positions(std::iter::once(0..row_count).collect(), &edits.deletes)
+        };
+        let inserted = edits
+            .placements
+            .iter()
+            .filter(|placement| matches!(placement, Placement::Insert(_)))
+            .count();
         let columns = columns
             .into_iter()
             .zip(&projection)
             .map(|(column, position)| {
-                let inserts = positions
-                    .iter()
-                    .zip(live)
-                    .map(|(at, row)| (*at, &row.values()[*position]))
-                    .collect::<Vec<_>>();
+                let mut replaces = Vec::with_capacity(live.len() - inserted);
+                let mut inserts = Vec::with_capacity(inserted);
+                for (placement, row) in edits.placements.iter().zip(live) {
+                    let value = &row.values()[*position];
+                    match placement {
+                        Placement::Replace(at) => replaces.push((*at, value)),
+                        Placement::Insert(at) => inserts.push((*at, value)),
+                    }
+                }
+                let mut column = column.replace_rows(&replaces);
+                if !edits.deletes.is_empty() {
+                    compact_decoded_column(&mut column, &surviving, survivors);
+                }
                 column.interleave(&inserts)
             })
             .collect::<Vec<_>>();
@@ -2583,9 +3158,11 @@ impl ProjectedScanStream {
             });
         }
         Ok(ProjectedColumnChunk {
-            prefiltered: false,
+            // A row placed from the memtable was not judged by the filter
+            // that judged the segment's.
+            prefiltered: prefiltered && live.is_empty(),
             columns,
-            row_count: row_count + live.len(),
+            row_count: survivors + inserted,
             stats,
             retained_bytes,
             column_decode,
@@ -3065,14 +3642,73 @@ impl ProjectedScanStream {
     /// Turns the overlay's live rows the side-index lookup rejects into
     /// masks: such a row still supersedes its segment row, it is only not
     /// interleaved.
-    fn mask_unwanted_live_rows<'a>(&'a self, rows: &mut [(Vec<i128>, Option<&'a StoredRow>)]) {
+    fn mask_unwanted_live_rows<'a>(&'a self, rows: &mut SpanRows<'a>) {
         if let Some(mut admission) = self.row_admission() {
-            for (_, row) in rows {
+            for row in &mut rows.rows {
                 if row.is_some_and(|row| !admission.admits(row)) {
                     *row = None;
                 }
             }
         }
+    }
+
+    /// Turns the overlay's live rows the scan's own filter rejects into
+    /// masks, as [`Self::mask_unwanted_live_rows`] does for an index lookup:
+    /// the predicate columns are built from the rows in packed form and
+    /// judged by the selector that judges the segment's, so a filter that
+    /// keeps a handful of segment rows no longer has every changed row of
+    /// the slice interleaved beside them for the filter above to drop.
+    ///
+    /// The selector may keep rows that fail (it promises only that a row it
+    /// drops fails), which is what the segment rows it keeps are held to.
+    fn mask_unselected_live_rows(
+        &self,
+        rows: &mut SpanRows<'_>,
+        predicate_ids: &[u32],
+        select: PrewhereSelect<'_>,
+    ) -> Result<(), StoreError> {
+        let live = rows.live();
+        if live.is_empty() {
+            return Ok(());
+        }
+        let columns = predicate_ids
+            .iter()
+            .map(|id| {
+                let position = self
+                    .snapshot
+                    .schema
+                    .columns()
+                    .iter()
+                    .position(|column| column.id() == *id)
+                    .ok_or_else(|| {
+                        StoreError::FormatLimit(format!("unknown projected column id {id}"))
+                    })?;
+                let inserts = live
+                    .iter()
+                    .enumerate()
+                    .map(|(at, row)| (at, &row.values()[position]))
+                    .collect::<Vec<_>>();
+                Ok(
+                    empty_packed_column(self.snapshot.schema.columns()[position].data_type())
+                        .interleave(&inserts),
+                )
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let Some(kept) = select(&columns, live.len()).map_err(StoreError::FormatLimit)? else {
+            return Ok(());
+        };
+        let kept = kept.into_ranges(live.len()).ranges;
+        check_selected_ranges(&kept, live.len())?;
+        let mut kept = kept.into_iter().peekable();
+        for (index, row) in rows.rows.iter_mut().filter(|row| row.is_some()).enumerate() {
+            while kept.peek().is_some_and(|range| range.end <= index) {
+                kept.next();
+            }
+            if kept.peek().is_none_or(|range| range.start > index) {
+                *row = None;
+            }
+        }
+        Ok(())
     }
 
     fn row_admission(&self) -> Option<super::side_index::RowAdmission<'_>> {
@@ -4416,7 +5052,8 @@ fn retain_predicate_fetch(
 #[cfg(test)]
 mod overlay_primitive_tests {
     use super::{
-        ColumnValidity, DecodedColumn, interleave_values, overlay_positions, subtract_positions,
+        ColumnValidity, DecodedColumn, OverlayEdits, Placement, SpanRows, interleave_values,
+        overlay_positions, searched_overlay_positions, subtract_positions,
     };
     use pintail_types::{KeyPart, PrimaryKey, StoredRow, Value};
 
@@ -4440,8 +5077,24 @@ mod overlay_primitive_tests {
         )
     }
 
+    /// The edits by the walk and by the lookups, which must agree.
+    fn edits(
+        key_columns: &[&DecodedColumn],
+        row_count: usize,
+        kept: Option<&[std::ops::Range<usize>]>,
+        memtable: &[(Vec<i128>, Option<&StoredRow>)],
+    ) -> OverlayEdits {
+        let span = SpanRows::from_rows(memtable);
+        let walked = overlay_positions(key_columns, row_count, kept, &span);
+        assert_eq!(
+            walked,
+            searched_overlay_positions(key_columns, row_count, kept, &span)
+        );
+        walked
+    }
+
     #[test]
-    fn the_walk_masks_superseded_rows_and_places_inserts_in_key_order() {
+    fn the_walk_replaces_deletes_and_places_inserts_in_key_order() {
         let live = [row(4), row(9), row(25), row(45)];
         // Segment keys 2..16 step 2; memtable: 4 updated, 8 deleted, 9
         // inserted between 8 and 10, 25 and 45 inserted past the end.
@@ -4454,27 +5107,44 @@ mod overlay_primitive_tests {
         ];
         let values = [2_u64, 4, 6, 8, 10, 12, 14, 16];
         for column in [packed(&values), plain(&values)] {
-            let (excluded, inserts) = overlay_positions(&[&column], 8, None, &memtable);
-            assert_eq!(excluded, vec![1, 3], "keys 4 and 8 are superseded");
+            let found = edits(&[&column], 8, None, &memtable);
+            assert_eq!(found.deletes, vec![3], "key 8 is deleted");
             // Output: 2, 4*, 6, 9*, 10, 12, 14, 16, 25*, 45*.
-            assert_eq!(inserts, vec![1, 3, 8, 9]);
+            assert_eq!(
+                found.placements,
+                vec![
+                    Placement::Replace(1),
+                    Placement::Insert(3),
+                    Placement::Insert(8),
+                    Placement::Insert(9),
+                ]
+            );
         }
-        // With only rows 2..6 (positions 2..=5) kept by a predicate. The
-        // memtable's live rows are placed whatever the predicate said about
-        // the segment rows they replace (the filter runs again above): the
-        // output is 4*, 6, 9*, 10, 12, 25*, 45*.
+        // With only rows 2..6 (keys 6, 8, 10, 12) kept by a predicate, the
+        // chunk holds those four. The memtable's live rows are placed
+        // whatever the predicate said about the segment rows they replace
+        // (the filter runs again above): the output is 4*, 6, 9*, 10, 12,
+        // 25*, 45*.
         let kept: Vec<std::ops::Range<usize>> = std::iter::once(2..6_usize).collect();
-        let (excluded, inserts) = overlay_positions(&[&packed(&values)], 8, Some(&kept), &memtable);
-        assert_eq!(excluded, vec![1, 3]);
-        assert_eq!(inserts, vec![0, 2, 5, 6]);
-        // Every row superseded, nothing live: no inserts.
+        let found = edits(&[&packed(&values)], 8, Some(&kept), &memtable);
+        assert_eq!(found.deletes, vec![1]);
+        assert_eq!(
+            found.placements,
+            vec![
+                Placement::Insert(0),
+                Placement::Insert(2),
+                Placement::Insert(5),
+                Placement::Insert(6),
+            ]
+        );
+        // Every row superseded, nothing live: no placements.
         let all: Vec<(Vec<i128>, Option<&StoredRow>)> = values
             .iter()
             .map(|value| (vec![i128::from(*value)], None))
             .collect();
-        let (excluded, inserts) = overlay_positions(&[&packed(&values)], 8, None, &all);
-        assert_eq!(excluded, (0..8).collect::<Vec<_>>());
-        assert!(inserts.is_empty());
+        let found = edits(&[&packed(&values)], 8, None, &all);
+        assert_eq!(found.deletes, (0..8).collect::<Vec<_>>());
+        assert!(found.placements.is_empty());
     }
 
     #[test]
@@ -4496,10 +5166,17 @@ mod overlay_primitive_tests {
             (vec![3, 0], None),
             (vec![4, 0], Some(&live[2])),
         ];
-        let (excluded, inserts) = overlay_positions(&[&first, &second], 5, None, &memtable);
-        assert_eq!(excluded, vec![1, 4]);
+        let found = edits(&[&first, &second], 5, None, &memtable);
+        assert_eq!(found.deletes, vec![4]);
         // Output: (1,5), (1,9)*, (2,1), (2,3)*, (2,7), (4,0)*.
-        assert_eq!(inserts, vec![1, 3, 5]);
+        assert_eq!(
+            found.placements,
+            vec![
+                Placement::Replace(1),
+                Placement::Insert(3),
+                Placement::Insert(5),
+            ]
+        );
         // Signed keys past the unsigned range and large unsigned keys stay
         // distinct.
         let signed = DecodedColumn::Int64 {
@@ -4508,8 +5185,60 @@ mod overlay_primitive_tests {
         };
         let memtable: Vec<(Vec<i128>, Option<&StoredRow>)> =
             vec![(vec![-1], None), (vec![i128::from(u64::MAX)], None)];
-        let (excluded, _) = overlay_positions(&[&signed], 3, None, &memtable);
-        assert_eq!(excluded, vec![1]);
+        assert_eq!(edits(&[&signed], 3, None, &memtable).deletes, vec![1]);
+    }
+
+    #[test]
+    fn replaced_rows_keep_a_column_packed_and_its_length() {
+        let (five, null, text) = (Value::Int64(5), Value::Null, Value::Utf8("x".to_owned()));
+        let column = DecodedColumn::Int64 {
+            values: vec![10, 20, 30],
+            validity: ColumnValidity::AllValid(3),
+        };
+        match column.clone().replace_rows(&[(1, &five)]) {
+            DecodedColumn::Int64 { values, validity } => {
+                assert_eq!(values, vec![10, 5, 30]);
+                assert_eq!(validity, ColumnValidity::AllValid(3));
+            }
+            other => panic!("not packed: {other:?}"),
+        }
+        match column.clone().replace_rows(&[(0, &null), (2, &five)]) {
+            DecodedColumn::Int64 { values, validity } => {
+                assert_eq!(values, vec![0, 20, 5]);
+                assert_eq!(validity, ColumnValidity::Bytes(vec![false, true, true]));
+            }
+            other => panic!("not packed: {other:?}"),
+        }
+        assert_eq!(
+            column.replace_rows(&[(2, &text)]).into_values(),
+            vec![Value::Int64(10), Value::Int64(20), text.clone()]
+        );
+        let texts = DecodedColumn::Utf8 {
+            heap: b"abbccc".to_vec(),
+            offsets: vec![0, 1, 3, 6],
+            validity: ColumnValidity::AllValid(3),
+        };
+        let longer = Value::Utf8("longer".to_owned());
+        assert_eq!(
+            texts
+                .replace_rows(&[(1, &longer), (2, &null)])
+                .into_values(),
+            vec![Value::Utf8("a".to_owned()), longer.clone(), Value::Null]
+        );
+        let coded = DecodedColumn::DictionaryUtf8 {
+            dict_heap: b"ab".to_vec(),
+            dict_offsets: vec![0, 1, 2],
+            codes: vec![0, 1, 0],
+            validity: ColumnValidity::AllValid(3),
+        };
+        let fresh = Value::Utf8("c".to_owned());
+        let known = Value::Utf8("b".to_owned());
+        assert_eq!(
+            coded
+                .replace_rows(&[(0, &known), (2, &fresh)])
+                .into_values(),
+            vec![known.clone(), known.clone(), fresh.clone()]
+        );
     }
 
     #[test]
