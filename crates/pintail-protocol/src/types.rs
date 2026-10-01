@@ -307,6 +307,10 @@ pub enum ErrorKind {
     ErInvalidBitwiseAggregateOperandsSize = 3514,
     /// 3854: a required character-set conversion is invalid.
     ErCannotConvertString = 3854,
+    /// 1267: two text operands whose collations tie.
+    ErCantAggregate2Collations = 1267,
+    /// 1271: an operation over several texts whose collations tie.
+    ErCantAggregateNCollations = 1271,
     /// 1235: the statement asks for something not supported.
     ErNotSupportedYet = 1235,
     /// 3033: a binary geometry function got two different SRIDs.
@@ -368,6 +372,8 @@ impl ErrorKind {
             | Self::ErInvalidBitwiseOperandsSize
             | Self::ErInvalidBitwiseAggregateOperandsSize
             | Self::ErGisDifferentSrids
+            | Self::ErCantAggregate2Collations
+            | Self::ErCantAggregateNCollations
             | Self::ErCannotConvertString => b"HY000",
         }
     }

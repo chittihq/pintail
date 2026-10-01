@@ -3008,7 +3008,7 @@ pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundEx
             right: right.data_type,
         });
     }
-    ensure_supported_text_collation(&[&left, &right])?;
+    super::ensure_comparison_collation("=", &left, &right)?;
     if super::is_exact_decimal_comparison(BinaryOp::Equal, &left, &right) {
         return Ok(super::bind_exact_decimal_comparison(
             BinaryOp::Equal,

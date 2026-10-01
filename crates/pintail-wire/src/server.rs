@@ -3978,6 +3978,8 @@ fn error_kind(error: &QueryError) -> ErrorKind {
             SqlRejection::CharacterConversion => ErrorKind::ErCannotConvertString,
             SqlRejection::WrongArguments => ErrorKind::ErWrongArguments,
             SqlRejection::ParameterCount => ErrorKind::ErWrongParamcountToNativeFct,
+            SqlRejection::CollationMixOfTwo => ErrorKind::ErCantAggregate2Collations,
+            SqlRejection::CollationMixOfSeveral => ErrorKind::ErCantAggregateNCollations,
             SqlRejection::BinaryBitwiseLength => ErrorKind::ErInvalidBitwiseOperandsSize,
             SqlRejection::BinaryBitwiseAggregateWidth => {
                 ErrorKind::ErInvalidBitwiseAggregateOperandsSize
@@ -5255,6 +5257,8 @@ mod tests {
             (SqlRejection::GroupFunctionMisplaced, 1111, *b"HY000"),
             (SqlRejection::ParameterCount, 1582, *b"42000"),
             (SqlRejection::OutOfRange, 1690, *b"22003"),
+            (SqlRejection::CollationMixOfTwo, 1267, *b"HY000"),
+            (SqlRejection::CollationMixOfSeveral, 1271, *b"HY000"),
         ];
         for (rejection, errno, sqlstate) in expectations {
             let kind = error_kind(&QueryError::Rejected {

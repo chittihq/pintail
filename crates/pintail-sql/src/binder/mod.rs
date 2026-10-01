@@ -2844,6 +2844,19 @@ fn unify_union_layout(left: &mut BoundQuery, right: &mut BoundQuery) -> Result<(
                 right_expr.data_type
             )));
         };
+        // Two text columns whose collations tie have no collation the
+        // result could carry.
+        if matches!(left_expr.kind, BoundExprKind::Column(_))
+            && matches!(right_expr.kind, BoundExprKind::Column(_))
+            && let (Some(left_collation), Some(right_collation)) =
+                (left_expr.text_collation(), right_expr.text_collation())
+            && collations_tie(left_collation, right_collation)
+        {
+            return Err(BindError::IllegalCollationMix {
+                message: "Illegal mix of collations for operation 'UNION'".to_owned(),
+                pair: false,
+            });
+        }
         let nullable = left_expr.nullable || right_expr.nullable;
         coerce_union_projection(left, index, unified, nullable);
         coerce_union_projection(right, index, unified, nullable);
@@ -5014,9 +5027,82 @@ fn ensure_binary_collation(
     right: &BoundExpr,
 ) -> Result<(), BindError> {
     if is_collation_sensitive_binary(operator) {
-        ensure_supported_text_collation(&[left, right])?;
+        ensure_comparison_collation(&operator.to_string(), left, right)?;
     }
     Ok(())
+}
+
+/// Whether two columns' collations leave no winner: one character set, two
+/// collations, neither of them the binary one that would take precedence.
+fn collations_tie(left: &str, right: &str) -> bool {
+    let charset = |collation: &str| {
+        let lower = collation.to_ascii_lowercase();
+        let charset = lower.split('_').next().unwrap_or_default();
+        if charset == "utf8" {
+            "utf8mb3"
+        } else {
+            charset
+        }
+        .to_owned()
+    };
+    let binary = |collation: &str| collation.to_ascii_lowercase().ends_with("_bin");
+    !left.eq_ignore_ascii_case(right)
+        && charset(left) == charset(right)
+        && !binary(left)
+        && !binary(right)
+}
+
+/// A comparison of two texts needs one collation for both. Two operands
+/// whose collations tie - neither is binary, neither is written with
+/// `COLLATE` over the other - are `MySQL`'s "illegal mix of collations",
+/// reported as it reports it.
+pub(super) fn ensure_comparison_collation(
+    operation: &str,
+    left: &BoundExpr,
+    right: &BoundExpr,
+) -> Result<(), BindError> {
+    let Err(error) = ensure_supported_text_collation(&[left, right]) else {
+        return Ok(());
+    };
+    // One operand's collation and how firmly it holds it.
+    let side = |expression: &BoundExpr| {
+        let mut explicit = Vec::new();
+        expression.collect_explicit_collations(&mut explicit);
+        explicit.sort_unstable();
+        explicit.dedup();
+        match explicit.as_slice() {
+            [only] => return Some((only.clone(), "EXPLICIT")),
+            [] => {}
+            _ => return None,
+        }
+        let mut sources = Vec::new();
+        expression.collect_source_collations(&mut sources);
+        sources.sort_unstable();
+        sources.dedup();
+        match sources.as_slice() {
+            [only] => Some((only.clone(), "IMPLICIT")),
+            _ => None,
+        }
+    };
+    match (side(left), side(right)) {
+        // Two written collations always tie; two columns' tie when
+        // neither names a winner. A collation this engine does not
+        // compare under is a different refusal, and keeps its own text.
+        (Some((left, left_level)), Some((right, right_level)))
+            if left_level == right_level
+                && (left_level == "EXPLICIT" && !left.eq_ignore_ascii_case(&right)
+                    || collations_tie(&left, &right)) =>
+        {
+            Err(BindError::IllegalCollationMix {
+                message: format!(
+                    "Illegal mix of collations ({left},{left_level}) and \
+                     ({right},{right_level}) for operation '{operation}'"
+                ),
+                pair: true,
+            })
+        }
+        _ => Err(error),
+    }
 }
 
 fn is_exact_decimal_comparison(op: BinaryOp, left: &BoundExpr, right: &BoundExpr) -> bool {
@@ -9205,6 +9291,15 @@ pub enum BindError {
     /// A built-in function was called with a number of arguments it does
     /// not take; the function's name.
     ParameterCount(String),
+    /// Text operands whose collations tie, so no one collation compares
+    /// or unifies them. The message is `MySQL`'s own.
+    IllegalCollationMix {
+        /// What the client reads.
+        message: String,
+        /// Two operands named in the message (1267), rather than an
+        /// operation over several (1271).
+        pair: bool,
+    },
     /// GROUP BY and HAVING have an invalid combination.
     InvalidGrouping(String),
     /// A row filter does not have `MySQL` truth-value semantics.
@@ -9314,7 +9409,9 @@ impl fmt::Display for BindError {
                     "column {column} is neither grouped nor aggregated"
                 )
             }
-            Self::InvalidGrouping(message) => formatter.write_str(message),
+            Self::IllegalCollationMix { message, .. } | Self::InvalidGrouping(message) => {
+                formatter.write_str(message)
+            }
             Self::ExpectedPredicate { actual } => {
                 write!(formatter, "row filter has non-boolean type {actual:?}")
             }
@@ -9926,7 +10023,7 @@ mod tests {
     fn a_single_comparison_cannot_span_two_collations() {
         let error = bind("SELECT l.label FROM legacy l JOIN Events e ON l.label = e.Name")
             .expect_err("a cross-collation comparison must be refused");
-        assert!(error.to_string().contains("across collations"), "{error}");
+        assert!(error.to_string().contains("collations"), "{error}");
     }
 
     /// A QUERY spanning two collations is answerable, and used to be refused.

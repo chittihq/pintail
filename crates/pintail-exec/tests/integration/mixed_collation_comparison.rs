@@ -183,5 +183,10 @@ fn an_in_subquery_compares_under_both_sides_together() {
 #[test]
 fn two_case_insensitive_collations_of_one_charset_stay_refused() {
     let error = run("SELECT id FROM m WHERE g = ai").expect_err("an illegal mix must refuse");
-    assert!(error.contains("across collations"), "{error}");
+    assert!(error.contains("llegal mix of collations"), "{error}");
+    let error = run("SELECT g FROM m UNION SELECT ai FROM m").expect_err("a union of the two");
+    assert!(
+        error.contains("llegal mix of collations for operation 'UNION'"),
+        "{error}"
+    );
 }

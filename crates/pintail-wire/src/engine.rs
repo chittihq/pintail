@@ -223,6 +223,10 @@ pub enum SqlRejection {
     BinaryBitwiseAggregateWidth,
     /// 3854: a required character-set conversion is invalid.
     CharacterConversion,
+    /// 1267: two text operands whose collations tie.
+    CollationMixOfTwo,
+    /// 1271: an operation over several texts whose collations tie.
+    CollationMixOfSeveral,
     /// A spatial function refused its arguments, by `MySQL`'s class.
     Spatial(pintail_exec::SpatialError),
 }
@@ -1797,6 +1801,8 @@ fn query_bind_error(error: &pintail_sql::BindError) -> QueryError {
         }
         BindError::GroupFunctionMisplaced(_) => SqlRejection::GroupFunctionMisplaced,
         BindError::ParameterCount(_) => SqlRejection::ParameterCount,
+        BindError::IllegalCollationMix { pair: true, .. } => SqlRejection::CollationMixOfTwo,
+        BindError::IllegalCollationMix { pair: false, .. } => SqlRejection::CollationMixOfSeveral,
         _ => return QueryError::Invalid(error.to_string()),
     };
     QueryError::Rejected {
