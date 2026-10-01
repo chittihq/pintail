@@ -167,6 +167,27 @@ impl Fixture {
                 })
                 .collect(),
         );
+        // A dimension whose labels differ only in letter case from row to
+        // row: under the default collation each pair is one group.
+        let tones = table(
+            directory.path(),
+            "tones",
+            vec![
+                Column::new(1, "id", DataType::Int64, false),
+                Column::new(2, "zone", DataType::Utf8, false),
+            ],
+            (1..=DIMS)
+                .filter(|id| dim_present(*id))
+                .map(|id| {
+                    let label = if (id / 5) % 2 == 0 {
+                        zone(id).to_owned()
+                    } else {
+                        zone(id).to_uppercase()
+                    };
+                    vec![Value::Int64(id), Value::Utf8(label)]
+                })
+                .collect(),
+        );
         let mut stores = Vec::new();
         let mut entries = Vec::new();
         for (index, (name, (store, schema, count))) in [
@@ -174,6 +195,7 @@ impl Fixture {
             ("dims", dims),
             ("pairs", pairs),
             ("spots", spots),
+            ("tones", tones),
         ]
         .into_iter()
         .enumerate()
@@ -439,6 +461,22 @@ fn a_left_join_merges_a_null_build_group_with_the_unmatched_rows() {
         "LEFT JOIN spots d ON f.dim_id = d.id",
         "GROUP BY d.zone ORDER BY d.zone",
     );
+}
+
+/// Labels equal under the group column's collation are one group, under an
+/// inner join and beside an outer join's NULL group.
+#[test]
+fn labels_equal_under_the_collation_are_one_group() {
+    let fixture = Fixture::new();
+    for (join, groups) in [("JOIN", ZONES.len()), ("LEFT JOIN", ZONES.len() + 1)] {
+        let rows = agree(
+            &fixture,
+            "SELECT COUNT(*), COUNT(f.amount), SUM(f.amount), AVG(f.amount) FROM facts f",
+            &format!("{join} tones d ON f.dim_id = d.id"),
+            "GROUP BY d.zone ORDER BY 1, 2, 3",
+        );
+        assert_eq!(rows.len(), groups, "{join}: {rows:?}");
+    }
 }
 
 /// Semi and anti joins on a key with NULLs, gaps and out-of-range values,

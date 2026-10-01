@@ -14,10 +14,13 @@
 //! morsel. Every fold here is exact integer addition, so the states end
 //! where the row fold leaves them.
 
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+
 use pintail_sql::AggregateFunction;
 
 use super::aggregate::{
-    AggregateGroup, CompiledAggregate, aggregate_uses_float, decimal_average_scale,
+    AggregateState, CompiledAggregate, aggregate_uses_float, decimal_average_scale,
 };
 use super::join::PartitionedBuild;
 use super::morsel::Morsel;
@@ -284,21 +287,184 @@ where
     }
 }
 
-/// Folds `morsel` into `groups` through the unique-key table, marking each
-/// group a probe row reached in `touched`. Under `outer`, `groups` holds the
-/// miss group last and the rows that match nothing fold into it. With
-/// nothing folded, the reason a column of this batch is not in a
-/// representation a lane reads - the row fold then takes the morsel, and
-/// the profile names the reason.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+/// The scale each unit lane's column carries, fixed by the first morsel
+/// that reads it: one lane's totals only add up at one scale, across every
+/// morsel and worker that folds into them.
+pub(super) struct LaneScales(Vec<AtomicU16>);
+
+/// A lane no morsel has read yet.
+const NO_SCALE: u16 = u16::MAX;
+
+impl LaneScales {
+    pub(super) fn new(lanes: usize) -> Self {
+        Self((0..lanes).map(|_| AtomicU16::new(NO_SCALE)).collect())
+    }
+
+    /// Whether `lane` folds at `scale`: the first morsel to ask decides.
+    fn agree(&self, lane: usize, scale: u8) -> bool {
+        match self.0[lane].compare_exchange(
+            NO_SCALE,
+            u16::from(scale),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => true,
+            Err(existing) => existing == u16::from(scale),
+        }
+    }
+
+    fn get(&self, lane: usize) -> Option<u8> {
+        u8::try_from(self.0[lane].load(Ordering::Relaxed)).ok()
+    }
+}
+
+/// Running totals of every lane for every group, indexed by the group's
+/// position in the plan: the build-side groups, then the miss group, then a
+/// sink for the rows a lane's NULL argument leaves out of that lane.
+///
+/// Nothing here depends on the morsel being folded, so one of these serves
+/// a worker for a whole query: its arrays are sized by the build side's
+/// groups, which are fixed before the first probe row is read.
+pub(super) struct LaneTotals {
+    slots: usize,
+    /// Probe rows that reached each group.
+    hits: Vec<u64>,
+    /// Lane after lane, each group's summed units.
+    totals: Vec<i128>,
+    /// Lane after lane, each group's rows whose argument was NULL.
+    null_rows: Vec<u64>,
+    chunk_groups: Vec<u32>,
+    lane_groups: Vec<u32>,
+    picked: Vec<u32>,
+    valid: Vec<bool>,
+    scratch: Vec<i128>,
+}
+
+impl LaneTotals {
+    /// Bytes one of these holds for `keys` and `lanes` lanes.
+    pub(super) fn bytes(keys: &UniqueKeyGroups, lanes: usize) -> usize {
+        let slots = keys.miss as usize + 2;
+        slots
+            .saturating_mul(size_of::<u64>().saturating_add(
+                lanes.saturating_mul(size_of::<i128>().saturating_add(size_of::<u64>())),
+            ))
+            .saturating_add(
+                CHUNK_ROWS.saturating_mul(3 * size_of::<u32>() + size_of::<bool>() + 16),
+            )
+    }
+
+    pub(super) fn new(keys: &UniqueKeyGroups, lanes: usize) -> Self {
+        let slots = keys.miss as usize + 2;
+        Self {
+            slots,
+            hits: vec![0; slots],
+            totals: vec![0; slots.saturating_mul(lanes)],
+            null_rows: vec![0; slots.saturating_mul(lanes)],
+            chunk_groups: Vec::with_capacity(CHUNK_ROWS),
+            lane_groups: Vec::with_capacity(CHUNK_ROWS),
+            picked: Vec::with_capacity(CHUNK_ROWS),
+            valid: Vec::with_capacity(CHUNK_ROWS),
+            scratch: Vec::new(),
+        }
+    }
+
+    /// Adds another worker's totals, group by group.
+    pub(super) fn absorb(&mut self, other: &Self) -> Result<(), ExecError> {
+        if self.slots != other.slots || self.totals.len() != other.totals.len() {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "fused join totals of two shapes",
+            ));
+        }
+        for (mine, theirs) in self.hits.iter_mut().zip(&other.hits) {
+            *mine = mine
+                .checked_add(*theirs)
+                .ok_or(ExecError::NumericOverflow)?;
+        }
+        for (mine, theirs) in self.totals.iter_mut().zip(&other.totals) {
+            *mine = mine
+                .checked_add(*theirs)
+                .ok_or(ExecError::NumericOverflow)?;
+        }
+        for (mine, theirs) in self.null_rows.iter_mut().zip(&other.null_rows) {
+            *mine = mine
+                .checked_add(*theirs)
+                .ok_or(ExecError::NumericOverflow)?;
+        }
+        Ok(())
+    }
+
+    /// Probe rows folded into `group`.
+    pub(super) fn rows(&self, group: usize) -> u64 {
+        self.hits[group]
+    }
+
+    /// Adds `group`'s totals to its aggregate states.
+    pub(super) fn apply(
+        &self,
+        lanes: &[Lane],
+        scales: &LaneScales,
+        group: usize,
+        states: &mut [AggregateState],
+    ) -> Result<(), ExecError> {
+        const LOST: ExecError = ExecError::InvalidPhysicalPlan("a fused join lane lost its column");
+        let rows = self.hits[group];
+        for (lane_index, (lane, state)) in lanes.iter().zip(states.iter_mut()).enumerate() {
+            let total = self.totals[lane_index * self.slots + group];
+            let valid = rows - self.null_rows[lane_index * self.slots + group];
+            match *lane {
+                Lane::CountRows => state.add_dense_count(rows)?,
+                Lane::CountValid { .. } => state.add_dense_count(valid)?,
+                Lane::DecimalSum { float_output, .. } => {
+                    if valid > 0 {
+                        let scale = scales.get(lane_index).ok_or(LOST)?;
+                        state.update_decimal_sum_units(total, scale, float_output)?;
+                    }
+                }
+                Lane::IntegerSum { signed, .. } => {
+                    if valid > 0 {
+                        // The total, exact in 128 bits; past the sum's
+                        // type it overflows as the row fold's would.
+                        if signed {
+                            state.add_dense_signed(
+                                i64::try_from(total).map_err(|_| ExecError::NumericOverflow)?,
+                            )?;
+                        } else {
+                            state.add_dense_unsigned(
+                                u64::try_from(total).map_err(|_| ExecError::NumericOverflow)?,
+                            )?;
+                        }
+                    }
+                }
+                Lane::DecimalAverage { result_scale, .. } => {
+                    if valid > 0 {
+                        let scale = scales.get(lane_index).ok_or(LOST)?;
+                        state.add_decimal_average_partial(
+                            total,
+                            result_scale - scale,
+                            result_scale,
+                            valid,
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Folds `morsel` into `kept` through the unique-key table: the build-side
+/// groups, then - last - the miss group, which takes the rows that match
+/// nothing. With nothing folded, the reason a column of this batch is not
+/// in a representation a lane reads - the row fold then takes the morsel,
+/// and the profile names the reason.
+#[allow(clippy::too_many_lines)]
 pub(super) fn fold_morsel(
     morsel: &Morsel<'_>,
     left_key: &CompiledExpr,
     keys: &UniqueKeyGroups,
     lanes: &[Lane],
-    outer: bool,
-    groups: &mut [AggregateGroup],
-    touched: &mut [bool],
+    scales: &LaneScales,
+    kept: &mut LaneTotals,
     memory: &MemoryTracker,
 ) -> Result<Option<&'static str>, ExecError> {
     let batch = morsel.batch;
@@ -315,7 +481,7 @@ pub(super) fn fold_morsel(
         _ => return Ok(Some("a probe key that is not packed integers")),
     };
     let mut inputs = Vec::with_capacity(lanes.len());
-    for lane in lanes {
+    for (lane_index, lane) in lanes.iter().enumerate() {
         let input = match *lane {
             Lane::CountRows => LaneInput::Rows,
             Lane::CountValid { column } => {
@@ -393,28 +559,29 @@ pub(super) fn fold_morsel(
         {
             return Ok(Some("an average widened past 19 digits"));
         }
+        if let LaneInput::Units { scale, .. } = &input
+            && !scales.agree(lane_index, *scale)
+        {
+            return Ok(Some("a summed column whose scale changed"));
+        }
         inputs.push(input);
     }
 
-    // The build-side groups, then the miss group, then a sink for the rows
-    // a lane's NULL argument leaves out of that lane.
-    let miss = keys.miss as usize;
     let sink = keys.miss + 1;
-    let slots = miss + 2;
-    let folded_groups = if outer { miss + 1 } else { miss };
-    if groups.len() < folded_groups {
+    let slots = kept.slots;
+    if slots != keys.miss as usize + 2 || kept.totals.len() != slots.saturating_mul(lanes.len()) {
         return Err(ExecError::InvalidPhysicalPlan(
-            "a fused join fold has fewer groups than its key table",
+            "fused join totals sized for another key table",
         ));
     }
-    let mut hits = vec![0_u64; slots];
-    let mut totals = vec![0_i128; slots.saturating_mul(lanes.len())];
-    let mut null_rows = vec![0_u64; slots.saturating_mul(lanes.len())];
-    let mut chunk_groups = Vec::<u32>::with_capacity(CHUNK_ROWS);
-    let mut lane_groups = Vec::<u32>::with_capacity(CHUNK_ROWS);
-    let mut picked = Vec::<u32>::with_capacity(CHUNK_ROWS);
-    let mut valid = Vec::<bool>::with_capacity(CHUNK_ROWS);
-    let mut scratch = Vec::<i128>::new();
+    let mut chunk_groups = std::mem::take(&mut kept.chunk_groups);
+    let mut lane_groups = std::mem::take(&mut kept.lane_groups);
+    let mut picked = std::mem::take(&mut kept.picked);
+    let mut valid = std::mem::take(&mut kept.valid);
+    let mut scratch = std::mem::take(&mut kept.scratch);
+    let hits = &mut kept.hits;
+    let totals = &mut kept.totals;
+    let null_rows = &mut kept.null_rows;
     let contiguous = morsel.selected_count() == morsel.rows.len();
     let mut selected = morsel.selected_rows();
     let mut next = morsel.rows.start;
@@ -483,57 +650,115 @@ pub(super) fn fold_morsel(
             }
         }
     }
-
-    for (group_index, rows) in hits.iter().take(folded_groups).enumerate() {
-        if *rows == 0 {
-            continue;
-        }
-        touched[group_index] = true;
-        let states = &mut groups[group_index].states;
-        for (lane_index, ((lane, input), state)) in
-            lanes.iter().zip(&inputs).zip(states.iter_mut()).enumerate()
-        {
-            let total = totals[lane_index * slots + group_index];
-            let valid = *rows - null_rows[lane_index * slots + group_index];
-            match (*lane, input) {
-                (Lane::CountRows, _) => state.add_dense_count(*rows)?,
-                (Lane::CountValid { .. }, _) => state.add_dense_count(valid)?,
-                (Lane::DecimalSum { float_output, .. }, LaneInput::Units { scale, .. }) => {
-                    if valid > 0 {
-                        state.update_decimal_sum_units(total, *scale, float_output)?;
-                    }
-                }
-                (Lane::IntegerSum { signed, .. }, LaneInput::Units { .. }) if valid > 0 => {
-                    // The morsel's total, exact in 128 bits; past the
-                    // sum's type it overflows as the row fold's would.
-                    if signed {
-                        state.add_dense_signed(
-                            i64::try_from(total).map_err(|_| ExecError::NumericOverflow)?,
-                        )?;
-                    } else {
-                        state.add_dense_unsigned(
-                            u64::try_from(total).map_err(|_| ExecError::NumericOverflow)?,
-                        )?;
-                    }
-                }
-                (Lane::IntegerSum { .. }, LaneInput::Units { .. }) => {}
-                (Lane::DecimalAverage { result_scale, .. }, LaneInput::Units { scale, .. }) => {
-                    if valid > 0 {
-                        state.add_decimal_average_partial(
-                            total,
-                            result_scale - *scale,
-                            result_scale,
-                            valid,
-                        )?;
-                    }
-                }
-                _ => {
-                    return Err(ExecError::InvalidPhysicalPlan(
-                        "a fused join lane lost its column",
-                    ));
-                }
-            }
-        }
-    }
+    kept.chunk_groups = chunk_groups;
+    kept.lane_groups = lane_groups;
+    kept.picked = picked;
+    kept.valid = valid;
+    kept.scratch = scratch;
     Ok(None)
+}
+
+/// Per-worker totals kept for a whole query.
+///
+/// Folding a morsel used to open with a zeroed set of totals and close by
+/// turning every group it touched back into aggregate states, which the
+/// caller then merged group by group on one thread. All of that is sized by
+/// the build side's groups, not by the morsel: with a hundred thousand
+/// groups it cost far more than adding the morsel's rows up. A worker now
+/// takes a set from here, folds its morsel into it and hands it back, and
+/// the sets are added together by group index once, when the probe ends.
+pub(super) struct LanePool<'a> {
+    keys: &'a UniqueKeyGroups,
+    lanes: &'a [Lane],
+    scales: LaneScales,
+    idle: Mutex<Vec<LaneTotals>>,
+    reserved: AtomicUsize,
+}
+
+impl<'a> LanePool<'a> {
+    /// A pool for `keys` and `lanes`, or why the query keeps per-morsel
+    /// totals: an integer sum checks its range as each morsel's total joins
+    /// the state, and a set per worker has to fit an eighth of the ceiling.
+    pub(super) fn plan(
+        keys: &'a UniqueKeyGroups,
+        lanes: &'a [Lane],
+        memory: &MemoryTracker,
+    ) -> Result<Self, &'static str> {
+        if lanes
+            .iter()
+            .any(|lane| matches!(lane, Lane::IntegerSum { .. }))
+        {
+            return Err("an integer sum checks its range morsel by morsel");
+        }
+        let workers = rayon::current_num_threads().max(1);
+        if LaneTotals::bytes(keys, lanes.len()).saturating_mul(workers) > memory.limit() / 8 {
+            return Err("a set of totals per worker is past an eighth of the memory ceiling");
+        }
+        Ok(Self {
+            keys,
+            lanes,
+            scales: LaneScales::new(lanes.len()),
+            idle: Mutex::new(Vec::new()),
+            reserved: AtomicUsize::new(0),
+        })
+    }
+
+    /// Folds `morsel` into an idle set of totals, opening - and charging
+    /// `memory` for - a new one when every set is in use.
+    pub(super) fn fold(
+        &self,
+        morsel: &Morsel<'_>,
+        left_key: &CompiledExpr,
+        memory: &MemoryTracker,
+    ) -> Result<Option<&'static str>, ExecError> {
+        let idle = self
+            .idle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop();
+        let mut kept = if let Some(kept) = idle {
+            kept
+        } else {
+            let bytes = LaneTotals::bytes(self.keys, self.lanes.len());
+            memory.reserve(bytes)?;
+            self.reserved.fetch_add(bytes, Ordering::Relaxed);
+            LaneTotals::new(self.keys, self.lanes.len())
+        };
+        let declined = fold_morsel(
+            morsel,
+            left_key,
+            self.keys,
+            self.lanes,
+            &self.scales,
+            &mut kept,
+            memory,
+        )?;
+        self.idle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(kept);
+        Ok(declined)
+    }
+
+    /// Bytes charged for the sets opened so far.
+    pub(super) fn reserved(&self) -> usize {
+        self.reserved.load(Ordering::Relaxed)
+    }
+
+    /// Every worker's totals added into one, and the scales they are in;
+    /// `None` when no morsel was folded.
+    pub(super) fn finish(self) -> Result<Option<(LaneTotals, LaneScales)>, ExecError> {
+        let mut sets = self
+            .idle
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .into_iter();
+        let Some(mut total) = sets.next() else {
+            return Ok(None);
+        };
+        for set in sets {
+            total.absorb(&set)?;
+        }
+        Ok(Some((total, self.scales)))
+    }
 }

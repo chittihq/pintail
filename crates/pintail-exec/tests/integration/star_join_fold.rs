@@ -308,6 +308,9 @@ fn assert_column_fold(segment_purchases: u64) {
         folded.is_some() && folded == total && folded != Some("0"),
         "not every morsel took the column fold:\n{profile}"
     );
+    // Decimal sums and counts add up in any order, so each worker keeps one
+    // set of totals for the whole probe.
+    assert!(line.contains("totals kept per worker"), "{profile}");
 }
 
 /// A sum of an integer column folds a column at a time too, on segment and
@@ -340,6 +343,12 @@ fn an_integer_sum_takes_the_column_fold() {
         let line = join_line(&profile);
         assert!(
             line.contains("column fold on") && !line.contains("row fold"),
+            "{profile}"
+        );
+        // An integer sum's range is checked as each morsel's total joins
+        // the state, so its totals are not carried across morsels.
+        assert!(
+            line.contains("totals opened per morsel: an integer sum"),
             "{profile}"
         );
     }

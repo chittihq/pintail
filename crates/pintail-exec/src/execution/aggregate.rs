@@ -21,7 +21,9 @@ use rayon::prelude::*;
 use crate::BatchStream as _;
 
 use super::distinct_keys::{TextKeys, UnitKind};
-use super::fused_join_fold::{Lane, UniqueKeyGroups, fold_morsel, plan_lanes};
+use super::fused_join_fold::{
+    Lane, LanePool, LaneScales, LaneTotals, UniqueKeyGroups, fold_morsel, plan_lanes,
+};
 use super::join::{
     BuildRow, JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
     normalized_group_hash_key, normalized_group_value, normalized_hash_key, normalized_join_key,
@@ -5551,6 +5553,15 @@ fn build_fused_inner_join_aggregate(
         });
     let row_fold_reason = unique_keys.as_ref().err().copied();
     let unique_keys = unique_keys.ok();
+    // Totals kept per worker for the whole probe, where the lanes allow it;
+    // otherwise each morsel opens its own and the reason is in the profile.
+    let lane_pool = unique_keys
+        .as_ref()
+        .map(|(keys, lanes)| LanePool::plan(keys, lanes, memory));
+    let per_morsel_reason = lane_pool
+        .as_ref()
+        .and_then(|pool| pool.as_ref().err().copied());
+    let lane_pool = lane_pool.and_then(Result::ok);
     // Morsels the column fold took; any other went to the row fold because
     // one of its batch columns was not in a representation a lane reads.
     let lane_morsels = std::sync::atomic::AtomicUsize::new(0);
@@ -5654,21 +5665,30 @@ fn build_fused_inner_join_aggregate(
         let partials = morsels
             .par_iter()
             .map(|morsel| {
-                build_local_fused_join_groups(
-                    morsel,
-                    outer.then_some(group_columns.len()),
-                    left_key,
-                    *key_mode,
-                    group_collation,
-                    left_width,
-                    aggregates,
-                    &join.build,
-                    &dense_group_indexes,
-                    unique_keys.as_ref(),
-                    &plan,
-                    memory,
-                )
-                .map(|(groups, declined)| {
+                let pooled = lane_pool
+                    .as_ref()
+                    .map(|pool| pool.fold(morsel, left_key, memory))
+                    .transpose()?;
+                let folded = if matches!(pooled, Some(None)) {
+                    Ok((HashMap::new(), None))
+                } else {
+                    build_local_fused_join_groups(
+                        morsel,
+                        outer.then_some(group_columns.len()),
+                        left_key,
+                        *key_mode,
+                        group_collation,
+                        left_width,
+                        aggregates,
+                        &join.build,
+                        &dense_group_indexes,
+                        unique_keys.as_ref(),
+                        &plan,
+                        pooled.flatten(),
+                        memory,
+                    )
+                };
+                folded.map(|(groups, declined)| {
                     all_morsels.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     match declined {
                         None => {
@@ -5685,45 +5705,40 @@ fn build_fused_inner_join_aggregate(
             })
             .collect::<Result<Vec<_>, _>>()?;
         for partial in partials {
-            for (key, partial_group) in partial {
-                if groups.len() == groups.capacity() {
-                    let growth = groups.capacity().max(64);
-                    reserve_hash_map_entries(
-                        &mut groups,
-                        growth,
-                        size_of::<Vec<Value>>()
-                            .saturating_add(size_of::<AggregateGroup>())
-                            .saturating_add(HASH_ENTRY_OVERHEAD),
-                        batch_reserved,
-                        memory,
-                    )?;
-                }
-                let group = match groups.entry(key) {
-                    Entry::Occupied(entry) => entry.into_mut(),
-                    Entry::Vacant(entry) => {
-                        let bytes = estimated_row_payload_bytes(&partial_group.values)
-                            .saturating_add(estimated_row_payload_bytes(entry.key()))
-                            .saturating_add(
-                                aggregates.len().saturating_mul(size_of::<AggregateState>()),
-                            );
-                        memory.reserve(bytes)?;
-                        entry.insert(AggregateGroup {
-                            values: partial_group.values,
-                            states: aggregates.iter().map(AggregateState::new).collect(),
-                        })
-                    }
-                };
-                for ((state, partial_state), aggregate) in group
-                    .states
-                    .iter_mut()
-                    .zip(partial_group.states)
-                    .zip(aggregates)
-                {
-                    state.merge(aggregate, partial_state, memory)?;
-                }
-            }
+            merge_fused_join_partial(&mut groups, partial, aggregates, batch_reserved, memory)?;
         }
         memory.release(local_upper.saturating_add(batch_reserved));
+    }
+
+    // The workers' totals become groups once, here: added together by group
+    // index, then each group a probe row reached gets its states and joins
+    // the map exactly as a morsel's groups do - so labels that normalize
+    // equal, and an outer join's NULL group beside a NULL label, still merge.
+    let pool_reserved = lane_pool.as_ref().map_or(0, LanePool::reserved);
+    if let (Some(pool), Some((_, lanes))) = (lane_pool, unique_keys.as_ref())
+        && let Some((totals, scales)) = pool.finish()?
+    {
+        memory.reserve(per_morsel_upper)?;
+        let mut reached = Vec::new();
+        for index in 0..plan.values.len() + usize::from(outer) {
+            if totals.rows(index) == 0 {
+                continue;
+            }
+            let values = plan
+                .values
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| vec![Value::Null; group_columns.len()]);
+            let mut states = aggregates
+                .iter()
+                .map(AggregateState::new)
+                .collect::<Vec<_>>();
+            totals.apply(lanes, &scales, index, &mut states)?;
+            reached.push(AggregateGroup { values, states });
+        }
+        let partial = fold_touched_join_groups(reached, group_collation, aggregates, memory)?;
+        merge_fused_join_partial(&mut groups, partial, aggregates, 0, memory)?;
+        memory.release(per_morsel_upper);
     }
 
     if std::env::var_os("PINTAIL_PHASE_TIMING").is_some() {
@@ -5743,6 +5758,12 @@ fn build_fused_inner_join_aggregate(
                     lane_morsels.into_inner(),
                     all_morsels.into_inner()
                 );
+                match per_morsel_reason {
+                    None => fold.push_str(", totals kept per worker"),
+                    Some(reason) => {
+                        let _ = write!(fold, ", totals opened per morsel: {reason}");
+                    }
+                }
                 for (reason, morsels) in declined_morsels.into_inner().unwrap_or_default() {
                     let _ = write!(fold, "; row fold on {morsels}: {reason}");
                 }
@@ -5755,8 +5776,60 @@ fn build_fused_inner_join_aggregate(
         ));
     }
     drop(join);
-    memory.release(build_reserved.saturating_add(unique_reserved));
+    memory.release(
+        build_reserved
+            .saturating_add(unique_reserved)
+            .saturating_add(pool_reserved),
+    );
     Ok(Some(finish_aggregate_groups(groups.into_values(), memory)?))
+}
+
+/// Merges one partial set of a fused join's groups into `groups`, charging
+/// each group that is new. `transient` is what the round's batches hold,
+/// which the map's growth may not spill.
+fn merge_fused_join_partial(
+    groups: &mut HashMap<Vec<Value>, AggregateGroup>,
+    partial: HashMap<Vec<Value>, AggregateGroup>,
+    aggregates: &[CompiledAggregate],
+    transient: usize,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    for (key, partial_group) in partial {
+        if groups.len() == groups.capacity() {
+            let growth = groups.capacity().max(64);
+            reserve_hash_map_entries(
+                groups,
+                growth,
+                size_of::<Vec<Value>>()
+                    .saturating_add(size_of::<AggregateGroup>())
+                    .saturating_add(HASH_ENTRY_OVERHEAD),
+                transient,
+                memory,
+            )?;
+        }
+        let group = match groups.entry(key) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let bytes = estimated_row_payload_bytes(&partial_group.values)
+                    .saturating_add(estimated_row_payload_bytes(entry.key()))
+                    .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()));
+                memory.reserve(bytes)?;
+                entry.insert(AggregateGroup {
+                    values: partial_group.values,
+                    states: aggregates.iter().map(AggregateState::new).collect(),
+                })
+            }
+        };
+        for ((state, partial_state), aggregate) in group
+            .states
+            .iter_mut()
+            .zip(partial_group.states)
+            .zip(aggregates)
+        {
+            state.merge(aggregate, partial_state, memory)?;
+        }
+    }
+    Ok(())
 }
 
 /// Folds one joined row into `states`: probe-side arguments from `row` of
@@ -5823,6 +5896,7 @@ fn build_local_fused_join_groups(
     dense_group_indexes: &[Option<&[usize]>],
     unique_keys: Option<&(UniqueKeyGroups, Vec<Lane>)>,
     plan: &JoinGroupPlan,
+    pool_declined: Option<&'static str>,
     parent_memory: &MemoryTracker,
 ) -> Result<FusedMorselGroups, ExecError> {
     // Groups are fixed by the build side: start with the resolved set and
@@ -5863,18 +5937,28 @@ fn build_local_fused_join_groups(
                 crate::batch::TypedValues::Int64(_) | crate::batch::TypedValues::UInt64(_)
             )
         });
-    let declined = match unique_keys {
-        Some((keys, lanes)) => fold_morsel(
-            morsel,
-            left_key,
-            keys,
-            lanes,
-            null_group.is_some(),
-            &mut groups,
-            &mut touched,
-            &memory,
-        )?,
-        None => Some("no column fold planned"),
+    let declined = match (pool_declined, unique_keys) {
+        (Some(reason), _) => Some(reason),
+        (None, Some((keys, lanes))) => {
+            let scales = LaneScales::new(lanes.len());
+            let mut kept = LaneTotals::new(keys, lanes.len());
+            let declined = fold_morsel(morsel, left_key, keys, lanes, &scales, &mut kept, &memory)?;
+            if declined.is_none() {
+                if groups.len() != plan.values.len() + usize::from(null_group.is_some()) {
+                    return Err(ExecError::InvalidPhysicalPlan(
+                        "a fused join fold has other groups than its key table",
+                    ));
+                }
+                for (index, group) in groups.iter_mut().enumerate() {
+                    if kept.rows(index) > 0 {
+                        touched[index] = true;
+                        kept.apply(lanes, &scales, index, &mut group.states)?;
+                    }
+                }
+            }
+            declined
+        }
+        (None, None) => Some("no column fold planned"),
     };
     let rows = declined.is_some().then(|| morsel.selected_rows());
     for (offset, row) in rows.into_iter().flatten().enumerate() {
@@ -5963,11 +6047,25 @@ fn build_local_fused_join_groups(
     // plain collect() dropped every earlier slot's states whenever two
     // build spellings folded to one key, silently losing their rows'
     // aggregates (#258's vanished red/RED group).
+    let touched_groups = groups
+        .into_iter()
+        .zip(touched)
+        .filter_map(|(group, touched)| touched.then_some(group))
+        .collect::<Vec<_>>();
+    let folded = fold_touched_join_groups(touched_groups, group_collation, aggregates, &memory)?;
+    Ok((folded, declined))
+}
+
+/// The groups a fused join's probe rows reached, keyed by their normalized
+/// values; groups whose keys normalize equal merge into one.
+fn fold_touched_join_groups(
+    groups: Vec<AggregateGroup>,
+    group_collation: Collation,
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     let mut folded: HashMap<Vec<Value>, AggregateGroup> = HashMap::with_capacity(groups.len());
-    for (group, touched) in groups.into_iter().zip(touched) {
-        if !touched {
-            continue;
-        }
+    for group in groups {
         let key: Vec<Value> = group
             .values
             .iter()
@@ -5986,12 +6084,12 @@ fn build_local_fused_join_groups(
                     .zip(group.states)
                     .zip(aggregates)
                 {
-                    state.merge(aggregate, partial_state, &memory)?;
+                    state.merge(aggregate, partial_state, memory)?;
                 }
             }
         }
     }
-    Ok((folded, declined))
+    Ok(folded)
 }
 
 /// Dictionary-code aggregation for low-cardinality string group keys
