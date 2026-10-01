@@ -22,7 +22,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque, hash_map::DefaultHasher},
     fs::File,
     hash::{Hash as _, Hasher as _},
-    io::{Seek as _, Write as _},
+    io::{BufReader, BufWriter, Seek as _, Write as _},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, PoisonError,
@@ -2448,7 +2448,10 @@ fn validate_configuration(
 #[derive(Default)]
 struct PendingTransaction {
     mutations: Vec<PendingMutation>,
-    spill: Option<File>,
+    /// Buffered: the encoder writes a token at a time and the decoder reads
+    /// a byte at a time, and against the bare file each of those was a
+    /// system call - a million-row transaction spent minutes in them.
+    spill: Option<BufWriter<File>>,
     spilled_mutations: usize,
     discarded_targets: BTreeSet<usize>,
     retained_bytes: usize,
@@ -2470,10 +2473,11 @@ impl PendingTransaction {
 
     fn spill(&mut self, mutations: Vec<PendingMutation>) -> Result<(), CdcError> {
         if self.spill.is_none() {
-            self.spill = Some(
+            self.spill = Some(BufWriter::with_capacity(
+                1 << 20,
                 tempfile::tempfile()
                     .map_err(|error| CdcError::TransactionSpill(error.to_string()))?,
-            );
+            ));
             let retained = std::mem::take(&mut self.mutations);
             self.write_spilled(retained)?;
             self.retained_bytes = 0;
@@ -2498,10 +2502,12 @@ impl PendingTransaction {
     fn take_mutations(&mut self) -> Result<Vec<PendingMutation>, CdcError> {
         let mut mutations =
             Vec::with_capacity(self.spilled_mutations.saturating_add(self.mutations.len()));
-        if let Some(file) = &mut self.spill {
-            file.flush()
-                .and_then(|()| file.rewind())
+        if let Some(spill) = &mut self.spill {
+            spill
+                .flush()
+                .and_then(|()| spill.get_mut().rewind())
                 .map_err(|error| CdcError::TransactionSpill(error.to_string()))?;
+            let file = BufReader::with_capacity(1 << 20, spill.get_mut());
             for mutation in
                 serde_json::Deserializer::from_reader(file).into_iter::<PendingMutation>()
             {
