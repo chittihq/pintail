@@ -154,7 +154,13 @@ pub(super) fn suits(
     let Some((typed, validity)) = column.typed() else {
         return Err("the key column is not typed");
     };
-    let mut seen = std::collections::HashSet::<u64>::new();
+    // A fixed hasher rather than a seed drawn per process: the set never
+    // holds more than `limit + 1` keys, so there is nothing to defend, and
+    // the same batch then costs the same on every run.
+    let mut seen = std::collections::HashSet::<
+        u64,
+        std::hash::BuildHasherDefault<std::collections::hash_map::DefaultHasher>,
+    >::default();
     let mut distinct = |bits: u64| {
         seen.insert(bits);
         seen.len() <= limit
