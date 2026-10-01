@@ -33,9 +33,20 @@ fn schema() -> TableSchema {
         vec![
             Column::new(1, "id", DataType::UInt64, false),
             Column::new(2, "amount", DataType::Int64, false),
+            Column::new(3, "reserve", DataType::Int64, false),
         ],
     )
     .expect("schema")
+}
+
+/// Row `id`'s reserve: the largest 64-bit value on every thousandth row,
+/// so the settled rows alone total past 64 bits and so do the appended.
+fn reserve_of(id: u64) -> i64 {
+    if id.is_multiple_of(1_000) {
+        i64::MAX
+    } else {
+        0
+    }
 }
 
 fn row(id: u64) -> StoredRow {
@@ -44,6 +55,7 @@ fn row(id: u64) -> StoredRow {
         vec![
             Value::UInt64(id),
             Value::Int64(i64::try_from(id % 10).expect("small")),
+            Value::Int64(reserve_of(id)),
         ],
         id + 1,
         false,
@@ -158,4 +170,44 @@ fn an_aggregate_over_appended_rows_extends_the_settled_answer() {
         merges, 1,
         "the delta found its base entry rather than reading the table again"
     );
+}
+
+/// An integer SUM is a DECIMAL: a total past 64 bits is memoized as the
+/// settled answer, and the appended rows' own total - past 64 bits or not
+/// - extends it exactly.
+#[test]
+fn a_total_past_64_bits_extends_the_settled_answer() {
+    let mut fixture = Fixture::new();
+    let sql = "SELECT COUNT(*), SUM(reserve) FROM events";
+    let total = |rows: u64| {
+        (0..rows)
+            .map(|id| i128::from(reserve_of(id)))
+            .sum::<i128>()
+            .to_string()
+    };
+    assert_eq!(total(SETTLED), (4 * i128::from(i64::MAX)).to_string());
+
+    let (rows, merges) = fixture.run(sql);
+    assert_eq!(
+        rows,
+        vec![Value::UInt64(SETTLED), Value::Utf8(total(SETTLED))]
+    );
+    assert_eq!(merges, 0, "nothing to extend yet");
+    // The memoized answer replays as it was.
+    assert_eq!(fixture.run(sql).0[1], Value::Utf8(total(SETTLED)));
+
+    fixture
+        .table
+        .ingest((SETTLED..SETTLED + APPENDED).map(row).collect())
+        .expect("append");
+    let (rows, merges) = fixture.run(sql);
+    assert_eq!(
+        rows,
+        vec![
+            Value::UInt64(SETTLED + APPENDED),
+            Value::Utf8(total(SETTLED + APPENDED))
+        ],
+        "the extended total holds the appended rows"
+    );
+    assert_eq!(merges, 1, "the delta extended the memoized total");
 }

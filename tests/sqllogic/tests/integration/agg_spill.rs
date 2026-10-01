@@ -63,7 +63,20 @@ fn run_aggregated(memory_limit: usize) -> Result<Vec<Vec<Value>>, String> {
     run_aggregated_with_metrics(memory_limit).map(|(rows, _)| rows)
 }
 
+/// COUNT(DISTINCT note) is the text set that repeats within a group across
+/// many runs: a merge that re-normalized its keys counted it once per run.
+const AGGREGATES: &str = "SELECT grp, tag, COUNT(*), SUM(score), AVG(score), MIN(label), \
+     COUNT(DISTINCT score), COUNT(DISTINCT label), COUNT(DISTINCT note) \
+     FROM events GROUP BY grp, tag ORDER BY grp, tag";
+
 fn run_aggregated_with_metrics(
+    memory_limit: usize,
+) -> Result<(Vec<Vec<Value>>, QuerySpillMetrics), String> {
+    run_query_with_metrics(AGGREGATES, memory_limit)
+}
+
+fn run_query_with_metrics(
+    sql: &str,
     memory_limit: usize,
 ) -> Result<(Vec<Vec<Value>>, QuerySpillMetrics), String> {
     let directory = tempfile::tempdir().expect("tempdir");
@@ -85,15 +98,7 @@ fn run_aggregated_with_metrics(
     let provider =
         SnapshotScanProvider::new([(DATABASE_ID, TABLE_ID, &snapshot)]).expect("provider");
 
-    let statement = parse_statement(
-        // COUNT(DISTINCT note) is the text set that repeats within a group
-        // across many runs: a merge that re-normalized its keys counted it
-        // once per run.
-        "SELECT grp, tag, COUNT(*), SUM(score), AVG(score), MIN(label), \
-         COUNT(DISTINCT score), COUNT(DISTINCT label), COUNT(DISTINCT note) \
-         FROM events GROUP BY grp, tag ORDER BY grp, tag",
-    )
-    .map_err(|error| format!("parse: {error}"))?;
+    let statement = parse_statement(sql).map_err(|error| format!("parse: {error}"))?;
     let bound = Binder::new(&catalog, Some("app"))
         .bind(&statement)
         .map_err(|error| format!("bind: {error}"))?;
@@ -251,4 +256,35 @@ fn a_spilling_aggregation_completes_under_a_low_descriptor_limit() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// An integer SUM is a DECIMAL, and a group's total past 64 bits survives
+/// the spill: partial totals written to runs and merged back answer what
+/// the in-memory map answers. Every row of a group carries one score, so
+/// four of them times a factor near 2^54 leave 64 bits for most groups.
+#[test]
+fn an_integer_total_past_64_bits_survives_the_spill() {
+    const FACTOR: i64 = 18_446_744_073_709_551;
+    let sql = format!(
+        "SELECT grp, tag, SUM(score * {FACTOR}), COUNT(DISTINCT label), COUNT(DISTINCT note) \
+         FROM events GROUP BY grp, tag ORDER BY grp, tag"
+    );
+    let (reference, fitted) =
+        run_query_with_metrics(&sql, 256 * 1024 * 1024).expect("in-memory aggregation");
+    assert_eq!(fitted.files, 0, "the roomy ceiling holds every group");
+    assert_eq!(reference.len(), 30_000);
+    let mut past = 0;
+    for row in &reference {
+        let Value::Int64(grp) = row[0] else {
+            panic!("a group key: {:?}", row[0]);
+        };
+        let total = 4 * i128::from(grp % 1_000 - 500) * i128::from(FACTOR);
+        assert_eq!(row[2], Value::Utf8(total.to_string()), "group {grp}");
+        past += usize::from(i64::try_from(total).is_err());
+    }
+    assert!(past > 10_000, "most totals leave 64 bits, {past} did");
+    let (spilled, metrics) =
+        run_query_with_metrics(&sql, 24 * 1024 * 1024).expect("spilled aggregation");
+    assert!(metrics.files > 0, "the tight ceiling spills");
+    assert_eq!(spilled, reference);
 }
