@@ -2,6 +2,7 @@ mod aggregate;
 pub use aggregate::take_fold_phase_timings;
 mod budget;
 mod columnar_sort;
+mod deferred_projection;
 mod dependent_index;
 mod error;
 mod fused_join_fold;
@@ -5388,6 +5389,40 @@ impl ProfileNote {
     }
 }
 
+/// The columns a projection exposes to the operators above it.
+fn projection_output_columns(expressions: &[BoundProjection]) -> Vec<BoundColumn> {
+    expressions
+        .iter()
+        .enumerate()
+        .map(|(index, projection)| match &projection.expr.kind {
+            BoundExprKind::Column(column) => {
+                let mut column = column.clone();
+                column.outer = false;
+                column.nullable = projection.expr.nullable;
+                column
+            }
+            _ => BoundColumn {
+                database_id: DatabaseId::new(u64::MAX),
+                table_id: TableId::new(u64::MAX - 2),
+                column_id: u32::try_from(index).unwrap_or(u32::MAX),
+                relation_name: "<projection>".to_owned(),
+                name: projection.name.clone(),
+                data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
+                nullable: projection.expr.nullable,
+                collation: None,
+                enum_labels: None,
+                geometry: false,
+                timestamp: false,
+                binary_width: projection.expr.binary_width(),
+                bit_width: projection.expr.bit_width(),
+                float_decimals: projection.expr.numeric_decimals(&[]),
+                outer: false,
+                using_shadowed: false,
+            },
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_lines)]
 fn build_operator_inner(
     plan: PhysicalPlan,
@@ -5849,36 +5884,7 @@ fn build_operator_inner(
                 .iter()
                 .any(|projection| expression_has_dependent_subquery(&projection.expr));
             let (mut input, columns) = build_operator(*input, provider, memory, collation)?;
-            let output_columns = expressions
-                .iter()
-                .enumerate()
-                .map(|(index, projection)| match &projection.expr.kind {
-                    BoundExprKind::Column(column) => {
-                        let mut column = column.clone();
-                        column.outer = false;
-                        column.nullable = projection.expr.nullable;
-                        column
-                    }
-                    _ => BoundColumn {
-                        database_id: DatabaseId::new(u64::MAX),
-                        table_id: TableId::new(u64::MAX - 2),
-                        column_id: u32::try_from(index).unwrap_or(u32::MAX),
-                        relation_name: "<projection>".to_owned(),
-                        name: projection.name.clone(),
-                        data_type: projection.expr.data_type.unwrap_or(DataType::Utf8),
-                        nullable: projection.expr.nullable,
-                        collation: None,
-                        enum_labels: None,
-                        geometry: false,
-                        timestamp: false,
-                        binary_width: projection.expr.binary_width(),
-                        bit_width: projection.expr.bit_width(),
-                        float_decimals: projection.expr.numeric_decimals(&[]),
-                        outer: false,
-                        using_shadowed: false,
-                    },
-                })
-                .collect::<Vec<_>>();
+            let output_columns = projection_output_columns(&expressions);
             if dependent {
                 let column_types = expressions
                     .iter()
@@ -6166,6 +6172,11 @@ fn build_operator_inner(
             offset,
             count,
         } => {
+            if deferred_projection::applies(&input, offset, count) {
+                return deferred_projection::build(
+                    *input, offset, count, provider, memory, collation,
+                );
+            }
             let (input, columns) = build_operator(*input, provider, memory, collation)?;
             Ok((
                 PullOperator::Limit {
