@@ -15,7 +15,7 @@ use std::{
 
 use mysql_async::{Opts, Pool, prelude::Queryable};
 use pintail_cdc::{CdcCheckpoint, CdcError, CdcOptions, CdcTarget, run_cdc};
-use pintail_meta::MetaStore;
+use pintail_meta::{CdcApplyIntent, MetaStore};
 use pintail_poll::{CdcReconcileScope, PollTarget, run_cdc_reconciliation};
 use pintail_probe::{ProbeReport, RecommendedMode, probe};
 use pintail_snapshot::{SnapshotOptions, SnapshotTarget, run_snapshot};
@@ -1578,9 +1578,9 @@ async fn assert_virtual_column_added_mid_stream_is_recopied(
     assert_eq!(flagged.len(), 1, "{label}: {flagged:?}");
     assert_eq!(flagged[0].0, "compat_generated", "{label}");
     assert!(
-        flagged[0]
-            .1
-            .contains("virtual generated column value_len joined the schema"),
+        flagged[0].1.contains(
+            "column value_len joined the schema with values the rows already copied need"
+        ),
         "{label}: the table is recopied for the right reason, not a parse failure: {}",
         flagged[0].1
     );
@@ -2096,16 +2096,35 @@ async fn assert_restart_replay(
              COMMIT;",
         )
         .expect("restart mutations");
+    let floor = stored_floor(&targets);
     let first = finite_catch_up(pool, metadata_path, report, targets)
         .await
         .expect("first restart catch-up");
     assert_eq!(first.mutations, 4);
     let checkpoint_after = first.checkpoint.clone();
     assert_restart_rows(&first.targets);
+    let highest = stored_floor(&first.targets);
+    assert!(highest > floor, "the transaction stored newer versions");
     drop(first.targets);
 
-    MetaStore::open(metadata_path)
-        .expect("rewind metadata")
+    // The state a process killed between writing the batch and committing
+    // its checkpoint leaves behind: the rows stored, the checkpoint still at
+    // the batch's start, and the record of what the apply was writing. A
+    // checkpoint rewound without that record reads as a source whose
+    // numbering restarted, which is answered by a full copy, not a replay.
+    let metadata = MetaStore::open(metadata_path).expect("rewind metadata");
+    metadata
+        .record_cdc_apply_intent(
+            DATABASE_ID,
+            &CdcApplyIntent {
+                floor,
+                highest,
+                binlog_file: checkpoint_before.binlog_file.clone(),
+                binlog_pos: checkpoint_before.binlog_pos,
+            },
+        )
+        .expect("record the unfinished apply");
+    metadata
         .upsert_snapshot_checkpoint(
             DATABASE_ID,
             &checkpoint_before.kind,
@@ -2131,9 +2150,36 @@ async fn assert_restart_replay(
     let replay = finite_catch_up(pool, metadata_path, report, reopened)
         .await
         .expect("replayed catch-up");
+    // The stream hands the transaction over again - four mutations read -
+    // and every table drops the rows it already holds: the same rows, the
+    // same versions, nothing stored twice and no copy from the source.
     assert_eq!(replay.mutations, 4);
     assert_eq!(replay.checkpoint, checkpoint_after);
     assert_restart_rows(&replay.targets);
+    assert_eq!(stored_floor(&replay.targets), highest);
+    let metadata = MetaStore::open(metadata_path).expect("replayed metadata");
+    assert_eq!(
+        metadata
+            .cdc_apply_intent(DATABASE_ID)
+            .expect("apply intent"),
+        None,
+        "the checkpoint that covers the batch clears its record"
+    );
+    assert_eq!(
+        metadata
+            .tables_needing_resync(DATABASE_ID)
+            .expect("tables to recopy"),
+        ["decode_fail".to_owned()].into_iter().collect(),
+        "the replay was not answered by a copy"
+    );
+}
+
+fn stored_floor(targets: &[CdcTarget]) -> u64 {
+    targets
+        .iter()
+        .filter_map(|target| target.store().snapshot().max_row_version())
+        .max()
+        .unwrap_or(0)
 }
 
 async fn finite_catch_up(
@@ -2217,7 +2263,10 @@ fn assert_replica(targets: &[CdcTarget]) {
             .any(|row| row.values().contains(&Value::Utf8("updated".to_owned())))
     );
 
-    let types = targets["type_rows"];
+    assert_type_fidelity(targets["type_rows"]);
+}
+
+fn assert_type_fidelity(types: &CdcTarget) {
     let rows = types.store().snapshot().scan().expect("type fidelity scan");
     assert_eq!(rows.len(), 2);
     let columns = types
@@ -2227,6 +2276,33 @@ fn assert_replica(targets: &[CdcTarget]) {
         .enumerate()
         .map(|(index, column)| (column.name.as_str(), index))
         .collect::<BTreeMap<_, _>>();
+    // A BIT column is its unsigned number at every width, and NULL stays
+    // NULL: the first row arrived by the copy, the second by the stream.
+    let bits = |row: usize| {
+        ["bit_value", "bit1", "bit8", "bit10", "bit64"]
+            .map(|name| rows[row].values()[columns[name]].clone())
+            .to_vec()
+    };
+    assert_eq!(
+        bits(0),
+        [
+            Value::UInt64(0),
+            Value::UInt64(1),
+            Value::Null,
+            Value::UInt64(682),
+            Value::UInt64(u64::MAX),
+        ]
+    );
+    assert_eq!(
+        bits(1),
+        [
+            Value::UInt64(341),
+            Value::UInt64(0),
+            Value::UInt64(128),
+            Value::Null,
+            Value::UInt64(0x8000_0000_0000_0001),
+        ]
+    );
     let row = &rows[1];
     // MySQL returns the all-zero date from a SELECT, does not match it with
     // IS NULL, and counts it in COUNT(column); the replica preserves it
@@ -2361,11 +2437,16 @@ fn source_schema() -> &'static str {
        set_value SET('red','green','blue'),\
        json_value JSON,\
        binary_value VARBINARY(8),\
-       blob_value BLOB\
+       blob_value BLOB,\
+       bit1 BIT(1),\
+       bit8 BIT(8),\
+       bit10 BIT(10),\
+       bit64 BIT(64)\
      );\
      INSERT INTO type_rows VALUES \
        (1,0.0000000000,b'0','1000-01-01','2024-02-29 12:34:56.123456',\
-        '1970-01-01 00:00:01.000001','plain','alpha','green',JSON_OBJECT(),X'',X'');"
+        '1970-01-01 00:00:01.000001','plain','alpha','green',JSON_OBJECT(),X'',X'',\
+        b'1',NULL,b'1010101010',X'FFFFFFFFFFFFFFFF');"
 }
 
 fn cdc_mutations() -> &'static str {
@@ -2382,7 +2463,8 @@ fn cdc_mutations() -> &'static str {
        2,1234567890123456789012345678.1234567890,b'101010101',\
        '0000-00-00','0000-00-00 00:00:00.000000','0000-00-00 00:00:00.000000',\
        _latin1 0x636166E9,'βeta','red,blue',\
-       JSON_OBJECT('b',JSON_ARRAY(TRUE,NULL),'a',1),0x00FF10,0xDEADBEEF\
+       JSON_OBJECT('b',JSON_ARRAY(TRUE,NULL),'a',1),0x00FF10,0xDEADBEEF,\
+       b'0',X'80',NULL,X'8000000000000001'\
      );"
 }
 

@@ -801,7 +801,18 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
                2,0,0.0000000000,\
                '0000-00-00','0000-00-00 00:00:00.000000','00:00:00.000000',\
                JSON_OBJECT(),'','alpha','',b'0',X'',X''\
-             );",
+             );\
+             CREATE TABLE bit_widths (\
+               id BIGINT UNSIGNED NOT NULL PRIMARY KEY,\
+               bit1 BIT(1) NULL,\
+               bit8 BIT(8) NULL,\
+               bit10 BIT(10) NULL,\
+               bit64 BIT(64) NULL\
+             ) ENGINE=InnoDB;\
+             INSERT INTO bit_widths VALUES \
+               (1,b'1',X'80',b'1010101010',X'FFFFFFFFFFFFFFFF'),\
+               (2,b'0',b'0',b'0',X'8000000000000001'),\
+               (3,NULL,NULL,NULL,NULL);",
         )
         .unwrap_or_else(|error| panic!("{error}"));
 
@@ -840,7 +851,7 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
                 "name": "analytics",
                 "dsn": mysql.dsn(),
                 "mode": "polling",
-                "include_tables": ["type_fidelity"]
+                "include_tables": ["type_fidelity", "bit_widths"]
             })),
         )
         .await,
@@ -915,6 +926,27 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
     assert_eq!(rows[1][3], json!("0000-00-00"));
     assert_eq!(rows[1][4], json!("0000-00-00 00:00:00.000000"));
 
+    // Over HTTP a BIT column is its unsigned number at every width.
+    let http_bits = json_response(
+        request(
+            &app,
+            Method::POST,
+            "/api/query",
+            Some(&authorization),
+            Some(json!({"db": database_id, "sql": BIT_WIDTHS_QUERY})),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        http_bits["rows"],
+        json!([
+            [1, 128, 682, 18_446_744_073_709_551_615_u64],
+            [0, 0, 0, 9_223_372_036_854_775_809_u64],
+            [null, null, null, null]
+        ])
+    );
+
     let key = json_response(
         request(
             &app,
@@ -967,7 +999,9 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
             mysql_async::Value::Bytes("café βeta red,blue 🪿".as_bytes().to_vec()),
             mysql_async::Value::Bytes("βeta".as_bytes().to_vec()),
             mysql_async::Value::Bytes(b"red,blue".to_vec()),
-            mysql_async::Value::Int(341),
+            // A BIT column travels as its bytes, most significant first,
+            // in as many bytes as its width needs - what the source sends.
+            mysql_async::Value::Bytes(vec![0x01, 0x55]),
             mysql_async::Value::Bytes(vec![0, 255, 16]),
             mysql_async::Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
         ]
@@ -989,6 +1023,28 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
             mysql_async::Value::Date(0, 0, 0, 0, 0, 0, 0)
         )
     );
+    // BIT over the wire is whatever the source itself sends for the same
+    // statement: the same bytes and the same column metadata, under both
+    // the prepared and the text protocol, at every width and for NULL.
+    let source_pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("source DSN"));
+    let mut source = source_pool.get_conn().await.expect("source connection");
+    let mirrored_prepared = bit_rows(&mut connection, true).await;
+    assert_eq!(mirrored_prepared, bit_rows(&mut source, true).await);
+    let mirrored_text = bit_rows(&mut connection, false).await;
+    assert_eq!(mirrored_text, bit_rows(&mut source, false).await);
+    assert_eq!(mirrored_prepared, mirrored_text);
+    assert_eq!(
+        mirrored_prepared[0].1,
+        vec![
+            mysql_async::Value::Bytes(vec![0x01]),
+            mysql_async::Value::Bytes(vec![0x80]),
+            mysql_async::Value::Bytes(vec![0x02, 0xaa]),
+            mysql_async::Value::Bytes(vec![0xff; 8]),
+        ]
+    );
+    assert_eq!(mirrored_prepared[2].1, vec![mysql_async::Value::NULL; 4]);
+    drop(source);
+    source_pool.disconnect().await.expect("disconnect source");
     drop(connection);
     pool.disconnect().await.expect("disconnect wire client");
     let _ = shutdown_tx.send(());
@@ -996,6 +1052,35 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
         .await
         .expect("wire server task")
         .expect("wire server");
+}
+
+const BIT_WIDTHS_QUERY: &str = "SELECT bit1, bit8, bit10, bit64 FROM bit_widths ORDER BY id";
+
+/// Each row of the BIT table as a client reads it: the type and declared
+/// length of every column, then the values.
+async fn bit_rows(
+    connection: &mut mysql_async::Conn,
+    prepared: bool,
+) -> Vec<(
+    Vec<(mysql_async::consts::ColumnType, u32)>,
+    Vec<mysql_async::Value>,
+)> {
+    let rows: Vec<mysql_async::Row> = if prepared {
+        connection.exec(BIT_WIDTHS_QUERY, ()).await
+    } else {
+        connection.query(BIT_WIDTHS_QUERY).await
+    }
+    .expect("BIT rows");
+    rows.into_iter()
+        .map(|row| {
+            let columns = row
+                .columns_ref()
+                .iter()
+                .map(|column| (column.column_type(), column.column_length()))
+                .collect();
+            (columns, row.unwrap())
+        })
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread")]
