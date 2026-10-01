@@ -134,6 +134,11 @@ async fn run() -> Result<()> {
     // locked to it between replication cycles, so queries prove the replica
     // current from its generation instead of walking the table's files.
     pintail_store::retain_writer_locks();
+    // The lookup postings' cache takes its default ceiling from the memory
+    // this process has, read the way the query budget reads it.
+    if let Some(available) = pintail::config::available_memory_bytes() {
+        pintail_store::side_index_cache_default(available);
+    }
     report_effective_limits(&config);
 
     let api_state = ApiState::new(
@@ -361,7 +366,7 @@ fn report_effective_limits(config: &pintail::config::AppConfig) {
     pintail_log::log_info!(
         "pintail limits: concurrent_queries={admission} queue_wait={:.1}s query_memory={} \
          shared_memory={} process_memory={} open_files={} spill_dir={} \
-         query_spill={} global_spill={}",
+         query_spill={} global_spill={} lookup_index_cache={}",
         config.query_queue_wait().as_secs_f64(),
         describe(config.query_memory_limit_bytes() as u64),
         describe(config.total_query_memory_limit_bytes() as u64),
@@ -370,6 +375,7 @@ fn report_effective_limits(config: &pintail::config::AppConfig) {
         config.spill_dir().display(),
         describe(config.query_spill_limit_bytes()),
         describe(config.global_spill_limit_bytes()),
+        describe(pintail_store::side_index_cache_limit() as u64),
     );
 }
 

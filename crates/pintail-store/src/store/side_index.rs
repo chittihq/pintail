@@ -413,20 +413,54 @@ impl CacheKey {
 /// scans reaching it meanwhile wait for that build rather than repeat it.
 type Slot = Arc<OnceLock<Option<Arc<Postings>>>>;
 
-/// Default ceiling on the heap the cached postings hold together.
+/// The least the cached postings may hold together when nothing says
+/// otherwise: the ceiling of a process that was not told its memory.
 const DEFAULT_CACHE_BYTES: usize = 256 << 20;
 
-/// The bytes the cached postings may hold, from
-/// `PINTAIL_SECONDARY_INDEX_CACHE_MB` when set.
+/// The share of the process's memory the cached postings may hold by
+/// default: one eighth.
+///
+/// A fixed 256 MB held the postings of one text column of a table of twelve
+/// million rows but not of two. Statements that looked rows up by one and
+/// then the other evicted each other's postings every time, and each
+/// rebuilt them - a few hundred milliseconds a statement for lookups that
+/// take a few once the postings stay.
+const DEFAULT_CACHE_MEMORY_SHARE: u64 = 8;
+
+/// The default ceiling the process was given for its memory, when it said.
+static DEFAULT_LIMIT: OnceLock<usize> = OnceLock::new();
+
+/// Sizes the postings cache's default ceiling from the memory available to
+/// the process: an eighth of it, and never under 256 MB.
+/// `PINTAIL_SECONDARY_INDEX_CACHE_MB` still overrides it. Call once, before
+/// the first query; later calls change nothing.
+pub fn side_index_cache_default(available_memory_bytes: u64) {
+    let _ = DEFAULT_LIMIT.set(default_cache_bytes(available_memory_bytes));
+}
+
+fn default_cache_bytes(available_memory_bytes: u64) -> usize {
+    usize::try_from(available_memory_bytes / DEFAULT_CACHE_MEMORY_SHARE)
+        .unwrap_or(usize::MAX)
+        .max(DEFAULT_CACHE_BYTES)
+}
+
+/// The bytes the cached postings may hold: `PINTAIL_SECONDARY_INDEX_CACHE_MB`
+/// when set, else the default sized from the process's memory.
+#[must_use]
+pub fn side_index_cache_limit() -> usize {
+    cache_limit()
+}
+
 fn cache_limit() -> usize {
     static LIMIT: OnceLock<usize> = OnceLock::new();
     *LIMIT.get_or_init(|| {
         std::env::var("PINTAIL_SECONDARY_INDEX_CACHE_MB")
             .ok()
             .and_then(|value| value.trim().parse::<usize>().ok())
-            .map_or(DEFAULT_CACHE_BYTES, |megabytes| {
-                megabytes.saturating_mul(1 << 20)
-            })
+            .map_or_else(
+                || DEFAULT_LIMIT.get().copied().unwrap_or(DEFAULT_CACHE_BYTES),
+                |megabytes| megabytes.saturating_mul(1 << 20),
+            )
     })
 }
 
@@ -1242,6 +1276,14 @@ mod tests {
                 .candidate_ranges(&IndexProbe::Span(0, 90), 0, 1_000)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn the_default_cache_is_an_eighth_of_memory_and_never_under_its_floor() {
+        assert_eq!(default_cache_bytes(0), 256 << 20);
+        assert_eq!(default_cache_bytes(1 << 30), 256 << 20);
+        assert_eq!(default_cache_bytes(16 << 30), 2 << 30);
+        assert_eq!(default_cache_bytes(64 << 30), 8 << 30);
     }
 
     #[test]
