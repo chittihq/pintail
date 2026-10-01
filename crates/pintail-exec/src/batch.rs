@@ -695,6 +695,40 @@ pub enum Cell<'a> {
     Value(&'a Value),
 }
 
+/// `value` in decimal digits, written from the end of `digits`: the text a
+/// scale-0 decimal spells. 64-bit digits where the value fits them, which
+/// is every total but the widest.
+fn whole_digits(value: i128, digits: &mut [u8; 40]) -> &[u8] {
+    let mut at = digits.len();
+    let mut push = |digit: u8| {
+        at -= 1;
+        digits[at] = digit;
+    };
+    let magnitude = value.unsigned_abs();
+    if let Ok(mut rest) = u64::try_from(magnitude) {
+        loop {
+            push(b'0' + u8::try_from(rest % 10).unwrap_or(0));
+            rest /= 10;
+            if rest == 0 {
+                break;
+            }
+        }
+    } else {
+        let mut rest = magnitude;
+        loop {
+            push(b'0' + u8::try_from(rest % 10).unwrap_or(0));
+            rest /= 10;
+            if rest == 0 {
+                break;
+            }
+        }
+    }
+    if value < 0 {
+        push(b'-');
+    }
+    &digits[at..]
+}
+
 /// One typed, nullable, columnar value vector.
 ///
 /// Exactly one of the two representations is populated at construction —
@@ -915,6 +949,16 @@ impl ColumnVector {
                 if let Some(column) = text.built() {
                     return column.views()[row]
                         .with_bytes(column.heap(), |bytes| f(Cell::Text(bytes)));
+                }
+                // A whole decimal - an integer SUM's total - is spelled
+                // where it is read, with no text allocated for the cell.
+                if let TypedValues::Decimal128 {
+                    values, scale: 0, ..
+                } = typed
+                    && let Some(units) = values.get(row)
+                {
+                    let mut digits = [0_u8; 40];
+                    return f(Cell::Text(whole_digits(units, &mut digits)));
                 }
                 match typed.format_unit(row) {
                     Some(formatted) => f(Cell::Text(formatted.as_bytes())),
@@ -2190,5 +2234,36 @@ mod column_projection_tests {
             [Value::Int64(7), Value::Int64(8), Value::Int64(9)]
         );
         assert_eq!(output.columns()[2].values(), output.columns()[0].values());
+    }
+}
+
+#[cfg(test)]
+mod whole_digit_tests {
+    use super::whole_digits;
+
+    #[test]
+    fn whole_digits_spell_what_the_number_prints() {
+        let wide = i128::from(u64::MAX);
+        for value in [
+            0,
+            7,
+            -7,
+            10,
+            -100,
+            i128::from(i64::MAX),
+            i128::from(i64::MIN),
+            wide,
+            wide + 1,
+            -wide - 1,
+            i128::MAX,
+            i128::MIN,
+        ] {
+            let mut digits = [0_u8; 40];
+            assert_eq!(
+                whole_digits(value, &mut digits),
+                value.to_string().as_bytes(),
+                "{value}"
+            );
+        }
     }
 }

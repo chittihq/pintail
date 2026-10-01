@@ -586,3 +586,91 @@ fn a_distinct_double_sum_adds_its_values_in_ascending_order() {
         );
     }
 }
+
+/// Integer totals of many groups reach what reads them next - a HAVING,
+/// an ORDER BY, arithmetic, a window - as packed whole numbers, and each
+/// answers what the spelled decimal would: a total at the edge of 64 bits
+/// plus one, doubled, divided.
+#[test]
+fn integer_totals_of_many_groups_compare_and_compute_as_decimals() {
+    let fixture = fixture();
+    let largest = i128::from(i64::MAX);
+    let cells = |sql: &str| -> Vec<Vec<String>> {
+        run(&fixture, sql)
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|value| match value {
+                        Value::UInt64(number) => number.to_string(),
+                        other => other.text().expect("a decimal cell").to_owned(),
+                    })
+                    .collect()
+            })
+            .collect()
+    };
+    assert_eq!(
+        cells(
+            "SELECT id, SUM(stock) AS s FROM parts GROUP BY id HAVING s > 0 \
+             ORDER BY s DESC, id LIMIT 3"
+        ),
+        [
+            vec!["5".to_owned(), largest.to_string()],
+            vec!["60005".to_owned(), "1".to_owned()]
+        ]
+    );
+    assert_eq!(
+        cells(
+            "SELECT id, SUM(stock) + 1, SUM(stock) * 2, SUM(stock) - 1, SUM(stock) / COUNT(*) \
+             FROM parts GROUP BY id HAVING SUM(stock) <> 0 ORDER BY id"
+        ),
+        [
+            vec![
+                "5".to_owned(),
+                (largest + 1).to_string(),
+                (largest * 2).to_string(),
+                (largest - 1).to_string(),
+                format!("{largest}.0000"),
+            ],
+            vec![
+                "60005".to_owned(),
+                "2".to_owned(),
+                "2".to_owned(),
+                "0".to_owned(),
+                "1.0000".to_owned()
+            ],
+            vec![
+                "117005".to_owned(),
+                "0".to_owned(),
+                "-2".to_owned(),
+                "-2".to_owned(),
+                "-1.0000".to_owned()
+            ],
+        ]
+    );
+    // The number first, and a bound no total reaches from either side.
+    assert_eq!(
+        cells("SELECT id, SUM(stock) AS s FROM parts GROUP BY id HAVING 0 > s"),
+        [vec!["117005".to_owned(), "-1".to_owned()]]
+    );
+    assert_eq!(
+        cells(
+            "SELECT id, SUM(stock) AS s FROM parts GROUP BY id \
+             HAVING s >= 9223372036854775807 OR s < -1"
+        ),
+        [vec!["5".to_owned(), largest.to_string()]]
+    );
+    // A running window total: whole numbers while they fit 64 bits, and
+    // the one past them beside them in the same column.
+    assert_eq!(
+        cells(
+            "SELECT id, SUM(stock) OVER (ORDER BY id) FROM parts \
+             WHERE id IN (4, 5, 60005, 117005) ORDER BY id"
+        ),
+        [
+            vec!["4".to_owned(), "0".to_owned()],
+            vec!["5".to_owned(), largest.to_string()],
+            vec!["60005".to_owned(), (largest + 1).to_string()],
+            vec!["117005".to_owned(), largest.to_string()],
+        ]
+    );
+}

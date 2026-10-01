@@ -1331,10 +1331,11 @@ impl AggregateState {
         // An integer-typed SUM keeps its exact total: see `add_integer_exact`.
         if aggregate.function == AggregateFunction::Sum
             && let Some(unsigned) = integer_sum_carrier(aggregate)
-            && matches!(
-                self.value,
-                AggregateValue::Sum(_) | AggregateValue::WideIntegerSum { .. }
-            )
+            && (self.decimal_total
+                || matches!(
+                    self.value,
+                    AggregateValue::Sum(_) | AggregateValue::WideIntegerSum { .. }
+                ))
         {
             let amount = if unsigned {
                 i128::from(mysql_u64(value)?)
@@ -1572,10 +1573,11 @@ impl AggregateState {
             }
             (Some(unsigned), AggregateValue::Sum(Some(right)))
                 if aggregate.function == AggregateFunction::Sum
-                    && matches!(
-                        self.value,
-                        AggregateValue::Sum(_) | AggregateValue::WideIntegerSum { .. }
-                    ) =>
+                    && (self.decimal_total
+                        || matches!(
+                            self.value,
+                            AggregateValue::Sum(_) | AggregateValue::WideIntegerSum { .. }
+                        )) =>
             {
                 let amount = if unsigned {
                     i128::from(mysql_u64(&right)?)
@@ -1916,6 +1918,9 @@ impl AggregateState {
 
     /// Packed signed SUM keeps the per-row update's total and NULL state.
     pub(super) fn add_dense_signed(&mut self, amount: i64) -> Result<(), ExecError> {
+        if self.decimal_total {
+            return self.add_decimal_total(i128::from(amount));
+        }
         match &mut self.value {
             AggregateValue::Sum(Some(Value::Int64(total))) => {
                 if let Some(sum) = total.checked_add(amount) {
@@ -1934,6 +1939,9 @@ impl AggregateState {
 
     /// Packed unsigned SUM keeps the per-row update's total and NULL state.
     pub(super) fn add_dense_unsigned(&mut self, amount: u64) -> Result<(), ExecError> {
+        if self.decimal_total {
+            return self.add_decimal_total(i128::from(amount));
+        }
         match &mut self.value {
             AggregateValue::Sum(Some(Value::UInt64(total))) => {
                 if let Some(sum) = total.checked_add(amount) {
@@ -1965,6 +1973,9 @@ impl AggregateState {
         amount: i128,
         unsigned: bool,
     ) -> Result<(), ExecError> {
+        if self.decimal_total {
+            return self.add_decimal_total(amount);
+        }
         let held = match &self.value {
             AggregateValue::Sum(None) => 0,
             AggregateValue::Sum(Some(Value::Int64(total))) => i128::from(*total),
@@ -1982,6 +1993,37 @@ impl AggregateState {
             None => AggregateValue::WideIntegerSum { total, unsigned },
         };
         Ok(())
+    }
+
+    /// The total so far of an integer SUM answered as a DECIMAL, where 64
+    /// bits hold it. `None` for every other state, an empty one included.
+    pub(super) fn whole_total(&self) -> Option<i64> {
+        match &self.value {
+            AggregateValue::DecimalSum {
+                units: ExactUnits::Narrow(total),
+                scale: 0,
+                ..
+            } if self.decimal_total => i64::try_from(*total).ok(),
+            _ => None,
+        }
+    }
+
+    /// Adds `amount` to an integer SUM answered as a DECIMAL: its total is
+    /// the scale-0 units of that decimal, the state a decimal column's SUM
+    /// keeps, so every fold and finish that reads units reads this one too.
+    #[inline]
+    fn add_decimal_total(&mut self, amount: i128) -> Result<(), ExecError> {
+        if let AggregateValue::DecimalSum {
+            units: ExactUnits::Narrow(total),
+            scale: 0,
+            ..
+        } = &mut self.value
+            && let Some(sum) = total.checked_add(amount)
+        {
+            *total = sum;
+            return Ok(());
+        }
+        self.update_decimal_sum_units(amount, 0, false)
     }
 
     /// Exact decimal SUM on scaled integer units: no text parse, no text
@@ -2326,7 +2368,6 @@ impl AggregateState {
 
     #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     pub(super) fn finish(self, memory: &MemoryTracker) -> Result<Value, ExecError> {
-        let decimal_total = self.decimal_total;
         // A DISTINCT sum or average of doubles adds the distinct values in
         // ascending order, whatever order the rows met them in: a double
         // sum depends on its order, and this is the one `MySQL` adds in.
@@ -2418,16 +2459,6 @@ impl AggregateState {
                 } else {
                     Value::Utf8(units.format(scale)?)
                 }
-            }
-            // A DECIMAL answer spells the total, however wide.
-            AggregateValue::WideIntegerSum { total, .. } if decimal_total => {
-                Value::Utf8(total.to_string())
-            }
-            AggregateValue::Sum(Some(Value::Int64(total))) if decimal_total => {
-                Value::Utf8(total.to_string())
-            }
-            AggregateValue::Sum(Some(Value::UInt64(total))) if decimal_total => {
-                Value::Utf8(total.to_string())
             }
             // A total that ends outside its 64-bit type has no value of
             // that type to answer with.
@@ -7753,7 +7784,7 @@ pub(super) fn sum_carrier(
 }
 
 /// Whether a SUM's integer total is answered as a DECIMAL.
-fn decimal_integer_total(aggregate: &CompiledAggregate) -> bool {
+pub(super) fn decimal_integer_total(aggregate: &CompiledAggregate) -> bool {
     aggregate.sum_carrier.is_some() && matches!(aggregate.data_type, Some(DataType::Decimal { .. }))
 }
 

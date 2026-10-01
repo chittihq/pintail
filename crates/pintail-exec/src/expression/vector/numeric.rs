@@ -371,6 +371,11 @@ fn is_decimal_column(operand: &Operand<'_>) -> bool {
 fn exact_ordering(left: (i128, u8), right: (i128, u8)) -> Option<Ordering> {
     let (left_units, left_scale) = left;
     let (right_units, right_scale) = right;
+    // One scale on both sides - two whole numbers, most often - is the
+    // units themselves.
+    if left_scale == right_scale {
+        return Some(left_units.cmp(&right_units));
+    }
     let power = |scale: u8| 10_i128.checked_pow(u32::from(scale));
     let (left_power, right_power) = (power(left_scale)?, power(right_scale)?);
     let whole = (left_units / left_power).cmp(&(right_units / right_power));
@@ -502,7 +507,11 @@ pub(super) fn decimal_comparison_column(
                 .checked_pow(u32::from(common - scale))
                 .and_then(|factor| units.checked_mul(factor))
         };
-        let ordering = rescale(left, left_scale)?.cmp(&rescale(right, right_scale)?);
+        let ordering = if left_scale == right_scale {
+            left.cmp(&right)
+        } else {
+            rescale(left, left_scale)?.cmp(&rescale(right, right_scale)?)
+        };
         answers.push(Some(match op {
             BinaryOp::Equal => ordering == Ordering::Equal,
             BinaryOp::NotEqual => ordering != Ordering::Equal,
@@ -619,6 +628,97 @@ fn exact(expr: &CompiledExpr, batch: &RecordBatch, effects: &mut Effects) -> Opt
     }
 }
 
+/// One `+`, `-` or `*` of two columns or constants whose exact answer has
+/// the declared scale - a sum or a difference at the wider operand's
+/// scale, a product at the two scales added - computed on the units
+/// themselves. That is every such step over whole numbers: an integer
+/// total plus one, times a count. No fraction is built per row, and the
+/// answer is the one the exact fractions give, since nothing is rounded.
+/// A row that leaves 128 bits is the general path's to answer.
+fn unit_step_column(
+    expr: &CompiledExpr,
+    batch: &RecordBatch,
+    own: DataType,
+    scale: u8,
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
+    let CompiledExpr::Binary {
+        op: op @ (BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply),
+        left,
+        right,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    let leaf = |expr: &CompiledExpr| {
+        matches!(expr, CompiledExpr::Column(_))
+            || matches!(
+                expr,
+                CompiledExpr::Literal(Value::Int64(_) | Value::UInt64(_) | Value::Utf8(_))
+            )
+    };
+    if !leaf(left) || !leaf(right) {
+        return None;
+    }
+    let (left, right) = (
+        operand(batch, left, effects)?,
+        operand(batch, right, effects)?,
+    );
+    let (left, right) = (scaled(&left)?, scaled(&right)?);
+    let rows = batch.row_count();
+    let mut units = Vec::with_capacity(rows);
+    let mut valid = Vec::with_capacity(rows);
+    for row in 0..rows {
+        let (Some((left, left_scale)), Some((right, right_scale))) = (left.at(row), right.at(row))
+        else {
+            units.push(0);
+            valid.push(false);
+            continue;
+        };
+        let widened = |value: i128, from: u8| {
+            10_i128
+                .checked_pow(u32::from(scale.checked_sub(from)?))
+                .and_then(|factor| value.checked_mul(factor))
+        };
+        let answer = if *op == BinaryOp::Multiply {
+            if left_scale.checked_add(right_scale)? != scale {
+                return None;
+            }
+            left.checked_mul(right)
+        } else {
+            if left_scale.max(right_scale) != scale {
+                return None;
+            }
+            match (widened(left, left_scale), widened(right, right_scale)) {
+                (Some(left), Some(right)) if *op == BinaryOp::Add => left.checked_add(right),
+                (Some(left), Some(right)) => left.checked_sub(right),
+                _ => None,
+            }
+        };
+        match answer {
+            Some(answer) => {
+                units.push(answer);
+                valid.push(true);
+            }
+            None if batch.selection().is_selected(row) => return None,
+            None => {
+                units.push(0);
+                valid.push(false);
+            }
+        }
+    }
+    Some(ColumnVector::from_typed(
+        own,
+        TypedValues::Decimal128 {
+            values: DecimalUnits::Wide(units),
+            scale,
+            text: LazyText::decimal(scale),
+        },
+        ValidityMask::from_bools(&valid),
+    ))
+}
+
 /// Decimal `+`, `-`, `*` and `/`, evaluated exactly and rounded once to the
 /// declared scale.
 pub(super) fn decimal_chain_column(
@@ -633,6 +733,9 @@ pub(super) fn decimal_chain_column(
     };
     if data_type.is_some_and(|declared| declared != own) {
         return None;
+    }
+    if let Some(column) = unit_step_column(expr, batch, own, scale, effects) {
+        return Some(column);
     }
     let Exact::Rows(values) = exact(expr, batch, effects)? else {
         return None;
@@ -898,6 +1001,57 @@ mod tests {
         ];
         for (expression, scale) in &expressions {
             agrees_with_warnings(expression, &batch, decimal_type(*scale));
+        }
+    }
+
+    /// One step over whole numbers - an integer total plus one, less a
+    /// column, times a count - and one at a wider scale: computed on the
+    /// units, and what row evaluation answers.
+    #[test]
+    fn whole_number_steps_match_row_evaluation() {
+        let batch = batch_of(vec![
+            decimal(
+                30,
+                0,
+                &[
+                    Some(7),
+                    Some(-9),
+                    None,
+                    Some(i64::MAX),
+                    Some(0),
+                    Some(123_456_789_012),
+                ],
+            ),
+            signed(&[
+                Some(3),
+                None,
+                Some(1),
+                Some(i64::MAX),
+                Some(-4),
+                Some(-1_000_000),
+            ]),
+        ]);
+        let steps = [
+            (BinaryOp::Add, column(0), literal(Value::Int64(1)), 0),
+            (BinaryOp::Add, column(0), column(1), 0),
+            (BinaryOp::Subtract, column(1), column(0), 0),
+            (BinaryOp::Multiply, column(0), literal(Value::Int64(-3)), 0),
+            (
+                BinaryOp::Add,
+                column(0),
+                literal(Value::Utf8("2.50".to_owned())),
+                2,
+            ),
+            (
+                BinaryOp::Multiply,
+                column(1),
+                literal(Value::Utf8("0.5".to_owned())),
+                1,
+            ),
+        ];
+        for (op, left, right, scale) in steps {
+            let expression = binary(op, left, right, decimal_type(scale));
+            agrees_with_warnings(&expression, &batch, decimal_type(scale));
         }
     }
 

@@ -267,6 +267,12 @@ pub fn div_decimal_round_half_up(numerator: i128, denominator: i128) -> Option<i
 /// one integer digit.
 #[must_use]
 pub fn format_decimal_scaled(value: i128, scale: u8) -> String {
+    // A whole number is its own digits, and 64-bit digits are several
+    // times cheaper to write than 128-bit ones: an integer total is
+    // spelled here once per group.
+    if scale == 0 {
+        return i64::try_from(value).map_or_else(|_| value.to_string(), |small| small.to_string());
+    }
     let negative = value < 0;
     let magnitude = value.unsigned_abs();
     let divisor = 10_u128.pow(u32::from(scale));

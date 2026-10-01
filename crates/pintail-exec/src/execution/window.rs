@@ -442,6 +442,14 @@ fn columnar_window(
     for (batch, offset) in batches.iter().zip(offsets) {
         let mut columns = batch.columns().to_vec();
         for (index, result) in results.iter().enumerate() {
+            let data_type = column_types[input_width + index];
+            if hands_out_whole_totals(&windows[index])
+                && matches!(data_type, DataType::Decimal { scale: 0, .. })
+            {
+                memory.reserve(batch.row_count().saturating_mul(size_of::<i128>()))?;
+                columns.push(whole_total_column(data_type, batch, result, offset)?);
+                continue;
+            }
             let mut values = vec![Value::Null; batch.row_count()];
             for (position, row) in batch.selection().selected_rows().enumerate() {
                 values[row] = result[offset + position].clone();
@@ -929,7 +937,8 @@ fn finish_window_partition(
         .collect::<Vec<_>>();
     memory.reserve(rows.len() * size_of::<Value>())?;
     let order = window_order(window, &keys, memory, collation)?;
-    let results = compute_window_column(window, &keys, rows.len(), &order, memory, collation)?;
+    let mut results = compute_window_column(window, &keys, rows.len(), &order, memory, collation)?;
+    spell_whole_totals(window, &mut results);
     for (mut row, value) in rows.drain(..).zip(results) {
         row.truncate(key_start);
         let ordinal = row.pop().expect("window ordinal");
@@ -1004,8 +1013,9 @@ fn build_memory_window(
     let row_count = rows.len();
     for (index, window) in windows.iter().enumerate() {
         let order = window_order(window, &keys[index], memory, collation)?;
-        let result =
+        let mut result =
             compute_window_column(window, &keys[index], row_count, &order, memory, collation)?;
+        spell_whole_totals(window, &mut result);
         for (row, value) in rows.iter_mut().zip(&result) {
             memory.reserve(value.heap_bytes().saturating_add(size_of::<Value>()))?;
             row.push(value.clone());
@@ -1654,7 +1664,9 @@ fn compute_window_column(
                     let mut accumulated = if trailing { partition.len() } else { 0 };
                     // A row whose frame is the previous row's shares its
                     // value: under RANGE every peer has the same frame.
-                    let mut previous: Option<(usize, usize, Value)> = None;
+                    // The previous row's frame and where its value is kept:
+                    // a value is cloned only for a row that shares it.
+                    let mut previous: Option<(usize, usize, usize)> = None;
                     let indexes: Vec<usize> = if trailing {
                         (0..partition.len()).rev().collect()
                     } else {
@@ -1666,9 +1678,9 @@ fn compute_window_column(
                         // defined over the ordering key's values, and peers
                         // share one value.
                         let (start, end) = frame_extent(frame, index)?;
-                        let value = match &previous {
-                            Some((first, last, value)) if (*first, *last) == (start, end) => {
-                                value.clone()
+                        let value = match previous {
+                            Some((first, last, kept)) if (first, last) == (start, end) => {
+                                results[kept].clone()
                             }
                             _ if moving.is_some() => {
                                 moments.advance(keys, partition, argument_position, start..end)?;
@@ -1684,7 +1696,7 @@ fn compute_window_column(
                                     )?;
                                     accumulated += 1;
                                 }
-                                materialize_window_value(state.clone().finish(memory)?)
+                                running_value(&state, memory)?
                             }
                             _ if trailing && start <= accumulated && end == partition.len() => {
                                 while accumulated > start {
@@ -1695,7 +1707,7 @@ fn compute_window_column(
                                         memory,
                                     )?;
                                 }
-                                materialize_window_value(state.clone().finish(memory)?)
+                                running_value(&state, memory)?
                             }
                             _ => {
                                 let mut framed = AggregateState::new(aggregate);
@@ -1706,12 +1718,12 @@ fn compute_window_column(
                                         memory,
                                     )?;
                                 }
-                                materialize_window_value(framed.finish(memory)?)
+                                finished_value(framed, memory)?
                             }
                         };
-                        previous = Some((start, end, value.clone()));
                         memory.reserve(value.heap_bytes())?;
                         results[partition[index]] = value;
+                        previous = Some((start, end, partition[index]));
                     }
                 } else if window.order.is_empty() {
                     // Whole-partition frame.
@@ -1719,7 +1731,7 @@ fn compute_window_column(
                     for row in partition {
                         state.update(aggregate, &keys[*row][argument_position], memory)?;
                     }
-                    let value = materialize_window_value(state.finish(memory)?);
+                    let value = finished_value(state, memory)?;
                     for row in partition {
                         memory.reserve(value.heap_bytes())?;
                         results[*row] = value.clone();
@@ -1738,11 +1750,15 @@ fn compute_window_column(
                         for row in &partition[group_start..group_end] {
                             state.update(aggregate, &keys[*row][argument_position], memory)?;
                         }
-                        let value = materialize_window_value(state.clone().finish(memory)?);
-                        for row in &partition[group_start..group_end] {
+                        let value = running_value(&state, memory)?;
+                        // The last peer takes the value itself: a group of
+                        // one row, the usual case, clones nothing.
+                        for row in &partition[group_start..group_end - 1] {
                             memory.reserve(value.heap_bytes())?;
                             results[*row] = value.clone();
                         }
+                        memory.reserve(value.heap_bytes())?;
+                        results[partition[group_end - 1]] = value;
                         group_start = group_end;
                     }
                 }
@@ -1752,6 +1768,89 @@ fn compute_window_column(
         start = end;
     }
     Ok(results)
+}
+
+/// The value of the frame `state` has folded so far, the state kept for
+/// the next row. An integer SUM answered as a DECIMAL hands out its whole
+/// total as the number it is: the window's column is packed from those
+/// numbers, and none is spelled or cloned per row.
+fn running_value(state: &AggregateState, memory: &MemoryTracker) -> Result<Value, ExecError> {
+    match state.whole_total() {
+        Some(total) => Ok(Value::Int64(total)),
+        None => Ok(materialize_window_value(state.clone().finish(memory)?)),
+    }
+}
+
+/// The value of a frame whose state is done with.
+fn finished_value(state: AggregateState, memory: &MemoryTracker) -> Result<Value, ExecError> {
+    match state.whole_total() {
+        Some(total) => Ok(Value::Int64(total)),
+        None => Ok(materialize_window_value(state.finish(memory)?)),
+    }
+}
+
+/// Whether `window`'s values may be whole totals handed out as numbers.
+fn hands_out_whole_totals(window: &CompiledWindow) -> bool {
+    matches!(
+        &window.function,
+        CompiledWindowFunction::Aggregate(aggregate, _)
+            if super::aggregate::decimal_integer_total(aggregate)
+    )
+}
+
+/// Spells the whole totals `window` handed out as numbers, for a consumer
+/// that keeps the window's values as rows of cells: a DECIMAL cell is its
+/// digits.
+fn spell_whole_totals(window: &CompiledWindow, values: &mut [Value]) {
+    if !hands_out_whole_totals(window) {
+        return;
+    }
+    for value in values {
+        if let Value::Int64(total) = value {
+            *value = Value::Utf8(total.to_string());
+        }
+    }
+}
+
+/// One batch's share of a window of whole totals as a packed scale-0
+/// decimal column: 64-bit units where every total fits them, the full
+/// width where a total was handed out as text because it does not.
+fn whole_total_column(
+    data_type: DataType,
+    batch: &RecordBatch,
+    result: &[Value],
+    offset: usize,
+) -> Result<ColumnVector, ExecError> {
+    const MISPLACED: ExecError =
+        ExecError::InvalidBatch("a window total that is not a whole number");
+    let mut units = vec![0_i128; batch.row_count()];
+    let mut valid = vec![false; batch.row_count()];
+    for (position, row) in batch.selection().selected_rows().enumerate() {
+        units[row] = match &result[offset + position] {
+            Value::Null => continue,
+            Value::Int64(total) => i128::from(*total),
+            Value::Utf8(text) => text.parse().map_err(|_| MISPLACED)?,
+            _ => return Err(MISPLACED),
+        };
+        valid[row] = true;
+    }
+    let values = units
+        .iter()
+        .map(|total| i64::try_from(*total).ok())
+        .collect::<Option<Vec<_>>>()
+        .map_or_else(
+            || crate::batch::DecimalUnits::Wide(units.clone()),
+            crate::batch::DecimalUnits::Narrow,
+        );
+    Ok(ColumnVector::from_typed(
+        data_type,
+        crate::batch::TypedValues::Decimal128 {
+            values,
+            scale: 0,
+            text: crate::batch::LazyText::decimal(0),
+        },
+        crate::array::ValidityMask::from_bools(&valid),
+    ))
 }
 
 /// Window output is materialized at its declared scale before a surrounding

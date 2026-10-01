@@ -245,6 +245,42 @@ fn typed_comparison_mask(
     }
 }
 
+/// A whole-number decimal column held as 64-bit units - an integer SUM's
+/// totals - ordered against a whole number: the integer comparison over
+/// the units, which is the comparison of the decimals. `None` for any other
+/// shape, which the general kernels answer.
+fn whole_decimal_mask(
+    batch: &RecordBatch,
+    op: BinaryOp,
+    left: &CompiledExpr,
+    right: &CompiledExpr,
+) -> Option<SelectionMask> {
+    let (column, literal, op) = match (left, right) {
+        (CompiledExpr::Column(index), CompiledExpr::Literal(value)) => (*index, value, op),
+        (CompiledExpr::Literal(value), CompiledExpr::Column(index)) => {
+            (*index, value, mirror_comparison(op))
+        }
+        _ => return None,
+    };
+    let (
+        TypedValues::Decimal128 {
+            values: crate::batch::DecimalUnits::Narrow(units),
+            scale: 0,
+            ..
+        },
+        validity,
+    ) = batch.column(column)?.typed()?
+    else {
+        return None;
+    };
+    let literal = match literal {
+        pintail_types::Value::Int64(value) => *value,
+        pintail_types::Value::UInt64(value) => i64::try_from(*value).ok()?,
+        _ => return None,
+    };
+    selection::select_i64(units, validity, op, literal)
+}
+
 /// `column IN (text literals)` over a text column, answered per distinct
 /// value; `None` for any other shape.
 /// `column BETWEEN lower AND upper` as a mask: the two packed comparisons
@@ -947,6 +983,11 @@ impl CompiledExpr {
                     *collation,
                 ))
             }
+            Self::Scalar {
+                function: ScalarFunction::DecimalComparison { op },
+                args,
+                ..
+            } if args.len() == 2 => Ok(whole_decimal_mask(batch, *op, &args[0], &args[1])),
             Self::Scalar {
                 function: ScalarFunction::Between { negated: false },
                 args,

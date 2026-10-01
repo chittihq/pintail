@@ -9,8 +9,8 @@ use pintail_types::{DataType, Value};
 use super::aggregate::GroupKeyMap;
 use super::aggregate::{
     AggregateGroup, AggregateState, CompiledAggregate, OpenDistinctBits, aggregate_uses_float,
-    decimal_average_scale, decimal_units_from_int, merge_spilled_aggregate_groups,
-    write_aggregate_spill_run,
+    decimal_average_scale, decimal_integer_total, decimal_units_from_int,
+    merge_spilled_aggregate_groups, write_aggregate_spill_run,
 };
 use super::join::{normalized_group_hash_key, normalized_group_text};
 use super::morsel::{Morsel, default_morsel_limit, morsel_plan};
@@ -3155,9 +3155,20 @@ impl ReadyColumns {
                     Ok(crate::ColumnVector::from_typed(
                         *data_type,
                         crate::batch::TypedValues::Decimal128 {
-                            values: crate::batch::DecimalUnits::Wide(
-                                units.iter().map(|units| units.unwrap_or(0)).collect(),
-                            ),
+                            // 64 bits a total where every one fits them,
+                            // the full width where one does not.
+                            values: units
+                                .iter()
+                                .map(|units| i64::try_from(units.unwrap_or(0)).ok())
+                                .collect::<Option<Vec<_>>>()
+                                .map_or_else(
+                                    || {
+                                        crate::batch::DecimalUnits::Wide(
+                                            units.iter().map(|units| units.unwrap_or(0)).collect(),
+                                        )
+                                    },
+                                    crate::batch::DecimalUnits::Narrow,
+                                ),
                             scale: *scale,
                             text: crate::batch::LazyText::decimal(*scale),
                         },
@@ -3647,9 +3658,18 @@ pub(super) fn packed_lane(lane: &TwoPassLane, aggregate: &CompiledAggregate) -> 
             ..
         } if !aggregate.distinct => match (aggregate.function, aggregate.sum_carrier) {
             (AggregateFunction::Count, _) => Some(PackedLane::Present),
-            // The group's exact total joins the integer state the per-row
-            // update keeps, which answers it as the plan typed the sum: a
-            // DECIMAL of any width, or an integer refused past its type.
+            // An integer SUM answered as a DECIMAL is that decimal's
+            // scale-0 units: it rides the decimal lane, and its finished
+            // totals stay units for what reads them next.
+            (AggregateFunction::Sum, Some(DataType::Int64)) if decimal_integer_total(aggregate) => {
+                Some(PackedLane::Sum {
+                    scale: 0,
+                    float_output: false,
+                })
+            }
+            // A sum the plan types as an integer joins the integer state
+            // the per-row update keeps, refused past its type when the
+            // group is finished.
             (AggregateFunction::Sum, Some(DataType::Int64)) => Some(PackedLane::IntegerSum),
             (AggregateFunction::Average, _) => decimal_average_scale(aggregate)
                 .filter(|digits| *digits <= PACKED_AVERAGE_MAX_DIGITS)
