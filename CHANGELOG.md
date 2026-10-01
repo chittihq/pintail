@@ -35,6 +35,93 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   workspace, so an operator of one workspace could pause or re-mode another
   workspace's database by its identifier.
 
+### Fixed
+
+- A transaction large enough to write a log record over 128 MiB, followed
+  by a kill, left a record that recovery refused: every table of the
+  database went to the error state on every later cycle. The writer no
+  longer writes such a record, a large batch is stored as segments
+  published in one step, and recovery replays any complete, checksummed
+  record.
+- A kill between storing rows and committing the checkpoint made the
+  restart recopy every table. Replayed changes a table already holds are
+  now recognised and skipped.
+- A merge deleted its input files while a running scan still read them
+  ("open segment" errors under sustained writes). A finished background
+  merge was published only by the next flush, so a table under continuous
+  writes could collect thousands of segment files; merges now publish
+  when they finish and idle tables are compacted.
+- ADD, DROP and RENAME COLUMN are applied as of their own statement. They
+  were applied from the source's current schema, so a column changed again
+  seconds later forced a full recopy of the table.
+- Reset mirror and resnapshot could wait indefinitely behind the
+  replication loop. Operator actions are admitted ahead of it, a reset
+  survives a crash, the catch-up after a snapshot's copy is bounded, and
+  the dashboard says what an action is waiting on.
+- A statement naming a table that is being recopied after a schema change
+  waits for it (`PINTAIL_TABLE_RECOPY_WAIT_MS`) instead of failing.
+- Aggregations under a memory ceiling: a range or dense fold, a
+  small-group fold whose keys keep coming, and a fused join whose groups
+  outgrow the ceiling now hand over to the spilling path instead of
+  failing or exceeding it.
+- MySQL parity, each confirmed against MySQL 8.4: SUM and AVG of doubles
+  add in row order; variance follows MySQL's recurrence; doubles past 1e15
+  print as MySQL prints them; keys merge under their own collation; ENUM
+  and SET columns keep their declaration order on rows built from the
+  memtable; a MIN/MAX no longer returns a stale extreme.
+- Date and time parity: dates with a zero month or day, text dates past a
+  month's end under ALLOW_INVALID_DATES, intervals and weeks at the
+  calendar's edges, zero and out-of-range TIMESTAMPs in every session
+  zone, text read as a TIME, a TIME column compared with text, TIMEDIFF of
+  a zero date under NO_ZERO_DATE, and PERIOD_ADD/PERIOD_DIFF.
+
+### Performance
+
+- Aggregates fold a column at a time: ungrouped and few-group aggregates,
+  packed lanes over integer, date-part and text keys, composite and
+  sparse integer keys, COUNT(DISTINCT) on packed keys, decimal moments,
+  text MIN/MAX and bit aggregates. Selection runs a 64-row word at a
+  time, and the new `pintail-simd` crate supplies safe vector kernels
+  with runtime dispatch.
+- Scans skip blocks whose stored min/max rule out a range filter, keep a
+  scattered filter's exact rows, decode filter-first where a filter
+  rejects rows, and unpack bit-packed integers sixty-four at a time.
+- Joins: a LEFT join fuses into the grouped aggregate above it, a dense
+  integer build goes straight into a flat table, and spread-out integer
+  keys hash into one flat table (a fused join over a 2M-row sparse-key
+  build fell from about 1.4 s to about 0.19 s in the in-process harness).
+- A correlated scalar subquery that could not become a join is answered
+  once for a batch of outer rows instead of once per row, and select-list
+  subqueries under a LIMIT run for the kept rows only. A paged report with
+  five such subqueries fell from seconds to a few hundred milliseconds.
+- Tables with a text, binary or composite primary key are read in place
+  after writes. They fell back to merging the whole table row by row; a
+  report page over such tables went from about 90 s to under 1 s, and a
+  point lookup from about 0.7 s to about 1 ms.
+- Text columns with few distinct values: values are numbered once per
+  segment, and a scan skips blocks holding no value the predicate
+  accepts, for `<>`, `NOT IN`, `LIKE`, `IS NULL` and functions of the
+  column. GROUP BY on a 200-value column is about 5× faster.
+- The side index answers text-key lookups from predicates and join keys,
+  and its cache is sized from the process's memory
+  (`PINTAIL_SECONDARY_INDEX_CACHE_MB` still overrides).
+- Written tables: changes apply to decoded chunks, the memtable is read
+  as arrays built once, newer segments are read where they are stored,
+  and the key index over them is a merge tree extended after each flush.
+- Replication applies source transactions in batches under one
+  checkpoint and stores a spilled transaction in bounded pieces: peak
+  memory for a 1M-row transaction fell from about 3.3 GB to under 0.5 GB.
+  Opening the tables at each cycle fell from seconds to tens of
+  milliseconds on a database with many tables.
+
+### Changed
+
+- `PINTAIL_LAYER_INDEX_MB` sizes the key index over a table's newer
+  segments; the fixed 256 MB cache it replaces is gone.
+- A select-list subquery under a LIMIT is not run for rows the LIMIT
+  discards, so an error it would have raised on a discarded row is not
+  raised.
+
 ## [0.1.7-rc1] - 2026-10-01
 
 Two of 0.1.6's known regressions fixed, faster grouped aggregation, a
