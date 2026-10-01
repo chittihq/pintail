@@ -10,6 +10,7 @@ mod agg_spill;
 mod date_prune;
 mod datetime_prune_fires;
 mod join_spill;
+mod memtable_ceiling;
 mod report_shapes;
 mod sort_spill;
 mod two_pass_spill;

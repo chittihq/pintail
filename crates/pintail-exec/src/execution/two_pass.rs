@@ -573,12 +573,20 @@ fn two_pass_spill(
     // memory, at the moment the query is out of it; the merge of the runs
     // unions them a group at a time instead.
     let partials = std::mem::take(&mut state.pool.partials);
+    let mut spill = GroupSpill {
+        keys,
+        intern,
+        labels,
+        members,
+        collation,
+        runs: state.spill_runs,
+    };
     if let Some(slots) = state.dense.take() {
         for partial in partials {
             let mut groups = dense_slot_groups(partial, keys, intern, labels, members, collation);
             if !groups.is_empty() {
-                state
-                    .spill_runs
+                spill
+                    .runs
                     .push(write_aggregate_spill_run(&mut groups, memory)?);
             }
         }
@@ -590,6 +598,7 @@ fn two_pass_spill(
             state.maps,
             memory,
             state.group_reserved,
+            &mut spill,
         )?;
     }
     memory.release(state.pool.reserved);
@@ -602,18 +611,49 @@ fn two_pass_spill(
             state.maps,
             memory,
             state.group_reserved,
+            &mut spill,
         )?;
     }
-    let mut groups = two_pass_groups_map(state.maps, keys, intern, labels, members, collation);
-    if groups.is_empty() {
-        return Ok(());
+    spill.write(state.maps, state.group_reserved, memory)
+}
+
+/// Where the partition maps' groups go when the budget cannot take another
+/// one: everything a closed run needs to name a group by its key.
+struct GroupSpill<'a> {
+    keys: TwoPassKeySource,
+    intern: Option<&'a StringIntern>,
+    labels: &'a KeyDeclarations,
+    members: &'a KeyMembers,
+    collation: Collation,
+    runs: &'a mut Vec<spill::ClosedRun>,
+}
+
+impl GroupSpill<'_> {
+    /// Writes the maps' groups as one closed, sorted run and gives their
+    /// charge back; nothing when the maps are empty.
+    fn write(
+        &mut self,
+        maps: &mut [GroupKeyMap],
+        group_reserved: &mut usize,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        let mut groups = two_pass_groups_map(
+            maps,
+            self.keys,
+            self.intern,
+            self.labels,
+            self.members,
+            self.collation,
+        );
+        if groups.is_empty() {
+            return Ok(());
+        }
+        self.runs
+            .push(write_aggregate_spill_run(&mut groups, memory)?);
+        memory.release(*group_reserved);
+        *group_reserved = 0;
+        Ok(())
     }
-    state
-        .spill_runs
-        .push(write_aggregate_spill_run(&mut groups, memory)?);
-    memory.release(*state.group_reserved);
-    *state.group_reserved = 0;
-    Ok(())
 }
 
 /// Clears the key intern table once nothing refers to its ids: the groups
@@ -1302,6 +1342,14 @@ fn streaming_two_pass(
                     memory,
                     &mut group_reserved,
                     &mut window_reserved,
+                    &mut GroupSpill {
+                        keys,
+                        intern: intern.as_ref(),
+                        labels: &key_enum_labels,
+                        members: &key_set_members,
+                        collation,
+                        runs: &mut spill_runs,
+                    },
                 )?;
                 window_rows = 0;
                 flushes += 1;
@@ -1368,6 +1416,14 @@ fn streaming_two_pass(
                     memory,
                     &mut group_reserved,
                     &mut window_reserved,
+                    &mut GroupSpill {
+                        keys,
+                        intern: intern.as_ref(),
+                        labels: &key_enum_labels,
+                        members: &key_set_members,
+                        collation,
+                        runs: &mut spill_runs,
+                    },
                 )?;
                 window_rows = 0;
                 flushes += 1;
@@ -1601,6 +1657,14 @@ fn streaming_two_pass(
         memory,
         &mut group_reserved,
         &mut window_reserved,
+        &mut GroupSpill {
+            keys,
+            intern: intern.as_ref(),
+            labels: &key_enum_labels,
+            members: &key_set_members,
+            collation,
+            runs: &mut spill_runs,
+        },
     )?;
     two_pass_relieve(
         &mut TwoPassState {
@@ -1645,6 +1709,14 @@ fn streaming_two_pass(
             &mut maps,
             memory,
             &mut group_reserved,
+            &mut GroupSpill {
+                keys,
+                intern: intern.as_ref(),
+                labels: &key_enum_labels,
+                members: &key_set_members,
+                collation,
+                runs: &mut spill_runs,
+            },
         )?;
     }
     if odd_batches > 0 {
@@ -1685,6 +1757,14 @@ fn streaming_two_pass(
             &mut maps,
             memory,
             &mut group_reserved,
+            &mut GroupSpill {
+                keys,
+                intern: intern.as_ref(),
+                labels: &key_enum_labels,
+                members: &key_set_members,
+                collation,
+                runs: &mut spill_runs,
+            },
         )?;
     }
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
@@ -2386,6 +2466,7 @@ fn drain_two_pass_window(
     memory: &MemoryTracker,
     group_reserved: &mut usize,
     window_reserved: &mut usize,
+    spill: &mut GroupSpill<'_>,
 ) -> Result<(), ExecError> {
     if window.is_empty() {
         return Ok(());
@@ -2434,6 +2515,7 @@ fn drain_two_pass_window(
             maps,
             memory,
             group_reserved,
+            spill,
         )?;
     }
     if let TwoPassKeySource::Int { column, group_type } = keys
@@ -2451,6 +2533,7 @@ fn drain_two_pass_window(
             range,
             memory,
             group_reserved,
+            spill,
         )?
     {
         window.clear();
@@ -2772,6 +2855,13 @@ fn fold_range_morsel(
 
 /// Commits the range fold's groups into the partition maps, where the
 /// scatter's groups and a spill expect them, and hands its slab back.
+///
+/// A group costs several times more in a map than in the fold's slots, and
+/// the slab stays charged until the last slot is read. The fold is given up
+/// exactly when the budget is short, so the maps may not have room for all
+/// of its groups: the ones already committed then go to disk as a run and
+/// the rest follow into the emptied maps. A slot is committed once, whole,
+/// and the merge of runs combines a key that several runs hold.
 fn fold_int_range_into_maps(
     range: &IntRangeFold,
     aggregates: &[CompiledAggregate],
@@ -2779,6 +2869,7 @@ fn fold_int_range_into_maps(
     maps: &mut [GroupKeyMap],
     memory: &MemoryTracker,
     group_reserved: &mut usize,
+    spill: &mut GroupSpill<'_>,
 ) -> Result<(), ExecError> {
     let per_group_bytes = size_of::<(u64, bool)>()
         .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
@@ -2792,14 +2883,16 @@ fn fold_int_range_into_maps(
             let partition =
                 usize::try_from(crate::batch::mix64(bits ^ u64::from(null)) % partitions as u64)
                     .expect("partition index fits usize");
-            let states = match maps[partition].entry((bits, null)) {
-                std::collections::hash_map::Entry::Vacant(entry) => {
+            if !maps[partition].contains_key(&(bits, null)) {
+                if memory.reserve(per_group_bytes).is_err() {
+                    spill.write(maps, group_reserved, memory)?;
                     memory.reserve(per_group_bytes)?;
-                    *group_reserved = group_reserved.saturating_add(per_group_bytes);
-                    entry.insert(aggregates.iter().map(AggregateState::new).collect())
                 }
-                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            };
+                *group_reserved = group_reserved.saturating_add(per_group_bytes);
+            }
+            let states = maps[partition]
+                .entry((bits, null))
+                .or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
             commit_merged(&range.folds, slot, states, aggregates, memory)?;
         }
         Ok(())
@@ -3153,10 +3246,11 @@ fn fold_int_range_window(
     range: &mut IntRange,
     memory: &MemoryTracker,
     group_reserved: &mut usize,
+    spill: &mut GroupSpill<'_>,
 ) -> Result<bool, ExecError> {
-    let give_up = |range: &mut IntRange,
-                   maps: &mut [GroupKeyMap],
-                   group_reserved: &mut usize|
+    let mut give_up = |range: &mut IntRange,
+                       maps: &mut [GroupKeyMap],
+                       group_reserved: &mut usize|
      -> Result<bool, ExecError> {
         if let IntRange::Active(active) = std::mem::replace(range, IntRange::Off) {
             fold_int_range_into_maps(
@@ -3166,6 +3260,7 @@ fn fold_int_range_window(
                 maps,
                 memory,
                 group_reserved,
+                spill,
             )?;
         }
         Ok(false)
@@ -4887,29 +4982,56 @@ fn merge_dense_slots(
 /// Folds dense slots into the partition maps (dense overflow, mixed
 /// serial-scatter flows, and the final pass share this): map collisions
 /// merge state-by-state, so dense and classic results always unify.
+///
+/// A group moving into a map is charged again while the slab that already
+/// paid for it stays charged, until the last slot has moved. When the budget
+/// refuses that second charge nothing is committed further: the maps' groups
+/// go to disk as one run and the slots not yet moved as another, straight
+/// from the slots, and the whole charge - maps, slab and what the states
+/// grew by - is given back, since no group it paid for is left in memory.
 #[allow(clippy::too_many_arguments)]
 fn fold_dense_into_maps(
-    slots: DenseGroupSlots,
+    mut slots: DenseGroupSlots,
     keys: TwoPassKeySource,
     aggregates: &[CompiledAggregate],
     partitions: usize,
     maps: &mut [GroupKeyMap],
     memory: &MemoryTracker,
     group_reserved: &mut usize,
+    spill: &mut GroupSpill<'_>,
 ) -> Result<(), ExecError> {
     let slab = dense_reservation(keys, slots.len(), aggregates.len());
     let per_group_bytes = size_of::<(u64, bool)>()
         .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
         .saturating_add(32);
-    for (index, slot) in slots.into_iter().enumerate() {
-        let Some(states) = slot else { continue };
+    for index in 0..slots.len() {
+        let Some(states) = slots[index].take() else {
+            continue;
+        };
         let (bits, null) = dense_slot_sentinel(keys, index);
         let partition =
             usize::try_from(crate::batch::mix64(bits ^ u64::from(null)) % partitions as u64)
                 .expect("partition index fits usize");
         match maps[partition].entry((bits, null)) {
             std::collections::hash_map::Entry::Vacant(entry) => {
-                memory.reserve(per_group_bytes)?;
+                if memory.reserve(per_group_bytes).is_err() {
+                    slots[index] = Some(states);
+                    spill.write(maps, group_reserved, memory)?;
+                    let mut rest = dense_slot_groups(
+                        slots,
+                        keys,
+                        spill.intern,
+                        spill.labels,
+                        spill.members,
+                        spill.collation,
+                    );
+                    spill
+                        .runs
+                        .push(write_aggregate_spill_run(&mut rest, memory)?);
+                    memory.release(*group_reserved);
+                    *group_reserved = 0;
+                    return Ok(());
+                }
                 *group_reserved = group_reserved.saturating_add(per_group_bytes);
                 entry.insert(states);
             }
