@@ -2551,7 +2551,9 @@ fn update_binary_bit_fold(
 /// The same rule the insert-only delta uses. An average cannot: merging
 /// two finished averages needs their counts, which the finished value has
 /// thrown away. A decimal sum carries its scale in its text and is left
-/// out for the same reason the delta leaves it out.
+/// out for the same reason the delta leaves it out. A double sum cannot
+/// either: the sum of two finished sums is not the sum of their rows in
+/// row order (see [`adds_in_row_order`]).
 fn mergeable_across_disjoint_rows(aggregate: &CompiledAggregate) -> bool {
     !aggregate.distinct
         && match aggregate.function {
@@ -2564,7 +2566,7 @@ fn mergeable_across_disjoint_rows(aggregate: &CompiledAggregate) -> bool {
             }
             AggregateFunction::Sum => matches!(
                 aggregate.data_type,
-                Some(DataType::Int64 | DataType::UInt64 | DataType::Float64)
+                Some(DataType::Int64 | DataType::UInt64)
             ),
             AggregateFunction::Average
             | AggregateFunction::GroupConcat
@@ -3350,6 +3352,7 @@ pub(super) fn build_hash_aggregate(
     }
     if group_by.is_empty()
         && !aggregates.is_empty()
+        && !adds_in_row_order(aggregates)
         && let Some(rows) = try_sma_fold(input, aggregates, memory)?
     {
         if let Some(key) = &memo_key {
@@ -3895,6 +3898,22 @@ fn project_computed_arguments(
     ))
 }
 
+/// Whether an aggregate here is a double SUM or AVG, whose answer is the
+/// rows' doubles added one at a time in row order.
+///
+/// Double addition is not associative: `(1e16 + 1) + -1e16` is 0 and
+/// `(1e16 + -1e16) + 1` is 1. A path that sums a morsel, a segment or a
+/// block apart from the rest and adds the partial sums afterwards adds the
+/// same values in a different grouping, and the last digits of its answer
+/// move with wherever the cuts fell - with the thread count, with the
+/// segment layout. Such a query takes the path that updates each group's
+/// one running sum a row at a time.
+fn adds_in_row_order(aggregates: &[CompiledAggregate]) -> bool {
+    aggregates
+        .iter()
+        .any(|aggregate| !aggregate.distinct && aggregate_uses_float(aggregate))
+}
+
 #[allow(clippy::too_many_lines)]
 fn build_hash_aggregate_scan(
     input: &mut PullOperator,
@@ -3933,7 +3952,7 @@ fn build_hash_aggregate_scan(
     if group_by.is_empty() && super::ungrouped_fold::eligible(aggregates) {
         return build_ungrouped_fold(input, aggregates, memory);
     }
-    if !group_by.is_empty() {
+    if !group_by.is_empty() && !adds_in_row_order(aggregates) {
         let direct_columns = group_by
             .iter()
             .map(CompiledExpr::column_index)
