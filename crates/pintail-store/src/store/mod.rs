@@ -1,8 +1,8 @@
-#[cfg(test)]
-mod lifecycle_tests;
 mod layer;
 #[cfg(test)]
 mod layer_tests;
+#[cfg(test)]
+mod lifecycle_tests;
 mod scan;
 pub(crate) mod side_index;
 mod snapshot;
@@ -1392,6 +1392,14 @@ impl TableStore {
         }
         let full_merge = plan.indices.len() == self.manifest.segments.len();
         let drop_tombstones = merge_drops_tombstones(&self.manifest.segments, &plan.indices);
+        let window = plan.window.clone();
+        if window.is_some() {
+            pintail_log::log_debug!(
+                "pintail store compaction folds one key range of a cluster: {} of {} segments",
+                plan.indices.len(),
+                self.manifest.segments.len()
+            );
+        }
         let input_metas = plan
             .indices
             .iter()
@@ -1430,6 +1438,7 @@ impl TableStore {
                     &input_metas,
                     full_merge,
                     drop_tombstones,
+                    window.as_ref(),
                     id_base,
                 );
                 // The owner joins this worker before releasing its writer
@@ -1545,6 +1554,8 @@ impl TableStore {
         let mut output_rows = 0_usize;
         let mut buffered_bytes = 0_usize;
         let mut output_path = None;
+        let window = plan.window.as_ref();
+        let mut was_inside = false;
         while let Some(minimum) = heads
             .iter()
             .filter_map(|row| row.as_ref().map(StoredRow::key))
@@ -1573,7 +1584,29 @@ impl TableStore {
                     "compaction minimum has no winning row".into(),
                 ));
             };
-            if !drop_tombstones || !winner.is_deleted() {
+            // A windowed merge closes its output at each boundary of the
+            // window and drops deletes only inside it.
+            let inside = in_merge_window(window, &minimum);
+            if window.is_some() && inside != was_inside && !rows.is_empty() {
+                let path = write_compaction_chunk(
+                    &self.directory,
+                    &self.schema,
+                    self.options.block_rows,
+                    compression,
+                    &mut next_manifest,
+                    &rows,
+                )?;
+                output_path.get_or_insert(path);
+                rows.clear();
+                buffered_bytes = 0;
+            }
+            was_inside = inside;
+            let drops = if window.is_some() {
+                inside
+            } else {
+                drop_tombstones
+            };
+            if !drops || !winner.is_deleted() {
                 buffered_bytes = buffered_bytes.saturating_add(winner.estimated_bytes());
                 rows.push(winner);
                 output_rows = output_rows.saturating_add(1);
@@ -1764,13 +1797,19 @@ impl TableStore {
                 row_count: meta.row_count,
                 minimum: meta.min_key.clone(),
                 maximum: meta.max_key.clone(),
+                min_version: meta.min_version,
+                max_version: meta.max_version,
+                unique_keys: meta.unique_keys,
             });
         }
         candidates.sort_by_key(|candidate| (candidate.size, candidate.index));
         if candidates.len() >= self.options.compaction_fan_in {
             for window in candidates.windows(self.options.compaction_fan_in) {
                 let selected = window.iter().collect::<Vec<_>>();
-                if !self.admits_window(&selected) || !ranges_overlap(&selected) {
+                if !self.admits_window(&selected)
+                    || !ranges_overlap(&selected)
+                    || splits_a_layer(&selected, &candidates)
+                {
                     continue;
                 }
                 return Ok(Some(plan_for(&selected)));
@@ -1795,8 +1834,31 @@ impl TableStore {
                 .map(|candidate| candidate.row_count)
                 .sum::<u64>();
             if rows <= self.options.max_compaction_input_rows {
-                return Ok(Some(plan_for(&self.overlap_cluster(&candidates, selected))));
+                let cluster = self.overlap_cluster(&candidates, selected);
+                // A cluster the budget cannot take whole is folded a key
+                // range at a time rather than a few of its segments at a
+                // time.
+                if splits_a_layer(&cluster, &candidates)
+                    && let Some(plan) = self.windowed_plan(&candidates, &cluster)
+                {
+                    return Ok(Some(plan));
+                }
+                return Ok(Some(plan_for(&cluster)));
             }
+        }
+        // A segment no other reaches that still carries deletes (or a key
+        // twice) is what a windowed merge leaves of the changes that fell
+        // outside every base. Nothing is left for its deletes to hide, yet
+        // a scan reads it row by row to apply them: rewriting it alone
+        // drops them and leaves a segment that decodes directly.
+        if let Some(lone) = candidates.iter().find(|candidate| {
+            !candidate.unique_keys
+                && candidate.row_count <= self.options.max_compaction_input_rows
+                && candidates
+                    .iter()
+                    .all(|other| other.index == candidate.index || !other.overlaps(candidate))
+        }) {
+            return Ok(Some(plan_for(&[lone])));
         }
         // Nothing overlaps, so no merge would collapse a row version. Merging
         // still pays for itself once the manifest holds many files: every scan
@@ -1860,6 +1922,101 @@ impl TableStore {
         }
     }
 
+    /// A merge of one key range of the cluster `seed` belongs to, for a
+    /// cluster too large to merge whole: the cluster's bases (unique-key
+    /// segments with nothing older over their keys) in key order, as many
+    /// consecutive ones as the row budget takes, with every other segment
+    /// that reaches their range. The range starts at the first base the
+    /// cluster's oldest change segment reaches, so successive passes walk
+    /// that segment across the table instead of folding the lowest keys
+    /// again while it waits. `None` when the cluster has no such shape or
+    /// even one base does not fit beside the changes.
+    fn windowed_plan(
+        &self,
+        candidates: &[CompactionCandidate],
+        seed: &[&CompactionCandidate],
+    ) -> Option<CompactionPlan> {
+        // Everything the seed reaches, whatever it holds.
+        let mut cluster = seed.to_vec();
+        loop {
+            let reached = candidates
+                .iter()
+                .filter(|candidate| {
+                    !cluster.iter().any(|member| member.index == candidate.index)
+                        && cluster.iter().any(|member| member.overlaps(candidate))
+                })
+                .collect::<Vec<_>>();
+            if reached.is_empty() {
+                break;
+            }
+            cluster.extend(reached);
+        }
+        let mut by_age = cluster.clone();
+        by_age.sort_by_key(|candidate| (candidate.min_version, candidate.max_version));
+        let mut bases: Vec<&CompactionCandidate> = Vec::new();
+        let mut changes: Vec<&CompactionCandidate> = Vec::new();
+        for candidate in by_age {
+            let under_everything = cluster.iter().all(|other| {
+                other.index == candidate.index
+                    || !other.overlaps(candidate)
+                    || other.min_version >= candidate.max_version
+            });
+            if candidate.unique_keys
+                && under_everything
+                && bases.iter().all(|base| !base.overlaps(candidate))
+            {
+                bases.push(candidate);
+            } else {
+                changes.push(candidate);
+            }
+        }
+        let oldest = *changes.first()?;
+        if bases.len() < 2 {
+            return None;
+        }
+        bases.sort_by(|left, right| left.minimum.cmp(&right.minimum));
+        let first = bases
+            .iter()
+            .position(|base| base.maximum >= oldest.minimum)?;
+        let change_rows = changes.iter().map(|change| change.row_count).sum::<u64>();
+        let mut rows = change_rows;
+        let mut end = first;
+        while end < bases.len()
+            && rows.saturating_add(bases[end].row_count) <= self.options.max_compaction_input_rows
+        {
+            rows = rows.saturating_add(bases[end].row_count);
+            end += 1;
+        }
+        if end == first || oldest.minimum > bases[end - 1].maximum {
+            // No base fits beside the changes, or the oldest change segment
+            // does not reach the range: folding it would rewrite bases for
+            // nothing.
+            return None;
+        }
+        let low = (first > 0).then(|| bases[first].minimum.clone());
+        let high = bases.get(end).map(|base| base.minimum.clone());
+        let reaches = |candidate: &CompactionCandidate| {
+            low.as_ref().is_none_or(|low| candidate.maximum >= *low)
+                && high.as_ref().is_none_or(|high| candidate.minimum < *high)
+        };
+        let mut selected = bases[first..end].to_vec();
+        selected.extend(changes.iter().copied().filter(|change| reaches(change)));
+        // Deletes are dropped inside the range, so nothing left out may
+        // reach it.
+        let closed = candidates.iter().all(|candidate| {
+            selected
+                .iter()
+                .any(|member| member.index == candidate.index)
+                || !reaches(candidate)
+        });
+        if !closed || (low.is_none() && high.is_none()) {
+            return None;
+        }
+        let mut plan = plan_for(&selected);
+        plan.window = Some((low, high));
+        Some(plan)
+    }
+
     /// Reports whether one candidate window fits the configured size tier and
     /// per-pass row budget.
     fn admits_window(&self, window: &[&CompactionCandidate]) -> bool {
@@ -1880,7 +2037,30 @@ fn plan_for(window: &[&CompactionCandidate]) -> CompactionPlan {
     CompactionPlan {
         indices: window.iter().map(|candidate| candidate.index).collect(),
         debt_bytes: window.iter().map(|candidate| candidate.size).sum(),
+        window: None,
     }
+}
+
+/// Whether merging `selected` would fold a segment into only some of the
+/// segments it lies over: one of them is selected with it, another is left
+/// out, and the two are not layered themselves. The output would then hold
+/// rows as old as the segment folded in while still reaching over the one
+/// left out - neither a base nor wholly newer than one - and a scan can no
+/// longer tell the changes from what they changed.
+fn splits_a_layer(selected: &[&CompactionCandidate], candidates: &[CompactionCandidate]) -> bool {
+    let chosen = |candidate: &CompactionCandidate| {
+        selected
+            .iter()
+            .any(|member| member.index == candidate.index)
+    };
+    selected.iter().any(|over| {
+        selected.iter().any(|under| {
+            over.lies_over(under)
+                && candidates
+                    .iter()
+                    .any(|left| !chosen(left) && over.lies_over(left) && !under.lies_over(left))
+        })
+    })
 }
 
 struct CompactionCandidate {
@@ -1889,11 +2069,47 @@ struct CompactionCandidate {
     row_count: u64,
     minimum: PrimaryKey,
     maximum: PrimaryKey,
+    min_version: u64,
+    max_version: u64,
+    unique_keys: bool,
 }
+
+impl CompactionCandidate {
+    fn overlaps(&self, other: &Self) -> bool {
+        self.minimum <= other.maximum && self.maximum >= other.minimum
+    }
+
+    /// Whether this segment lies over `other`: their keys overlap and
+    /// everything here is at least as new as everything there, some of it
+    /// newer.
+    fn lies_over(&self, other: &Self) -> bool {
+        self.overlaps(other)
+            && self.min_version >= other.max_version
+            && self.max_version > other.max_version
+    }
+}
+
+/// The key range a merge folds: from the first key (inclusive, `None` for
+/// the lowest) up to the second (exclusive, `None` for the highest).
+type MergeWindow = (Option<PrimaryKey>, Option<PrimaryKey>);
 
 struct CompactionPlan {
     indices: Vec<usize>,
     debt_bytes: u64,
+    /// When set, the merge folds only this key range: there every selected
+    /// segment's rows resolve to one per key and deletes are dropped, since
+    /// every segment that reaches the range is selected. Rows of the
+    /// selected segments outside it are written through as they are - the
+    /// newest version of a key, a delete kept - into segments of their own,
+    /// so no output spans a boundary of the range.
+    window: Option<MergeWindow>,
+}
+
+/// Whether `key` lies inside a merge's window; every key does without one.
+fn in_merge_window(window: Option<&MergeWindow>, key: &PrimaryKey) -> bool {
+    window.is_none_or(|(low, high)| {
+        low.as_ref().is_none_or(|low| key >= low) && high.as_ref().is_none_or(|high| key < high)
+    })
 }
 
 fn ranges_overlap(candidates: &[&CompactionCandidate]) -> bool {
@@ -1968,6 +2184,7 @@ fn apply_latest(rows: &mut BTreeMap<PrimaryKey, StoredRow>, row: StoredRow) {
 /// The background thread's merge: same winner-per-key loop as the inline
 /// pass, writing chunks from a reserved segment-ID range and returning
 /// their metadata for publication on the store's thread.
+#[allow(clippy::too_many_arguments)]
 fn run_background_merge(
     directory: &Path,
     schema: &TableSchema,
@@ -1975,6 +2192,7 @@ fn run_background_merge(
     input_metas: &[segment::SegmentMeta],
     full_merge: bool,
     drop_tombstones: bool,
+    window: Option<&MergeWindow>,
     id_base: u64,
 ) -> Result<Vec<segment::SegmentMeta>, StoreError> {
     let mut streams = Vec::with_capacity(input_metas.len());
@@ -1995,6 +2213,7 @@ fn run_background_merge(
     let mut buffered_bytes = 0_usize;
     let mut next_id = id_base;
     let mut outputs = Vec::new();
+    let mut was_inside = false;
     let mut write_chunk = |rows: &[StoredRow], next_id: &mut u64| -> Result<(), StoreError> {
         let output = segment::write(
             directory,
@@ -2039,7 +2258,21 @@ fn run_background_merge(
                 "compaction minimum has no winning row".into(),
             ));
         };
-        if !drop_tombstones || !winner.is_deleted() {
+        // A windowed merge closes its output at each boundary of the window
+        // and drops deletes only inside it.
+        let inside = in_merge_window(window, &minimum);
+        if window.is_some() && inside != was_inside && !rows.is_empty() {
+            write_chunk(&rows, &mut next_id)?;
+            rows.clear();
+            buffered_bytes = 0;
+        }
+        was_inside = inside;
+        let drops = if window.is_some() {
+            inside
+        } else {
+            drop_tombstones
+        };
+        if !drops || !winner.is_deleted() {
             buffered_bytes = buffered_bytes.saturating_add(winner.estimated_bytes());
             rows.push(winner);
         }

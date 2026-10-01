@@ -1,5 +1,6 @@
 //! A table of several base segments taking changes across its whole key
-//! range and flushing them: each state is read through the layered scan
+//! range, flushed and compacted under a row budget far smaller than the
+//! table: the state between any two passes is read through the layered scan
 //! and through the row-wise one, and both must show the model's rows.
 
 use super::*;
@@ -152,6 +153,13 @@ impl Table {
             .collect::<Vec<_>>();
         assert_eq!(merged, expected, "row-wise scan, {state}");
     }
+
+    fn disjoint(&self) -> bool {
+        self.store
+            .snapshot()
+            .grouped_fold_spans(usize::MAX)
+            .is_some()
+    }
 }
 
 #[test]
@@ -171,4 +179,48 @@ fn flushed_changes_over_many_bases_are_read_in_place() {
     table.assert_exact("two flushes");
     table.change(3, 3, 17, 100);
     table.assert_exact("two flushes under the memtable");
+}
+
+#[test]
+fn a_cluster_larger_than_the_budget_is_folded_a_key_range_at_a_time() {
+    let mut table = Table::new(StoreOptions {
+        background_compaction: false,
+        // Two bases beside a round's changes; never the cluster whole.
+        max_compaction_input_rows: 3_600,
+        max_compaction_rows: 1_500,
+        ..StoreOptions::default()
+    });
+    let mut layered = false;
+    for round in 1..=3_u64 {
+        table.change(round, 6 + round, 10 + round, 150);
+        table.store.flush().unwrap();
+        table.assert_exact(&format!("round {round} flushed"));
+        // One pass, then more changes over the half-folded table.
+        let outcome = table.store.compact().unwrap();
+        assert!(
+            outcome.input_segments() > 0,
+            "round {round} planned no merge"
+        );
+        table.assert_exact(&format!("round {round} after one pass"));
+        layered |= table.store.metrics().unwrap().layer_index_bytes() > 0;
+    }
+    let mut passes = 0;
+    while table.store.compact().unwrap().input_segments() > 0 {
+        passes += 1;
+        assert!(passes < 64, "compaction does not settle");
+        table.assert_exact(&format!("pass {passes}"));
+    }
+    assert!(layered, "no state between passes was read in place");
+    assert!(
+        table.disjoint(),
+        "the changes were not folded into the bases: segments still overlap"
+    );
+    let tombstones = table
+        .store
+        .manifest
+        .segments
+        .iter()
+        .filter(|meta| !meta.unique_keys)
+        .count();
+    assert_eq!(tombstones, 0, "a folded table kept deletes");
 }
