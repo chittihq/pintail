@@ -199,6 +199,10 @@ fn cdc_apply_intent_key(database_id: &str) -> String {
     format!("cdc.apply_intent.{database_id}")
 }
 
+fn cdc_version_carry_key(database_id: &str) -> String {
+    format!("cdc.version_carry.{database_id}")
+}
+
 impl MetaStore {
     /// Opens a control-plane database and applies all pending migrations.
     ///
@@ -1100,6 +1104,31 @@ impl MetaStore {
         touched_tables: &[String],
         now: &str,
     ) -> Result<()> {
+        self.commit_cdc_checkpoint_carrying(database_id, checkpoint, touched_tables, now, None)
+    }
+
+    /// Commits a CDC source checkpoint together with the version carry the
+    /// stream holds at that position, when the carry moved.
+    ///
+    /// A transaction with more row mutations than one version slot numbers
+    /// runs on into the slots after it, and every later transaction is
+    /// numbered that many slots further on. The count is part of where the
+    /// stream is: a replay from this checkpoint has to number its
+    /// transactions exactly as the first pass did, so it is stored in the
+    /// transaction that stores the position.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the position is invalid or the control-plane
+    /// transaction cannot commit.
+    pub fn commit_cdc_checkpoint_carrying(
+        &mut self,
+        database_id: &str,
+        checkpoint: &SnapshotCheckpointRecord,
+        touched_tables: &[String],
+        now: &str,
+        version_carry: Option<u64>,
+    ) -> Result<()> {
         if !matches!(checkpoint.kind.as_str(), "gtid" | "filepos") {
             bail!("CDC checkpoint kind must be gtid or filepos");
         }
@@ -1157,6 +1186,15 @@ impl MetaStore {
                 [cdc_apply_intent_key(database_id)],
             )
             .context("failed to clear the CDC apply intent")?;
+        if let Some(carry) = version_carry {
+            transaction
+                .execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (cdc_version_carry_key(database_id), carry.to_string()),
+                )
+                .context("failed to persist the CDC version carry")?;
+        }
         pintail_failpoint::hit("meta.before_commit")?;
         transaction
             .commit()
@@ -1206,6 +1244,21 @@ impl MetaStore {
             binlog_pos,
             binlog_file: fields.next().unwrap_or_default().to_owned(),
         }))
+    }
+
+    /// Version slots the stream's earlier transactions used beyond their
+    /// own, as of the durable checkpoint. Zero when none ever did.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the setting cannot be read or is not a count.
+    pub fn cdc_version_carry(&self, database_id: &str) -> Result<u64> {
+        match self.setting(&cdc_version_carry_key(database_id))? {
+            Some(stored) => stored
+                .parse()
+                .with_context(|| format!("CDC version carry {stored:?} is not a count")),
+            None => Ok(0),
+        }
     }
 
     /// Marks one table as requiring a new snapshot.

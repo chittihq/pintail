@@ -2,6 +2,33 @@ use pintail_meta::{MetaStore, SnapshotCheckpointRecord};
 use rusqlite::Connection;
 
 #[test]
+fn the_version_carry_is_stored_with_the_checkpoint_that_moves_it() {
+    let workspace = tempfile::tempdir().expect("metadata workspace");
+    let mut store = MetaStore::open(&workspace.path().join("pintail-meta.db")).expect("metadata");
+    register_source(&store);
+    assert_eq!(store.cdc_version_carry("source").expect("carry"), 0);
+    let checkpoint = SnapshotCheckpointRecord {
+        kind: "gtid".to_owned(),
+        gtid_set: Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:1-7".to_owned()),
+        binlog_file: Some("mysql-bin.000003".to_owned()),
+        binlog_pos: Some(918),
+    };
+    store
+        .commit_cdc_checkpoint_carrying("source", &checkpoint, &[], "2026-07-30T01:00:00Z", Some(3))
+        .expect("checkpoint with a carry");
+    assert_eq!(store.cdc_version_carry("source").expect("carry"), 3);
+
+    // A checkpoint that does not move the carry leaves it stored, and it
+    // is there for the process that opens the metadata next.
+    store
+        .commit_cdc_checkpoint("source", &checkpoint, &[], "2026-07-30T01:00:01Z")
+        .expect("checkpoint without one");
+    drop(store);
+    let store = MetaStore::open(&workspace.path().join("pintail-meta.db")).expect("reopen");
+    assert_eq!(store.cdc_version_carry("source").expect("carry"), 3);
+}
+
+#[test]
 fn cdc_checkpoint_updates_position_and_streaming_state_atomically() {
     let workspace = tempfile::tempdir().expect("metadata workspace");
     let path = workspace.path().join("pintail-meta.db");

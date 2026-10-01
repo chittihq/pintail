@@ -227,6 +227,14 @@ fn store_options(rng: &mut Rng) -> StoreOptions {
     }
 }
 
+/// Ordinal bits of a GTID version slot for a seed. Every other seed gets
+/// slots of four mutations, so its ordinary transactions run on into the
+/// slots after their own and the carry is live at every crash site; the
+/// rest keep the real width.
+const fn slot_bits(seed: u64) -> u32 {
+    if seed.is_multiple_of(2) { 2 } else { 24 }
+}
+
 struct Simulation {
     seed: u64,
     rng: Rng,
@@ -287,9 +295,10 @@ impl Simulation {
                 appended: Vec::new(),
             });
         }
-        let position =
+        let mut position =
             StreamPosition::from_checkpoint(initial_checkpoint(mode), SourceFlavor::Mysql)
                 .expect("simulation position");
+        position.slot_bits = slot_bits(seed);
         Self {
             seed,
             rng,
@@ -312,6 +321,7 @@ impl Simulation {
                 file: position.file.clone(),
                 pos: position.pos,
                 floor: 0,
+                carry: 0,
             },
             position,
             pending: PendingTransaction::default(),
@@ -702,10 +712,16 @@ impl Simulation {
             stored_version_floor(&self.targets),
         )
         .expect("resume floor");
+        self.position.slot_bits = slot_bits(self.seed);
+        self.position.carry = self
+            .metadata
+            .cdc_version_carry(DATABASE)
+            .expect("resume carry");
         self.durable = DurablePoint {
             file: self.position.file.clone(),
             pos: self.position.pos,
             floor: self.position.floor,
+            carry: self.position.carry,
         };
         let replay = (0..self.log.len())
             .filter(|&index| self.log[index].commit_position() > resume)

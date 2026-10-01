@@ -406,10 +406,11 @@ stays readable as a list of things to fix.
   nothing to place them against; the table is flagged for resync instead.
   Under FULL metadata the table map names its own columns and any lag is
   repaired without one.
-- Versions reserve 16 bits for the intra-transaction mutation ordinal, GTID
-  sequences must fit 48 bits, and file/position versions support a 16-bit
-  numeric file suffix and 32-bit event offset. A source transaction above
-  65,535 physical mutations fails explicitly.
+- File/position versions support a 16-bit numeric file suffix, a 32-bit
+  event offset and a 16-bit intra-transaction mutation ordinal; a source
+  transaction above 65,535 physical mutations fails explicitly in that mode.
+  Under GTID a transaction's size is not limited, and the GTID sequence plus
+  the version slots large transactions ran on into must fit 40 bits.
 - Automatic purge recovery is database-wide and attempted once per runner
   invocation, resetting every included target, because one global source
   coordinate cannot safely advance while a table retains an unfillable gap.
@@ -631,12 +632,12 @@ multi-tenant isolation, or spatial indexing. Those
 boundaries are explicit rather than emulated with results that look plausible
 but may be wrong.
 
-- One source transaction may carry at most 16,777,215 row mutations in GTID
-  mode, and 65,535 in file-position mode - the per-transaction ordinal is
-  encoded into the 64-bit row version (24 bits under GTID, 16 under
-  file-position, where the file index and byte position leave no spare
-  bits). A larger transaction quarantines its table to needs_resync; a
-  per-table resync captures the data and recovers.
+- One source transaction may carry at most 65,535 row mutations in
+  file-position mode - the per-transaction ordinal is encoded into the
+  64-bit row version, and the file index and byte position leave it 16
+  bits. A larger transaction quarantines its table to needs_resync; a
+  per-table resync captures the data and recovers. GTID mode has no such
+  limit.
 
 - SEC_TO_TIME, MAKETIME, CONVERT_TZ and JSON_UNQUOTE/->> advertise
   MySQL's own column types (TIME, DATETIME, LONG_BLOB) as direct

@@ -566,10 +566,17 @@ async fn run_cdc_inner(
             &position,
             stored_version_floor(&targets),
         )?);
+        // Nor does it carry the slots earlier transactions ran on into. An
+        // empty batch means the position is the durable one, and so is the
+        // count stored beside it.
+        if batch.is_empty() {
+            position.carry = metadata.cdc_version_carry(database_id)?;
+        }
         durable = DurablePoint {
             file: position.file.clone(),
             pos: position.pos,
             floor: position.floor,
+            carry: position.carry,
         };
         // Writes out the closed transactions waiting in the batch: one WAL
         // record and one sync per touched table, one checkpoint for all of
@@ -2778,7 +2785,7 @@ struct PendingTransaction {
     spilled_mutations: usize,
     discarded_targets: BTreeSet<usize>,
     retained_bytes: usize,
-    ordinal: u32,
+    ordinal: u64,
     /// Targets whose snapshot fence this transaction's events are past.
     passed_fences: BTreeSet<usize>,
 }
@@ -3232,9 +3239,7 @@ fn stage_row_change(
             }
             let ordinal = pending
                 .ordinal
-                .checked_add(u32::try_from(mutations.len()).map_err(|error| {
-                    CdcError::Decode(format!("mutation ordinal conversion failed: {error}"))
-                })?)
+                .checked_add(mutations.len() as u64)
                 .ok_or_else(|| CdcError::Decode("mutation ordinal overflowed".to_owned()))?;
             mutations.push(PendingMutation {
                 target_index,
@@ -3265,13 +3270,11 @@ fn push_mutations(
     pending: &mut PendingTransaction,
     mutations: Vec<PendingMutation>,
     maximum_bytes: usize,
-    ordinal_budget: u32,
+    ordinal_budget: u64,
 ) -> Result<(), CdcError> {
-    let mutation_count = u32::try_from(mutations.len())
-        .map_err(|error| CdcError::Decode(format!("mutation count conversion failed: {error}")))?;
     let next_ordinal = pending
         .ordinal
-        .checked_add(mutation_count)
+        .checked_add(mutations.len() as u64)
         .ok_or_else(|| CdcError::Decode("mutation ordinal overflowed".to_owned()))?;
     // This gate fired at u16::MAX regardless of mode even after the GTID
     // version layout grew its 24-bit ordinal - the browser soak's 65,536-row
@@ -3368,6 +3371,8 @@ struct DurablePoint {
     file: String,
     pos: u64,
     floor: u64,
+    /// The version carry the checkpoint holds.
+    carry: u64,
 }
 
 /// Where one catch-up's time went, for the debug line that ends it.
@@ -3519,7 +3524,7 @@ fn seal_transaction(
     if let Some(highest) = batch.highest_version {
         position.floor = position.floor.max(highest);
     }
-    position.commit_gtid()?;
+    position.close_transaction(pending.ordinal)?;
     batch.file.clone_from(&position.file);
     batch.pos = position.pos;
     batch.transactions += 1;
@@ -3689,17 +3694,19 @@ fn flush_batch(
         binlog_pos: Some(checkpoint.binlog_pos),
     };
     recovery_point("cdc.before_checkpoint_commit")?;
-    metadata.commit_cdc_checkpoint(
+    metadata.commit_cdc_checkpoint_carrying(
         database_id,
         &checkpoint_record,
         &touched_names,
         &Utc::now().to_rfc3339(),
+        (position.carry != durable.carry).then_some(position.carry),
     )?;
     recovery_point("cdc.after_checkpoint_commit")?;
     phases.checkpoint += synchronized.elapsed();
     phases.batches += 1;
     durable.file.clone_from(&batch.file);
     durable.pos = batch.pos;
+    durable.carry = position.carry;
     if let Some(highest) = batch.highest_version {
         durable.floor = durable.floor.max(highest);
     }
@@ -3850,6 +3857,9 @@ fn classify_stream_error(
     }
 }
 
+/// Ordinal bits in one GTID version slot.
+const SLOT_BITS: u32 = 24;
+
 #[derive(Clone, Debug)]
 struct GtidIdentity {
     sid: [u8; 16],
@@ -3867,6 +3877,14 @@ struct StreamPosition {
     /// so a transaction versioned at or below it would be applied and then
     /// lose to the very row it replaced.
     floor: u64,
+    /// Version slots the transactions before this one used beyond their
+    /// own. A GTID transaction is numbered from the slot its sequence plus
+    /// this names, so one that ran on past its slot pushes every later one
+    /// along and versions still follow commit order.
+    carry: u64,
+    /// Ordinal bits in one GTID version slot: `SLOT_BITS`, except where the
+    /// simulation narrows it so that small transactions outgrow a slot.
+    slot_bits: u32,
 }
 
 enum PositionKind {
@@ -3906,6 +3924,8 @@ impl StreamPosition {
                 file: checkpoint.binlog_file.unwrap_or_default(),
                 pos: checkpoint.binlog_pos.unwrap_or(4),
                 floor: 0,
+                carry: 0,
+                slot_bits: SLOT_BITS,
             }),
             "gtid" | "filepos" => Ok(Self {
                 kind: PositionKind::FilePosition,
@@ -3922,6 +3942,8 @@ impl StreamPosition {
                     )
                 })?,
                 floor: 0,
+                carry: 0,
+                slot_bits: SLOT_BITS,
             }),
             "polling" => Err(CdcError::InvalidCheckpoint(
                 "polling checkpoint cannot start CDC".to_owned(),
@@ -3960,44 +3982,44 @@ impl StreamPosition {
         }
     }
 
-    /// How many row mutations one source transaction may carry: 24 ordinal
-    /// bits under GTID, 16 under file-position, matching the version layout.
-    fn ordinal_budget(&self) -> u32 {
+    /// How many row mutations one source transaction may carry. A GTID
+    /// transaction has no limit: it runs on into the version slots after its
+    /// own. File-position mode has 16 ordinal bits and nowhere to run on to.
+    const fn ordinal_budget(&self) -> u64 {
         match self.kind {
-            PositionKind::MysqlGtid => 0xFF_FFFF,
+            PositionKind::MysqlGtid => u64::MAX,
             PositionKind::FilePosition => 0xFFFF,
         }
     }
 
-    fn version(&self, event_position: u64, ordinal: u32) -> Result<u64, CdcError> {
+    fn version(&self, event_position: u64, ordinal: u64) -> Result<u64, CdcError> {
         if let Some(gtid) = &self.pending_gtid {
-            // 24 ordinal bits, not 16. A production backfill routinely
-            // commits hundreds of thousands of rows in one transaction, and
-            // the old 65,535-mutation budget quarantined the table the first
-            // time one arrived - measured by the browser soak at its very
-            // first 256k-row batch. Growing the ordinal is upgrade-safe
-            // because GTID sequences only increase: for any seq2 > seq1,
-            // seq2 << 24 exceeds seq1 << 16, so every new version stays
-            // above every stored one; and a transaction applies atomically
-            // at commit, so no single transaction ever spans encodings.
-            // 40 bits of sequence remain - a trillion transactions.
-            let ordinal = u64::from(ordinal) + 1;
-            if ordinal > 0xFF_FFFF {
-                return Err(CdcError::Decode(
-                    "one source transaction exceeds 16,777,215 row mutations".to_owned(),
-                ));
-            }
+            // A slot is 24 bits of ordinal under a 40-bit slot number, and a
+            // transaction starts at the slot `sequence + carry`. Its
+            // mutations count up from there without stopping at the slot's
+            // end: the sixteen-million-and-first lands in the next slot, and
+            // closing the transaction adds the slots it ran into to the
+            // carry, so the transaction after it starts above them. The
+            // carry only grows, so versions follow commit order across it,
+            // and it is stored with the checkpoint, so a replay numbers the
+            // same transactions the same way. Stored versions from before
+            // the carry existed are the carry-zero case of the same layout.
             return gtid
                 .sequence
-                .checked_shl(24)
-                .and_then(|base| base.checked_add(ordinal))
+                .checked_add(self.carry)
+                .filter(|slot| *slot < 1 << (64 - self.slot_bits))
+                .and_then(|slot| {
+                    (slot << self.slot_bits)
+                        .checked_add(ordinal)?
+                        .checked_add(1)
+                })
                 .ok_or_else(|| CdcError::Decode("GTID version exceeds UInt64".to_owned()));
         }
         // File-position mode has no spare bits: 16 for the file index, 32
         // for the byte position, 16 for the ordinal. The budget stays at
         // 65,535 mutations per transaction there - recorded in
         // docs/limitations.md; GTID mode is the fix.
-        let ordinal = u16::try_from(ordinal + 1).map_err(|_| {
+        let ordinal = u16::try_from(ordinal.saturating_add(1)).map_err(|_| {
             CdcError::Decode(
                 "one source transaction exceeds 65,535 row mutations                  (file-position mode; GTID mode raises the budget to 16,777,215)"
                     .to_owned(),
@@ -4042,11 +4064,18 @@ impl StreamPosition {
         }))
     }
 
-    fn commit_gtid(&mut self) -> Result<(), CdcError> {
-        if let Some(gtid) = self.pending_gtid.take()
-            && let Some(set) = &mut self.gtid_set
-        {
-            set.add_event(gtid.sid, gtid.tag.as_deref(), gtid.sequence)?;
+    /// Closes the open transaction, which staged `mutations` row mutations:
+    /// its GTID joins the executed set, and the slots it ran on into join
+    /// the carry.
+    fn close_transaction(&mut self, mutations: u64) -> Result<(), CdcError> {
+        if let Some(gtid) = self.pending_gtid.take() {
+            self.carry = self
+                .carry
+                .checked_add(mutations >> self.slot_bits)
+                .ok_or_else(|| CdcError::Decode("GTID version exceeds UInt64".to_owned()))?;
+            if let Some(set) = &mut self.gtid_set {
+                set.add_event(gtid.sid, gtid.tag.as_deref(), gtid.sequence)?;
+            }
         }
         Ok(())
     }
@@ -4462,10 +4491,6 @@ mod tests {
             position.version(200, 100_000).expect("low")
                 < position.version(200, 100_001).expect("high")
         );
-        // The 24-bit budget still refuses the truly absurd, by name.
-        let refusal = position.version(200, 0xFF_FFFF).expect_err("over budget");
-        assert!(refusal.to_string().contains("16,777,215"));
-
         // Upgrade safety: any later transaction's version under the 24-bit
         // layout exceeds any earlier one stored under the old 16-bit layout,
         // because GTID sequences only increase.
@@ -4476,6 +4501,58 @@ mod tests {
             sequence: 6,
         });
         assert!(position.version(200, 0).expect("next transaction") > old_layout_ceiling);
+    }
+
+    #[test]
+    fn a_transaction_past_one_slot_pushes_the_next_one_above_it() {
+        let mut position = StreamPosition::from_checkpoint(
+            SnapshotCheckpointRecord {
+                kind: "gtid".to_owned(),
+                gtid_set: Some("3E11FA47-71CA-11E1-9E33-C80AA9429562:1-4".to_owned()),
+                binlog_file: Some("mysql-bin.000002".to_owned()),
+                binlog_pos: Some(4),
+            },
+            SourceFlavor::Mysql,
+        )
+        .expect("position");
+        let open = |position: &mut StreamPosition, sequence| {
+            position.pending_gtid = Some(super::GtidIdentity {
+                sid: [7; 16],
+                tag: None,
+                sequence,
+            });
+        };
+        open(&mut position, 5);
+        assert_eq!(position.ordinal_budget(), u64::MAX);
+        // Forty million mutations: two whole slots and part of a third.
+        let mutations = 40_000_000_u64;
+        let slot_edge = position.version(200, (1 << 24) - 2).expect("slot edge");
+        let past_edge = position.version(200, (1 << 24) - 1).expect("past edge");
+        assert_eq!(past_edge, slot_edge + 1);
+        let last = position.version(200, mutations - 1).expect("last");
+        assert_eq!(last, (5 << 24) + mutations);
+        position.floor = last;
+        position.close_transaction(mutations).expect("close");
+        assert_eq!(position.carry, 2);
+
+        // The next transaction is numbered above every one of them, and one
+        // that stays inside its slot leaves the carry alone.
+        open(&mut position, 6);
+        assert_eq!(position.out_of_order(300).expect("check"), None);
+        assert_eq!(position.version(300, 0).expect("first"), (8 << 24) + 1);
+        position.close_transaction(1 << 23).expect("close");
+        assert_eq!(position.carry, 2);
+
+        // Exactly one slot's worth runs one mutation into the next.
+        open(&mut position, 7);
+        let full = position.version(400, (1 << 24) - 1).expect("full slot");
+        position.close_transaction(1 << 24).expect("close");
+        open(&mut position, 8);
+        assert!(position.version(500, 0).expect("after a full slot") > full);
+
+        // A slot number past forty bits has no version.
+        position.carry = (1 << 40) - 8;
+        position.version(500, 0).expect_err("slot overflow");
     }
 
     #[test]

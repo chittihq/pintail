@@ -175,6 +175,14 @@ and the same ordinal field. This makes ordering and replay deterministic
 without overlapping bit ranges; exceeding a field returns an explicit decode
 error.
 
+GTID versions later became 40 slot bits over 24 ordinal bits, where a
+transaction's slot is its sequence plus a carry. A transaction with more
+mutations than a slot numbers keeps counting into the following slots, and
+closing it adds those slots to the carry, so every later transaction starts
+above it. The carry is stored in the metadata transaction that stores the
+checkpoint: a replay from a checkpoint numbers its transactions exactly as
+the first pass did, and no transaction size forces a recopy.
+
 ### MariaDB resumes from its captured classic coordinate
 
 The selected protocol client parses MariaDB row events but does not encode the
