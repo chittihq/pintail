@@ -121,15 +121,51 @@ impl Float64 {
 
     /// The value as `MySQL` prints a DOUBLE: the shortest digits that read
     /// back to it, in fixed notation from 1e-15 up to 1e15 and in exponent
-    /// notation (`1e20`, `1.5e-16`) outside that range.
+    /// notation (`1e20`, `1.5e-16`) outside that range - except that a
+    /// value of 1e15 or more whose shortest digits reach past the decimal
+    /// point (`1159876301785078.5`) stays in fixed notation.
+    ///
+    /// Where two spellings of that shortest length read back to the value
+    /// and it lies exactly between them, the one ending in an even digit is
+    /// printed: `782394713348404.25` is `782394713348404.2`.
     #[must_use]
     pub fn mysql_text(self) -> String {
         let value = self.get();
+        if value == 0.0 || !value.is_finite() {
+            return value.to_string();
+        }
         let magnitude = value.abs();
-        if magnitude != 0.0 && !(1e-15..1e15).contains(&magnitude) {
-            format!("{value:e}")
-        } else {
-            value.to_string()
+        let shortest = format!("{magnitude:e}");
+        let Some((mantissa, exponent)) = shortest.split_once('e') else {
+            return value.to_string();
+        };
+        let Ok(exponent) = exponent.parse::<i32>() else {
+            return value.to_string();
+        };
+        let mut digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+        if let Some(even) = even_of_two_shortest(magnitude, &digits, exponent) {
+            digits = even;
+        }
+        let sign = if value.is_sign_negative() { "-" } else { "" };
+        // Digits before the decimal point, when there are any.
+        let whole = usize::try_from(exponent).ok().map(|exponent| exponent + 1);
+        let fixed =
+            (-15..15).contains(&exponent) || whole.is_some_and(|whole| digits.len() > whole);
+        if !fixed {
+            let (first, rest) = digits.split_at(1);
+            let point = if rest.is_empty() { "" } else { "." };
+            return format!("{sign}{first}{point}{rest}e{exponent}");
+        }
+        match whole {
+            Some(whole) if digits.len() > whole => {
+                let (integer, fraction) = digits.split_at(whole);
+                format!("{sign}{integer}.{fraction}")
+            }
+            Some(whole) => format!("{sign}{digits}{}", "0".repeat(whole - digits.len())),
+            None => {
+                let zeros = usize::try_from(-exponent - 1).unwrap_or(0);
+                format!("{sign}0.{}{digits}", "0".repeat(zeros))
+            }
         }
     }
 
@@ -404,6 +440,51 @@ impl std::hash::Hash for Value {
     }
 }
 
+/// The other shortest spelling of `magnitude`, when it is the one to print.
+///
+/// `digits` are the shortest significant digits that read back to
+/// `magnitude`, which is `d.ddd` times ten to the `exponent`. A double
+/// needing sixteen or seventeen of them can lie exactly halfway between two
+/// such spellings, both reading back to it; the one whose last digit is
+/// even is printed. `None` when `digits` already is that spelling, or when
+/// the value is no such tie.
+fn even_of_two_shortest(magnitude: f64, digits: &str, exponent: i32) -> Option<String> {
+    let count = digits.len();
+    // Fifteen digits or fewer name one double each, so two of them never
+    // read back to the same one.
+    if !(16..=17).contains(&count) {
+        return None;
+    }
+    // The value's own digits, far enough to see whether they end.
+    let exact = format!("{magnitude:.39e}");
+    let (mantissa, exact_exponent) = exact.split_once('e')?;
+    if exact_exponent.parse::<i32>().ok()? != exponent {
+        return None;
+    }
+    let exact: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let (below, rest) = exact.split_at(count);
+    let halfway = rest.starts_with('5') && rest[1..].bytes().all(|digit| digit == b'0');
+    if !halfway {
+        return None;
+    }
+    let last = below.as_bytes()[count - 1] - b'0';
+    let even = if last.is_multiple_of(2) {
+        below.to_owned()
+    } else if last == 9 {
+        // The spelling above would end in zero and be shorter still.
+        return None;
+    } else {
+        format!("{}{}", &below[..count - 1], last + 1)
+    };
+    if even == digits {
+        return None;
+    }
+    // Next to a power of two the doubles below are closer together, and the
+    // spelling on that side may read back to a neighbour instead.
+    let spelled = format!("{}.{}e{exponent}", &even[..1], &even[1..]);
+    (spelled.parse::<f64>().ok()?.to_bits() == magnitude.to_bits()).then_some(even)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{DecimalQuotient, Value};
@@ -424,6 +505,18 @@ mod tests {
             (1e14, "100000000000000"),
             (999_999_999_999_999.9, "999999999999999.9"),
             (1e15, "1e15"),
+            // A fraction keeps fixed notation past 1e15.
+            (1_159_876_301_785_078.5, "1159876301785078.5"),
+            (-3_081_054_686_000_004.5, "-3081054686000004.5"),
+            (1_000_000_000_000_000.1, "1000000000000000.1"),
+            (4_503_599_627_370_495.5, "4503599627370495.5"),
+            (4_503_599_627_370_496.0, "4.503599627370496e15"),
+            (3_081_054_686_000_004.0, "3.081054686000004e15"),
+            (123_456.789, "123456.789"),
+            (2.5e-5, "0.000025"),
+            (6_400_000_000.5, "6400000000.5"),
+            (1e22, "1e22"),
+            (1.5e300, "1.5e300"),
             (1e-15, "0.000000000000001"),
             (1.5e-16, "1.5e-16"),
             (-1e20, "-1e20"),
@@ -435,6 +528,23 @@ mod tests {
             (1.797_693_134_862_315_7e308, "1.7976931348623157e308"),
         ] {
             assert_eq!(super::Float64::new(value).mysql_text(), text, "{value}");
+        }
+    }
+
+    #[test]
+    fn a_double_between_two_shortest_spellings_prints_the_even_one() {
+        // Measured against MySQL 8.4. Each value is written out in full:
+        // it lies exactly halfway between two spellings of sixteen digits
+        // that both read back to it.
+        for (exact, text) in [
+            ("-782394713348404.25", "-782394713348404.2"),
+            ("-833049989439478.25", "-833049989439478.2"),
+            ("782394713348404.75", "782394713348404.8"),
+            ("4503599627370497.5", "4.503599627370498e15"),
+            ("1159876301785078.5", "1159876301785078.5"),
+        ] {
+            let value: f64 = exact.parse().expect("a double");
+            assert_eq!(super::Float64::new(value).mysql_text(), text, "{exact}");
         }
     }
 
