@@ -624,17 +624,25 @@ pub(crate) fn append_collation_key(text: &str, collation: Collation, out: &mut V
         Collation::Utf8mb4UnicodeCi => {
             out.extend_from_slice(&crate::collation::unicode_ci_sort_key(text));
         }
-        Collation::Utf8mb40900AiCi => MYSQL_DEFAULT_COLLATOR.with(|collator| {
-            collator
-                .write_sort_key_to(text, out)
-                .expect("Vec-backed collation keys cannot fail");
-        }),
+        Collation::Utf8mb40900AiCi => {
+            crate::collation::ai_ci_ascii::append_key(text, out, &collator_ai_ci_key);
+        }
         Collation::Utf8mb40900AsCs => MYSQL_AS_CS_COLLATOR.with(|collator| {
             collator
                 .write_sort_key_to(text, out)
                 .expect("Vec-backed collation keys cannot fail");
         }),
     }
+}
+
+/// The `utf8mb4_0900_ai_ci` key as the collator itself writes it, whatever
+/// the text.
+pub(crate) fn collator_ai_ci_key(text: &str, out: &mut Vec<u8>) {
+    MYSQL_DEFAULT_COLLATOR.with(|collator| {
+        collator
+            .write_sort_key_to(text, out)
+            .expect("Vec-backed collation keys cannot fail");
+    });
 }
 
 /// FNV-1a over bytes, for the two byte-keyed maps plan resolution builds.
@@ -4306,11 +4314,9 @@ pub(crate) fn collation_sort_key(text: &str, collation: Collation) -> Vec<u8> {
             key = crate::json_order::json_sort_key(text)
                 .unwrap_or_else(|| crate::collation::bin_sort_key(text));
         }
-        Collation::Utf8mb40900AiCi => MYSQL_DEFAULT_COLLATOR.with(|collator| {
-            collator
-                .write_sort_key_to(text, &mut key)
-                .expect("Vec-backed collation keys cannot fail");
-        }),
+        Collation::Utf8mb40900AiCi => {
+            crate::collation::ai_ci_ascii::append_key(text, &mut key, &collator_ai_ci_key);
+        }
         Collation::Utf8mb40900AsCs => MYSQL_AS_CS_COLLATOR.with(|collator| {
             collator
                 .write_sort_key_to(text, &mut key)

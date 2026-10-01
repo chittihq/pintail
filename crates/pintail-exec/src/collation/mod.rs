@@ -14,6 +14,7 @@
 //! meant a source could snapshot, replicate and read back while every `WHERE`,
 //! `JOIN`, `GROUP BY` and `ORDER BY` on its text columns was refused.
 
+pub(crate) mod ai_ci_ascii;
 mod general_ci_table;
 mod thai;
 mod unicode_ci_table;
