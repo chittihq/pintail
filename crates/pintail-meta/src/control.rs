@@ -1373,6 +1373,11 @@ impl MetaStore {
     /// activity history all survive - this resets what is mirrored, not how
     /// the database is reached.
     ///
+    /// The same transaction marks the reset as pending. What it leaves - no
+    /// tables, no position - is indistinguishable from a database nobody has
+    /// snapshotted yet, so without the mark nothing would know a fresh copy
+    /// is owed if the one the caller starts next fails or never starts.
+    ///
     /// # Errors
     ///
     /// Returns an error when the reset transaction cannot be applied.
@@ -1390,6 +1395,13 @@ impl MetaStore {
         transaction
             .execute("DELETE FROM dlq WHERE db_id = ?1", [id])
             .context("failed to clear quarantined events")?;
+        transaction
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (reset_pending_key(id), now),
+            )
+            .context("failed to record the pending reset")?;
         let changed = transaction
             .execute(
                 "UPDATE databases SET state = 'created', updated_at = ?2 WHERE id = ?1",
@@ -1400,6 +1412,25 @@ impl MetaStore {
             .commit()
             .context("failed to commit database reset")?;
         Ok(changed == 1)
+    }
+
+    /// Whether a reset of this database still owes its fresh copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the mark cannot be read.
+    pub fn reset_pending(&self, id: &str) -> Result<bool> {
+        Ok(self.setting(&reset_pending_key(id))?.is_some())
+    }
+
+    /// Clears the pending-reset mark once a snapshot of the database has
+    /// completed. A no-op when no reset is pending.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the mark cannot be removed.
+    pub fn finish_database_reset(&self, id: &str) -> Result<()> {
+        self.delete_setting(&reset_pending_key(id))
     }
 
     /// Deletes one database and its cascading control-plane records.
@@ -2066,4 +2097,8 @@ fn validate_mode(mode: &str) -> Result<()> {
     } else {
         bail!("database mode must be auto, cdc, polling, or paused")
     }
+}
+
+fn reset_pending_key(id: &str) -> String {
+    format!("mirror_reset_pending:{id}")
 }

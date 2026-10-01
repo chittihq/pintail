@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -25,6 +25,131 @@ const NONCE_BYTES: usize = 12;
 const OAUTH_EXCHANGE_LIFETIME: Duration = Duration::from_secs(60);
 const MAX_PENDING_OAUTH_EXCHANGES: usize = 256;
 
+/// How long an operator action waits for a replication cycle to hand the
+/// job slot over before the cycle is cut short.
+const CYCLE_YIELD_GRACE: Duration = Duration::from_secs(8);
+/// How long a reset lets whatever holds the slot finish before cancelling it.
+const CANCEL_GRACE: Duration = Duration::from_secs(2);
+/// How long an operator action waits for a job that is not a cycle. Those
+/// are real work - a copy, a backup - and are not interrupted for anything
+/// short of a reset; the wait only covers the ones that finish in a moment.
+const BUSY_PATIENCE: Duration = Duration::from_secs(3);
+/// The longest an operator action waits for the slot before it is refused.
+const OPERATOR_WAIT: Duration = Duration::from_secs(25);
+
+/// Who holds a database's job slot, which decides who may take it from them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum JobKind {
+    /// A supervisor replication cycle: repeats forever, so it yields to
+    /// anything an operator asks for.
+    Cycle,
+    /// Work the supervisor started by itself (a table repair, a scheduled
+    /// backup). Not started while an operator waits.
+    Automatic,
+    /// Work an operator asked for.
+    Operator,
+}
+
+/// What an operator action may do to the job in its way.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Preempt {
+    /// End a replication cycle early; wait briefly for anything else and
+    /// then say what is running.
+    Yield,
+    /// Cancel whatever holds the slot. Only for an action that discards the
+    /// state the running job is writing.
+    Cancel,
+}
+
+/// The line between a job and whoever wants its slot.
+#[derive(Clone, Default)]
+pub(crate) struct JobSignal {
+    stop: pintail_cdc::CycleStop,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl JobSignal {
+    /// Raised when the job should finish at its next safe point.
+    pub(crate) fn stop(&self) -> pintail_cdc::CycleStop {
+        self.stop.clone()
+    }
+
+    fn cancel(&self) {
+        self.stop.request();
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Runs `job` until it finishes or the slot is taken from it, in which
+    /// case the job is dropped where it stands and `None` comes back. That
+    /// leaves what a process stopped at the same point would leave, which
+    /// every job here already recovers from.
+    pub(crate) async fn until_cancelled<T>(&self, job: impl Future<Output = T>) -> Option<T> {
+        let cancelled = async {
+            while !self.is_cancelled() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::select! {
+            biased;
+            () = cancelled => None,
+            output = job => Some(output),
+        }
+    }
+}
+
+struct JobSlot {
+    claim: String,
+    since: Instant,
+    kind: JobKind,
+    signal: JobSignal,
+}
+
+impl JobSlot {
+    fn describe(&self) -> String {
+        format!(
+            "{} has been running for {}s; it holds this database's job slot",
+            self.claim,
+            self.since.elapsed().as_secs()
+        )
+    }
+}
+
+/// One claim per database: what kind of job holds the slot and since when,
+/// so a refusal can say what is actually running instead of leaving the
+/// operator to guess whether to retry in seconds or minutes - and how many
+/// operator actions are waiting for it, which keeps the supervisor from
+/// taking it back first.
+#[derive(Default)]
+struct JobTable {
+    active: std::collections::BTreeMap<String, JobSlot>,
+    waiting: std::collections::BTreeMap<String, usize>,
+}
+
+/// Counts one waiting operator action for as long as it lives, including
+/// when the request it belongs to is dropped mid-wait.
+struct OperatorWaiting<'a> {
+    state: &'a ApiState,
+    database_id: &'a str,
+}
+
+impl Drop for OperatorWaiting<'_> {
+    fn drop(&mut self) {
+        if let Some(inner) = &self.state.inner
+            && let Ok(mut jobs) = inner.jobs.lock()
+            && let Some(count) = jobs.waiting.get_mut(self.database_id)
+        {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                jobs.waiting.remove(self.database_id);
+            }
+        }
+    }
+}
+
 /// Shared configuration for Pintail's authenticated HTTP surface.
 #[derive(Clone)]
 pub struct ApiState {
@@ -42,7 +167,7 @@ struct ApiStateInner {
     /// One claim per database: what kind of job holds the slot and since
     /// when, so the 409 can say what is actually running instead of leaving
     /// the operator to guess whether to retry in seconds or minutes.
-    active_jobs: Mutex<std::collections::BTreeMap<String, (String, std::time::Instant)>>,
+    jobs: Mutex<JobTable>,
     /// Last-known copy progress per (database, table), retained so a
     /// dashboard that loads MID-copy (reload, second browser) can seed its
     /// progress bar instead of waiting for the next SSE frame. Entries live
@@ -162,7 +287,7 @@ impl ApiState {
                 jwt_secret: jwt_secret.into(),
                 dsn_key,
                 events,
-                active_jobs: Mutex::new(std::collections::BTreeMap::new()),
+                jobs: Mutex::new(JobTable::default()),
                 table_progress: Mutex::new(HashMap::new()),
                 oauth_exchanges: Mutex::new(HashMap::new()),
                 metrics: RuntimeMetrics::default(),
@@ -442,8 +567,21 @@ impl ApiState {
             .cloned()
     }
 
-    pub(crate) fn acquire_job(&self, database_id: &str) -> Result<(), ApiError> {
-        self.acquire_job_as(database_id, "a replication cycle")
+    /// Claims the slot for one replication cycle. Refused while an operator
+    /// action waits for it: a cycle that restarts the moment the last one
+    /// ends would otherwise keep every such action out for good.
+    pub(crate) fn acquire_job(&self, database_id: &str) -> Result<JobSignal, ApiError> {
+        self.claim_job(database_id, "a replication cycle", JobKind::Cycle)
+    }
+
+    /// Claims the slot for work the supervisor starts by itself, which
+    /// gives way to a waiting operator the way a cycle does.
+    pub(crate) fn acquire_automatic_job(
+        &self,
+        database_id: &str,
+        claim: &str,
+    ) -> Result<JobSignal, ApiError> {
+        self.claim_job(database_id, claim, JobKind::Automatic)
     }
 
     /// Claims the database's one job slot under a human-readable name. On
@@ -459,7 +597,7 @@ impl ApiState {
     /// (`docs/design/writable-mode.md`). Backups are deliberately NOT
     /// guarded: they read the manifest objects a local database has like any
     /// other, which is why this is a per-entry-point check and not one
-    /// inside `acquire_job_as`.
+    /// inside the job-slot claim.
     ///
     /// # Errors
     ///
@@ -482,26 +620,142 @@ impl ApiState {
         Ok(())
     }
 
-    pub(crate) fn acquire_job_as(&self, database_id: &str, claim: &str) -> Result<(), ApiError> {
+    fn claim_job(
+        &self,
+        database_id: &str,
+        claim: &str,
+        kind: JobKind,
+    ) -> Result<JobSignal, ApiError> {
         let inner = self
             .inner
             .as_ref()
             .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))?;
-        let mut jobs = inner.active_jobs.lock().map_err(ApiError::internal)?;
-        match jobs.entry(database_id.to_owned()) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert((claim.to_owned(), std::time::Instant::now()));
-                Ok(())
-            }
-            std::collections::btree_map::Entry::Occupied(entry) => {
-                let (running, since) = entry.get();
-                Err(ApiError::conflict(format!(
-                    "{running} has been running for {}s; it holds this database's job slot - \
-                     retry when it completes",
-                    since.elapsed().as_secs()
-                )))
-            }
+        let mut jobs = inner.jobs.lock().map_err(ApiError::internal)?;
+        if kind != JobKind::Operator && jobs.waiting.contains_key(database_id) {
+            return Err(ApiError::conflict(
+                "an operator action is waiting for this database's job slot",
+            ));
         }
+        match jobs.active.entry(database_id.to_owned()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let signal = JobSignal::default();
+                entry.insert(JobSlot {
+                    claim: claim.to_owned(),
+                    since: Instant::now(),
+                    kind,
+                    signal: signal.clone(),
+                });
+                Ok(signal)
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => Err(ApiError::conflict(
+                format!("{} - retry when it completes", entry.get().describe()),
+            )),
+        }
+    }
+
+    /// Claims the slot for an operator's action, ahead of the supervisor.
+    ///
+    /// The supervisor takes the slot for every replication cycle and takes
+    /// it again as soon as it can, and a cycle on a source written faster
+    /// than it is applied does not end at all. An immediate claim therefore
+    /// lost to the supervisor for as long as that lasted - minutes of
+    /// refusals for a reset, a resnapshot or an added table, on exactly the
+    /// databases that needed them. So the claim is queued instead: while it
+    /// waits the supervisor starts nothing new for this database, a running
+    /// cycle is asked to return at its next commit and is cut short if it
+    /// does not, and the action is admitted behind at most that one cycle.
+    ///
+    /// # Errors
+    ///
+    /// Returns a conflict naming the job that holds the slot when that job
+    /// is not one to interrupt, or did not let go in time.
+    pub(crate) async fn acquire_operator_job(
+        &self,
+        database_id: &str,
+        claim: &str,
+        preempt: Preempt,
+    ) -> Result<JobSignal, ApiError> {
+        let inner = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))?;
+        {
+            let mut jobs = inner.jobs.lock().map_err(ApiError::internal)?;
+            *jobs.waiting.entry(database_id.to_owned()).or_default() += 1;
+        }
+        let _waiting = OperatorWaiting {
+            state: self,
+            database_id,
+        };
+        let asked = Instant::now();
+        loop {
+            {
+                let mut jobs = inner.jobs.lock().map_err(ApiError::internal)?;
+                let Some(slot) = jobs.active.get(database_id) else {
+                    let signal = JobSignal::default();
+                    jobs.active.insert(
+                        database_id.to_owned(),
+                        JobSlot {
+                            claim: claim.to_owned(),
+                            since: Instant::now(),
+                            kind: JobKind::Operator,
+                            signal: signal.clone(),
+                        },
+                    );
+                    return Ok(signal);
+                };
+                let waited = asked.elapsed();
+                match (preempt, slot.kind) {
+                    (Preempt::Cancel, _) => {
+                        slot.signal.stop.request();
+                        if waited >= CANCEL_GRACE {
+                            slot.signal.cancel();
+                        }
+                    }
+                    (Preempt::Yield, JobKind::Cycle) => {
+                        slot.signal.stop.request();
+                        if waited >= CYCLE_YIELD_GRACE {
+                            slot.signal.cancel();
+                        }
+                    }
+                    (Preempt::Yield, JobKind::Automatic | JobKind::Operator) => {
+                        if waited >= BUSY_PATIENCE {
+                            return Err(ApiError::conflict(format!(
+                                "{} - retry when it completes",
+                                slot.describe()
+                            )));
+                        }
+                    }
+                }
+                if waited >= OPERATOR_WAIT {
+                    return Err(ApiError::conflict(format!(
+                        "{} and did not stop within {}s of being asked to - retry shortly",
+                        slot.describe(),
+                        OPERATOR_WAIT.as_secs()
+                    )));
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Renames the claim a held slot carries, when one action hands the
+    /// slot to the next step of the same work.
+    pub(crate) fn relabel_job(&self, database_id: &str, claim: &str) {
+        if let Some(inner) = &self.inner
+            && let Ok(mut jobs) = inner.jobs.lock()
+            && let Some(slot) = jobs.active.get_mut(database_id)
+        {
+            claim.clone_into(&mut slot.claim);
+        }
+    }
+
+    /// What holds the database's job slot, if anything, for status output.
+    pub(crate) fn job_holder(&self, database_id: &str) -> Option<(String, u64)> {
+        let inner = self.inner.as_ref()?;
+        let jobs = inner.jobs.lock().ok()?;
+        let slot = jobs.active.get(database_id)?;
+        Some((slot.claim.clone(), slot.since.elapsed().as_secs()))
     }
 
     /// Runs `action` over the per-database catalog-repair clock; `None` when
@@ -517,9 +771,9 @@ impl ApiState {
 
     pub(crate) fn release_job(&self, database_id: &str) {
         if let Some(inner) = &self.inner
-            && let Ok(mut jobs) = inner.active_jobs.lock()
+            && let Ok(mut jobs) = inner.jobs.lock()
         {
-            jobs.remove(database_id);
+            jobs.active.remove(database_id);
         }
     }
 

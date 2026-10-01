@@ -50,7 +50,13 @@ pub(crate) async fn resync(
     crate::databases::load_database(&state, &principal, &database_id)?;
     require_table(&state, &database_id, &table_name)?;
     state.require_replicated(&database_id, "a table resnapshot")?;
-    state.acquire_job_as(&database_id, "a table resnapshot")?;
+    let signal = state
+        .acquire_operator_job(
+            &database_id,
+            "a table resnapshot",
+            crate::state::Preempt::Yield,
+        )
+        .await?;
 
     let run_id = crate::state::random_identifier("run_", 16);
     let metadata = match state.metadata() {
@@ -86,12 +92,14 @@ pub(crate) async fn resync(
                 .enable_all()
                 .build();
             match runtime {
-                Ok(runtime) => runtime.block_on(complete_table_resnapshot_job(
-                    job_state,
-                    job_database_id,
-                    job_table_name,
-                    job_run_id,
-                )),
+                Ok(runtime) => complete_table_resnapshot_job(
+                    runtime,
+                    &signal,
+                    &job_state,
+                    &job_database_id,
+                    &job_table_name,
+                    &job_run_id,
+                ),
                 Err(error) => finish_table_resnapshot(
                     &job_state,
                     &job_database_id,
@@ -276,16 +284,14 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
             return;
         }
     }
-    if state
-        .acquire_job_as(database_id, "an automatic table resnapshot")
-        .is_err()
-    {
+    let Ok(signal) = state.acquire_automatic_job(database_id, "an automatic table resnapshot")
+    else {
         // Another job holds the database; the next cycle tries again. The
         // cooldown is deliberately NOT stamped on this path - it records
         // attempts actually started, and stamping a suppressed one would
         // silence retries for the whole window.
         return;
-    }
+    };
     let run_id = crate::state::random_identifier("run_", 16);
     let started = metadata
         .start_sync_run(
@@ -332,12 +338,14 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
                 .enable_all()
                 .build();
             match runtime {
-                Ok(runtime) => runtime.block_on(complete_table_resnapshot_job(
-                    job_state,
-                    job_database_id,
-                    job_table_name,
-                    job_run_id,
-                )),
+                Ok(runtime) => complete_table_resnapshot_job(
+                    runtime,
+                    &signal,
+                    &job_state,
+                    &job_database_id,
+                    &job_table_name,
+                    &job_run_id,
+                ),
                 Err(error) => finish_table_resnapshot(
                     &job_state,
                     &job_database_id,
@@ -360,19 +368,26 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
     }
 }
 
-async fn complete_table_resnapshot_job(
-    state: ApiState,
-    database_id: String,
-    table_name: String,
-    run_id: String,
+fn complete_table_resnapshot_job(
+    runtime: tokio::runtime::Runtime,
+    signal: &crate::state::JobSignal,
+    state: &ApiState,
+    database_id: &str,
+    table_name: &str,
+    run_id: &str,
 ) {
     let started = Instant::now();
-    let result = run_table_resnapshot_job(&state, &database_id, &table_name).await;
+    let result = runtime
+        .block_on(signal.until_cancelled(run_table_resnapshot_job(state, database_id, table_name)))
+        .unwrap_or_else(|| Err("cancelled: a reset took this database's job slot".to_owned()));
+    // Whatever the copy left running ends with its runtime, before the slot
+    // passes to the next job.
+    drop(runtime);
     finish_table_resnapshot(
-        &state,
-        &database_id,
-        &table_name,
-        &run_id,
+        state,
+        database_id,
+        table_name,
+        run_id,
         result,
         duration_ms(started),
     );
@@ -633,7 +648,13 @@ pub(crate) async fn reconcile(
     crate::databases::load_database(&state, &principal, &database_id)?;
     require_table(&state, &database_id, &table_name)?;
     state.require_replicated(&database_id, "a table reconciliation")?;
-    state.acquire_job_as(&database_id, "a table reconciliation")?;
+    state
+        .acquire_operator_job(
+            &database_id,
+            "a table reconciliation",
+            crate::state::Preempt::Yield,
+        )
+        .await?;
 
     let run_id = crate::state::random_identifier("run_", 16);
     if let Err(error) = state.metadata()?.start_sync_run(
@@ -943,7 +964,13 @@ pub(crate) async fn remove(
     let table = table_for_pause(&principal, &state, &database_id, &table_name)?;
     // Holding the job slot keeps a replication cycle, which holds the
     // table's store open, from running while its files go.
-    state.acquire_job_as(&database_id, "a table removal")?;
+    state
+        .acquire_operator_job(
+            &database_id,
+            "a table removal",
+            crate::state::Preempt::Yield,
+        )
+        .await?;
     let removed = remove_absent_table(&state, &database_id, &table).await;
     state.release_job(&database_id);
     removed?;

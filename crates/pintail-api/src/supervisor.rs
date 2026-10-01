@@ -12,9 +12,18 @@ use pintail_store::StoreOptions;
 
 use crate::{
     ApiState, backup::start_scheduled_if_due, events::ApiEvent, snapshot::table_directory,
+    state::JobSignal,
 };
 
 const SUPERVISOR_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How long one replication cycle may run before it returns at its next
+/// commit. A source written faster than it is applied has no end of binlog
+/// to reach, so an unbounded cycle ran for as long as the backlog lasted:
+/// its run stayed open, the status it reports at the end never moved, and
+/// the job slot was never free. The next cadence continues from where this
+/// one stopped.
+const CYCLE_BUDGET: Duration = Duration::from_secs(30);
 
 /// The supervision cadence: five seconds in production, overridable through
 /// `PINTAIL_SUPERVISOR_INTERVAL_MS` so test harnesses stop paying multiples
@@ -196,7 +205,12 @@ fn supervise_once(state: &ApiState) {
             return;
         }
     };
-    for database in databases.into_iter().filter(eligible) {
+    for database in databases {
+        // A reset still owed its fresh copy has no tables and no position:
+        // there is nothing to replicate until that copy lands.
+        if crate::snapshot::resume_pending_reset(state, &database) || !eligible(&database) {
+            continue;
+        }
         // A polling cycle overwrites the source checkpoint with a polling
         // one, and CDC can never start from that - so a database switched
         // from polling back to cdc has no position to resume from and every
@@ -243,9 +257,9 @@ fn supervise_once(state: &ApiState) {
             }
             continue;
         }
-        if state.acquire_job(&database.id).is_err() {
+        let Ok(signal) = state.acquire_job(&database.id) else {
             continue;
-        }
+        };
         let task_state = state.clone();
         let database_id = database.id.clone();
         let thread_database_id = database_id.clone();
@@ -257,7 +271,12 @@ fn supervise_once(state: &ApiState) {
                     .build()
                 {
                     Ok(runtime) => {
-                        runtime.block_on(supervise_database(task_state, database));
+                        runtime.block_on(supervise_database(&task_state, &database, &signal));
+                        // Whatever the cycle left running ends with its
+                        // runtime, before the slot passes to the next job.
+                        drop(runtime);
+                        task_state.release_job(&thread_database_id);
+                        after_cycle(&task_state, &thread_database_id);
                     }
                     Err(error) => {
                         task_state.record_replication_cycle(0, false);
@@ -308,7 +327,7 @@ fn eligible(database: &DatabaseRecord) -> bool {
         && state_live
 }
 
-async fn supervise_database(state: ApiState, database: DatabaseRecord) {
+async fn supervise_database(state: &ApiState, database: &DatabaseRecord, signal: &JobSignal) {
     let run_id = crate::state::random_identifier("run_", 16);
     let started = std::time::Instant::now();
     // Derived exactly as run_cycle derives it, so the success path's
@@ -320,7 +339,7 @@ async fn supervise_database(state: ApiState, database: DatabaseRecord) {
         .filter(|mode| matches!(mode.as_str(), "cdc" | "polling"))
         .or_else(|| {
             let report: ProbeReport = serde_json::from_str(database.probe_json.as_deref()?).ok()?;
-            Some(crate::snapshot::effective_mode(&database, &report).to_owned())
+            Some(crate::snapshot::effective_mode(database, &report).to_owned())
         })
         .unwrap_or_else(|| "replication".to_owned());
     let kind = kind.as_str();
@@ -328,9 +347,33 @@ async fn supervise_database(state: ApiState, database: DatabaseRecord) {
         let _ =
             metadata.start_sync_run(&run_id, &database.id, None, kind, &Utc::now().to_rfc3339());
     }
-    let result = run_cycle(&state, &database).await;
+    let cycle_started = std::time::Instant::now();
+    let result = signal
+        .until_cancelled(run_cycle(state, database, signal))
+        .await;
+    pintail_log::log_debug!(
+        "supervisor cycle db={} kind={kind} total_ms={} cut_short={}",
+        database.id,
+        cycle_started.elapsed().as_millis(),
+        result.is_none()
+    );
     match result {
-        Ok(rows) => {
+        // The slot was taken mid-cycle. What the cycle had committed stays
+        // committed and the rest is read again from the checkpoint; nothing
+        // is recorded against the database, which did nothing wrong.
+        None => {
+            if let Ok(metadata) = state.metadata() {
+                let _ = metadata.finish_sync_run(
+                    &run_id,
+                    "completed",
+                    0,
+                    0,
+                    elapsed_ms(started),
+                    Some("ended early: an operator action took the job slot"),
+                );
+            }
+        }
+        Some(Ok(rows)) => {
             if let Ok(metadata) = state.metadata() {
                 let now = Utc::now().to_rfc3339();
                 let _ = metadata.finish_sync_run(
@@ -352,7 +395,7 @@ async fn supervise_database(state: ApiState, database: DatabaseRecord) {
                 ));
             }
         }
-        Err(error) => {
+        Some(Err(error)) => {
             if let Ok(metadata) = state.metadata() {
                 let now = Utc::now().to_rfc3339();
                 let _ = metadata.finish_sync_run(
@@ -369,7 +412,10 @@ async fn supervise_database(state: ApiState, database: DatabaseRecord) {
             state.publish(ApiEvent::database("replication.error", &database.id, error));
         }
     }
-    state.release_job(&database.id);
+}
+
+/// What follows every cycle once its job slot is free again.
+fn after_cycle(state: &ApiState, database_id: &str) {
     // A table CDC quarantined (needs_resync) stays frozen until recopied;
     // under binlog_row_metadata=MINIMAL that legitimately happens when the
     // stream falls more than one hidden ALTER behind, so the repair cannot
@@ -377,22 +423,27 @@ async fn supervise_database(state: ApiState, database: DatabaseRecord) {
     // claims the job slot afresh, exactly as the operator endpoint would,
     // and losing the claim to another claimant in the window costs one
     // cycle, not correctness.
-    crate::controls::auto_resync_quarantined(&state, &database.id);
+    crate::controls::auto_resync_quarantined(state, database_id);
     // Included tables the catalog lost are never recreated by the stream,
     // which only adopts tables it sees created; the same non-forced snapshot
     // an operator would start copies them, on a gap so it cannot loop.
-    crate::upstream::repair_catalog_drift(&state, &database.id);
-    if let Err(error) = start_scheduled_if_due(&state, &database.id) {
+    crate::upstream::repair_catalog_drift(state, database_id);
+    if let Err(error) = start_scheduled_if_due(state, database_id) {
         state.publish(ApiEvent::database(
             "backup.schedule.error",
-            &database.id,
+            database_id,
             error.to_string(),
         ));
     }
 }
 
 #[allow(clippy::too_many_lines)]
-async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, String> {
+async fn run_cycle(
+    state: &ApiState,
+    database: &DatabaseRecord,
+    signal: &JobSignal,
+) -> Result<u64, String> {
+    let phase = std::time::Instant::now();
     let report: ProbeReport = serde_json::from_str(
         database
             .probe_json
@@ -411,6 +462,12 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
         .join("tables");
     let targets = open_targets(&metadata_path, &database.id, &root, &report, &records)?;
     drop(metadata);
+    pintail_log::log_debug!(
+        "supervisor cycle db={} opened {} targets in {}ms",
+        database.id,
+        targets.len(),
+        phase.elapsed().as_millis()
+    );
 
     let dsn = state
         .decrypt_dsn(&database.encrypted_dsn)
@@ -437,6 +494,8 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
                 targets,
                 CdcOptions {
                     blocking: false,
+                    max_duration: Some(CYCLE_BUDGET),
+                    stop: Some(signal.stop()),
                     new_table_root: Some(root.clone()),
                     new_table_includes: includes,
                     new_table_excludes: excludes,

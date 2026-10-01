@@ -956,6 +956,12 @@ fn a_reset_clears_replication_state_but_keeps_the_connection() {
     assert!(metadata.dlq_records(Some("db-1"), 10).unwrap().is_empty());
     assert!(metadata.snapshot_checkpoint("db-1").unwrap().is_none());
 
+    // The fresh copy the reset owes is recorded with the wipe, and stays
+    // recorded until a snapshot completes.
+    assert!(metadata.reset_pending("db-1").unwrap());
+    metadata.finish_database_reset("db-1").unwrap();
+    assert!(!metadata.reset_pending("db-1").unwrap());
+
     // The connection itself survives, back at the starting line.
     let database = metadata.database("db-1").unwrap().expect("database");
     assert_eq!(database.state, "created");

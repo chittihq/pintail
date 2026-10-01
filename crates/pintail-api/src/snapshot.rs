@@ -26,7 +26,16 @@ use pintail_snapshot::{
 use pintail_store::{StoreOptions, TableStore};
 use serde::{Deserialize, Serialize};
 
-use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError, events::ApiEvent};
+use crate::{
+    ApiState, audit,
+    auth::AuthPrincipal,
+    error::ApiError,
+    events::ApiEvent,
+    state::{JobSignal, Preempt},
+};
+
+/// How often the supervisor retries the fresh copy a reset is waiting on.
+const RESET_RETRY_GAP: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[derive(Deserialize)]
 pub(crate) struct SnapshotRequest {
@@ -45,7 +54,16 @@ pub(crate) struct SnapshotStatus {
     database_id: String,
     state: String,
     effective_mode: Option<String>,
+    /// What holds the database's job slot right now, so a page can say why
+    /// an action is waiting instead of showing a spinner.
+    job: Option<RunningJob>,
     tables: Vec<TableSnapshotStatus>,
+}
+
+#[derive(Serialize)]
+struct RunningJob {
+    claim: String,
+    seconds: u64,
 }
 
 #[derive(Serialize)]
@@ -68,7 +86,7 @@ pub(crate) async fn start(
     principal.authorize_database(&database_id)?;
     crate::databases::load_database(&state, &principal, &database_id)?;
     let force = payload.is_some_and(|Json(request)| request.force);
-    let run_id = begin_snapshot_job(&state, &database_id, force)?;
+    let run_id = begin_operator_snapshot(&state, &database_id, force).await?;
     audit::record(
         &state,
         &principal,
@@ -92,6 +110,14 @@ pub(crate) async fn start(
 /// event and on-disk store is dropped, then a forced snapshot re-probes the
 /// source and copies everything fresh, continuing in whatever mode the
 /// database is configured for. Nothing about the connection is asked again.
+///
+/// It has to work on exactly the databases where nothing else does, so it
+/// waits for nothing: whatever holds the job slot - a cycle that never
+/// ends, a copy against a source that stopped answering - is cancelled,
+/// and the slot is kept from the wipe through to the snapshot that follows,
+/// so nothing can start on the emptied mirror in between. The intent is
+/// recorded with the wipe; if the snapshot cannot start or the process
+/// stops, the supervisor finishes the reset.
 pub(crate) async fn reset(
     Extension(principal): Extension<AuthPrincipal>,
     State(state): State<ApiState>,
@@ -99,44 +125,26 @@ pub(crate) async fn reset(
 ) -> Result<(StatusCode, Json<AcceptedSnapshot>), ApiError> {
     principal.require_operator()?;
     principal.authorize_database(&database_id)?;
-    crate::databases::load_database(&state, &principal, &database_id)?;
-    // Hold the job slot through the wipe so no replication cycle is mid-write
-    // while the state underneath it disappears.
+    let database = crate::databases::load_database(&state, &principal, &database_id)?;
     state.require_replicated(&database_id, "a factory reset")?;
-    state.acquire_job_as(&database_id, "a factory reset")?;
-    let wiped = (|| -> Result<(), ApiError> {
-        let mut metadata = state.metadata()?;
-        let database = metadata
-            .database(&database_id)
-            .map_err(ApiError::internal)?
-            .ok_or_else(|| ApiError::not_found("database does not exist"))?;
-        if database.mode == "paused" {
-            return Err(ApiError::conflict(
-                "resume the database before resetting it",
-            ));
-        }
-        metadata
-            .reset_database_replication(&database_id, &Utc::now().to_rfc3339())
-            .map_err(ApiError::internal)?;
-        let tables_dir = state
-            .data_dir()?
-            .join("databases")
-            .join(&database_id)
-            .join("tables");
-        if tables_dir.exists() {
-            std::fs::remove_dir_all(&tables_dir).map_err(ApiError::internal)?;
-            pintail_store::publish_changes_under(&tables_dir);
-        }
-        Ok(())
-    })();
-    state.release_job(&database_id);
-    wiped?;
+    // Refused before anything is interrupted or cleared.
+    if database.mode == "paused" {
+        return Err(ApiError::conflict(
+            "resume the database before resetting it",
+        ));
+    }
+    let signal = state
+        .acquire_operator_job(&database_id, "a factory reset", Preempt::Cancel)
+        .await?;
+    if let Err(error) = wipe_mirror(&state, &database_id) {
+        state.release_job(&database_id);
+        return Err(error);
+    }
     state.publish(ApiEvent::database(
         "database.reset",
         &database_id,
         "replication state cleared; a fresh snapshot follows",
     ));
-    let run_id = begin_snapshot_job(&state, &database_id, true)?;
     audit::record(
         &state,
         &principal,
@@ -144,6 +152,8 @@ pub(crate) async fn reset(
         Some(("database", &database_id)),
         None,
     );
+    state.relabel_job(&database_id, "a full snapshot");
+    let run_id = start_snapshot_holding(&state, &database_id, true, signal)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedSnapshot {
@@ -153,16 +163,132 @@ pub(crate) async fn reset(
     ))
 }
 
-/// Acquires the database job slot, journals a snapshot run, and detaches the
-/// worker. Used by the snapshot/resync routes and the supervisor's
-/// polling-to-CDC handoff.
+/// Drops everything mirrored for one database: the control-plane rows, with
+/// the pending-reset mark written in the same transaction, then the stores.
+/// Safe to repeat, which is how an interrupted reset is finished.
+fn wipe_mirror(state: &ApiState, database_id: &str) -> Result<(), ApiError> {
+    let mut metadata = state.metadata()?;
+    metadata
+        .reset_database_replication(database_id, &Utc::now().to_rfc3339())
+        .map_err(ApiError::internal)?;
+    pintail_failpoint::hit("reset.after_metadata_wipe").map_err(ApiError::internal)?;
+    remove_stores(state, database_id)
+}
+
+fn remove_stores(state: &ApiState, database_id: &str) -> Result<(), ApiError> {
+    let tables_dir = state
+        .data_dir()?
+        .join("databases")
+        .join(database_id)
+        .join("tables");
+    if tables_dir.exists() {
+        std::fs::remove_dir_all(&tables_dir).map_err(ApiError::internal)?;
+        pintail_store::publish_changes_under(&tables_dir);
+    }
+    Ok(())
+}
+
+/// Finishes a reset whose snapshot never completed: the source was
+/// unreachable when it was asked for, the copy failed, or the process
+/// stopped between the wipe and the copy. Until that snapshot lands the
+/// database has no tables and no position, so nothing else can repair it.
+/// Called by the supervisor on a gap; `false` when there was nothing to do.
+pub(crate) fn resume_pending_reset(state: &ApiState, database: &DatabaseRecord) -> bool {
+    let Ok(metadata) = state.metadata() else {
+        return false;
+    };
+    if !metadata.reset_pending(&database.id).unwrap_or(false) {
+        return false;
+    }
+    if database.mode == "paused" || database.kind == "local" {
+        return true;
+    }
+    let due = state
+        .with_catalog_repairs(|clock| {
+            let key = format!("reset\u{0}{}", database.id);
+            let due = clock
+                .get(&key)
+                .is_none_or(|last| last.elapsed() >= RESET_RETRY_GAP);
+            if due {
+                clock.insert(key, Instant::now());
+            }
+            due
+        })
+        .unwrap_or(false);
+    if !due {
+        return true;
+    }
+    let Ok(signal) = state.acquire_automatic_job(&database.id, "a full snapshot") else {
+        return true;
+    };
+    // A stop between the control-plane wipe and the file removal leaves
+    // stores nothing tracks; with no table recorded they are all leftovers.
+    let untracked = metadata
+        .tables(&database.id)
+        .is_ok_and(|tables| tables.is_empty());
+    drop(metadata);
+    if untracked && let Err(error) = remove_stores(state, &database.id) {
+        state.release_job(&database.id);
+        state.publish(ApiEvent::database(
+            "reset.resume_failed",
+            &database.id,
+            format!("the interrupted reset could not clear its stores: {error}"),
+        ));
+        return true;
+    }
+    match start_snapshot_holding(state, &database.id, true, signal) {
+        Ok(run_id) => state.publish(ApiEvent::database(
+            "reset.resumed",
+            &database.id,
+            format!("the reset's fresh copy is starting again as snapshot {run_id}"),
+        )),
+        Err(error) => state.publish(ApiEvent::database(
+            "reset.resume_failed",
+            &database.id,
+            format!(
+                "the reset's fresh copy could not start and retries in {}s: {error}",
+                RESET_RETRY_GAP.as_secs()
+            ),
+        )),
+    }
+    true
+}
+
+/// Starts a snapshot for the supervisor: claims the job slot at once, and
+/// not at all while an operator action waits for it.
 pub(crate) fn begin_snapshot_job(
     state: &ApiState,
     database_id: &str,
     force: bool,
 ) -> Result<String, ApiError> {
     state.require_replicated(database_id, "a snapshot")?;
-    state.acquire_job_as(database_id, "a full snapshot")?;
+    let signal = state.acquire_automatic_job(database_id, "a full snapshot")?;
+    start_snapshot_holding(state, database_id, force, signal)
+}
+
+/// Starts a snapshot an operator asked for, behind at most the replication
+/// cycle that is running.
+pub(crate) async fn begin_operator_snapshot(
+    state: &ApiState,
+    database_id: &str,
+    force: bool,
+) -> Result<String, ApiError> {
+    state.require_replicated(database_id, "a snapshot")?;
+    let signal = state
+        .acquire_operator_job(database_id, "a full snapshot", Preempt::Yield)
+        .await?;
+    start_snapshot_holding(state, database_id, force, signal)
+}
+
+/// Journals a snapshot run and detaches the worker, on a job slot the
+/// caller already holds. The slot is released here on every refusal and by
+/// the worker when it ends.
+fn start_snapshot_holding(
+    state: &ApiState,
+    database_id: &str,
+    force: bool,
+    signal: JobSignal,
+) -> Result<String, ApiError> {
     let run_id = crate::state::random_identifier("run_", 16);
     let metadata = match state.metadata() {
         Ok(metadata) => metadata,
@@ -198,52 +324,60 @@ pub(crate) fn begin_snapshot_job(
         state.release_job(database_id);
         return Err(ApiError::internal(error));
     }
+    drop(metadata);
     let job_state = state.clone();
     let job_database_id = database_id.to_owned();
     let job_run_id = run_id.clone();
-    let failure_state = state.clone();
-    let failure_database_id = database_id.to_owned();
-    let failure_run_id = run_id.clone();
-    if let Err(error) = std::thread::Builder::new()
-        .name(format!("pintail-snapshot-{database_id}"))
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
-            match runtime {
-                Ok(runtime) => runtime.block_on(complete_snapshot_job(
-                    job_state,
-                    job_database_id,
-                    job_run_id,
-                    force,
-                )),
-                Err(error) => fail_snapshot_job(
+    if let Err(error) =
+        std::thread::Builder::new()
+            .name(format!("pintail-snapshot-{database_id}"))
+            .spawn(move || {
+                let started = Instant::now();
+                let outcome =
+                    match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        Ok(runtime) => {
+                            let outcome = runtime.block_on(signal.until_cancelled(
+                                run_snapshot_job(&job_state, &job_database_id, &job_run_id, force),
+                            ));
+                            // Whatever the copy left running ends with its runtime,
+                            // before the slot passes to the next job.
+                            drop(runtime);
+                            outcome
+                        }
+                        Err(error) => Some(Err(error.to_string())),
+                    };
+                finish_snapshot_job(
                     &job_state,
                     &job_database_id,
                     &job_run_id,
-                    &error.to_string(),
-                    0,
-                ),
-            }
-        })
+                    outcome,
+                    duration_ms(started),
+                );
+            })
     {
         let message = format!("could not start snapshot worker: {error}");
-        fail_snapshot_job(
-            &failure_state,
-            &failure_database_id,
-            &failure_run_id,
-            &message,
-            0,
-        );
+        finish_snapshot_job(state, database_id, &run_id, Some(Err(message.clone())), 0);
         return Err(ApiError::unavailable(message));
     }
     Ok(run_id)
 }
 
-async fn complete_snapshot_job(state: ApiState, database_id: String, run_id: String, force: bool) {
-    let started = Instant::now();
-    match run_snapshot_job(&state, &database_id, &run_id, force).await {
-        Ok((rows, bytes, mode, failed)) => {
+type SnapshotOutcome = Result<(u64, u64, &'static str, Vec<TableSnapshotFailure>), String>;
+
+/// Journals how a snapshot ended and releases its job slot, once.
+/// `None` is a snapshot whose slot was taken by a reset.
+fn finish_snapshot_job(
+    state: &ApiState,
+    database_id: &str,
+    run_id: &str,
+    outcome: Option<SnapshotOutcome>,
+    elapsed_ms: u64,
+) {
+    match outcome {
+        Some(Ok((rows, bytes, mode, failed))) => {
             let partial = (!failed.is_empty()).then(|| {
                 format!(
                     "{} table(s) could not be copied and are flagged for resync: {}",
@@ -257,47 +391,45 @@ async fn complete_snapshot_job(state: ApiState, database_id: String, run_id: Str
             });
             if let Ok(metadata) = state.metadata() {
                 let _ = metadata.finish_sync_run(
-                    &run_id,
+                    run_id,
                     "completed",
                     rows,
                     bytes,
-                    duration_ms(started),
+                    elapsed_ms,
                     partial.as_deref(),
                 );
+                // The fresh copy a reset promised has landed.
+                let _ = metadata.finish_database_reset(database_id);
             }
             if let Some(partial) = &partial {
-                state.publish(ApiEvent::database(
-                    "snapshot.partial",
-                    &database_id,
-                    partial,
-                ));
+                state.publish(ApiEvent::database("snapshot.partial", database_id, partial));
             }
             state.publish(ApiEvent::database(
                 "replication.ready",
-                &database_id,
+                database_id,
                 format!("{mode} handoff is ready"),
             ));
         }
-        Err(error) => {
-            fail_snapshot_job(&state, &database_id, &run_id, &error, duration_ms(started));
+        Some(Err(error)) => {
+            if let Ok(metadata) = state.metadata() {
+                let now = Utc::now().to_rfc3339();
+                let _ = metadata.finish_sync_run(run_id, "error", 0, 0, elapsed_ms, Some(&error));
+                let _ = metadata.fail_database_job(database_id, &error, &now);
+            }
+            state.publish(ApiEvent::database("replication.error", database_id, error));
+        }
+        None => {
+            let reason = "cancelled: a reset took this database's job slot";
+            if let Ok(metadata) = state.metadata() {
+                let _ = metadata.finish_sync_run(run_id, "error", 0, 0, elapsed_ms, Some(reason));
+            }
+            state.publish(ApiEvent::database(
+                "snapshot.cancelled",
+                database_id,
+                reason,
+            ));
         }
     }
-    state.release_job(&database_id);
-}
-
-fn fail_snapshot_job(
-    state: &ApiState,
-    database_id: &str,
-    run_id: &str,
-    error: &str,
-    elapsed_ms: u64,
-) {
-    if let Ok(metadata) = state.metadata() {
-        let now = Utc::now().to_rfc3339();
-        let _ = metadata.finish_sync_run(run_id, "error", 0, 0, elapsed_ms, Some(error));
-        let _ = metadata.fail_database_job(database_id, error, &now);
-    }
-    state.publish(ApiEvent::database("replication.error", database_id, error));
     state.release_job(database_id);
 }
 
@@ -320,10 +452,14 @@ pub(crate) async fn status(
         .into_iter()
         .map(|table| table_snapshot_status(&metadata, table))
         .collect::<Result<Vec<_>, _>>()?;
+    let job = state
+        .job_holder(&database_id)
+        .map(|(claim, seconds)| RunningJob { claim, seconds });
     Ok(Json(SnapshotStatus {
         database_id,
         state: database.state,
         effective_mode: database.effective_mode,
+        job,
         tables,
     }))
 }
@@ -1124,5 +1260,336 @@ mod tests {
             summarize_names(many.iter().map(String::as_str)),
             "t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11 and 3 more"
         );
+    }
+}
+
+/// The job-slot behaviour behind Reset mirror, Resnapshot and adding
+/// tables: none of them may lose the slot to the supervisor for good.
+#[cfg(test)]
+mod operator_admission_tests {
+    use std::{
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicU32, Ordering},
+        },
+        time::{Duration, Instant},
+    };
+
+    use axum::http::StatusCode;
+
+    use super::resume_pending_reset;
+    use crate::{ApiState, state::Preempt, test_support::Node};
+
+    /// Tracks one table with a file in its store, and returns the store.
+    fn seed(node: &Node, database_id: &str) -> PathBuf {
+        node.metadata()
+            .upsert_snapshot_table(database_id, "orders", None, None)
+            .expect("tracked table");
+        let store = node
+            .state
+            .data_dir()
+            .expect("data directory")
+            .join("databases")
+            .join(database_id)
+            .join("tables")
+            .join("orders");
+        std::fs::create_dir_all(&store).expect("store directory");
+        std::fs::write(store.join("part"), b"rows").expect("store file");
+        store
+    }
+
+    /// A supervisor whose cycles follow one another with no gap: each takes
+    /// the slot the moment the last one lets go.
+    struct TightCycles {
+        done: Arc<AtomicBool>,
+        cycles: Arc<AtomicU32>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl TightCycles {
+        fn start(state: &ApiState, database_id: &str) -> Self {
+            let done = Arc::new(AtomicBool::new(false));
+            let cycles = Arc::new(AtomicU32::new(0));
+            let (state, id) = (state.clone(), database_id.to_owned());
+            let (thread_done, thread_cycles) = (Arc::clone(&done), Arc::clone(&cycles));
+            let thread = std::thread::spawn(move || {
+                while !thread_done.load(Ordering::Acquire) {
+                    if state.acquire_job(&id).is_ok() {
+                        thread_cycles.fetch_add(1, Ordering::AcqRel);
+                        std::thread::sleep(Duration::from_millis(40));
+                        state.release_job(&id);
+                    } else {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+            });
+            let cycles_seen = Arc::clone(&cycles);
+            let started = Instant::now();
+            while cycles_seen.load(Ordering::Acquire) < 3 {
+                assert!(started.elapsed() < Duration::from_secs(10), "no cycle ran");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Self {
+                done,
+                cycles,
+                thread: Some(thread),
+            }
+        }
+    }
+
+    impl Drop for TightCycles {
+        fn drop(&mut self) {
+            self.done.store(true, Ordering::Release);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    /// Holds the slot as a job that never finishes by itself and only lets
+    /// go when it is cancelled: a cycle on a source that stopped answering,
+    /// or a copy with hours left.
+    fn hold_until_cancelled(state: &ApiState, database_id: &str, operator: bool) {
+        let (state, id) = (state.clone(), database_id.to_owned());
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            let signal = if operator {
+                runtime
+                    .block_on(state.acquire_operator_job(&id, "a full snapshot", Preempt::Yield))
+                    .expect("operator claim")
+            } else {
+                state.acquire_job(&id).expect("cycle claim")
+            };
+            ready_tx.send(()).expect("ready");
+            runtime.block_on(signal.until_cancelled(std::future::pending::<()>()));
+            state.release_job(&id);
+        });
+        ready_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the holder claimed the slot");
+    }
+
+    async fn wait_until_not_snapshotting(state: &ApiState, database_id: &str) {
+        let started = Instant::now();
+        while state
+            .job_holder(database_id)
+            .is_some_and(|(claim, _)| claim == "a full snapshot")
+        {
+            assert!(
+                started.elapsed() < Duration::from_secs(60),
+                "the snapshot against an unreachable source never ended"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn reset_and_resnapshot_are_admitted_while_cycles_retake_the_slot() {
+        let node = Node::new().await;
+        let id = node.database(&node.admin, "shop").await;
+        let store = seed(&node, &id);
+        let cycles = TightCycles::start(&node.state, &id);
+
+        let asked = Instant::now();
+        let (status, body) = node
+            .call(
+                "POST",
+                &format!("/api/databases/{id}/snapshot"),
+                Some(&node.admin),
+                Some(r#"{"force":true}"#),
+            )
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        assert!(
+            asked.elapsed() < Duration::from_secs(3),
+            "the resnapshot waited {:?} behind 40ms cycles",
+            asked.elapsed()
+        );
+        wait_until_not_snapshotting(&node.state, &id).await;
+
+        let asked = Instant::now();
+        let (status, body) = node
+            .call(
+                "POST",
+                &format!("/api/databases/{id}/reset"),
+                Some(&node.admin),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        assert!(
+            asked.elapsed() < Duration::from_secs(3),
+            "the reset waited {:?} behind 40ms cycles",
+            asked.elapsed()
+        );
+        assert!(node.metadata().tables(&id).expect("tables").is_empty());
+        assert!(!store.exists(), "the store outlived the reset");
+        assert!(cycles.cycles.load(Ordering::Acquire) >= 3);
+    }
+
+    #[tokio::test]
+    async fn reset_cancels_a_cycle_that_never_ends() {
+        let node = Node::new().await;
+        let id = node.database(&node.admin, "shop").await;
+        seed(&node, &id);
+        hold_until_cancelled(&node.state, &id, false);
+
+        let asked = Instant::now();
+        let (status, body) = node
+            .call(
+                "POST",
+                &format!("/api/databases/{id}/reset"),
+                Some(&node.admin),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        assert!(
+            asked.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            asked.elapsed()
+        );
+        assert!(node.metadata().tables(&id).expect("tables").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_running_snapshot_refuses_a_second_one_by_name_and_yields_to_a_reset() {
+        let node = Node::new().await;
+        let id = node.database(&node.admin, "shop").await;
+        seed(&node, &id);
+        hold_until_cancelled(&node.state, &id, true);
+
+        let (status, body) = node
+            .call(
+                "POST",
+                &format!("/api/databases/{id}/snapshot"),
+                Some(&node.admin),
+                Some(r#"{"force":true}"#),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        let refusal = body["error"].as_str().expect("refusal");
+        assert!(
+            refusal.starts_with("a full snapshot has been running for")
+                && refusal.contains("job slot"),
+            "{refusal}"
+        );
+        assert_eq!(node.metadata().tables(&id).expect("tables").len(), 1);
+
+        let (status, body) = node
+            .call(
+                "POST",
+                &format!("/api/databases/{id}/reset"),
+                Some(&node.admin),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        assert!(node.metadata().tables(&id).expect("tables").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reset_that_cannot_copy_stays_owed_and_is_resumed() {
+        let node = Node::new().await;
+        let id = node.database(&node.admin, "shop").await;
+        seed(&node, &id);
+        let (status, body) = node
+            .call(
+                "POST",
+                &format!("/api/databases/{id}/reset"),
+                Some(&node.admin),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        // The source in the stored connection does not exist, so the copy
+        // fails; the reset must not be forgotten with it.
+        wait_until_not_snapshotting(&node.state, &id).await;
+        assert!(node.metadata().reset_pending(&id).expect("mark"));
+        let database = node.metadata().database(&id).expect("read").expect("row");
+        assert!(resume_pending_reset(&node.state, &database));
+        wait_until_not_snapshotting(&node.state, &id).await;
+        assert!(node.metadata().reset_pending(&id).expect("mark"));
+    }
+
+    #[tokio::test]
+    async fn a_reset_stopped_after_its_control_plane_wipe_is_finished_by_the_supervisor() {
+        let node = Node::new().await;
+        let id = node.database(&node.admin, "shop").await;
+        let store = seed(&node, &id);
+        // What a process killed between the two halves of the wipe leaves.
+        node.metadata()
+            .reset_database_replication(&id, "2026-01-01T00:00:00Z")
+            .expect("control-plane wipe");
+        assert!(store.exists());
+
+        let database = node.metadata().database(&id).expect("read").expect("row");
+        assert!(resume_pending_reset(&node.state, &database));
+        assert!(!store.exists(), "the untracked store survived the resume");
+        wait_until_not_snapshotting(&node.state, &id).await;
+        // A database with nothing owed is left to the ordinary cycle.
+        node.metadata().finish_database_reset(&id).expect("clear");
+        assert!(!resume_pending_reset(&node.state, &database));
+    }
+
+    #[tokio::test]
+    async fn reset_refusals_change_nothing() {
+        let node = Node::new().await;
+        let id = node.database(&node.admin, "shop").await;
+        let store = seed(&node, &id);
+        let path = format!("/api/databases/{id}/reset");
+        let intact = |why: &str| {
+            assert_eq!(
+                node.metadata().tables(&id).expect("tables").len(),
+                1,
+                "{why}"
+            );
+            assert!(store.exists(), "{why}");
+            assert!(!node.metadata().reset_pending(&id).expect("mark"), "{why}");
+            assert!(node.state.job_holder(&id).is_none(), "{why}");
+        };
+
+        let (status, _) = node.call("POST", &path, None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        intact("anonymous");
+
+        let (_, viewer) = node.member(&node.first_workspace, "viewer");
+        let (status, _) = node.call("POST", &path, Some(&viewer), None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        intact("viewer");
+
+        // Another workspace's administrator must not learn the database
+        // exists, let alone clear it.
+        let (_, outsider) = node.workspace(&node.admin, "Second").await;
+        let (status, body) = node.call("POST", &path, Some(&outsider), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        intact("another workspace");
+
+        let (_, secret) = node.api_key(&node.admin, &id).await;
+        let (status, _) = node.call("POST", &path, Some(&secret), None).await;
+        assert!(
+            matches!(status, StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED),
+            "{status}"
+        );
+        intact("API key");
+
+        let (status, body) = node
+            .call(
+                "POST",
+                &format!("/api/databases/{id}/mode"),
+                Some(&node.admin),
+                Some(r#"{"mode":"paused"}"#),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = node.call("POST", &path, Some(&node.admin), None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"], "resume the database before resetting it");
+        intact("paused");
     }
 }

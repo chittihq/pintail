@@ -402,17 +402,18 @@ pub(crate) async fn add(
         .snapshot_checkpoint(&id)
         .map_err(ApiError::internal)?
         .is_some();
-    let (run_id, snapshot_state) = match begin_when_free(&state, &id).await {
-        Ok(run_id) => (Some(run_id), "snapshotting"),
-        // A live database's selection now names tables its catalog lacks,
-        // which is exactly what the supervisor's catalog repair copies; it
-        // is cleared to try on its next cadence rather than after its gap.
-        Err(error) if handed_off && is_busy(&error) => {
-            state.forget_catalog_repair(&id);
-            (None, "queued")
-        }
-        Err(error) => return Err(error),
-    };
+    let (run_id, snapshot_state) =
+        match crate::snapshot::begin_operator_snapshot(&state, &id, false).await {
+            Ok(run_id) => (Some(run_id), "snapshotting"),
+            // A live database's selection now names tables its catalog lacks,
+            // which is exactly what the supervisor's catalog repair copies; it
+            // is cleared to try on its next cadence rather than after its gap.
+            Err(error) if handed_off && is_busy(&error) => {
+                state.forget_catalog_repair(&id);
+                (None, "queued")
+            }
+            Err(error) => return Err(error),
+        };
     audit::record(
         &state,
         &principal,
@@ -501,24 +502,6 @@ pub(crate) fn repair_catalog_drift(state: &ApiState, database_id: &str) {
                 CATALOG_REPAIR_GAP.as_secs()
             ),
         )),
-    }
-}
-
-/// Starts the non-forced snapshot, waiting out a short-lived job-slot claim.
-///
-/// The supervisor holds the slot for every replication cycle, usually for
-/// well under a second, so a click frequently lands on a 409 that clears
-/// itself. Retrying here keeps the client from repeating the probe.
-async fn begin_when_free(state: &ApiState, database_id: &str) -> Result<String, ApiError> {
-    let mut attempt = 0;
-    loop {
-        match crate::snapshot::begin_snapshot_job(state, database_id, false) {
-            Err(error) if is_busy(&error) && attempt < 20 => {
-                attempt += 1;
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            other => return other,
-        }
     }
 }
 

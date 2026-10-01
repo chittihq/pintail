@@ -255,6 +255,9 @@ pub(crate) async fn start(
     principal.authorize_database(&database_id)?;
     crate::databases::load_database(&state, &principal, &database_id)?;
     let force_full = payload.is_some_and(|Json(request)| request.full);
+    state
+        .acquire_operator_job(&database_id, "a backup", crate::state::Preempt::Yield)
+        .await?;
     let accepted = start_job(&state, &database_id, force_full)?;
     audit::record(
         &state,
@@ -313,15 +316,18 @@ pub(crate) fn start_scheduled_if_due(
         saw_full && chain >= config.full_every
     };
     drop(metadata);
+    // Not while an operator action waits for the slot.
+    state.acquire_automatic_job(database_id, "a scheduled backup")?;
     start_job(state, database_id, force_full).map(|_| true)
 }
 
+/// Journals a backup and detaches its worker, on a job slot the caller
+/// already holds; the slot is released here on every refusal.
 fn start_job(
     state: &ApiState,
     database_id: &str,
     force_full: bool,
 ) -> Result<AcceptedBackup, ApiError> {
-    state.acquire_job_as(database_id, "a backup")?;
     let metadata = state
         .metadata()
         .inspect_err(|_| state.release_job(database_id))?;

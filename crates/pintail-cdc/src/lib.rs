@@ -22,8 +22,11 @@ use std::{
     hash::{Hash as _, Hasher as _},
     io::{Seek as _, Write as _},
     path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use chrono::Utc;
@@ -145,6 +148,13 @@ pub struct CdcOptions {
     pub blocking: bool,
     /// Optional deterministic commit budget for supervisors and tests.
     pub max_commits: Option<usize>,
+    /// How long a finite catch-up may run before it returns at the next
+    /// commit. A source written faster than the stream applies never reaches
+    /// the end of its binlog, so without this one catch-up runs for as long
+    /// as the backlog lasts and whatever waits on its return waits with it.
+    pub max_duration: Option<Duration>,
+    /// Ends the catch-up at the next commit when someone outside asks.
+    pub stop: Option<CycleStop>,
     /// Maximum in-memory bytes retained before an uncommitted transaction
     /// spills to an anonymous temporary file.
     pub max_transaction_bytes: usize,
@@ -176,6 +186,8 @@ impl Default for CdcOptions {
             server_id: 0,
             blocking: true,
             max_commits: None,
+            max_duration: None,
+            stop: None,
             max_transaction_bytes: 256 * 1024 * 1024,
             max_reconnect_attempts: 8,
             reconnect_initial_delay: Duration::from_millis(100),
@@ -188,6 +200,40 @@ impl Default for CdcOptions {
         }
     }
 }
+
+/// A request from outside the stream to end a catch-up early.
+///
+/// The stream looks at it after each commit, so the position it returns is
+/// always the end of a whole source transaction.
+#[derive(Clone, Debug, Default)]
+pub struct CycleStop(Arc<AtomicBool>);
+
+impl CycleStop {
+    /// A signal nobody has raised yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Asks the stream holding this signal to return at its next commit.
+    pub fn request(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    /// Whether a stop has been asked for.
+    #[must_use]
+    pub fn requested(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+impl PartialEq for CycleStop {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for CycleStop {}
 
 /// Durable position after one committed source transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -450,6 +496,7 @@ async fn run_cdc_inner(
     };
     let mut pending = PendingTransaction::default();
     let mut commits = 0_usize;
+    let cycle_started = Instant::now();
     let mut mutations = 0_usize;
     let mut events_read = 0_usize;
     let mut reconnect_attempts = 0_usize;
@@ -532,6 +579,7 @@ async fn run_cdc_inner(
         // event compared against a snapshot fence always fell below it.
         let mut logged_position = position.pos;
         while let Some(event) = stream.next().await {
+            let commits_before = commits;
             let event = match event {
                 Ok(event) => {
                     reconnect_attempts = 0;
@@ -963,9 +1011,19 @@ async fn run_cdc_inner(
                     }
                 }
             }
-            if options
-                .max_commits
-                .is_some_and(|maximum| commits >= maximum)
+            // Asked to stop, or out of time: honoured only on the event that
+            // committed, so the position handed back never splits a source
+            // transaction.
+            let yielding = commits > commits_before
+                && !options.blocking
+                && (options.stop.as_ref().is_some_and(CycleStop::requested)
+                    || options
+                        .max_duration
+                        .is_some_and(|maximum| cycle_started.elapsed() >= maximum));
+            if yielding
+                || options
+                    .max_commits
+                    .is_some_and(|maximum| commits >= maximum)
             {
                 stream.close().await?;
                 pintail_log::log_debug!(
