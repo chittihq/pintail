@@ -1337,9 +1337,7 @@ impl AggregateState {
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
                 #[allow(clippy::cast_precision_loss)]
                 let n = *count as f64;
-                let delta = observation - *mean;
-                *mean += delta / n;
-                *m2 = delta.mul_add(observation - *mean, *m2);
+                (*mean, *m2) = variance_step(n, *mean, *m2, observation);
                 // Values near the f64 ceiling drive delta to infinity and m2
                 // to -infinity, which would surface as a negative variance
                 // or a NaN standard deviation. Average and Sum already
@@ -1854,9 +1852,8 @@ impl AggregateState {
                     rows += 1;
                     #[allow(clippy::cast_precision_loss)]
                     let n = rows as f64;
-                    let delta = observation - running_mean;
-                    running_mean += delta / n;
-                    running_m2 = delta.mul_add(observation - running_mean, running_m2);
+                    (running_mean, running_m2) =
+                        variance_step(n, running_mean, running_m2, observation);
                 }
                 if !running_mean.is_finite() || !running_m2.is_finite() {
                     return Err(ExecError::NumericOverflow);
@@ -3995,20 +3992,46 @@ fn project_computed_arguments(
     ))
 }
 
-/// Whether an aggregate here is a double SUM or AVG, whose answer is the
-/// rows' doubles added one at a time in row order.
+/// Whether an aggregate here is a double SUM or AVG, or a STDDEV or
+/// VARIANCE, whose answer is the rows' doubles folded one at a time in row
+/// order.
 ///
 /// Double addition is not associative: `(1e16 + 1) + -1e16` is 0 and
 /// `(1e16 + -1e16) + 1` is 1. A path that sums a morsel, a segment or a
 /// block apart from the rest and adds the partial sums afterwards adds the
 /// same values in a different grouping, and the last digits of its answer
 /// move with wherever the cuts fell - with the thread count, with the
-/// segment layout. Such a query takes the path that updates each group's
-/// one running sum a row at a time.
+/// segment layout. A variance's running mean and spread depend on the
+/// order the same way, and two partial ones combine by a formula no row
+/// order produces. Such a query takes a path that keeps each group's one
+/// running state and updates it a row at a time.
 fn adds_in_row_order(aggregates: &[CompiledAggregate]) -> bool {
-    aggregates
-        .iter()
-        .any(|aggregate| !aggregate.distinct && aggregate_uses_float(aggregate))
+    aggregates.iter().any(|aggregate| {
+        !aggregate.distinct
+            && (aggregate_uses_float(aggregate)
+                || matches!(
+                    aggregate.function,
+                    AggregateFunction::StdDev { .. } | AggregateFunction::Variance { .. }
+                ))
+    })
+}
+
+/// One row of a variance: the mean and the spread after `observation`,
+/// the `count`-th value, from the two before it.
+///
+/// `MySQL`'s recurrence, operation for operation: the mean moves by the
+/// row's distance from it over the count, and the spread grows by that
+/// distance times the distance from the moved mean - a product rounded on
+/// its own, then a sum rounded on its own. A fused multiply-add rounds the
+/// two once, and over a few hundred thousand rows that is another last
+/// digit: `VAR_SAMP` answered `2.7453351521139196e31` where `MySQL`
+/// answers `2.745335152113919e31`.
+#[inline]
+#[allow(clippy::suboptimal_flops)] // the fused form is the defect
+fn variance_step(count: f64, mean: f64, spread: f64, observation: f64) -> (f64, f64) {
+    let delta = observation - mean;
+    let moved = mean + delta / count;
+    (moved, spread + delta * (observation - moved))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -4048,6 +4071,60 @@ fn build_hash_aggregate_scan(
     }
     if group_by.is_empty() && super::ungrouped_fold::eligible(aggregates) {
         return build_ungrouped_fold(input, aggregates, memory);
+    }
+    // The first batch of an order-bound aggregate, read to choose its path
+    // and handed to the row loop below when that is the path.
+    let mut held = None;
+    if !group_by.is_empty() && adds_in_row_order(aggregates) {
+        let Some(first) = input.next_batch(memory)? else {
+            return Ok(MaterializedRows {
+                rows: Vec::new(),
+                position: 0,
+                spilled: None,
+                ready: None,
+            });
+        };
+        // Plain column keys. Few groups fold a column at a time, and that
+        // fold keeps these aggregates serial: each group's rows in row
+        // order, one state. More groups, or a fold whose keys outgrew it,
+        // take the sequential direct loop, which finds a row's group from
+        // its key columns without building a key per row and declines its
+        // own two-pass for these.
+        if let Some(group_columns) = group_by
+            .iter()
+            .map(CompiledExpr::column_index)
+            .collect::<Option<Vec<_>>>()
+        {
+            let mut resumed = Resumed::default();
+            if super::small_group_fold::suits(group_by, aggregates, &first).is_ok() {
+                match super::small_group_fold::build_small_group_fold(
+                    input,
+                    first,
+                    &group_by[0],
+                    aggregates,
+                    memory,
+                    key_collations.first().copied().unwrap_or(collation),
+                )? {
+                    super::small_group_fold::Folded::Finished(rows) => return Ok(rows),
+                    super::small_group_fold::Folded::HandedOver { runs, pending } => {
+                        resumed = Resumed { pending, runs };
+                    }
+                }
+            } else {
+                resumed.pending.push_back(first);
+            }
+            return build_direct_column_aggregate(
+                input,
+                resumed,
+                &group_columns,
+                aggregates,
+                memory,
+                collation,
+                key_collations,
+            );
+        }
+        // A computed key: the row loop below, from this batch on.
+        held = Some(first);
     }
     if !group_by.is_empty() && !adds_in_row_order(aggregates) {
         let direct_columns = group_by
@@ -4131,7 +4208,14 @@ fn build_hash_aggregate_scan(
         );
     }
 
-    while let Some(batch) = input.next_batch(memory)? {
+    loop {
+        let batch = match held.take() {
+            Some(batch) => batch,
+            None => match input.next_batch(memory)? {
+                Some(batch) => batch,
+                None => break,
+            },
+        };
         let batch_bytes = batch.estimated_bytes();
         // The batch and everything the scan retained for it are already
         // charged; what grows past here is the map's own.
@@ -6798,7 +6882,11 @@ fn build_direct_column_aggregate(
             }
             _ => None,
         };
-        let lanes = keys.and_then(|_| two_pass_lanes(aggregates, &head));
+        // The two-pass folds partitions apart and merges them; an aggregate
+        // bound to row order keeps the sequential loop below.
+        let lanes = keys
+            .filter(|_| !adds_in_row_order(aggregates))
+            .and_then(|_| two_pass_lanes(aggregates, &head));
         if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
             let kinds = lanes.as_ref().map(|lanes| {
                 lanes

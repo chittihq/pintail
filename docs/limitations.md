@@ -260,12 +260,13 @@ stays readable as a list of things to fix.
   of returned. A running total that leaves 64 bits and returns is answered,
   except below a join whose aggregate is folded into the probe and as a
   window function, where it is refused as well.
-- A double `SUM` or `AVG` adds its rows in row order, as MySQL does, except
-  where MySQL itself reads them in another order: `SUM(DISTINCT ...)`
-  (MySQL adds the distinct values in its own order), `WITH ROLLUP` and
-  other groupings MySQL sorts first, and a join MySQL reorders. A group
-  spilled to disk under the memory ceiling is the sum of its runs' sums.
-  `STDDEV` and `VARIANCE` over doubles can differ in the last digit.
+- A double `SUM`, `AVG`, `STDDEV` or `VARIANCE` can differ from MySQL in its
+  last digits where MySQL reads the rows in an order of its own:
+  `SUM(DISTINCT ...)` and `AVG(DISTINCT ...)` (MySQL adds the distinct
+  values in its own order), `WITH ROLLUP` and other groupings MySQL sorts
+  first, and a join MySQL reorders. A group spilled to disk under the
+  memory ceiling is combined from its runs' partial results, not row by
+  row.
 - A grace join partition that cannot be reduced by hashing replays its
   build rows for each probe row: what a quarter of the ceiling holds is
   read from the file once, and the rest is re-read per probe. This can
