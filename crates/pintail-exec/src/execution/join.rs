@@ -963,6 +963,26 @@ impl HashJoinState {
         Some(Arc::new(keys))
     }
 
+    /// The resident build's text keys (a composite key's first part) as
+    /// collation weight bytes, when it holds at most `limit` of them: the
+    /// only values a probe row's key can match.
+    pub(super) fn text_key_weights(&self, limit: usize) -> Option<Vec<&[u8]>> {
+        if self.spilled() || self.build.is_dense() || self.build.len() > limit {
+            return None;
+        }
+        self.build
+            .keys()
+            .map(|key| match key {
+                JoinHashKey::CollatedText(weights) => Some(weights.as_slice()),
+                JoinHashKey::Composite(parts) => match parts.first() {
+                    Some(JoinHashKey::CollatedText(weights)) => Some(weights.as_slice()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
     fn clear_left(&mut self, memory: &MemoryTracker) {
         self.left_values = None;
         self.left_key = None;
@@ -1965,6 +1985,20 @@ pub(super) fn integer_key_values(keys: &HashSet<JoinHashKey>, limit: usize) -> O
         .map(|key| match key {
             JoinHashKey::NegativeInteger(value) => Some(i128::from(*value)),
             JoinHashKey::NonNegativeInteger(value) => Some(i128::from(*value)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The keys as collation weight bytes, when there are at most `limit` and
+/// every one is a text key: what a scan's side index looks rows up by.
+pub(super) fn text_key_weights(keys: &HashSet<JoinHashKey>, limit: usize) -> Option<Vec<&[u8]>> {
+    if keys.len() > limit {
+        return None;
+    }
+    keys.iter()
+        .map(|key| match key {
+            JoinHashKey::CollatedText(weights) => Some(weights.as_slice()),
             _ => None,
         })
         .collect()

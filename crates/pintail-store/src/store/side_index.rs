@@ -62,6 +62,25 @@ pub fn side_index_enabled() -> bool {
         })
 }
 
+/// Whether `PINTAIL_SIDE_INDEX_TRACE=1` asks every lookup to log what it
+/// found or why it declined: the first thing to read when a filter on an
+/// indexed column still reads the table.
+#[must_use]
+pub fn side_index_trace() -> bool {
+    static TRACE: OnceLock<bool> = OnceLock::new();
+    *TRACE.get_or_init(|| {
+        std::env::var("PINTAIL_SIDE_INDEX_TRACE").is_ok_and(|value| value.trim() == "1")
+    })
+}
+
+/// Logs `message()` when the trace is on: for the layers above the store,
+/// which decide what a scan is asked and have no log of their own.
+pub fn side_index_note(message: impl FnOnce() -> String) {
+    if side_index_trace() {
+        pintail_log::log_info!("side index {}", message());
+    }
+}
+
 /// Switches the side index on or off for scans planned on this thread, or
 /// back to the environment's setting with `None`: what lets a test compare
 /// both paths in one process.
@@ -105,7 +124,14 @@ impl TextKeyer {
     pub fn value(&self, text: &str) -> i64 {
         let mut key = Vec::with_capacity(text.len() * 2 + 8);
         (self.key)(text, &mut key);
-        xxhash_rust::xxh3::xxh3_64(&key).cast_signed()
+        Self::value_of_key(&key)
+    }
+
+    /// The postings value of a text whose collation key is already written:
+    /// what [`Self::value`] answers for any text with this key.
+    #[must_use]
+    pub fn value_of_key(key: &[u8]) -> i64 {
+        xxhash_rust::xxh3::xxh3_64(key).cast_signed()
     }
 }
 

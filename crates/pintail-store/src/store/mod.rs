@@ -15,7 +15,8 @@ pub use scan::{
 };
 pub use side_index::{
     IndexKey, IndexLookup, IndexProbe, TextKeyFn, TextKeyer, override_side_index,
-    side_index_cache_usage, side_index_enabled, side_index_totals,
+    side_index_cache_usage, side_index_enabled, side_index_note, side_index_totals,
+    side_index_trace,
 };
 pub use snapshot::{BackupArtifacts, BackupSegment, GroupedFoldSpan, TableSnapshot};
 

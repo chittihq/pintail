@@ -590,6 +590,16 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             // masked by those columns, instead of merged row by row.
             stream.enable_memtable_overlay(&scan.table.key_column_ids);
             let prewhere = build_prewhere_spec(scan, snapshot, self.collation);
+            pintail_store::side_index_note(|| {
+                format!(
+                    "scan table={} predicates={} filter_first={} lookup={:?}",
+                    scan.table.table_name,
+                    scan.predicates.len(),
+                    prewhere.is_some(),
+                    predicate_index_lookup(scan, snapshot, self.collation)
+                        .map(|lookup| lookup.column_id)
+                )
+            });
             if prewhere.is_some()
                 && pintail_store::side_index_enabled()
                 && let Some(lookup) = predicate_index_lookup(scan, snapshot, self.collation)
@@ -1241,6 +1251,71 @@ impl SnapshotStream {
         }
     }
 
+    /// Hands the side index the text values a join can use in the projected
+    /// text column at `position`, as hashes of their collation weight bytes.
+    /// A scan with no predicates of its own gets a spec that decodes this
+    /// column first, for the rows the index names alone.
+    fn restrict_text_set(&mut self, position: usize, collation: Collation, weights: &[&[u8]]) {
+        pintail_store::side_index_note(|| {
+            format!(
+                "text keys offered position={position} keys={} started={} type={:?} filter_first={}",
+                weights.len(),
+                self.started,
+                self.types.get(position),
+                self.prewhere.is_some()
+            )
+        });
+        if self.started || !pintail_store::side_index_enabled() {
+            return;
+        }
+        if self.types.get(position).copied() != Some(pintail_types::DataType::Utf8)
+            || self.enum_labels.get(position).is_some_and(Option::is_some)
+            || self.set_members.get(position).is_some_and(Option::is_some)
+        {
+            return;
+        }
+        let Some(keyer) = text_keyer(collation) else {
+            return;
+        };
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
+        let Some(column_id) = stream.column_ids().get(position).copied() else {
+            return;
+        };
+        let mut values = weights
+            .iter()
+            .map(|weights| i128::from(pintail_store::TextKeyer::value_of_key(weights)))
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values.dedup();
+        if self.prewhere.is_none() {
+            if stream.column_ids().len() < 2 {
+                // Nothing to decode second.
+                return;
+            }
+            self.prewhere = Some(PrewhereSpec {
+                predicate_ids: vec![column_id],
+                predicates: Vec::new(),
+                data_types: vec![pintail_types::DataType::Utf8],
+                enum_labels: vec![None],
+                set_members: vec![None],
+                collation,
+                complete: true,
+                runtime_range: None,
+                membership: None,
+            });
+        }
+        // Beside a lookup the scan already has, not instead of it: which
+        // names fewer rows - a label test or these keys - is the segment's
+        // to say.
+        stream.add_index_lookup(pintail_store::IndexLookup {
+            column_id,
+            key: pintail_store::IndexKey::Text(keyer),
+            probe: pintail_store::IndexProbe::Values(values),
+        });
+    }
+
     /// Makes the integer column at `position` one the filter-first decode
     /// reads, creating a spec with no predicates of its own when the scan
     /// had none, and answers the spec and the column's index in it.
@@ -1499,7 +1574,13 @@ impl BatchStream for SnapshotStream {
                                 && stream.index_lookup().is_none(),
                         );
                     }
-                    (chunks, judged > 0 && unanswered == judged)
+                    // A lookup of exact values chose the rows the selector
+                    // saw: no answer about those says nothing about the
+                    // rows the lookup left out.
+                    (
+                        chunks,
+                        judged > 0 && unanswered == judged && !stream.has_value_index_lookup(),
+                    )
                 } else {
                     (
                         stream
@@ -1754,6 +1835,15 @@ impl BatchStream for SnapshotStream {
         if self.key_position != Some(position) {
             self.restrict_value_set(position, values);
         }
+    }
+
+    fn restrict_key_position_text_set(
+        &mut self,
+        position: usize,
+        collation: Collation,
+        weights: &[&[u8]],
+    ) {
+        self.restrict_text_set(position, collation, weights);
     }
 
     fn restrict_order_limit(
@@ -2209,7 +2299,14 @@ fn build_prewhere_spec(
                 pintail_types::DataType::Int64 | pintail_types::DataType::UInt64
             )
         });
-    if predicate_ids.len() >= scan.projected_column_ids.len() && !exact_ranges {
+    // A scan that projects nothing beyond its predicate columns has nothing
+    // to decode second - unless the side index can name its rows, when the
+    // predicate columns themselves decode for those rows alone.
+    if predicate_ids.len() >= scan.projected_column_ids.len()
+        && !exact_ranges
+        && !(pintail_store::side_index_enabled()
+            && predicate_index_lookup(scan, snapshot, collation).is_some())
+    {
         return None;
     }
     let predicates = chosen
@@ -2235,9 +2332,9 @@ fn build_prewhere_spec(
 const INDEX_LOOKUP_VALUES: usize = 4_096;
 
 /// The side-index lookup a scan's own predicates imply: a top-level
-/// equality or IN list of literals on a column other than the table's key
-/// (whose range the key bounds already prune), integer literals on an
-/// integer column or text literals on a text column. A text lookup names
+/// equality or IN list of literals, integer literals on an integer column
+/// other than the table's key (whose range the key bounds already prune)
+/// or text literals on a text column, the table's key included. A text lookup names
 /// its values by their key under the collation the comparison itself uses,
 /// so every row that compares equal to a literal - whatever its case,
 /// accents or trailing spaces where the collation ignores them - is a
@@ -2251,7 +2348,7 @@ fn predicate_index_lookup(
     collation: Collation,
 ) -> Option<pintail_store::IndexLookup> {
     let indexed_column = |expr: &BoundExpr| match &expr.kind {
-        BoundExprKind::Column(column) if !scan.table.key_column_ids.contains(&column.column_id) => {
+        BoundExprKind::Column(column) => {
             let data_type = snapshot
                 .schema()
                 .columns()
@@ -2259,8 +2356,13 @@ fn predicate_index_lookup(
                 .find(|candidate| candidate.id() == column.column_id)?
                 .data_type();
             if is_integer_type(data_type) {
-                Some((column.column_id, false))
+                // An integer key's range already prunes by the key bounds.
+                (!scan.table.key_column_ids.contains(&column.column_id))
+                    .then_some((column.column_id, false))
             } else {
+                // A text key is included: storage orders its keys by their
+                // bytes, which no collation's equality follows, so the key
+                // bounds prune nothing for `key = 'literal'`.
                 (data_type == pintail_types::DataType::Utf8).then_some((column.column_id, true))
             }
         }

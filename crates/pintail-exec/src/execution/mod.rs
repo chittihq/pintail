@@ -1630,6 +1630,18 @@ pub trait BatchStream: Send {
     /// projected column at `position`. Best-effort, like the range form.
     fn restrict_key_position_set(&mut self, _position: usize, _values: &[i128]) {}
 
+    /// Hands the stream the collation weight bytes of the exact text values
+    /// a join can use in the projected column at `position`, compared under
+    /// `collation`. Best-effort, like the integer form: the caller still
+    /// tests every row the stream returns.
+    fn restrict_key_position_text_set(
+        &mut self,
+        _position: usize,
+        _collation: Collation,
+        _weights: &[&[u8]],
+    ) {
+    }
+
     /// Narrows a not-yet-started stream to rows that can be among the first
     /// `k` in the order of the integer column at `position` (descending, or
     /// ascending; `nulls_first` when a NULL sorts before every value): the
@@ -4378,11 +4390,34 @@ impl PullOperator {
         }
     }
 
+    /// Forwards a join's exact text key set to the underlying scan, as
+    /// [`Self::restrict_probe_set`] forwards an integer one.
+    fn restrict_probe_text_set(
+        &mut self,
+        position: usize,
+        collation: Collation,
+        weights: &[&[u8]],
+    ) {
+        match self {
+            Self::Scan { stream, .. } => {
+                stream.restrict_key_position_text_set(position, collation, weights);
+            }
+            Self::Filter { input, .. }
+            | Self::KeyFilter { input, .. }
+            | Self::Profiled { input, .. } => {
+                input.restrict_probe_text_set(position, collation, weights);
+            }
+            _ => {}
+        }
+    }
+
     /// Keeps only build rows whose key is in `keys`, the set the probe side
     /// carries. A row whose key no probe row has can match nothing, so for
     /// inner, left, semi and anti joins it contributes nothing to the
     /// output and need not be built. The key span goes to the scan first,
     /// so storage can prune on it where the key is the table's own key.
+    // One arm per operator the keys pass beneath.
+    #[allow(clippy::too_many_lines)]
     fn restrict_build_keys(
         &mut self,
         key: CompiledExpr,
@@ -4497,6 +4532,17 @@ impl PullOperator {
             && let Some(values) = join::integer_key_values(&keys, INDEX_KEY_SET_VALUES)
         {
             self.restrict_probe_set(position, &values);
+        }
+        // Text keys have no span and no packed membership: the side index
+        // is what keeps a scan from decoding every row for the key filter
+        // above to drop.
+        if let Some(position) = key.column_index()
+            && let KeyForm::CollatedText(collation) = key_mode.form
+            && !key_mode.null_safe
+            && pintail_store::side_index_enabled()
+            && let Some(weights) = join::text_key_weights(&keys, INDEX_KEY_SET_VALUES)
+        {
+            self.restrict_probe_text_set(position, collation, &weights);
         }
         let integers = join::IntegerKeySet::from_keys(&keys).map(std::sync::Arc::new);
         if let Some(position) = key.column_index()
@@ -4727,6 +4773,17 @@ impl PullOperator {
                         && let Some(position) = left_key.column_index()
                     {
                         left.restrict_probe_range(position, minimum, maximum);
+                    }
+                    // A text key has no range; a small build's exact keys
+                    // name the probe rows through the side index instead.
+                    if matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Semi)
+                        && !key_mode.null_safe
+                        && let KeyForm::CollatedText(key_collation) = key_mode.form
+                        && pintail_store::side_index_enabled()
+                        && let Some(position) = left_key.column_index()
+                        && let Some(weights) = built.text_key_weights(INDEX_KEY_SET_VALUES)
+                    {
+                        left.restrict_probe_text_set(position, key_collation, &weights);
                     }
                     built.adopt_prefetch(prefetch);
                     if matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Semi)

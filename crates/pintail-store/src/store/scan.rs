@@ -1330,6 +1330,9 @@ pub struct ProjectedScanStream {
     /// The side-index request the scan's predicates or a join
     /// gave it; consulted only while the index is switched on.
     pub(super) index_lookup: Option<super::side_index::IndexLookup>,
+    /// Further lookups, each naming every row the scan wants by another
+    /// column: per segment the one naming the fewest rows is read.
+    pub(super) index_alternates: Vec<super::side_index::IndexLookup>,
     /// The scan predicates' value bounds, consulted against each direct
     /// block's stored extremes on the filter-first path.
     pub(super) value_bounds: Vec<segment::ColumnBounds>,
@@ -3730,6 +3733,27 @@ impl ProjectedScanStream {
         self.index_lookup = Some(lookup);
     }
 
+    /// Whether any side-index request names exact values rather than a
+    /// span.
+    #[must_use]
+    pub fn has_value_index_lookup(&self) -> bool {
+        self.index_lookup
+            .iter()
+            .chain(&self.index_alternates)
+            .any(|lookup| matches!(lookup.probe, super::side_index::IndexProbe::Values(_)))
+    }
+
+    /// Adds a side-index request beside the one set: both name every row
+    /// the scan wants, and each segment is read by whichever names fewer
+    /// of its rows. Becomes the request when none is set.
+    pub fn add_index_lookup(&mut self, lookup: super::side_index::IndexLookup) {
+        if self.index_lookup.is_none() {
+            self.index_lookup = Some(lookup);
+        } else {
+            self.index_alternates.push(lookup);
+        }
+    }
+
     /// The side-index lookup as a test of whole rows (the memtable's, or a
     /// layered cluster's resolved ones): the lookup and its column's schema
     /// position. A row it rejects is one the scan does not want, so it is
@@ -3939,26 +3963,67 @@ impl ProjectedScanStream {
         predicate_ids: &[u32],
         select: PrewhereSelect<'_>,
     ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
-        let Some(lookup) = self.index_lookup.as_ref() else {
+        let Some(first) = self.index_lookup.as_ref() else {
+            if super::side_index::side_index_trace() {
+                pintail_log::log_info!(
+                    "side index unasked file={}: the scan has no lookup",
+                    segment.file_name
+                );
+            }
             return Ok(None);
         };
         let (Ok(start), Ok(end)) = (usize::try_from(start_row), usize::try_from(end_row)) else {
             return Ok(None);
         };
-        let Some(postings) = super::side_index::postings(
-            &self.snapshot.directory,
-            segment,
-            &self.snapshot.schema,
-            lookup.column_id,
-            &lookup.key,
-        )?
-        else {
+        // Every lookup names a superset of the wanted rows, so the one
+        // naming the fewest of this slice's rows is the one to read by.
+        let mut chosen: Option<(usize, u32, Vec<std::ops::Range<usize>>)> = None;
+        for lookup in std::iter::once(first).chain(&self.index_alternates) {
+            let Some(postings) = super::side_index::postings(
+                &self.snapshot.directory,
+                segment,
+                &self.snapshot.schema,
+                lookup.column_id,
+                &lookup.key,
+            )?
+            else {
+                if super::side_index::side_index_trace() {
+                    pintail_log::log_info!(
+                        "side index declined file={} column={}: no postings for the column",
+                        segment.file_name,
+                        lookup.column_id
+                    );
+                }
+                continue;
+            };
+            let Some(candidates) = postings.candidate_ranges(&lookup.probe, start, end) else {
+                if super::side_index::side_index_trace() {
+                    pintail_log::log_info!(
+                        "side index declined file={} column={} rows={start}..{end}: the lookup names too many rows",
+                        segment.file_name,
+                        lookup.column_id
+                    );
+                }
+                continue;
+            };
+            let rows = candidates
+                .iter()
+                .map(std::iter::ExactSizeIterator::len)
+                .sum::<usize>();
+            if chosen.as_ref().is_none_or(|(fewest, _, _)| rows < *fewest) {
+                chosen = Some((rows, lookup.column_id, candidates));
+            }
+        }
+        let Some((rows, column_id, candidates)) = chosen else {
             return Ok(None);
         };
-        let Some(candidates) = postings.candidate_ranges(&lookup.probe, start, end) else {
-            return Ok(None);
-        };
-        super::side_index::note_useful(&self.snapshot.directory, lookup.column_id);
+        if super::side_index::side_index_trace() {
+            pintail_log::log_info!(
+                "side index used file={} column={column_id} rows={start}..{end}: {rows} candidates",
+                segment.file_name
+            );
+        }
+        super::side_index::note_useful(&self.snapshot.directory, column_id);
         let map_projection = |ids: &[u32]| -> Result<Vec<usize>, StoreError> {
             ids.iter()
                 .map(|id| {
