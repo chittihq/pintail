@@ -24,6 +24,9 @@ const SUPERVISOR_INTERVAL: Duration = Duration::from_secs(5);
 /// the job slot was never free. The next cadence continues from where this
 /// one stopped.
 const CYCLE_BUDGET: Duration = Duration::from_secs(30);
+/// Unflushed row bytes a database's tables may hold between them when a
+/// cycle ends: what the next cycle's open replays from their logs.
+const SETTLED_MEMTABLE_BYTES: usize = 8 * 1024 * 1024;
 
 /// The supervision cadence: five seconds in production, overridable through
 /// `PINTAIL_SUPERVISOR_INTERVAL_MS` so test harnesses stop paying multiples
@@ -504,7 +507,31 @@ async fn run_cycle(
             )
             .await;
             let result = match streamed {
-                Ok(outcome) => Ok(u64::try_from(outcome.mutations).unwrap_or(u64::MAX)),
+                Ok(mut outcome) => {
+                    // Leave little for the next cycle's open to replay. A
+                    // waiting operator is not made to wait for it: the cycle
+                    // after theirs settles the same rows.
+                    if !signal.stop().requested() {
+                        let settling = std::time::Instant::now();
+                        match pintail_cdc::settle_memtables(
+                            &mut outcome.targets,
+                            SETTLED_MEMTABLE_BYTES,
+                        ) {
+                            Ok(0) => {}
+                            Ok(flushed) => pintail_log::log_debug!(
+                                "supervisor cycle db={} flushed {flushed} tables in {}ms",
+                                database.id,
+                                settling.elapsed().as_millis()
+                            ),
+                            // The rows are durable in the log either way.
+                            Err(error) => pintail_log::log_error!(
+                                "supervisor cycle db={} could not flush after the cycle: {error}",
+                                database.id
+                            ),
+                        }
+                    }
+                    Ok(u64::try_from(outcome.mutations).unwrap_or(u64::MAX))
+                }
                 // One table's storage refused its rows, or its first copy
                 // failed: quarantine that table and let the rest stream.
                 // Failing the cycle instead wrote the one error onto every

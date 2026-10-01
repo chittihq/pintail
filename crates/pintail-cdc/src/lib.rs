@@ -139,6 +139,42 @@ impl CdcTarget {
     }
 }
 
+/// Flushes the tables holding the most unflushed rows until all of them
+/// together hold no more than `keep_bytes`. Returns how many were flushed.
+///
+/// Every open of a table replays its log, and a supervised stream opens
+/// every table once a cycle: with rows left in memory across a hundred and
+/// fifty tables each cycle began with seconds of replay, a busy one and an
+/// idle one alike, until the memtables happened to fill. Flushed down to a
+/// small remainder when a cycle ends, the next one opens in milliseconds.
+///
+/// # Errors
+///
+/// Returns the table and the reason when a flush fails.
+pub fn settle_memtables(targets: &mut [CdcTarget], keep_bytes: usize) -> Result<usize, CdcError> {
+    let mut held = targets
+        .iter()
+        .enumerate()
+        .map(|(index, target)| (target.store.unflushed_bytes(), index))
+        .filter(|(bytes, _)| *bytes > 0)
+        .collect::<Vec<_>>();
+    held.sort_unstable();
+    let mut total = held.iter().map(|(bytes, _)| *bytes).sum::<usize>();
+    let mut flushed = 0;
+    while total > keep_bytes
+        && let Some((bytes, index)) = held.pop()
+    {
+        let target = &mut targets[index];
+        target
+            .store
+            .flush()
+            .map_err(|error| CdcError::from(error).for_table(&target.source.name))?;
+        total -= bytes;
+        flushed += 1;
+    }
+    Ok(flushed)
+}
+
 /// Runtime controls for one CDC stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CdcOptions {
