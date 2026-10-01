@@ -303,11 +303,7 @@ fn a_composite_key_table_answers_through_the_overlay() {
     let row = |user: i64, item: i64, score: i64, version: u64, deleted: bool| {
         StoredRow::new(
             PrimaryKey::new(vec![KeyPart::Int64(user), KeyPart::Int64(item)]).expect("key"),
-            vec![
-                Value::Int64(user),
-                Value::Int64(item),
-                Value::Int64(score),
-            ],
+            vec![Value::Int64(user), Value::Int64(item), Value::Int64(score)],
             version,
             deleted,
         )
