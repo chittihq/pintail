@@ -170,11 +170,7 @@ fn identity(segments: &[segment::SegmentMeta]) -> Vec<SegmentIdentity> {
 pub(crate) struct LayerIndex {
     segments: Vec<SegmentIdentity>,
     parts: usize,
-    keys: Vec<i128>,
-    versions: Vec<u64>,
-    sources: Vec<u32>,
-    rows: Vec<u32>,
-    deleted: Vec<bool>,
+    entries: Headers,
 }
 
 /// One segment's headers, in key order.
@@ -238,25 +234,25 @@ const PIECE_BLOCKS: usize = 8;
 
 impl LayerIndex {
     pub(super) fn len(&self) -> usize {
-        self.versions.len()
+        self.entries.len()
     }
 
     pub(super) fn key(&self, index: usize) -> &[i128] {
-        &self.keys[index * self.parts..(index + 1) * self.parts]
+        self.entries.key(self.parts, index)
     }
 
     pub(super) fn version(&self, index: usize) -> u64 {
-        self.versions[index]
+        self.entries.versions[index]
     }
 
     /// The row at `index`: a mask for a delete.
     pub(super) fn row(&self, index: usize) -> SpanRow<'static> {
-        if self.deleted[index] {
+        if self.entries.deleted[index] {
             SpanRow::Mask
         } else {
             SpanRow::Layer {
-                segment: self.sources[index],
-                row: self.rows[index],
+                segment: self.entries.sources[index],
+                row: self.entries.rows[index],
             }
         }
     }
@@ -264,10 +260,10 @@ impl LayerIndex {
     /// Bytes this index holds.
     pub(crate) fn bytes(&self) -> usize {
         size_of::<Self>()
-            + self.keys.capacity() * size_of::<i128>()
-            + self.versions.capacity() * size_of::<u64>()
-            + (self.sources.capacity() + self.rows.capacity()) * size_of::<u32>()
-            + self.deleted.capacity()
+            + self.entries.keys.capacity() * size_of::<i128>()
+            + self.entries.versions.capacity() * size_of::<u64>()
+            + (self.entries.sources.capacity() + self.entries.rows.capacity()) * size_of::<u32>()
+            + self.entries.deleted.capacity()
     }
 
     /// The key at `index` as a key of the table, its parts typed as
@@ -307,10 +303,59 @@ impl LayerIndex {
         if parts == 0 {
             return Ok(None);
         }
+        Ok(
+            Self::read_resolved(directory, schema, segments, parts, 0)?.map(|entries| Self {
+                segments: identity(segments),
+                parts,
+                entries,
+            }),
+        )
+    }
+
+    /// This index with the segments that follow its own in `segments`
+    /// resolved over it: what a flush adds to a cluster is one newer
+    /// segment, and reading that segment's headers and merging them in once
+    /// costs a pass over the entries instead of every header again. `None`
+    /// when `segments` does not start with the segments indexed here, or
+    /// the new ones cannot be indexed.
+    pub(super) fn extend(
+        &self,
+        directory: &std::path::Path,
+        schema: &TableSchema,
+        segments: &[segment::SegmentMeta],
+    ) -> Result<Option<Self>, StoreError> {
+        let wanted = identity(segments);
+        let held = self.segments.len();
+        if held == 0 || held >= wanted.len() || wanted[..held] != self.segments[..] {
+            return Ok(None);
+        }
+        let Some(newer) =
+            Self::read_resolved(directory, schema, &segments[held..], self.parts, held)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            segments: wanted,
+            parts: self.parts,
+            entries: merge_headers(&self.entries, &newer, self.parts),
+        }))
+    }
+
+    /// The headers of `segments` (oldest first) as one entry per key, each
+    /// naming its segment by its place in the list plus `first_source`.
+    fn read_resolved(
+        directory: &std::path::Path,
+        schema: &TableSchema,
+        segments: &[segment::SegmentMeta],
+        parts: usize,
+        first_source: usize,
+    ) -> Result<Option<Headers>, StoreError> {
         // (segment, first key, the key the piece stops before).
         let mut pieces: Vec<(usize, PrimaryKey, Option<PrimaryKey>)> = Vec::new();
         for (index, meta) in segments.iter().enumerate() {
-            if u32::try_from(meta.row_count).is_err() || u32::try_from(index).is_err() {
+            if u32::try_from(meta.row_count).is_err()
+                || u32::try_from(index + first_source).is_err()
+            {
                 return Ok(None);
             }
             let sparse = segment::read_sparse_index(directory, meta)?;
@@ -333,7 +378,7 @@ impl LayerIndex {
             let end = stop.as_ref().unwrap_or(&meta.max_key);
             let scan =
                 segment::read_row_headers_range(directory, meta, schema, start, end, &budget)?;
-            let source = u32::try_from(*index).unwrap_or(u32::MAX);
+            let source = u32::try_from(*index + first_source).unwrap_or(u32::MAX);
             let mut headers = Headers::default();
             for row in scan.rows {
                 if stop.as_ref().is_some_and(|stop| row.key >= *stop) {
@@ -354,7 +399,7 @@ impl LayerIndex {
         };
         let read: Result<Vec<Option<Headers>>, StoreError> =
             projected_scan_pool()?.install(|| pieces.par_iter().map(read).collect());
-        let mut resolved = Headers::default();
+        let mut runs = Vec::with_capacity(segments.len());
         let mut next_piece = read?.into_iter();
         for index in 0..segments.len() {
             // This segment's pieces, in key order, as one run with a key's
@@ -375,21 +420,29 @@ impl LayerIndex {
                     }
                 }
             }
-            resolved = if resolved.len() == 0 {
-                run
-            } else {
-                merge_headers(&resolved, &run, parts)
-            };
+            runs.push(run);
         }
-        Ok(Some(Self {
-            segments: identity(segments),
-            parts,
-            keys: resolved.keys,
-            versions: resolved.versions,
-            sources: resolved.sources,
-            rows: resolved.rows,
-            deleted: resolved.deleted,
-        }))
+        Ok(Some(
+            projected_scan_pool()?.install(|| merge_runs(runs, parts)),
+        ))
+    }
+}
+
+/// Runs of one entry per key, oldest first, as one: a key several hold
+/// resolves to its greatest version, and to the oldest run's among equals.
+/// The runs are merged as a tree, its two halves at once, so every entry is
+/// copied once per level of the tree rather than once per run that follows
+/// its own.
+fn merge_runs(mut runs: Vec<Headers>, parts: usize) -> Headers {
+    match runs.len() {
+        0 => Headers::default(),
+        1 => runs.pop().unwrap_or_default(),
+        count => {
+            let newer = runs.split_off(count / 2);
+            let (older, newer) =
+                rayon::join(|| merge_runs(runs, parts), || merge_runs(newer, parts));
+            merge_headers(&older, &newer, parts)
+        }
     }
 }
 
@@ -633,12 +686,13 @@ fn partition_point(len: usize, before: impl Fn(usize) -> bool) -> usize {
 #[derive(Default)]
 pub(crate) struct LayerIndexSlot(Arc<Mutex<Option<Arc<LayerIndex>>>>);
 
-/// A manifest is copied to make the one that follows it, whose segments may
-/// differ: the copy starts with nothing kept, and the index goes with the
-/// last reader of the manifest it was resolved for.
+/// A manifest is copied to make the one that follows it. A flush adds one
+/// segment over the ones indexed, so the copy keeps the index and the next
+/// scan extends it; a publication that takes segments away starts its
+/// manifest with [`Self::default`] instead.
 impl Clone for LayerIndexSlot {
     fn clone(&self) -> Self {
-        Self::default()
+        Self(Arc::new(Mutex::new(self.lock().clone())))
     }
 }
 
@@ -670,14 +724,24 @@ impl LayerIndexSlot {
         segments: &[segment::SegmentMeta],
     ) -> Result<Option<Arc<LayerIndex>>, StoreError> {
         let wanted = identity(segments);
-        if let Some(kept) = self.lock().as_ref()
+        let kept = self.lock().clone();
+        if let Some(kept) = &kept
             && kept.segments == wanted
         {
             return Ok(Some(Arc::clone(kept)));
         }
         let started = std::time::Instant::now();
-        let Some(index) = LayerIndex::build(directory, schema, segments)? else {
-            return Ok(None);
+        let extended = match &kept {
+            Some(kept) => kept.extend(directory, schema, segments)?,
+            None => None,
+        };
+        let index = if let Some(index) = extended {
+            index
+        } else {
+            let Some(index) = LayerIndex::build(directory, schema, segments)? else {
+                return Ok(None);
+            };
+            index
         };
         pintail_log::log_debug!(
             "store scan indexed the keys of {} newer rows in {} segments over their bases: {} bytes, {} ms",
