@@ -90,9 +90,17 @@ pub struct ScanStats {
     pub(super) bytes_decompressed: u64,
     pub(super) values_decoded: u64,
     pub(super) blocks_value_skipped: usize,
+    pub(super) index_slices: usize,
 }
 
 impl ScanStats {
+    /// Returns the slices of segments read through the side index: only
+    /// the rows a lookup named were decoded.
+    #[must_use]
+    pub fn index_slices(self) -> usize {
+        self.index_slices
+    }
+
     /// Returns the bytes the scan's decoded blocks decompressed to.
     #[must_use]
     pub fn bytes_decompressed(self) -> u64 {
@@ -167,6 +175,7 @@ impl ScanStats {
             .saturating_add(other.bytes_decompressed);
         self.values_decoded = self.values_decoded.saturating_add(other.values_decoded);
         self.blocks_value_skipped += other.blocks_value_skipped;
+        self.index_slices += other.index_slices;
     }
 }
 
@@ -1361,6 +1370,11 @@ pub struct ProjectedScanStream {
     /// Further lookups, each naming every row the scan wants by another
     /// column: per segment the one naming the fewest rows is read.
     pub(super) index_alternates: Vec<super::side_index::IndexLookup>,
+    /// Whether the scan decodes nothing beyond the columns its filter
+    /// reads and selects first only to leave rows unread: the side index
+    /// is then held to a smaller share of rows, and a slice where no row
+    /// is left unread is read through as a scan with no selector reads it.
+    pub(super) filter_only: bool,
     /// The scan predicates' value bounds, consulted against each direct
     /// block's stored extremes on the filter-first path.
     pub(super) value_bounds: Vec<segment::ColumnBounds>,
@@ -2949,7 +2963,7 @@ impl ProjectedScanStream {
         if self.overlay.is_some() {
             return self.decode_overlay_slice(slice, memory_limit, prewhere);
         }
-        self.decode_slice_plain(slice, memory_limit, prewhere)
+        self.decode_slice_plain(slice, memory_limit, prewhere, self.filter_only)
             .map(|chunk| vec![chunk])
     }
 
@@ -2958,11 +2972,15 @@ impl ProjectedScanStream {
         slice: &DirectSlice,
         memory_limit: usize,
         prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+        read_through: bool,
     ) -> Result<ProjectedColumnChunk, StoreError> {
         match slice {
-            DirectSlice::Whole(segment) => {
-                self.decode_column_chunk_maybe_filtered(segment.clone(), memory_limit, prewhere)
-            }
+            DirectSlice::Whole(segment) => self.decode_column_chunk_maybe_filtered(
+                segment.clone(),
+                memory_limit,
+                prewhere,
+                read_through,
+            ),
             DirectSlice::Range {
                 segment,
                 start_row,
@@ -2973,6 +2991,7 @@ impl ProjectedScanStream {
                 *end_row,
                 memory_limit,
                 prewhere,
+                read_through,
             ),
         }
     }
@@ -3030,14 +3049,14 @@ impl ProjectedScanStream {
     ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
         let Some(key_ids) = self.overlay_key.as_deref() else {
             return self
-                .decode_slice_plain(slice, memory_limit, prewhere)
+                .decode_slice_plain(slice, memory_limit, prewhere, self.filter_only)
                 .map(|chunk| vec![chunk]);
         };
         let mut memtable = self.overlay_span_rows(slice, key_ids.len())?;
         let key_bytes = memtable.keys.used_bytes();
         if memtable.is_empty() {
             return self
-                .decode_slice_plain(slice, memory_limit, prewhere)
+                .decode_slice_plain(slice, memory_limit, prewhere, self.filter_only)
                 .map(|chunk| vec![chunk]);
         }
         self.mask_unwanted_live_rows(&mut memtable, memory_limit)?;
@@ -3114,7 +3133,10 @@ impl ProjectedScanStream {
             ));
             Ok(kept)
         };
-        let segment_chunk = self.decode_slice_plain(slice, decode_limit, Some((&ids, &select)))?;
+        // Never read through unselected: the selector is where the
+        // memtable's rows are placed.
+        let segment_chunk =
+            self.decode_slice_plain(slice, decode_limit, Some((&ids, &select)), false)?;
         let edits = edits
             .into_inner()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3297,6 +3319,7 @@ impl ProjectedScanStream {
         end_row: u64,
         memory_limit: usize,
         prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+        read_through: bool,
     ) -> Result<ProjectedColumnChunk, StoreError> {
         let Some((predicate_ids, select)) = prewhere.filter(|(ids, _)| !ids.is_empty()) else {
             return self.decode_column_chunk_rows(segment, start_row, end_row, memory_limit);
@@ -3343,6 +3366,12 @@ impl ProjectedScanStream {
                 usize::from(start_row == 0),
                 &scan_budget,
             );
+        }
+        // Neither the index nor a block's values left a row unread, and
+        // the scan decodes no column beyond these: selecting here would
+        // only copy the rows the reader's own filter judges as cheaply.
+        if read_through {
+            return self.decode_column_chunk_rows(segment, start_row, end_row, memory_limit);
         }
         let fetch = segment::read_projected_columns(
             &self.snapshot.directory,
@@ -3818,6 +3847,17 @@ impl ProjectedScanStream {
         self.index_lookup = Some(lookup);
     }
 
+    /// Says the scan decodes nothing beyond the columns its filter reads,
+    /// and selects first only for the rows that leaves unread. There is no
+    /// second column to save, so a side-index lookup is read by only when
+    /// it names very few rows; and where neither a lookup nor a block's
+    /// values rule rows out, the slice is decoded whole and unselected,
+    /// for the reader's own filter to judge, rather than selected and
+    /// copied here first.
+    pub fn set_filter_only(&mut self, filter_only: bool) {
+        self.filter_only = filter_only;
+    }
+
     /// Whether any side-index request names exact values rather than a
     /// span.
     #[must_use]
@@ -4060,6 +4100,11 @@ impl ProjectedScanStream {
         let (Ok(start), Ok(end)) = (usize::try_from(start_row), usize::try_from(end_row)) else {
             return Ok(None);
         };
+        let share = if self.filter_only {
+            super::side_index::MAX_FILTER_ONLY_CANDIDATE_SHARE
+        } else {
+            super::side_index::MAX_CANDIDATE_SHARE
+        };
         // Every lookup names a superset of the wanted rows, so the one
         // naming the fewest of this slice's rows is the one to read by.
         let mut chosen: Option<(usize, u32, Vec<std::ops::Range<usize>>)> = None;
@@ -4081,7 +4126,9 @@ impl ProjectedScanStream {
                 }
                 continue;
             };
-            let Some(candidates) = postings.candidate_ranges(&lookup.probe, start, end) else {
+            let Some(candidates) =
+                postings.candidate_ranges_within(&lookup.probe, start, end, share)
+            else {
                 if super::side_index::side_index_trace() {
                     pintail_log::log_info!(
                         "side index declined file={} column={} rows={start}..{end}: the lookup names too many rows",
@@ -4143,7 +4190,7 @@ impl ProjectedScanStream {
             .map_err(StoreError::FormatLimit)?
             .map(|kept| kept.into_ranges(candidate_rows));
         let segments_read = usize::from(start_row == 0);
-        let chunk = match selected {
+        let mut chunk = match selected {
             Some(PrewhereRanges { ranges, exact, .. }) => {
                 let absolute = super::side_index::absolute_ranges(&candidates, &ranges);
                 self.project_after_predicates(
@@ -4170,16 +4217,19 @@ impl ProjectedScanStream {
                 &scan_budget,
             )?,
         };
+        chunk.stats.index_slices += 1;
         Ok(Some(chunk))
     }
 
     /// Routes one segment through the filter-first path when a predicate
     /// selector applies and the segment decodes as a full direct chunk.
+    #[allow(clippy::too_many_lines)] // one path per way a segment is left partly unread
     fn decode_column_chunk_maybe_filtered(
         &self,
         segment: segment::SegmentMeta,
         memory_limit: usize,
         prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+        read_through: bool,
     ) -> Result<ProjectedColumnChunk, StoreError> {
         let full_direct = self.start <= segment.min_key && self.end >= segment.max_key;
         if let Some((predicate_ids, select)) = prewhere
@@ -4228,6 +4278,9 @@ impl ProjectedScanStream {
                     1,
                     &scan_budget,
                 );
+            }
+            if read_through {
+                return self.decode_column_chunk(segment, memory_limit);
             }
             let fetch = segment::read_projected_columns(
                 &self.snapshot.directory,

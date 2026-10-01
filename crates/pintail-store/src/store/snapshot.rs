@@ -978,6 +978,7 @@ impl TableSnapshot {
             pending: std::collections::VecDeque::new(),
             index_lookup: None,
             index_alternates: Vec::new(),
+            filter_only: false,
             value_bounds: bounds.to_vec(),
             text_filters: Vec::new(),
             prewhere_sample: super::scan::PrewhereSample::default(),

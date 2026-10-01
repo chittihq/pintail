@@ -95,6 +95,9 @@ pub struct PhysicalScanStats {
     /// out every row for a range or equality predicate (each also counts in
     /// `blocks_pruned` once per projected column).
     pub blocks_value_skipped: usize,
+    /// Slices of segments read through the side index, decoding only the
+    /// rows a lookup named.
+    pub index_slices: usize,
 }
 
 impl PhysicalScanStats {
@@ -121,6 +124,7 @@ impl PhysicalScanStats {
             .saturating_add(other.bytes_decompressed);
         self.values_decoded = self.values_decoded.saturating_add(other.values_decoded);
         self.blocks_value_skipped += other.blocks_value_skipped;
+        self.index_slices += other.index_slices;
     }
 }
 
@@ -135,6 +139,7 @@ impl From<ScanStats> for PhysicalScanStats {
             bytes_decompressed: stats.bytes_decompressed(),
             values_decoded: stats.values_decoded(),
             blocks_value_skipped: stats.blocks_value_skipped(),
+            index_slices: stats.index_slices(),
         }
     }
 }
@@ -592,8 +597,9 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             let text_filters = text_value_filters(scan, snapshot, self.collation);
             let prewhere =
                 build_prewhere_spec(scan, snapshot, self.collation, !text_filters.is_empty());
-            if prewhere.is_some() {
+            if let Some(spec) = &prewhere {
                 stream.set_text_filters(text_filters);
+                stream.set_filter_only(spec.filter_only);
             }
             pintail_store::side_index_note(|| {
                 format!(
@@ -1026,6 +1032,12 @@ struct PrewhereSpec {
     /// this index: rows it rejects are not decoded. The join's own key
     /// filter still tests every row, so this only narrows the decode.
     membership: Option<(usize, crate::execution::IntegerMembership)>,
+    /// Whether the scan projects nothing beyond these predicate columns and
+    /// the spec exists only for the rows the store can leave unread: those
+    /// the side index does not name, and blocks holding no value a text
+    /// predicate accepts. Where neither applies the store reads the columns
+    /// through unselected, as it did before there was a spec.
+    filter_only: bool,
 }
 
 /// A join key span pushed into a scan on a column that is not the table's
@@ -1309,8 +1321,15 @@ impl SnapshotStream {
                 complete: true,
                 runtime_range: None,
                 membership: None,
+                filter_only: false,
             });
         }
+        // The keys choose rows before the scan's other work, whatever it
+        // projects.
+        if let Some(spec) = &mut self.prewhere {
+            spec.filter_only = false;
+        }
+        stream.set_filter_only(false);
         // Beside a lookup the scan already has, not instead of it: which
         // names fewer rows - a label test or these keys - is the segment's
         // to say.
@@ -1331,6 +1350,11 @@ impl SnapshotStream {
         if !is_integer_type(data_type) {
             return None;
         }
+        // What a join restricts is tested by the selector, so the selector
+        // has to run on every slice from here on.
+        if let Some(stream) = self.stream.as_mut() {
+            stream.set_filter_only(false);
+        }
         let spec = self.prewhere.get_or_insert_with(|| PrewhereSpec {
             predicate_ids: Vec::new(),
             predicates: Vec::new(),
@@ -1341,7 +1365,9 @@ impl SnapshotStream {
             complete: true,
             runtime_range: None,
             membership: None,
+            filter_only: false,
         });
+        spec.filter_only = false;
         let index = if let Some(index) = spec.predicate_ids.iter().position(|id| *id == column_id) {
             index
         } else {
@@ -1379,6 +1405,7 @@ impl SnapshotStream {
                 bytes_decompressed: stats.bytes_decompressed(),
                 values_decoded: stats.values_decoded(),
                 blocks_value_skipped: stats.blocks_value_skipped(),
+                index_slices: stats.index_slices(),
                 ..PhysicalScanStats::default()
             });
     }
@@ -2450,6 +2477,7 @@ fn build_prewhere_spec(
     // Nor when a text predicate can rule whole blocks out by the values
     // they hold: the filter-first read is where blocks are skipped.
     let reads_selectively = exact_ranges || skips_by_value;
+    let filter_only = predicate_ids.len() >= scan.projected_column_ids.len() && !exact_ranges;
     if predicate_ids.len() >= scan.projected_column_ids.len()
         && !reads_selectively
         && !(pintail_store::side_index_enabled()
@@ -2473,6 +2501,7 @@ fn build_prewhere_spec(
         complete,
         runtime_range: None,
         membership: None,
+        filter_only,
     })
 }
 

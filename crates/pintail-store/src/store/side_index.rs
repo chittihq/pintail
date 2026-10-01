@@ -40,7 +40,15 @@ use crate::{StoreError, segment};
 
 /// Candidates past this share of a slice's rows are not worth the detour:
 /// the plain filter-first decode reads the same blocks in one pass.
-const MAX_CANDIDATE_SHARE: usize = 4;
+pub(crate) const MAX_CANDIDATE_SHARE: usize = 4;
+
+/// The share for a scan that decodes nothing beyond the columns its filter
+/// reads. The detour then saves no second column, only the filter columns'
+/// own decode, and reading a candidate through the index costs several
+/// times what decoding a row in place does: a value one row in five holds
+/// took three times the instructions through the index that reading the
+/// column through did, and the two met near one row in thirteen.
+pub(crate) const MAX_FILTER_ONLY_CANDIDATE_SHARE: usize = 32;
 
 thread_local! {
     static THREAD_OVERRIDE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
@@ -309,11 +317,24 @@ impl Postings {
     /// The rows of `[start, end)` whose value the probe admits, coalesced
     /// into ascending ranges; `None` when they are too many to be worth
     /// reading apart from the rest.
+    #[cfg(test)]
     pub(crate) fn candidate_ranges(
         &self,
         probe: &IndexProbe,
         start: usize,
         end: usize,
+    ) -> Option<Vec<Range<usize>>> {
+        self.candidate_ranges_within(probe, start, end, MAX_CANDIDATE_SHARE)
+    }
+
+    /// [`Self::candidate_ranges`] with the share of rows past which the
+    /// probe declines given as its divisor: one row in `share`.
+    pub(crate) fn candidate_ranges_within(
+        &self,
+        probe: &IndexProbe,
+        start: usize,
+        end: usize,
+        share: usize,
     ) -> Option<Vec<Range<usize>>> {
         let runs = match probe {
             IndexProbe::Values(values) => values
@@ -324,7 +345,7 @@ impl Postings {
             IndexProbe::Span(lower, upper) => vec![self.entries_between(*lower, *upper)],
         };
         let slice_rows = end.saturating_sub(start);
-        let limit = slice_rows / MAX_CANDIDATE_SHARE;
+        let limit = slice_rows / share;
         let in_slice = |row: &u32| {
             let row = *row as usize;
             row >= start && row < end
@@ -333,7 +354,7 @@ impl Postings {
         // A probe past the share of the whole segment declines at once: a
         // segment read in several slices otherwise walked the probe's every
         // row once per slice to count the ones inside it.
-        if total.saturating_mul(MAX_CANDIDATE_SHARE) > self.row_count {
+        if total.saturating_mul(share) > self.row_count {
             return None;
         }
         // Counted before anything is collected, and abandoned as soon as the
@@ -1274,6 +1295,15 @@ mod tests {
         assert!(
             postings
                 .candidate_ranges(&IndexProbe::Span(0, 90), 0, 1_000)
+                .is_none()
+        );
+        // Five values of 97 are one row in twenty: few enough beside a
+        // second column to decode, too many for a filter's columns alone.
+        let five = IndexProbe::Span(5, 9);
+        assert!(postings.candidate_ranges(&five, 0, 1_000).is_some());
+        assert!(
+            postings
+                .candidate_ranges_within(&five, 0, 1_000, MAX_FILTER_ONLY_CANDIDATE_SHARE)
                 .is_none()
         );
     }

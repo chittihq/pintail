@@ -205,6 +205,8 @@ struct Answer {
     notes: String,
     /// Blocks the scan skipped for holding no value its filter accepts.
     skipped: usize,
+    /// Slices of segments the scan read through the side index.
+    index_slices: usize,
 }
 
 fn run(fixture: &Fixture, sql: &str) -> Answer {
@@ -246,12 +248,13 @@ fn run(fixture: &Fixture, sql: &str) -> Answer {
         }
     }
     let profile = execution.profile().expect("profile");
+    let stats = provider
+        .scan_stats(DatabaseId::new(1), TableId::new(1))
+        .unwrap_or_default();
     Answer {
         rows,
-        skipped: provider
-            .scan_stats(DatabaseId::new(1), TableId::new(1))
-            .unwrap_or_default()
-            .blocks_value_skipped,
+        skipped: stats.blocks_value_skipped,
+        index_slices: stats.index_slices,
         notes: profile
             .operators
             .iter()
@@ -535,6 +538,46 @@ fn a_rare_value_reads_only_the_blocks_holding_it() {
         // Eleven blocks over two segments; the value lies in two of them.
         assert_eq!(answer.skipped, 9, "{sql}: {}", answer.notes);
     }
+}
+
+/// A count that reads nothing beyond its filter's column goes through the
+/// side index only for a value very few rows hold. One row in twenty
+/// scattered over the table is read by decoding the column through, which
+/// costs a third of fetching those rows one by one; the same value beside
+/// a second column to decode is still worth the index, which spares that
+/// column for the other nineteen.
+#[test]
+fn a_count_by_its_filter_column_alone_asks_the_side_index_for_rare_values_only() {
+    let fixture = fixture(150_000, false, true);
+    let pending = fixture
+        .model
+        .values()
+        .filter(|entry| entry.state == "pending")
+        .count();
+    assert!(
+        pending * 32 > fixture.model.len() && pending * 4 < fixture.model.len(),
+        "{pending} rows are pending: the case needs a share between the two limits"
+    );
+    let common = run(
+        &fixture,
+        "SELECT COUNT(*) FROM ledger WHERE state = 'pending'",
+    );
+    assert_eq!(common.rows, vec![vec![pending.to_string()]]);
+    assert_eq!(common.index_slices, 0, "{}", common.notes);
+
+    let beside = run(
+        &fixture,
+        "SELECT COUNT(*), SUM(qty) FROM ledger WHERE state = 'pending'",
+    );
+    assert_eq!(beside.rows[0][0], pending.to_string());
+    assert!(beside.index_slices > 0, "{}", beside.notes);
+
+    let rare = run(
+        &fixture,
+        "SELECT COUNT(*) FROM ledger WHERE mark = 'flagged'",
+    );
+    assert_eq!(rare.rows, vec![vec!["60".to_owned()]]);
+    assert!(rare.index_slices > 0, "{}", rare.notes);
 }
 
 /// Writes the rows as tab-separated text and prints each answer as
