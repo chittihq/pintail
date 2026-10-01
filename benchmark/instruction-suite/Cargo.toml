@@ -1,0 +1,47 @@
+[package]
+name = "pintail-instruction-suite"
+description = "Instruction-count benchmarks of the Pintail executor, in process"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+# A workspace of its own, on purpose. The measuring harness needs Valgrind's
+# headers and libclang when it compiles, which no gate box and no release
+# build has; as a workspace member it would break `clippy --workspace
+# --all-targets` there. Standing alone it also leaves the root Cargo.lock,
+# and so the release binary's dependency graph, exactly as it was.
+[workspace]
+
+[dependencies]
+pintail-catalog = { path = "../../crates/pintail-catalog" }
+pintail-exec = { path = "../../crates/pintail-exec" }
+pintail-sql = { path = "../../crates/pintail-sql" }
+pintail-store = { path = "../../crates/pintail-store" }
+pintail-types = { path = "../../crates/pintail-types" }
+tempfile = "3.20.0"
+
+[dev-dependencies]
+iai-callgrind = { version = "=0.16.1", features = ["client_requests"] }
+
+[[bench]]
+name = "shapes"
+harness = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+# The release profile of the engine itself: a count taken under other
+# settings would describe a binary nobody ships.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"
+
+[profile.bench]
+inherits = "release"
