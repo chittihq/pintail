@@ -189,15 +189,19 @@ fn aggregate(
                         0
                     })
                     .min(30);
-                let precision = (digits
+                // The declared length is not held to 65 digits: a
+                // DECIMAL(65,30) sum declares 89, as MySQL's does.
+                let precision = digits
                     + if aggregate.function == AggregateFunction::Average {
                         widen
                     } else {
                         22
-                    })
-                .min(65);
+                    };
                 column.column_length = precision + 1 + u32::from(column.decimals > 0);
                 set_flags(&mut column, 128);
+            } else if column.coltype == ColumnType::MysqlTypeDouble && column.decimals >= 31 {
+                // A double sum or average of no fixed scale declares 23.
+                column.column_length = 23;
             }
         }
         AggregateFunction::Minimum | AggregateFunction::Maximum => {
