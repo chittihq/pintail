@@ -1,5 +1,6 @@
 //! A columnar fold for the fused inner join-aggregate's commonest shape: a
-//! build key that is dense and unique (an auto-increment primary key), and
+//! build key that is a unique integer (an auto-increment primary key, dense
+//! or with gaps of any width), and
 //! aggregates that are counts, integer sums and exact decimal sums or
 //! averages of probe columns.
 //!
@@ -24,6 +25,7 @@ use super::aggregate::{
 };
 use super::join::PartitionedBuild;
 use super::morsel::Morsel;
+use super::sparse_keys::SparseKeyTable;
 use super::{ExecError, MemoryTracker};
 use crate::array::ValidityMask;
 use crate::batch::{DecimalUnits, TypedValues};
@@ -37,21 +39,26 @@ const CHUNK_ROWS: usize = 2_048;
 /// bound the packed aggregate lanes use.
 const AVERAGE_MAX_DIGITS: u8 = 19;
 
-/// Each dense key slot's one group, for a build whose every key names
-/// exactly one row.
+/// Each build key's one group, for a build whose every key names exactly
+/// one row: by the key's offset where the keys are dense, through a hash
+/// table of the keys where they are spread.
 ///
 /// A slot without a key - and any probe row that matches nothing - resolves
 /// to the miss group one past the real ones, so the fold adds every row
 /// somewhere and needs no branch to skip the misses. An inner join discards
 /// that group; an outer join's unmatched rows are exactly it.
 pub(super) struct UniqueKeyGroups {
-    minimum: i128,
-    groups: Vec<u32>,
+    keys: GroupKeys,
     miss: u32,
 }
 
+enum GroupKeys {
+    Direct { minimum: i128, groups: Vec<u32> },
+    Sparse(SparseKeyTable),
+}
+
 impl UniqueKeyGroups {
-    /// Why not, unless the build finalized to a dense table and every
+    /// Why not, unless the build finalized to a flat table and every
     /// bucket holds one row: a key with several rows folds each of them,
     /// which is the row fold's job.
     pub(super) fn resolve(
@@ -60,46 +67,46 @@ impl UniqueKeyGroups {
         group_count: usize,
     ) -> Result<Self, &'static str> {
         const TOO_MANY_GROUPS: &str = "more groups than the key table addresses";
-        let (minimum, slots) = build
-            .dense_layout()
-            .ok_or("a build key that is not a dense integer range")?;
         let miss = u32::try_from(group_count)
             .ok()
             .filter(|miss| *miss < u32::MAX - 1)
             .ok_or(TOO_MANY_GROUPS)?;
+        let group_of = |bucket: usize| match dense_group_indexes.get(bucket).copied().flatten() {
+            None | Some([]) => Ok(miss),
+            Some([group]) => u32::try_from(*group)
+                .ok()
+                .filter(|g| *g < miss)
+                .ok_or(TOO_MANY_GROUPS),
+            Some(_) => Err("a build key with several rows"),
+        };
+        if let Some(table) = build.sparse_layout() {
+            return Ok(Self {
+                keys: GroupKeys::Sparse(table.remapped(group_of)?),
+                miss,
+            });
+        }
+        let (minimum, slots) = build
+            .dense_layout()
+            .ok_or("a build key that is not a packed integer column")?;
         let mut groups = Vec::with_capacity(slots.len());
         for slot in slots {
-            let group = match slot.checked_sub(1) {
+            groups.push(match slot.checked_sub(1) {
                 None => miss,
-                Some(bucket) => match dense_group_indexes.get(bucket as usize).copied().flatten() {
-                    None | Some([]) => miss,
-                    Some([group]) => u32::try_from(*group)
-                        .ok()
-                        .filter(|g| *g < miss)
-                        .ok_or(TOO_MANY_GROUPS)?,
-                    Some(_) => return Err("a build key with several rows"),
-                },
-            };
-            groups.push(group);
+                Some(bucket) => group_of(bucket as usize)?,
+            });
         }
         Ok(Self {
-            minimum,
-            groups,
+            keys: GroupKeys::Direct { minimum, groups },
             miss,
         })
     }
 
-    /// Bytes the slot array holds.
+    /// Bytes the key table holds.
     pub(super) fn bytes(&self) -> usize {
-        self.groups.len().saturating_mul(size_of::<u32>())
-    }
-
-    #[inline]
-    fn group(&self, key: i128) -> u32 {
-        usize::try_from(key.wrapping_sub(self.minimum))
-            .ok()
-            .and_then(|offset| self.groups.get(offset).copied())
-            .unwrap_or(self.miss)
+        match &self.keys {
+            GroupKeys::Direct { groups, .. } => groups.len().saturating_mul(size_of::<u32>()),
+            GroupKeys::Sparse(table) => table.bytes(),
+        }
     }
 
     /// Each value's group into `out`, NULL keys to the miss group.
@@ -109,7 +116,24 @@ impl UniqueKeyGroups {
         i128: From<T>,
     {
         out.clear();
-        out.extend(values.iter().map(|value| self.group(i128::from(*value))));
+        let miss = self.miss;
+        match &self.keys {
+            GroupKeys::Direct { minimum, groups } => {
+                out.extend(values.iter().map(|value| {
+                    usize::try_from(i128::from(*value).wrapping_sub(*minimum))
+                        .ok()
+                        .and_then(|offset| groups.get(offset).copied())
+                        .unwrap_or(miss)
+                }));
+            }
+            GroupKeys::Sparse(table) => {
+                out.extend(values.iter().map(|value| {
+                    table
+                        .find(i128::from(*value))
+                        .map_or(miss, |group| u32::try_from(group).unwrap_or(miss))
+                }));
+            }
+        }
         if let Some(valid) = valid {
             for (group, valid) in out.iter_mut().zip(valid) {
                 if !valid {

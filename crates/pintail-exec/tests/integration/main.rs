@@ -117,6 +117,7 @@ mod side_index;
 mod side_index_text;
 mod small_group_handover;
 mod sort_determinism;
+mod sparse_join_keys;
 mod spatial_parity;
 mod star_join_fold;
 mod statement_warnings;

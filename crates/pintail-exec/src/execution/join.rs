@@ -14,6 +14,7 @@ use crate::collation::Collation;
 
 use rayon::prelude::*;
 
+use super::sparse_keys::SparseKeyTable;
 use super::{
     ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, KeyForm, MemoryTracker, PullOperator,
     ScanProvider, WorkerWarnings, batch_row, compare_sort_values, estimated_batch_row_bytes,
@@ -52,7 +53,8 @@ pub(super) const BUILD_PARTITIONS: usize = 64;
 pub(super) struct PartitionedBuild<R = BuildRow> {
     partitions: Vec<JoinKeyMap<Vec<R>>>,
     /// Set once, after every build row was inserted, when the keys are a
-    /// plain integer set spanning fewer than [`MAX_DENSE_SPAN`] values.
+    /// plain integer set spanning fewer than [`MAX_DENSE_SPAN`] values - or,
+    /// built straight from a packed integer key column, any integer set.
     /// `get` and the other read accessors consult this first, trading a
     /// probe row's hash-and-compare for one bounds-checked array index.
     /// `partitions` is left as an emptied skeleton rather than cleared away,
@@ -71,13 +73,20 @@ pub(super) struct PartitionedBuild<R = BuildRow> {
 /// A dense build's buckets, laid out flat: no allocation per key, and a
 /// probe's lookup is an index into `slots` and a slice of `rows`.
 struct DenseTable<R> {
-    minimum: i128,
-    /// Per key offset from `minimum`: one more than the index of the bucket
-    /// that key names, or zero where no key falls.
-    slots: Vec<u32>,
+    keys: FlatKeys,
     /// Bucket `b` holds `rows[starts[b]..starts[b + 1]]`.
     starts: Vec<usize>,
     rows: Vec<R>,
+}
+
+/// How a flat table finds a key's bucket.
+enum FlatKeys {
+    /// Keys in a narrow range, addressed by their offset from `minimum`:
+    /// `slots` holds one more than the index of the bucket each offset
+    /// names, or zero where no key falls.
+    Direct { minimum: i128, slots: Vec<u32> },
+    /// Keys spread too widely for that, hashed.
+    Sparse(SparseKeyTable),
 }
 
 impl<R> DenseTable<R> {
@@ -91,9 +100,20 @@ impl<R> DenseTable<R> {
 
     /// The index of the bucket `key` names, if any.
     fn index(&self, key: &JoinHashKey) -> Option<usize> {
-        let offset = usize::try_from(integer_key(key)?.checked_sub(self.minimum)?).ok()?;
-        let slot = *self.slots.get(offset)?;
-        (slot != 0).then(|| slot as usize - 1)
+        self.find(integer_key(key)?)
+    }
+
+    /// The index of the bucket the integer `key` names, if any.
+    #[inline]
+    fn find(&self, key: i128) -> Option<usize> {
+        match &self.keys {
+            FlatKeys::Direct { minimum, slots } => {
+                let offset = usize::try_from(key.checked_sub(*minimum)?).ok()?;
+                let slot = *slots.get(offset)?;
+                (slot != 0).then(|| slot as usize - 1)
+            }
+            FlatKeys::Sparse(table) => table.find(key),
+        }
     }
 }
 
@@ -108,7 +128,7 @@ fn integer_key(key: &JoinHashKey) -> Option<i128> {
 
 /// A resident build row: its batch among the build's kept batches, and its
 /// row in that batch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct BuildRow {
     batch: u32,
     row: u32,
@@ -208,9 +228,28 @@ impl<R> PartitionedBuild<R> {
     /// the index of the bucket that key names - zero where none does - once
     /// [`Self::is_dense`].
     pub(super) fn dense_layout(&self) -> Option<(i128, &[u32])> {
-        self.dense
-            .as_ref()
-            .map(|dense| (dense.minimum, dense.slots.as_slice()))
+        match &self.dense.as_ref()?.keys {
+            FlatKeys::Direct { minimum, slots } => Some((*minimum, slots.as_slice())),
+            FlatKeys::Sparse(_) => None,
+        }
+    }
+
+    /// The hashed key table of a flat build whose keys are too widely
+    /// spread to address directly; its entries are bucket indexes.
+    pub(super) fn sparse_layout(&self) -> Option<&SparseKeyTable> {
+        match &self.dense.as_ref()?.keys {
+            FlatKeys::Direct { .. } => None,
+            FlatKeys::Sparse(table) => Some(table),
+        }
+    }
+
+    /// The bucket the integer `key` names in a flat build, with its index
+    /// as [`Self::dense_get`] gives it.
+    #[inline]
+    pub(super) fn flat_find(&self, key: i128) -> Option<(usize, &[R])> {
+        let dense = self.dense.as_ref()?;
+        let index = dense.find(key)?;
+        Some((index, dense.bucket(index)))
     }
 
     pub(super) const fn is_dense(&self) -> bool {
@@ -241,9 +280,12 @@ impl<R> PartitionedBuild<R> {
         }
         let span = usize::try_from(max - min).expect("bounded span") + 1;
         let buckets = self.len();
+        let mut slots = vec![0_u32; span];
         let mut table = DenseTable {
-            minimum: min,
-            slots: vec![0; span],
+            keys: FlatKeys::Direct {
+                minimum: min,
+                slots: Vec::new(),
+            },
             starts: Vec::with_capacity(buckets + 1),
             rows: Vec::with_capacity(self.values().map(<[R]>::len).sum()),
         };
@@ -252,12 +294,15 @@ impl<R> PartitionedBuild<R> {
                 let value = integer_key(&key).expect("verified integer keys above");
                 let offset = usize::try_from(value - min).expect("within span");
                 table.starts.push(table.rows.len());
-                table.slots[offset] =
-                    u32::try_from(table.starts.len()).expect("a dense span fits u32");
+                slots[offset] = u32::try_from(table.starts.len()).expect("a dense span fits u32");
                 table.rows.extend(bucket);
             }
         }
         table.starts.push(table.rows.len());
+        table.keys = FlatKeys::Direct {
+            minimum: min,
+            slots,
+        };
         self.dense = Some(table);
     }
 
@@ -914,6 +959,29 @@ pub(super) struct HashJoinState {
 }
 
 impl HashJoinState {
+    /// A finished resident build holding `held` bytes, about to be probed.
+    fn resident(build: PartitionedBuild, key_bounds: (Value, Value), held: usize) -> Self {
+        Self {
+            build,
+            grace: None,
+            key_bounds: Some(key_bounds),
+            batch: None,
+            batch_reserved: 0,
+            batch_row_bytes: 0,
+            row: 0,
+            match_index: 0,
+            left_values: None,
+            left_key: None,
+            left_reserved: 0,
+            prefetched: VecDeque::new(),
+            ready: VecDeque::new(),
+            probe_batches: 0,
+            probe_done: false,
+            filter_reserved: 0,
+            build_reserved: held,
+        }
+    }
+
     /// Whether the build side outgrew the ceiling and moved to grace
     /// partitions. `build` is drained when that happens, so anything reading
     /// it directly has to ask first.
@@ -1162,9 +1230,12 @@ enum DenseBuild {
 /// laid out once by counting: rows of one key stay in the order they were
 /// read, as the general build keeps them.
 ///
+/// Keys spread past [`MAX_DENSE_SPAN`] - ids with long gaps, ids minted
+/// from a clock - take the same flat list into a hash table of integers
+/// instead, with the same rows-by-bucket layout behind it.
+///
 /// Optimistic: anything this path does not handle - a key that is not a
-/// plain integer column, a span past [`MAX_DENSE_SPAN`], a ceiling that
-/// refuses a reservation - declines, handing every batch it read to the
+/// plain integer column, a ceiling that refuses a reservation - declines, handing every batch it read to the
 /// general build, which starts over from them and spills where it must.
 #[allow(clippy::too_many_lines)]
 fn build_dense_directly(
@@ -1260,17 +1331,74 @@ fn build_dense_directly(
             });
         }
         batches.push(batch);
-        // Past the span a dense table takes, or past the share of the
-        // ceiling a resident build keeps before it spills: the general
-        // build knows what to do with both.
-        if (!keys.is_empty() && maximum - minimum >= MAX_DENSE_SPAN)
-            || batch_bytes.saturating_add(flat_bytes) > memory.limit() / 2
-        {
+        // Past the share of the ceiling a resident build keeps before it
+        // spills: the general build knows what to do with that.
+        if batch_bytes.saturating_add(flat_bytes) > memory.limit() / 2 {
             return declined(batches, batch_bytes + flat_bytes);
         }
     }
     if keys.is_empty() {
         return declined(batches, batch_bytes + flat_bytes);
+    }
+    let bound = |value: i128| {
+        if signed == Some(true) {
+            Value::Int64(i64::try_from(value).expect("read from an i64 column"))
+        } else {
+            Value::UInt64(u64::try_from(value).expect("read from a u64 column"))
+        }
+    };
+    if maximum - minimum >= MAX_DENSE_SPAN {
+        // Keys too widely spread to address by offset are hashed into one
+        // flat table instead, laid out a region per worker. What the
+        // layout holds while it is built - the keys and rows gathered by
+        // region, each row's entry - is charged with what it leaves.
+        let working = keys
+            .len()
+            .saturating_mul(size_of::<u64>() + 2 * size_of::<BuildRow>() + 2 * size_of::<usize>());
+        let table_bytes = SparseKeyTable::bytes_for(keys.len()).saturating_add(
+            keys.len()
+                .saturating_mul(size_of::<usize>() + size_of::<BuildRow>()),
+        );
+        match memory.reserve(table_bytes.saturating_add(working)) {
+            Ok(()) => {}
+            Err(ExecError::MemoryLimitExceeded { .. }) => {
+                return declined(batches, batch_bytes + flat_bytes);
+            }
+            Err(error) => return Err(error),
+        }
+        let layout = SparseKeyTable::lay_out(&keys, &rows, signed == Some(true));
+        drop(keys);
+        drop(rows);
+        memory.release(flat_bytes.saturating_add(working));
+        let Some(layout) = layout else {
+            return declined(batches, batch_bytes.saturating_add(table_bytes));
+        };
+        // The table was charged at its largest; it holds what it holds.
+        let laid_out = layout
+            .table
+            .bytes()
+            .saturating_add(layout.starts.len().saturating_mul(size_of::<usize>()))
+            .saturating_add(layout.rows.len().saturating_mul(size_of::<BuildRow>()))
+            .min(table_bytes);
+        memory.release(table_bytes - laid_out);
+        let held = batch_bytes.saturating_add(laid_out);
+        match memory.ensure_transient(probe_floor.max(held)) {
+            Ok(()) => {}
+            Err(ExecError::MemoryLimitExceeded { .. }) => return declined(batches, held),
+            Err(error) => return Err(error),
+        }
+        let mut build = PartitionedBuild::with_partitions(BUILD_PARTITIONS);
+        build.batches = batches;
+        build.dense = Some(DenseTable {
+            keys: FlatKeys::Sparse(layout.table),
+            starts: layout.starts,
+            rows: layout.rows,
+        });
+        return Ok(DenseBuild::Built(Box::new(HashJoinState::resident(
+            build,
+            (bound(minimum), bound(maximum)),
+            held,
+        ))));
     }
     let span = usize::try_from(maximum - minimum).expect("bounded span") + 1;
     let mut slots = vec![0_u32; span];
@@ -1325,40 +1453,18 @@ fn build_dense_directly(
         Err(ExecError::MemoryLimitExceeded { .. }) => return declined(batches, held),
         Err(error) => return Err(error),
     }
-    let bound = |value: i128| {
-        if signed == Some(true) {
-            Value::Int64(i64::try_from(value).expect("read from an i64 column"))
-        } else {
-            Value::UInt64(u64::try_from(value).expect("read from a u64 column"))
-        }
-    };
     let mut build = PartitionedBuild::with_partitions(BUILD_PARTITIONS);
     build.batches = batches;
     build.dense = Some(DenseTable {
-        minimum,
-        slots,
+        keys: FlatKeys::Direct { minimum, slots },
         starts,
         rows: placed,
     });
-    Ok(DenseBuild::Built(Box::new(HashJoinState {
+    Ok(DenseBuild::Built(Box::new(HashJoinState::resident(
         build,
-        grace: None,
-        key_bounds: Some((bound(minimum), bound(maximum))),
-        batch: None,
-        batch_reserved: 0,
-        batch_row_bytes: 0,
-        row: 0,
-        match_index: 0,
-        left_values: None,
-        left_key: None,
-        left_reserved: 0,
-        prefetched: VecDeque::new(),
-        ready: VecDeque::new(),
-        probe_batches: 0,
-        probe_done: false,
-        filter_reserved: 0,
-        build_reserved: held,
-    })))
+        (bound(minimum), bound(maximum)),
+        held,
+    ))))
 }
 
 /// A packed integer key column.
@@ -2998,6 +3104,53 @@ impl Probe<'_> {
             None => Ok(None),
         }
     }
+
+    /// `batch`'s key column as packed integers, when the build is a flat
+    /// integer table and the key is one such column: a probe row's bucket
+    /// is then found from the integer itself, without a `Value` and a
+    /// tagged key per row. A NULL key finds nothing either way - under a
+    /// null-safe comparison too, since a flat table holds no NULL key.
+    fn flat_keys<'batch>(
+        &self,
+        build: &PartitionedBuild,
+        batch: &'batch RecordBatch,
+    ) -> Option<(Keys<'batch>, &'batch crate::array::ValidityMask)> {
+        if !build.is_dense()
+            || !self.extra_keys.is_empty()
+            || !matches!(self.key_mode.form, KeyForm::Integer)
+        {
+            return None;
+        }
+        match batch.column(self.left_key.column_index()?)?.typed()? {
+            (crate::batch::TypedValues::Int64(values), validity) => {
+                Some((Keys::Signed(values), validity))
+            }
+            (crate::batch::TypedValues::UInt64(values), validity) => {
+                Some((Keys::Unsigned(values), validity))
+            }
+            _ => None,
+        }
+    }
+
+    /// The build rows probe row `row` matches.
+    #[inline]
+    fn matches<'build>(
+        &self,
+        build: &'build PartitionedBuild,
+        flat: Option<&(Keys<'_>, &crate::array::ValidityMask)>,
+        batch: &RecordBatch,
+        row: usize,
+    ) -> Result<Option<&'build [BuildRow]>, ExecError> {
+        if let Some((keys, validity)) = flat {
+            return Ok(if validity.is_valid(row) {
+                build.flat_find(keys.get(row)).map(|(_, rows)| rows)
+            } else {
+                None
+            });
+        }
+        let key = self.key(batch, row)?;
+        Ok(key.as_ref().and_then(|key| build.get(key)))
+    }
 }
 
 /// The next probe batch the join reads: one read ahead of the build first,
@@ -3238,6 +3391,7 @@ fn probe_columns_chunk(
     memory: &MemoryTracker,
 ) -> Result<Option<RecordBatch>, ExecError> {
     let kind = probe.kind;
+    let flat = probe.flat_keys(build, batch);
     loop {
         if *row >= batch.row_count() {
             return Ok(None);
@@ -3254,8 +3408,7 @@ fn probe_columns_chunk(
                 *row += 1;
                 continue;
             }
-            let key = probe.key(batch, current)?;
-            let matches = key.as_ref().and_then(|key| build.get(key));
+            let matches = probe.matches(build, flat.as_ref(), batch, current)?;
             let probe_row = probe_row_index(current)?;
             let room = SPILL_SERVE_BATCH_ROWS - picks.probe_rows.len();
             match (kind, matches) {
@@ -3358,6 +3511,7 @@ fn probe_residual_chunk(
 ) -> Result<Option<RecordBatch>, ExecError> {
     let residual = &reads.expr;
     let left_width = reads.layout_width.saturating_sub(probe.right_width);
+    let flat = probe.flat_keys(build, batch);
     loop {
         if *row >= batch.row_count() {
             return Ok(None);
@@ -3371,8 +3525,7 @@ fn probe_residual_chunk(
                 *row += 1;
                 continue;
             }
-            let key = probe.key(batch, current)?;
-            let bucket = key.as_ref().and_then(|key| build.get(key));
+            let bucket = probe.matches(build, flat.as_ref(), batch, current)?;
             let size = bucket.map_or(0, <[BuildRow]>::len);
             // A probe row keeps its bucket whole; a chunk holds at least one.
             if !groups.is_empty()

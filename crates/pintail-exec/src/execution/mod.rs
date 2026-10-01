@@ -21,6 +21,7 @@ mod packed_group;
 mod points;
 mod small_group_fold;
 mod sort;
+mod sparse_keys;
 mod two_pass;
 mod ungrouped_fold;
 mod watchdog;

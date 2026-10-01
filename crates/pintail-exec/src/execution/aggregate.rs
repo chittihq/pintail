@@ -26,9 +26,8 @@ use super::fused_join_fold::{
     plan_lanes,
 };
 use super::join::{
-    BuildRow, JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
-    normalized_group_hash_key, normalized_group_value, normalized_hash_key, normalized_join_key,
-    resolve_join_group_plan,
+    BuildRow, JoinGroupPlan, PartitionedBuild, build_hash_join_state, normalized_group_hash_key,
+    normalized_group_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
 };
 use super::morsel::{Morsel, default_morsel_limit, split_into_morsels, split_into_morsels_bounded};
 use super::two_pass::{
@@ -6366,22 +6365,11 @@ fn build_local_fused_join_groups(
         let found = if let Some((typed, validity)) = left_typed {
             if validity.is_valid(row) {
                 let key = match typed {
-                    crate::batch::TypedValues::Int64(values) => {
-                        let candidate = values[row];
-                        if candidate < 0 {
-                            JoinHashKey::NegativeInteger(candidate)
-                        } else {
-                            JoinHashKey::NonNegativeInteger(
-                                u64::try_from(candidate).expect("non-negative i64 fits u64"),
-                            )
-                        }
-                    }
-                    crate::batch::TypedValues::UInt64(values) => {
-                        JoinHashKey::NonNegativeInteger(values[row])
-                    }
+                    crate::batch::TypedValues::Int64(values) => i128::from(values[row]),
+                    crate::batch::TypedValues::UInt64(values) => i128::from(values[row]),
                     _ => unreachable!("filtered to integer projections"),
                 };
-                build.dense_get(&key).and_then(|(flat_index, matches)| {
+                build.flat_find(key).and_then(|(flat_index, matches)| {
                     dense_group_indexes[flat_index].map(|indexes| (matches, indexes))
                 })
             } else {
