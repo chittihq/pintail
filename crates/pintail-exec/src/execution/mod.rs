@@ -4459,6 +4459,32 @@ impl PullOperator {
                         return;
                     }
                 }
+                // A window passes its input rows through and adds columns.
+                // When every window partitions by the key column, compared
+                // as the key compares, the rows of one partition are kept
+                // or dropped together, so the partitions left are numbered
+                // and folded exactly as before - and the window is computed
+                // over the rows that can match rather than over the table.
+                Self::Window {
+                    input,
+                    windows,
+                    collation,
+                    column_types,
+                    state: None,
+                } if position < column_types.len().saturating_sub(windows.len())
+                    && !windows.is_empty()
+                    && windows
+                        .iter()
+                        .all(|window| window.partitions_by_column(position))
+                    && match key_mode.form {
+                        KeyForm::Integer => true,
+                        KeyForm::CollatedText(key_collation) => key_collation == *collation,
+                        _ => false,
+                    } =>
+                {
+                    input.restrict_build_keys(key, key_mode, keys);
+                    return;
+                }
                 // Distinct keeps or drops each row whole, so a key column
                 // filtered beneath it drops the same rows; integer keys only,
                 // for the reason the grouped case gives.

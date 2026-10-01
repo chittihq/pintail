@@ -152,6 +152,14 @@ impl CompiledWindow {
         })
     }
 
+    /// Whether the input column at `position` is one of this window's
+    /// partition keys, as the column itself.
+    pub(super) fn partitions_by_column(&self, position: usize) -> bool {
+        self.partition
+            .iter()
+            .any(|expr| expr.column_index() == Some(position))
+    }
+
     /// The expressions each row's keys hold, in the order
     /// [`compute_window_column`] reads them: partition, order, then the
     /// function's arguments.
