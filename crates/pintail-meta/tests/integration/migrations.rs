@@ -608,3 +608,35 @@ fn a_change_skipped_as_a_table_resumed_quarantines_it() {
             .contains("orders")
     );
 }
+
+/// A fresh file opened by many connections at once: every opener saw the
+/// file behind and ran the same migrations, so all but the first failed on
+/// columns the first had already added or on a write lock they could not
+/// wait for - the request in a server's first second that answered "failed
+/// to apply metadata migration".
+#[test]
+fn a_fresh_file_opened_by_many_connections_at_once_migrates_once() {
+    for round in 0..24 {
+        let directory = tempfile::tempdir().expect("metadata directory");
+        let path = directory.path().join("pintail-meta.db");
+        let start = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            let openers = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        pintail_meta::MetaStore::open(&path)
+                            .and_then(|store| store.schema_version())
+                    })
+                })
+                .collect::<Vec<_>>();
+            let newest = 23;
+            for opener in openers {
+                match opener.join().expect("opener thread") {
+                    Ok(version) => assert_eq!(version, newest, "round {round}"),
+                    Err(error) => panic!("round {round}: concurrent open failed: {error:#}"),
+                }
+            }
+        });
+    }
+}

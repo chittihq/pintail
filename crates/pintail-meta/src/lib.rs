@@ -3,7 +3,12 @@
 //! This crate stores configuration and replication metadata only. Analytical
 //! row data belongs exclusively to `pintail-store`.
 
-use std::{collections::BTreeSet, path::Path, time::Duration};
+use std::{
+    collections::BTreeSet,
+    path::Path,
+    sync::{Mutex, PoisonError},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Transaction, types::ValueRef};
@@ -174,6 +179,9 @@ impl StoredSetting {
     }
 }
 
+/// Serializes schema migration across the connections of one process.
+static MIGRATING: Mutex<()> = Mutex::new(());
+
 impl MetaStore {
     /// Opens a control-plane database and applies all pending migrations.
     ///
@@ -203,6 +211,15 @@ impl MetaStore {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .context("failed to read metadata schema version")?;
         if version < CURRENT_SCHEMA_VERSION {
+            // One opener migrates at a time. Each migration reads the
+            // version and then writes inside a transaction that starts as a
+            // reader, so two connections opening a fresh file together both
+            // saw it behind and both ran the same migration: the second
+            // failed on the first one's columns or on a write lock it could
+            // not wait for, and whichever request held that connection
+            // failed with it. The version is read again under the lock, so
+            // the opener that waited finds the work done.
+            let _migrating = MIGRATING.lock().unwrap_or_else(PoisonError::into_inner);
             connection
                 .pragma_update(None, "journal_mode", "WAL")
                 .context("failed to enable SQLite WAL mode")?;
