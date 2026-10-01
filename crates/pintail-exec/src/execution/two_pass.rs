@@ -349,10 +349,6 @@ pub(super) enum TwoPassKeySource {
     /// One string column: key bits are interned string ids (bit 7 of the
     /// mask carries NULL, matching the int scheme).
     Text { column: usize },
-    /// Two string columns: `(id_a + 1) << 32 | (id_b + 1)`, with 0 as the
-    /// per-column NULL sentinel so `(NULL, x)`, `(x, NULL)` and
-    /// `(NULL, NULL)` stay distinct groups.
-    TextPair { first: usize, second: usize },
     /// Up to two DATE-PART expressions over temporal columns (the Q5
     /// shape, GROUP BY YEAR(d), MONTH(d)): each part value is bounded
     /// (year < 10^4, others < 60), so `(v + 1)` packs into 20 bits per
@@ -477,22 +473,6 @@ fn two_pass_key_values(
         } else {
             interned_key_value(intern(), bits, labels[0].as_ref(), members[0].as_ref())
         }],
-        TwoPassKeySource::TextPair { .. } => [bits >> 32, bits & 0xFFFF_FFFF]
-            .into_iter()
-            .enumerate()
-            .map(|(slot, id)| {
-                if id == 0 {
-                    Value::Null
-                } else {
-                    interned_key_value(
-                        intern(),
-                        id - 1,
-                        labels[slot].as_ref(),
-                        members[slot].as_ref(),
-                    )
-                }
-            })
-            .collect(),
         TwoPassKeySource::DateParts { parts } => {
             let count = parts.iter().flatten().count();
             (0..count)
@@ -993,7 +973,6 @@ fn fold_odd_batch(
         .collect::<Vec<_>>();
     let text_columns: &[usize] = match &keys {
         TwoPassKeySource::Text { column } => std::slice::from_ref(column),
-        TwoPassKeySource::TextPair { first, second } => &[*first, *second],
         TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => &[],
     };
     let mut readers = Vec::with_capacity(text_columns.len());
@@ -1023,21 +1002,18 @@ fn fold_odd_batch(
                 };
                 bits.ok_or_else(|| vec![value])
             }
-            TwoPassKeySource::Text { .. } | TwoPassKeySource::TextPair { .. } => {
+            TwoPassKeySource::Text { .. } => {
                 let intern = intern
                     .as_deref_mut()
                     .ok_or(ExecError::InvalidBatch("text keys carry an intern table"))?;
-                let pair = readers.len() == 2;
                 let mut bits = 0_u64;
                 let mut null = false;
                 for (reader, validity) in &readers {
-                    let id = if validity.is_valid(row) {
-                        reader.read(row, intern, memory)? + u64::from(pair)
+                    if validity.is_valid(row) {
+                        bits = reader.read(row, intern, memory)?;
                     } else {
-                        null = !pair;
-                        0
-                    };
-                    bits = if pair { (bits << 32) | id } else { id };
+                        null = true;
+                    }
                 }
                 Ok((bits, null))
             }
@@ -1215,11 +1191,7 @@ fn streaming_two_pass(
     let mut group_reserved = 0_usize;
     let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
     let mut flushes = 0_u32;
-    let mut intern = matches!(
-        keys,
-        TwoPassKeySource::Text { .. } | TwoPassKeySource::TextPair { .. }
-    )
-    .then(|| StringIntern {
+    let mut intern = matches!(keys, TwoPassKeySource::Text { .. }).then(|| StringIntern {
         index: HashMap::new(),
         values: Vec::new(),
         reserved: 0,
@@ -1258,7 +1230,6 @@ fn streaming_two_pass(
     let mut key_set_members: [Option<std::sync::Arc<Vec<String>>>; 2] = [None, None];
     let key_columns: [Option<usize>; 2] = match keys {
         TwoPassKeySource::Text { column } => [Some(column), None],
-        TwoPassKeySource::TextPair { first, second } => [Some(first), Some(second)],
         TwoPassKeySource::Int { .. } | TwoPassKeySource::DateParts { .. } => [None, None],
     };
     let mut odd = OddGroups::new();
@@ -1384,9 +1355,6 @@ fn streaming_two_pass(
         let prepared = match (keys, &mut intern) {
             (TwoPassKeySource::Text { column }, Some(intern)) => {
                 prepare_text_translations(&current, &[column], intern, memory)?
-            }
-            (TwoPassKeySource::TextPair { first, second }, Some(intern)) => {
-                prepare_text_translations(&current, &[first, second], intern, memory)?
             }
             _ => Some(Vec::new()),
         };
@@ -1615,18 +1583,6 @@ fn streaming_two_pass(
                 intern,
                 memory,
             )?,
-            (TwoPassKeySource::TextPair { first, second }, Some(intern)) => {
-                two_pass_scatter_string_pair(
-                    &current,
-                    first,
-                    second,
-                    lanes,
-                    partitions,
-                    &mut buckets,
-                    intern,
-                    memory,
-                )?;
-            }
             (TwoPassKeySource::Int { column, .. }, _) => {
                 two_pass_scatter_batch(
                     &Morsel::whole(&current),
@@ -2220,60 +2176,21 @@ fn two_pass_scatter_text_prepared(
         };
         readers.push((codes, validity, translation));
     }
-    let pair = readers.len() == 2;
     let values = lane_readers(batch, lanes);
     for row in morsel.selected_rows() {
         let mut key_bits = 0_u64;
         let mut key_null = false;
         for (codes, validity, translation) in &readers {
-            let id = if validity.is_valid(row) {
+            if validity.is_valid(row) {
                 let code = usize::try_from(codes[row]).expect("dict code fits usize");
-                let interned = *translation
+                key_bits = *translation
                     .get(code)
                     .ok_or(ExecError::InvalidBatch("dictionary code is out of bounds"))?;
-                if pair { interned + 1 } else { interned }
             } else {
-                if !pair {
-                    key_null = true;
-                }
-                0
-            };
-            key_bits = if pair { (key_bits << 32) | id } else { id };
+                key_null = true;
+            }
         }
         scatter_two_pass_row(&values, row, key_bits, key_null, partitions, buckets);
-    }
-    Ok(())
-}
-
-/// Two string group columns: ids pack as `(a+1) << 32 | (b+1)` with 0 as
-/// the per-column NULL sentinel (mask bit 7 stays clear).
-#[allow(clippy::too_many_arguments)]
-fn two_pass_scatter_string_pair(
-    batch: &RecordBatch,
-    first: usize,
-    second: usize,
-    lanes: &[TwoPassLane],
-    partitions: usize,
-    buckets: &mut [TwoPassBucket],
-    intern: &mut StringIntern,
-    memory: &MemoryTracker,
-) -> Result<(), ExecError> {
-    let (first_reader, first_validity) = string_key_reader(batch, first, intern, memory)?;
-    let (second_reader, second_validity) = string_key_reader(batch, second, intern, memory)?;
-    let readers = lane_readers(batch, lanes);
-    for row in batch.selection().selected_rows() {
-        let first_id = if first_validity.is_valid(row) {
-            first_reader.read(row, intern, memory)? + 1
-        } else {
-            0
-        };
-        let second_id = if second_validity.is_valid(row) {
-            second_reader.read(row, intern, memory)? + 1
-        } else {
-            0
-        };
-        let key_bits = (first_id << 32) | second_id;
-        scatter_two_pass_row(&readers, row, key_bits, false, partitions, buckets);
     }
     Ok(())
 }
@@ -2731,16 +2648,6 @@ fn drain_two_pass_window(
                         two_pass_scatter_text_prepared(
                             morsel,
                             &[column],
-                            translations,
-                            lanes,
-                            partitions,
-                            &mut buckets,
-                        )?;
-                    }
-                    TwoPassKeySource::TextPair { first, second } => {
-                        two_pass_scatter_text_prepared(
-                            morsel,
-                            &[first, second],
                             translations,
                             lanes,
                             partitions,
@@ -4069,12 +3976,9 @@ fn dense_reservation(keys: TwoPassKeySource, slots: usize, lanes: usize) -> usiz
 
 /// Single text column: intern ids 0..=1023 map to slots 1..=1024.
 const DENSE_TEXT_CAP: usize = 1024;
-/// Text pair: side ids are (intern id + 1) with 0 as NULL, kept < 65.
-const DENSE_PAIR_SIDE: usize = 65;
 
 fn dense_slot_count(keys: TwoPassKeySource) -> Option<usize> {
     match keys {
-        TwoPassKeySource::TextPair { .. } => Some(DENSE_PAIR_SIDE * DENSE_PAIR_SIDE),
         TwoPassKeySource::DateParts { parts } => dense_date_slot_count(parts),
         TwoPassKeySource::Text { .. }
         | TwoPassKeySource::Int {
@@ -4090,7 +3994,6 @@ fn dense_slot_count(keys: TwoPassKeySource) -> Option<usize> {
 fn dense_in_bounds(keys: TwoPassKeySource, intern_len: usize) -> bool {
     match keys {
         TwoPassKeySource::Text { .. } => intern_len <= DENSE_TEXT_CAP,
-        TwoPassKeySource::TextPair { .. } => intern_len + 1 < DENSE_PAIR_SIDE,
         // Date-part domains are checked per row instead: the table covers a
         // bounded window of years and the fold abandons it when a value
         // falls outside, which no table-wide check can predict.
@@ -4106,11 +4009,6 @@ fn dense_slot_index(keys: TwoPassKeySource, key_bits: u64, key_null: bool) -> us
             } else {
                 usize::try_from(key_bits).expect("intern id fits usize") + 1
             }
-        }
-        TwoPassKeySource::TextPair { .. } => {
-            let first = usize::try_from(key_bits >> 32).expect("side id fits usize");
-            let second = usize::try_from(key_bits & 0xFFFF_FFFF).expect("side id fits usize");
-            first * DENSE_PAIR_SIDE + second
         }
         // The date-part fold indexes its own slots, because unlike text it
         // can fail: a year outside the table's window has no slot at all.
@@ -4130,11 +4028,6 @@ fn dense_slot_sentinel(keys: TwoPassKeySource, index: usize) -> (u64, bool) {
                     false,
                 )
             }
-        }
-        TwoPassKeySource::TextPair { .. } => {
-            let first = u64::try_from(index / DENSE_PAIR_SIDE).expect("slot index fits u64");
-            let second = u64::try_from(index % DENSE_PAIR_SIDE).expect("slot index fits u64");
-            ((first << 32) | second, false)
         }
         TwoPassKeySource::DateParts { parts } => (dense_date_key(parts, index), false),
     }
@@ -4297,24 +4190,18 @@ fn two_pass_dense_batch(
             return Ok(());
         }
     }
-    let pair = readers.len() == 2;
     for row in batch.selection().selected_rows() {
         let mut key_bits = 0_u64;
         let mut key_null = false;
         for (codes, validity, translation) in &readers {
-            let id = if validity.is_valid(row) {
+            if validity.is_valid(row) {
                 let code = usize::try_from(codes[row]).expect("dict code fits usize");
-                let interned = *translation
+                key_bits = *translation
                     .get(code)
                     .ok_or(ExecError::InvalidBatch("dictionary code is out of bounds"))?;
-                if pair { interned + 1 } else { interned }
             } else {
-                if !pair {
-                    key_null = true;
-                }
-                0
-            };
-            key_bits = if pair { (key_bits << 32) | id } else { id };
+                key_null = true;
+            }
         }
         let states = slots[dense_slot_index(keys, key_bits, key_null)]
             .get_or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
@@ -4387,8 +4274,8 @@ fn dense_packed_chunk(
     Ok(())
 }
 
-/// Each selected row's dense slot, in selection order, for an integer,
-/// text or text-pair key - the slots [`two_pass_dense_batch`] folds into.
+/// Each selected row's dense slot, in selection order, for an integer
+/// or text key - the slots [`two_pass_dense_batch`] folds into.
 /// `None` when a text key column carries no dictionary codes.
 fn dense_row_slots(
     batch: &RecordBatch,
@@ -4432,38 +4319,21 @@ fn dense_row_slots(
         };
         readers.push((codes, validity, translation));
     }
-    // A row's slot is the sum of its columns' shares: (intern id + 1) times
-    // the column's weight, and 0 for NULL - `dense_slot_index` spelled as
-    // one lookup per column. The shares are tabled per dictionary code once
-    // per batch, so the row loop is a lookup and an add; a code with no
-    // translation saturates to a slot past the table and fails below.
-    let pair_weights = [
-        u32::try_from(DENSE_PAIR_SIDE).expect("pair side fits u32"),
-        1,
-    ];
-    let weights: &[u32] = if readers.len() == 2 {
-        &pair_weights
-    } else {
-        &[1]
-    };
+    // A row's slot is its intern id + 1, and 0 for NULL - `dense_slot_index`
+    // spelled as one lookup. The slots are tabled per dictionary code once
+    // per batch, so the row loop is a lookup; a code with no translation
+    // saturates to a slot past the table and fails below.
     let tables = readers
         .iter()
-        .zip(weights)
-        .map(|((_, _, translation), weight)| {
+        .map(|(_, _, translation)| {
             translation
                 .iter()
-                .map(|id| {
-                    u32::try_from(id + 1)
-                        .ok()
-                        .and_then(|share| share.checked_mul(*weight))
-                        .unwrap_or(u32::MAX)
-                })
+                .map(|id| u32::try_from(id + 1).unwrap_or(u32::MAX))
                 .collect::<Vec<u32>>()
         })
         .collect::<Vec<_>>();
     let share = |table: &[u32], code: u32| table.get(code as usize).copied().unwrap_or(u32::MAX);
     let rows = batch.row_count();
-    let every_row = batch.visible_row_count() == rows;
     let no_nulls = readers
         .iter()
         .all(|(codes, validity, _)| validity.no_nulls() && codes.len() >= rows);
@@ -4477,14 +4347,6 @@ fn dense_row_slots(
                 slots.extend(picked.iter().map(|row| share(table, codes[*row as usize])));
             }
         },
-        ([(first, ..), (second, ..)], [first_table, second_table]) if every_row && no_nulls => {
-            slots.extend(
-                first[..rows]
-                    .iter()
-                    .zip(&second[..rows])
-                    .map(|(a, b)| share(first_table, *a).saturating_add(share(second_table, *b))),
-            );
-        }
         _ => {
             for row in batch.selection().selected_rows() {
                 let mut slot = 0_u32;
@@ -4504,7 +4366,7 @@ fn dense_row_slots(
     Ok(Some(slots))
 }
 
-/// Folds one window into the dense slots of a text or text-pair key.
+/// Folds one window into the dense slots of a text key.
 ///
 /// One partial per rayon worker (fold), merged pairwise (reduce): batches of
 /// the window aggregate in parallel with no per-row buffering and no hashing.
@@ -4522,7 +4384,6 @@ fn dense_text_window(
     let columns: &[usize] = match keys {
         TwoPassKeySource::Text { column } => &[column],
         TwoPassKeySource::Int { .. } => &[],
-        TwoPassKeySource::TextPair { first, second } => &[first, second],
         TwoPassKeySource::DateParts { .. } => unreachable!("dense slots are text or integer keyed"),
     };
     let slot_count = slots.len();

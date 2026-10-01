@@ -7126,13 +7126,14 @@ fn build_direct_column_aggregate(
                     None
                 }
             }
-            [first, second]
-                if typed_text(first)
-                    && typed_text(second)
-                    && key_collations.windows(2).all(|pair| pair[0] == pair[1]) =>
-            {
-                Some(TwoPassKeySource::TextPair { first, second })
-            }
+            // Two text keys are not folded here. A key is carried as the
+            // id of its collation class, and a class shows the first
+            // spelling met of it - right for one key, where the class is
+            // the group. With two, a group is a pair of classes, and the
+            // spellings it shows are its own first row's: `('OPEN', 'b')`
+            // after `('Open', 'A')` is a new group that reads `OPEN`, not
+            // the `Open` its class was first met as. The packed-key fold
+            // keeps each group's first spellings and takes these.
             _ => None,
         };
         // The two-pass folds partitions apart and merges them; an aggregate

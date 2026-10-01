@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2510;
+const EXPECTED_CASES: usize = 2514;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4638,6 +4638,24 @@ fn relational_edge_cases() -> Vec<OracleCase> {
         ..ordered(family, sql)
     };
     vec![
+        // Two text keys: a group shows the spellings of its own first row,
+        // not the first spelling met of each key's collation class.
+        ordered(
+            "two text keys keep each group's spelling",
+            "SELECT note, name, COUNT(*) FROM events GROUP BY note, name ORDER BY name",
+        ),
+        ordered(
+            "two text keys keep each group's spelling",
+            "SELECT DISTINCT note, name FROM events ORDER BY name",
+        ),
+        ordered(
+            "two text keys keep each group's spelling",
+            "SELECT name, note, SUM(score) FROM events WHERE note IS NOT NULL GROUP BY name, note ORDER BY name",
+        ),
+        ordered(
+            "two text keys keep each group's spelling",
+            "SELECT note, name, MIN(score), MAX(id) FROM events WHERE id > 1 GROUP BY note, name ORDER BY name",
+        ),
         ordered(
             "json missing and null interactions",
             "SELECT id, JSON_EXTRACT(meta, '$.missing'), JSON_TYPE(JSON_EXTRACT(meta, '$.missing')), JSON_LENGTH(meta, '$.missing') FROM orders ORDER BY id",

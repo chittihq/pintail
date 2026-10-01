@@ -127,6 +127,7 @@ mod temporal_predicate_rewrite;
 mod text_extreme_folds;
 mod text_grouping_scale;
 mod text_key_lookup;
+mod text_pair_first_row;
 mod text_range_predicates;
 mod timestamp_session_zone;
 mod top_k_sort;

@@ -148,11 +148,6 @@ impl PackedGroupPlan {
                 }
             }
             [_] => return Err("one key column has its own fold".to_owned()),
-            [KeyKind::Text { .. }, KeyKind::Text { .. }]
-                if text_collations.windows(2).all(|pair| pair[0] == pair[1]) =>
-            {
-                return Err("two text keys have their own fold".to_owned());
-            }
             _ => {}
         }
         if aggregates.len() > MAX_LANES {
