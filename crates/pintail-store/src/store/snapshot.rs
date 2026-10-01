@@ -1053,9 +1053,15 @@ impl TableSnapshot {
             log_unlayered_cluster(&by_age);
             return None;
         }
-        if newer_rows.saturating_mul(super::layer::LAYER_INDEX_ROW_BYTES)
-            > super::layer::layer_index_budget()
-        {
+        // A text key is held at its own length, so what the index would
+        // hold is judged by the widest key bound the newer segments name.
+        let row_bytes = newer
+            .iter()
+            .flat_map(|meta| [&meta.min_key, &meta.max_key])
+            .map(super::layer::layer_index_row_bytes)
+            .max()
+            .unwrap_or(super::layer::LAYER_INDEX_ROW_BYTES);
+        if newer_rows.saturating_mul(row_bytes) > super::layer::layer_index_budget() {
             pintail_log::log_debug!(
                 "store scan merges a cluster row by row: the key index of its {newer_rows} newer rows would pass its budget"
             );

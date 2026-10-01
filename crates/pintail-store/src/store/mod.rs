@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod key_shape_tests;
 mod layer;
 #[cfg(test)]
 mod layer_tests;

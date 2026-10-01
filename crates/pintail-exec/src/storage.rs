@@ -585,7 +585,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 [key_id] => scan.projected_column_ids.iter().position(|id| id == key_id),
                 _ => None,
             };
-            // An integer key (of one column or several) lets a segment the
+            // A key of integer, text or binary columns lets a segment the
             // memtable overlaps be decoded directly with the superseded rows
             // masked by those columns, instead of merged row by row.
             stream.enable_memtable_overlay(&scan.table.key_column_ids);

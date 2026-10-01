@@ -12,7 +12,9 @@ use std::{
 use pintail_types::{PrimaryKey, StoredRow};
 use rayon::prelude::*;
 
-use super::layer::{Cell, LayerRows, LiveCells, SpanKey, SpanRow, image_cell, push_key_parts};
+use super::layer::{
+    Cell, KeyList, KeyPartRef, KeyRef, LayerRows, LiveCells, SpanKey, SpanRow, image_cell,
+};
 use super::{TableSnapshot, projected_scan_pool};
 use crate::{StoreError, segment, segment::ColumnDecode};
 
@@ -293,6 +295,22 @@ fn integer_at(column: &DecodedColumn, row: usize) -> Option<i128> {
             pintail_types::Value::UInt64(value) => Some(i128::from(*value)),
             _ => None,
         },
+        _ => None,
+    }
+}
+
+/// The key part at `row` of a decoded key column: an integer, or the bytes
+/// of a text or binary value, which are the bytes its key part holds.
+fn key_part_at(column: &DecodedColumn, row: usize) -> Option<KeyPartRef<'_>> {
+    if let Some(value) = integer_at(column, row) {
+        return Some(KeyPartRef::Int(value));
+    }
+    match column.cell(row) {
+        Cell::Text(bytes) => Some(KeyPartRef::Text(bytes)),
+        Cell::Value(
+            pintail_types::Value::Utf8(text) | pintail_types::Value::Enum { label: text, .. },
+        ) => Some(KeyPartRef::Text(text.as_bytes())),
+        Cell::Value(pintail_types::Value::Binary(bytes)) => Some(KeyPartRef::Binary(bytes)),
         _ => None,
     }
 }
@@ -672,32 +690,37 @@ fn interleave_values(
     out
 }
 
-/// The memtable rows of one slice's key span, in key order: every key's
-/// integer parts side by side in one allocation (`parts` per row) and, for a
-/// live row, the row itself (a tombstone carries `None`: it only masks).
-///
-/// A key vector per row made a span of a hundred thousand changed rows a
-/// hundred thousand allocations before the first comparison.
+/// The memtable rows of one slice's key span, in key order: every key side
+/// by side in one allocation and, for a live row, the row itself (a
+/// tombstone carries `None`: it only masks).
 pub(super) struct SpanRows<'a> {
-    parts: usize,
-    keys: Vec<i128>,
+    keys: KeyList,
     rows: Vec<SpanRow<'a>>,
 }
 
 impl<'a> SpanRows<'a> {
-    fn new(parts: usize) -> Self {
+    fn new() -> Self {
         Self {
-            parts: parts.max(1),
-            keys: Vec::new(),
+            keys: KeyList::default(),
             rows: Vec::new(),
         }
     }
 
     #[cfg(test)]
     fn from_rows(rows: &[(Vec<i128>, Option<&'a StoredRow>)]) -> Self {
-        let mut span = Self::new(rows.first().map_or(1, |(key, _)| key.len()));
+        let mut span = Self::new();
         for (key, row) in rows {
-            span.keys.extend_from_slice(key);
+            span.keys.push_ref(KeyRef::Ints(key));
+            span.rows.push(row.map_or(SpanRow::Mask, SpanRow::Row));
+        }
+        span
+    }
+
+    #[cfg(test)]
+    fn from_keys(rows: &[(PrimaryKey, Option<&'a StoredRow>)]) -> Self {
+        let mut span = Self::new();
+        for (key, row) in rows {
+            span.keys.push(key);
             span.rows.push(row.map_or(SpanRow::Mask, SpanRow::Row));
         }
         span
@@ -711,8 +734,8 @@ impl<'a> SpanRows<'a> {
         self.rows.is_empty()
     }
 
-    fn key(&self, index: usize) -> &[i128] {
-        &self.keys[index * self.parts..(index + 1) * self.parts]
+    fn key(&self, index: usize) -> KeyRef<'_> {
+        self.keys.get(index)
     }
 
     fn is_live(&self, index: usize) -> bool {
@@ -728,16 +751,21 @@ impl<'a> SpanRows<'a> {
     }
 }
 
-/// The integer key of `row` compared with a memtable key, part by part.
-fn compare_row_key(key_columns: &[&DecodedColumn], row: usize, key: &[i128]) -> std::cmp::Ordering {
-    for (column, part) in key_columns.iter().zip(key) {
-        match integer_at(column, row) {
-            Some(value) => match value.cmp(part) {
+/// The key of `row` compared with a memtable key, part by part: integers
+/// by value, text and binary by their bytes, as the table's keys order.
+fn compare_row_key(
+    key_columns: &[&DecodedColumn],
+    row: usize,
+    key: KeyRef<'_>,
+) -> std::cmp::Ordering {
+    for (column, part) in key_columns.iter().zip(key.parts()) {
+        match key_part_at(column, row) {
+            Some(value) => match value.cmp(&part) {
                 std::cmp::Ordering::Equal => {}
                 other => return other,
             },
-            // A key column that does not decode as an integer cannot match
-            // any memtable key; order it first so the walk moves on.
+            // A key column with no key part to read here cannot match any
+            // memtable key; order it first so the walk moves on.
             None => return std::cmp::Ordering::Less,
         }
     }
@@ -816,7 +844,7 @@ fn searched_overlay_positions(
             .is_some_and(|range| range.start <= row && row < range.end)
     };
     // Where a key sits in the segment, or where it would be inserted.
-    let search = |key: &[i128]| -> Result<usize, usize> {
+    let search = |key: KeyRef<'_>| -> Result<usize, usize> {
         let mut low = 0_usize;
         let mut high = row_count;
         while low < high {
@@ -889,16 +917,16 @@ fn overlay_positions(
     // A single key column that decoded packed is compared straight from its
     // values: asking each row which shape its column has costs more than the
     // comparison it leads to.
-    if let ([column], 1) = (key_columns, memtable.parts) {
+    if let ([column], Some(keys)) = (key_columns, memtable.keys.single_integers()) {
         match column {
             DecodedColumn::UInt64 { values, .. } if values.len() >= row_count => {
                 return walked_overlay_positions(row_count, kept, memtable, |row, next| {
-                    i128::from(values[row]).cmp(&memtable.keys[next])
+                    i128::from(values[row]).cmp(&keys[next])
                 });
             }
             DecodedColumn::Int64 { values, .. } if values.len() >= row_count => {
                 return walked_overlay_positions(row_count, kept, memtable, |row, next| {
-                    i128::from(values[row]).cmp(&memtable.keys[next])
+                    i128::from(values[row]).cmp(&keys[next])
                 });
             }
             _ => {}
@@ -1319,8 +1347,8 @@ pub struct ProjectedScanStream {
     /// the current part as they are reached.
     pub(super) slices: VecDeque<DirectSlice>,
     pub(super) merge: Option<MergedProjectedStream>,
-    /// The user column that carries the table's single integer key, when
-    /// the caller named it; what lets an [`ScanPart::Overlay`] mask the rows
+    /// The user columns that carry the table's key (integer, text or
+    /// binary parts), when the caller named them; what lets an [`ScanPart::Overlay`] mask the rows
     /// the memtable supersedes from a packed column instead of merging.
     pub(super) overlay_key: Option<Vec<u32>>,
     pub(super) overlay: Option<OverlayState>,
@@ -2297,7 +2325,7 @@ impl ProjectedScanStream {
                 let layered = rows.is_some();
                 let mut rows =
                     rows.unwrap_or_else(|| LayerRows::single(self.snapshot.memtable.clone()));
-                // The key is named and an integer here, so the memtable is
+                // The key's columns are named here, so the memtable is
                 // read as arrays: built once for these rows, by this scan
                 // or one before it.
                 rows.attach_image(&self.snapshot.memtable_image);
@@ -2433,7 +2461,7 @@ impl ProjectedScanStream {
             pintail_log::log_debug!(
                 "store scan merges a layered cluster row by row: {}",
                 if !keyed {
-                    "the scan names no integer key to mask by"
+                    "the scan names no key columns to mask by (a keyless table, or a key part that is not an integer, text or binary column)"
                 } else if !sparse {
                     "a base has no sparse index"
                 } else {
@@ -3003,6 +3031,7 @@ impl ProjectedScanStream {
                 .map(|chunk| vec![chunk]);
         };
         let mut memtable = self.overlay_span_rows(slice, key_ids.len())?;
+        let key_bytes = memtable.keys.used_bytes();
         if memtable.is_empty() {
             return self
                 .decode_slice_plain(slice, memory_limit, prewhere)
@@ -3025,12 +3054,8 @@ impl ProjectedScanStream {
         let slice_rows = usize::try_from(slice_rows).unwrap_or(usize::MAX);
         let overhead = memtable
             .len()
-            .saturating_mul(
-                key_ids
-                    .len()
-                    .saturating_mul(size_of::<i128>())
-                    .saturating_add(size_of::<SpanRow<'_>>()),
-            )
+            .saturating_mul(size_of::<SpanRow<'_>>())
+            .saturating_add(key_bytes)
             .saturating_add(live.len().saturating_mul(size_of::<SpanRow<'_>>()))
             .saturating_add(
                 slice_rows.saturating_mul(size_of::<usize>() + size_of::<std::ops::Range<usize>>()),
@@ -3104,24 +3129,24 @@ impl ProjectedScanStream {
         key_parts: usize,
     ) -> Result<SpanRows<'_>, StoreError> {
         let span = self.overlay_slice_span(slice);
-        let mut rows = SpanRows::new(key_parts);
+        let mut rows = SpanRows::new();
         if bound_range_is_searchable(&span.0, &span.1) {
             let mut cursor = self.overlay_rows.range(&span.0, &span.1)?;
             while let Some((key, row)) = cursor.next()? {
-                let before = rows.keys.len();
-                match key {
+                let parts = match key {
                     SpanKey::Memtable(key) => {
-                        if !push_key_parts(key, &mut rows.keys) {
-                            return Err(StoreError::FormatLimit(
-                                "the memtable overlay needs integer key parts".into(),
-                            ));
-                        }
+                        rows.keys.push(key);
+                        key.parts().len()
                     }
-                    held => rows
-                        .keys
-                        .extend_from_slice(cursor.parts(held).unwrap_or_default()),
-                }
-                if rows.keys.len() - before != key_parts {
+                    held => {
+                        let key = cursor.parts(held).ok_or_else(|| {
+                            StoreError::FormatLimit("an overlay row lost its key".into())
+                        })?;
+                        rows.keys.push_ref(key);
+                        key.parts().count()
+                    }
+                };
+                if parts != key_parts {
                     return Err(StoreError::FormatLimit(
                         "the memtable overlay's key has a different number of parts".into(),
                     ));
@@ -4624,9 +4649,8 @@ impl ProjectedScanStream {
     /// run: a directly served segment holds each key once, in key order, so
     /// the rows in range are those between the first key at or above the
     /// range's start and the first key past its end. The sparse index names
-    /// the blocks that can hold them; only those blocks' integer key
-    /// columns, which the executor named, are read to find the run. `None`
-    /// without them.
+    /// the blocks that can hold them; only those blocks' key columns, which
+    /// the executor named, are read to find the run. `None` without them.
     fn key_row_span(
         &self,
         segment: &segment::SegmentMeta,
@@ -4701,38 +4725,18 @@ impl ProjectedScanStream {
         )?;
         let reserved = fetch.reserved_bytes;
         let key_blocks_decoded = fetch.blocks_decoded;
-        let keys = fetch
-            .columns
-            .iter()
-            .map(|column| match column {
-                DecodedColumn::Int64 { values, .. } => {
-                    Some(values.iter().map(|value| i128::from(*value)).collect())
-                }
-                DecodedColumn::UInt64 { values, .. } => {
-                    Some(values.iter().map(|value| i128::from(*value)).collect())
-                }
-                _ => None,
-            })
-            .collect::<Option<Vec<Vec<i128>>>>();
-        let bound = |key: &PrimaryKey| {
-            key.parts()
+        // Every key column must show its part at every row asked: a column
+        // that decoded in a shape with no key part to read has none.
+        let key_columns = fetch.columns.iter().collect::<Vec<_>>();
+        let readable = window.is_empty()
+            || key_columns
                 .iter()
-                .map(|part| match part {
-                    pintail_types::KeyPart::Int64(value) => Some(i128::from(*value)),
-                    pintail_types::KeyPart::UInt64(value) => Some(i128::from(*value)),
-                    _ => None,
-                })
-                .collect::<Option<Vec<_>>>()
-        };
-        let span = match (keys, bound(&self.start), bound(&self.end)) {
-            (Some(keys), Some(start), Some(end)) => {
-                let compare = |row: usize, bound: &[i128]| {
-                    keys.iter()
-                        .zip(bound)
-                        .map(|(column, part)| column[row].cmp(part))
-                        .find(|ordering| ordering.is_ne())
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                };
+                .all(|column| key_part_at(column, 0).is_some());
+        let (start, end) = (KeyList::of(&self.start), KeyList::of(&self.end));
+        let span = readable.then(|| {
+            {
+                let compare =
+                    |row: usize, bound: &KeyList| compare_row_key(&key_columns, row, bound.get(0));
                 // The first window row for which `past` holds; rows are in
                 // key order.
                 let first_where = |past: &dyn Fn(usize) -> bool| {
@@ -4749,15 +4753,14 @@ impl ProjectedScanStream {
                 };
                 let first = first_where(&|row| compare(row, &start).is_ge());
                 let last = first_where(&|row| compare(row, &end).is_gt());
-                Some(KeySpan {
+                KeySpan {
                     rows: window.start + first..window.start + last.max(first),
                     key_blocks_decoded,
                     blocks_read: end_block - first_block,
                     blocks_pruned: blocks - (end_block - first_block),
-                })
+                }
             }
-            _ => None,
-        };
+        });
         drop(fetch);
         memory.release(reserved);
         Ok(span)
@@ -4867,16 +4870,20 @@ impl ProjectedScanStream {
 
     /// Returns the scanned key range.
     /// Names the user columns holding the table's key, in key order; every
-    /// part must be an integer column. A segment the memtable overlaps can
-    /// then be decoded directly, with the superseded rows masked out by
-    /// those columns, instead of merged row by row. Ignored for an absent or
-    /// non-integer column. Call before the first chunk is pulled.
+    /// part must be an integer, text or binary column, whose stored value
+    /// is the key part itself (text and binary compare by their bytes, as
+    /// the table's keys do; which rows are one row under a collation was
+    /// settled by the source before the key was written). A segment the
+    /// memtable overlaps can then be decoded directly, with the superseded
+    /// rows masked out by those columns, instead of merged row by row.
+    /// Ignored for an absent column or one of another type. Call before the
+    /// first chunk is pulled.
     ///
     /// The memtable's live rows are placed among the segment's rows by key,
     /// so the stream stays in key order; a consumer that takes the first
     /// value it meets for a group sees the same row the merge would show.
     pub fn enable_memtable_overlay(&mut self, key_column_ids: &[u32]) {
-        let integer = |id: u32| {
+        let keyed = |id: u32| {
             self.snapshot
                 .schema
                 .columns()
@@ -4885,7 +4892,9 @@ impl ProjectedScanStream {
                 .is_some_and(|column| {
                     matches!(
                         column.data_type(),
-                        pintail_types::DataType::Int8
+                        pintail_types::DataType::Utf8
+                            | pintail_types::DataType::Binary
+                            | pintail_types::DataType::Int8
                             | pintail_types::DataType::Int16
                             | pintail_types::DataType::Int32
                             | pintail_types::DataType::Int64
@@ -4896,7 +4905,7 @@ impl ProjectedScanStream {
                     )
                 })
         };
-        if !key_column_ids.is_empty() && key_column_ids.iter().all(|id| integer(*id)) {
+        if !key_column_ids.is_empty() && key_column_ids.iter().all(|id| keyed(*id)) {
             self.overlay_key = Some(key_column_ids.to_vec());
         }
     }
@@ -5260,8 +5269,9 @@ fn retain_predicate_fetch(
 #[cfg(test)]
 mod overlay_primitive_tests {
     use super::{
-        ColumnValidity, DecodedColumn, OverlayEdits, Placement, SpanRows, interleave_values,
-        overlay_positions, searched_overlay_positions, subtract_positions,
+        Cell, ColumnValidity, DecodedColumn, OverlayEdits, Placement, SpanRows, compare_row_key,
+        empty_packed_column, interleave_values, overlay_positions, searched_overlay_positions,
+        subtract_positions, walked_overlay_positions,
     };
     use pintail_types::{KeyPart, PrimaryKey, StoredRow, Value};
 
@@ -5353,6 +5363,96 @@ mod overlay_primitive_tests {
         let found = edits(&[&packed(&values)], 8, None, &all);
         assert_eq!(found.deletes, (0..8).collect::<Vec<_>>());
         assert!(found.placements.is_empty());
+    }
+
+    /// A text key, alone and after an integer part, is placed by its bytes:
+    /// upper case before lower, a key before the keys it is a prefix of, a
+    /// trailing space significant, in a packed text column and in plain
+    /// values alike.
+    #[test]
+    fn a_text_key_is_placed_by_its_bytes() {
+        let texts = ["Ab", "a", "ab", "ab ", "b", "\u{e9}"];
+        let plain_text = DecodedColumn::Values(
+            texts
+                .iter()
+                .map(|text| Value::Utf8((*text).to_owned()))
+                .collect(),
+        );
+        let packed_text = empty_packed_column(pintail_types::DataType::Utf8).interleave_cells(
+            &texts
+                .iter()
+                .enumerate()
+                .map(|(at, text)| (at, Cell::Text(text.as_bytes())))
+                .collect::<Vec<_>>(),
+        );
+        let live = [row(1), row(2), row(3), row(4)];
+        let key = |text: &str| PrimaryKey::new(vec![KeyPart::Utf8(text.to_owned())]).expect("key");
+        // "A" before everything, "a" updated, "aB" between "a" and "ab",
+        // "ab " deleted, "abc" between "ab " and "b", "z" between "b" and
+        // the two-byte key.
+        let memtable = vec![
+            (key("A"), Some(&live[0])),
+            (key("a"), Some(&live[1])),
+            (key("aB"), Some(&live[2])),
+            (key("ab "), None),
+            (key("abc"), Some(&live[3])),
+            (key("z"), None),
+        ];
+        for column in [&plain_text, &packed_text] {
+            let span = SpanRows::from_keys(&memtable);
+            let walked = walked_overlay_positions(texts.len(), None, &span, |row, next| {
+                compare_row_key(&[column], row, span.key(next))
+            });
+            assert_eq!(
+                walked,
+                searched_overlay_positions(&[column], texts.len(), None, &span)
+            );
+            assert_eq!(walked.deletes, vec![3]);
+            // Output: A*, Ab, a*, aB*, ab, abc*, b, e-acute.
+            assert_eq!(
+                walked.placements,
+                vec![
+                    Placement::Insert(0),
+                    Placement::Replace(1),
+                    Placement::Insert(3),
+                    Placement::Insert(5),
+                ]
+            );
+        }
+        // (shelf, code): the text decides within a shelf.
+        let shelves = DecodedColumn::Int64 {
+            values: vec![1, 1, 1, 2, 2, 2],
+            validity: ColumnValidity::AllValid(6),
+        };
+        let codes = DecodedColumn::Values(
+            ["a", "b", "c", "a", "b", "c"]
+                .iter()
+                .map(|text| Value::Utf8((*text).to_owned()))
+                .collect(),
+        );
+        let key = |shelf: i64, text: &str| {
+            PrimaryKey::new(vec![KeyPart::Int64(shelf), KeyPart::Utf8(text.to_owned())])
+                .expect("key")
+        };
+        let memtable = vec![
+            (key(1, "b"), None),
+            (key(1, "bb"), Some(&live[0])),
+            (key(2, "a"), Some(&live[1])),
+            (key(2, "d"), Some(&live[2])),
+        ];
+        let span = SpanRows::from_keys(&memtable);
+        let columns = [&shelves, &codes];
+        let walked = overlay_positions(&columns, 6, None, &span);
+        assert_eq!(walked, searched_overlay_positions(&columns, 6, None, &span));
+        assert_eq!(walked.deletes, vec![1]);
+        assert_eq!(
+            walked.placements,
+            vec![
+                Placement::Insert(1),
+                Placement::Replace(3),
+                Placement::Insert(6),
+            ]
+        );
     }
 
     #[test]
