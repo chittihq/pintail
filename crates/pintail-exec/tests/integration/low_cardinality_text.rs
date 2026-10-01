@@ -12,7 +12,8 @@
 //! The ignored bench prints what each shape costs on an invented table:
 //! `cargo test --profile recovery -p pintail-exec --test integration
 //! low_cardinality_text::bench -- --ignored --nocapture`. `BENCH_ROWS` sets
-//! the table size (4M) and `BENCH_RUNS` the repeats (9).
+//! the table size (4M), `BENCH_RUNS` the repeats (9) and `BENCH_SQL` the
+//! statements to time instead, separated by `;`.
 
 use std::collections::BTreeMap;
 
@@ -665,6 +666,12 @@ mod bench {
             .unwrap_or(9);
         let fixture = fixture(rows, false, false);
         println!("query\tmedian_ms\tmin_ms\tanswer\tscan");
+        let chosen = std::env::var("BENCH_SQL").unwrap_or_default();
+        let chosen = chosen
+            .split(';')
+            .map(str::trim)
+            .filter(|sql| !sql.is_empty())
+            .collect::<Vec<_>>();
         for sql in [
             "SELECT COUNT(*) FROM ledger WHERE state = 'closed'",
             "SELECT COUNT(*) FROM ledger WHERE state = 'active'",
@@ -691,7 +698,11 @@ mod bench {
             "SELECT kind, SUM(state = 'closed'), COUNT(CASE mark WHEN 'normal' THEN 1 END) \
              FROM ledger GROUP BY kind",
             "SELECT id, state FROM ledger ORDER BY state, id LIMIT 10",
-        ] {
+        ]
+        .into_iter()
+        .filter(|_| chosen.is_empty())
+        .chain(chosen.iter().copied())
+        {
             let _ = run(&fixture, sql);
             let mut times = Vec::new();
             let mut last = None;
