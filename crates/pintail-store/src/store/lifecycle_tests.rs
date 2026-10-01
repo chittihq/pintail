@@ -89,6 +89,7 @@ fn reset_discards_completed_unpublished_compaction_outputs() {
         true,
         None,
         999,
+        &std::sync::atomic::AtomicBool::new(false),
     )
     .unwrap();
     let (sender, receiver) = mpsc::channel();
@@ -121,6 +122,115 @@ fn reset_discards_completed_unpublished_compaction_outputs() {
 /// delete over part of its range) are merged on read. The merge seeks each
 /// stream to the range's lower bound and stops at its upper bound, and the
 /// answer is the same as walking everything.
+fn keyed_schema() -> TableSchema {
+    TableSchema::new(1, vec![Column::new(1, "id", DataType::UInt64, false)]).unwrap()
+}
+
+fn keyed_row(id: u64, version: u64, deleted: bool) -> StoredRow {
+    StoredRow::new(
+        PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap(),
+        vec![pintail_types::Value::UInt64(id)],
+        version,
+        deleted,
+    )
+}
+
+/// Two overlapping flushed segments: keys 1..=40 and then 20..=60, half of
+/// the second a delete.
+fn two_overlapping_segments(table: &mut TableStore) {
+    table
+        .ingest((1..=40).map(|id| keyed_row(id, 1, false)).collect())
+        .unwrap();
+    table.flush().unwrap();
+    table
+        .ingest((20..=60).map(|id| keyed_row(id, 2, id % 2 == 0)).collect())
+        .unwrap();
+    table.flush().unwrap();
+}
+
+fn visible_ids(snapshot: &TableSnapshot) -> Vec<u64> {
+    snapshot
+        .scan()
+        .unwrap()
+        .iter()
+        .map(|row| match row.key().parts() {
+            [KeyPart::UInt64(id)] => *id,
+            other => panic!("unexpected key {other:?}"),
+        })
+        .collect()
+}
+
+fn expected_ids() -> Vec<u64> {
+    (1..=60)
+        .filter(|id| *id < 20 || id % 2 == 1)
+        .collect::<Vec<u64>>()
+}
+
+#[test]
+fn a_reader_opened_from_the_files_keeps_merged_segments_until_it_closes() {
+    let directory = tempfile::tempdir().unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), keyed_schema(), options).unwrap();
+    two_overlapping_segments(&mut table);
+    // A query's reader: its manifest is loaded from the files, not handed
+    // out by the writer.
+    let reader = TableSnapshot::open(directory.path(), keyed_schema()).unwrap();
+    assert_eq!(table.compact().unwrap().input_segments(), 2);
+    assert_eq!(
+        table.reclaim_obsolete_segments().unwrap(),
+        0,
+        "the merged inputs are still what the open reader reads"
+    );
+    assert_eq!(visible_ids(&reader), expected_ids());
+    drop(reader);
+    assert_eq!(table.reclaim_obsolete_segments().unwrap(), 2);
+    assert_eq!(visible_ids(&table.snapshot()), expected_ids());
+}
+
+#[test]
+fn a_table_that_stops_taking_writes_still_merges_and_a_close_publishes_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut table =
+        TableStore::open(directory.path(), keyed_schema(), StoreOptions::default()).unwrap();
+    two_overlapping_segments(&mut table);
+    assert_eq!(table.manifest.segments.len(), 2);
+    // No write follows: only maintenance can start the merge, and the
+    // close, not a later flush, has to publish it.
+    assert!(table.maintain().unwrap(), "a merge is running");
+    drop(table);
+    let reopened =
+        TableStore::open(directory.path(), keyed_schema(), StoreOptions::default()).unwrap();
+    assert_eq!(reopened.manifest.segments.len(), 1);
+    assert!(reopened.manifest.segments[0].unique_keys);
+    assert_eq!(visible_ids(&reopened.snapshot()), expected_ids());
+}
+
+#[test]
+fn a_merge_asked_to_yield_publishes_nothing_and_loses_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut table =
+        TableStore::open(directory.path(), keyed_schema(), StoreOptions::default()).unwrap();
+    two_overlapping_segments(&mut table);
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    table.yield_merges_to(Arc::clone(&flag));
+    assert!(table.maintain().unwrap());
+    drop(table);
+    let mut reopened =
+        TableStore::open(directory.path(), keyed_schema(), StoreOptions::default()).unwrap();
+    assert_eq!(reopened.manifest.segments.len(), 2, "nothing was published");
+    assert_eq!(visible_ids(&reopened.snapshot()), expected_ids());
+    // Planned again once nobody asks it to yield.
+    assert!(reopened.maintain().unwrap());
+    drop(reopened);
+    let settled =
+        TableStore::open(directory.path(), keyed_schema(), StoreOptions::default()).unwrap();
+    assert_eq!(settled.manifest.segments.len(), 1);
+    assert_eq!(visible_ids(&settled.snapshot()), expected_ids());
+}
+
 #[test]
 fn merge_on_read_over_a_key_range_answers_from_the_newest_versions() {
     let directory = tempfile::tempdir().unwrap();

@@ -444,6 +444,8 @@ pub struct TableStore {
     /// The most recent background-merge failure, surfaced for diagnostics;
     /// the merge itself is retried by the next eligible pass.
     last_background_error: Option<String>,
+    /// Set by whoever must not wait for this table's merges to finish.
+    merge_yield: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// One background size-tier merge in flight.
@@ -489,8 +491,10 @@ impl Drop for TableStore {
         // Hold the writer lock (and input files) until output publication has
         // stopped. Dropping a JoinHandle detaches it; a subsequent writer's
         // orphan sweep must never race the old worker's temporary-file rename.
-        // Unpublished completed outputs remain safe orphans for the next open.
-        self.discard_background_merge();
+        // A merge that finishes is published before the lock goes: a writer
+        // that closes with its merge thrown away, and whose successor starts
+        // the same merge again, never gets one done.
+        self.settle_background_merge();
     }
 }
 
@@ -499,6 +503,67 @@ impl TableStore {
         if let Some(merge) = self.background.take() {
             let _ = merge.worker.join();
         }
+    }
+
+    /// Waits for the merge in flight and publishes what it wrote. A merge
+    /// asked to yield ends early with nothing to publish.
+    fn settle_background_merge(&mut self) {
+        let Some(merge) = self.background.take() else {
+            return;
+        };
+        let BackgroundMerge {
+            worker,
+            receiver,
+            input_files,
+        } = merge;
+        let outcome = receiver.recv();
+        let _ = worker.join();
+        match outcome {
+            Ok(Ok(outputs)) => {
+                if let Err(error) = self.publish_merge(&input_files, outputs) {
+                    self.last_background_error = Some(error.to_string());
+                } else {
+                    let _ = self.reclaim_obsolete_segments();
+                }
+            }
+            Ok(Err(error)) => self.last_background_error = Some(error.to_string()),
+            Err(_) => {}
+        }
+    }
+
+    /// Has this table's background merges stop early once `flag` is set,
+    /// so closing the table does not wait for one. What a stopped merge
+    /// wrote is swept at the next open and the merge is planned again.
+    pub fn yield_merges_to(&mut self, flag: Arc<std::sync::atomic::AtomicBool>) {
+        self.merge_yield = flag;
+    }
+
+    /// Moves this table's compaction forward when no write does: publishes
+    /// a finished merge and starts the next one the table's segments call
+    /// for. Returns whether a merge is now running.
+    ///
+    /// A flush does the same, which is all a table under steady writes
+    /// needs; one whose writes stopped is left with the segments its last
+    /// flushes wrote unless something calls this.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a manifest cannot be published or segment
+    /// metadata cannot be read.
+    pub fn maintain(&mut self) -> Result<bool, StoreError> {
+        if !self.options.background_compaction {
+            if self.compact()?.input_segments() > 0 {
+                self.reclaim_obsolete_segments()?;
+            }
+            return Ok(false);
+        }
+        if self.poll_background_merge()? {
+            self.reclaim_obsolete_segments()?;
+        }
+        if self.background.is_none() {
+            self.spawn_background_merge()?;
+        }
+        Ok(self.background.is_some())
     }
 
     /// Opens a table, exclusively claims its writer lock, and replays its WAL.
@@ -644,6 +709,7 @@ impl TableStore {
             commit_version,
             background: None,
             last_background_error: None,
+            merge_yield: Arc::default(),
         })
     }
 
@@ -911,6 +977,16 @@ impl TableStore {
                 "WAL sequence {sequence} must follow {}",
                 self.last_sequence
             )));
+        }
+        // A merge that finished since the last write is published now rather
+        // than at the next flush, which a table of small writes may not
+        // reach for a long time.
+        if self.background.is_some() && self.poll_background_merge()? {
+            self.reclaim_obsolete_segments()?;
+            // And the next merge starts behind it: one merge per flush
+            // falls behind a table whose merges each leave several
+            // segments, as a fold of one key range does.
+            self.spawn_background_merge()?;
         }
         let _published = self.publication.publishing();
         self.wal
@@ -1343,25 +1419,26 @@ impl TableStore {
         Ok(())
     }
 
-    /// Publishes a background merge that has finished, if any. Cheap when
-    /// the merge is still running.
-    fn poll_background_merge(&mut self) -> Result<(), StoreError> {
+    /// Publishes a background merge that has finished, if any, and says
+    /// whether it did. Cheap when the merge is still running.
+    fn poll_background_merge(&mut self) -> Result<bool, StoreError> {
         let Some(merge) = &self.background else {
-            return Ok(());
+            return Ok(false);
         };
         let outcome = match merge.receiver.try_recv() {
             Ok(outcome) => outcome,
-            Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(()),
+            Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(false),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.background = None;
                 self.last_background_error =
                     Some("background merge thread exited without a result".to_owned());
-                return Ok(());
+                return Ok(false);
             }
         };
         let Some(merge) = self.background.take() else {
-            return Ok(());
+            return Ok(false);
         };
+        let _ = merge.worker.join();
         let outputs = match outcome {
             Ok(outputs) => outputs,
             Err(error) => {
@@ -1369,13 +1446,20 @@ impl TableStore {
                 // streaming merge-on-read, and orphan chunk files are swept
                 // at the next open. Record and move on.
                 self.last_background_error = Some(error.to_string());
-                return Ok(());
+                return Ok(false);
             }
         };
-        let inputs = merge
-            .input_files
-            .iter()
-            .collect::<std::collections::HashSet<_>>();
+        self.publish_merge(&merge.input_files, outputs)?;
+        Ok(true)
+    }
+
+    /// Replaces a finished merge's inputs with its outputs in a new manifest.
+    fn publish_merge(
+        &mut self,
+        input_files: &[String],
+        outputs: Vec<segment::SegmentMeta>,
+    ) -> Result<(), StoreError> {
+        let inputs = input_files.iter().collect::<std::collections::HashSet<_>>();
         let mut next_manifest = self.manifest.as_ref().clone();
         next_manifest.generation = next_manifest
             .generation
@@ -1459,6 +1543,7 @@ impl TableStore {
         let directory = self.directory.clone();
         let schema = self.schema.clone();
         let options = self.options;
+        let yield_flag = Arc::clone(&self.merge_yield);
         let (sender, receiver) = std::sync::mpsc::channel();
         let worker = std::thread::Builder::new()
             .name("pintail-compaction".to_owned())
@@ -1472,6 +1557,7 @@ impl TableStore {
                     drop_tombstones,
                     window.as_ref(),
                     id_base,
+                    &yield_flag,
                 );
                 // The owner joins this worker before releasing its writer
                 // lock; the next open may then sweep unpublished chunks.
@@ -1710,8 +1796,25 @@ impl TableStore {
         let published = self.publication.publishing();
         let mut reclaimed = 0;
         let mut retained = Vec::new();
+        // A reader that opened the table from its files holds a manifest of
+        // its own, which this writer's retired generations know nothing of:
+        // the files it names are pinned through the registry instead.
+        let pinned = pinned_manifests(&self.directory);
+        let read_elsewhere = |path: &PathBuf| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    pinned.iter().any(|manifest| {
+                        manifest
+                            .segments
+                            .iter()
+                            .any(|segment| segment.file_name == name)
+                    })
+                })
+        };
         for generation in self.retired.drain(..) {
-            if generation.readers.upgrade().is_some() {
+            if generation.readers.upgrade().is_some() || generation.paths.iter().any(read_elsewhere)
+            {
                 retained.push(generation);
                 continue;
             }
@@ -2235,6 +2338,7 @@ fn run_background_merge(
     drop_tombstones: bool,
     window: Option<&MergeWindow>,
     id_base: u64,
+    yield_flag: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<segment::SegmentMeta>, StoreError> {
     let mut streams = Vec::with_capacity(input_metas.len());
     for meta in input_metas {
@@ -2277,6 +2381,15 @@ fn run_background_merge(
         .min()
         .cloned()
     {
+        if yield_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(StoreError::io(
+                "background merge",
+                std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "the merge yielded to an operator action",
+                ),
+            ));
+        }
         let mut winner = None;
         for (stream, head) in streams.iter_mut().zip(&mut heads) {
             while head.as_ref().is_some_and(|row| row.key() == &minimum) {

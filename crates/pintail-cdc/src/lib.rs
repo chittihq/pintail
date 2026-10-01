@@ -421,6 +421,13 @@ async fn run_cdc_inner(
     progress: ProgressListener,
 ) -> Result<CdcResult, CdcError> {
     validate_configuration(report, &targets, &options)?;
+    // An operator action waiting for this stream must not also wait for the
+    // merges its tables have running when they close.
+    if let Some(stop) = &options.stop {
+        for target in &mut targets {
+            target.store.yield_merges_to(Arc::clone(&stop.0));
+        }
+    }
     targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
     let mut target_indexes = targets
         .iter()
@@ -1083,7 +1090,13 @@ async fn run_cdc_inner(
                     position.pos
                 );
                 settle_paused_skips(&metadata, database_id, &targets, &paused_skipped)?;
-                return finish_result(commits, mutations, &position, targets);
+                return finish_result(
+                    commits,
+                    mutations,
+                    &position,
+                    targets,
+                    options.stop.as_ref(),
+                );
             }
         }
         // However the stream ended, the transactions it closed are stored
@@ -1168,7 +1181,13 @@ async fn run_cdc_inner(
             position.pos
         );
         settle_paused_skips(&metadata, database_id, &targets, &paused_skipped)?;
-        return finish_result(commits, mutations, &position, targets);
+        return finish_result(
+            commits,
+            mutations,
+            &position,
+            targets,
+            options.stop.as_ref(),
+        );
     }
 }
 
@@ -3310,12 +3329,48 @@ fn settle_paused_skips(
     Ok(())
 }
 
+/// Tables whose compaction one finished stream may start. Each merge is
+/// bounded by the store's per-pass row budget and runs on a thread of its
+/// own, so this is also how many such threads a stream leaves behind it.
+const MERGES_STARTED_PER_STREAM: usize = 2;
+
+/// Moves the tables' compaction forward at the end of a stream: a table
+/// whose writes stopped has no flush left to do it. Starts at a different
+/// table each time so the same few are not always first.
+fn maintain_targets(targets: &mut [CdcTarget], stop: Option<&CycleStop>) {
+    static ROTATION: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let count = targets.len();
+    if count == 0 {
+        return;
+    }
+    let first = ROTATION.fetch_add(1, Ordering::Relaxed) % count;
+    let mut running = 0;
+    for offset in 0..count {
+        if running >= MERGES_STARTED_PER_STREAM || stop.is_some_and(CycleStop::requested) {
+            return;
+        }
+        let target = &mut targets[(first + offset) % count];
+        match target.store.maintain() {
+            Ok(true) => running += 1,
+            Ok(false) => {}
+            // Unmerged segments still answer correctly; the next stream
+            // tries again.
+            Err(error) => pintail_log::log_debug!(
+                "cdc maintenance of {} deferred: {error}",
+                target.source.name
+            ),
+        }
+    }
+}
+
 fn finish_result(
     commits: usize,
     mutations: usize,
     position: &StreamPosition,
     mut targets: Vec<CdcTarget>,
+    stop: Option<&CycleStop>,
 ) -> Result<CdcResult, CdcError> {
+    maintain_targets(&mut targets, stop);
     targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
     Ok(CdcResult {
         commits,
