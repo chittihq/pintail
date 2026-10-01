@@ -3652,9 +3652,9 @@ impl PackedCell {
                 scale,
                 float_output,
             } => state.update_decimal_sum_units(self.total, scale, float_output),
-            PackedLane::IntegerSum => state.add_dense_signed(
-                i64::try_from(self.total).map_err(|_| ExecError::NumericOverflow)?,
-            ),
+            // The cell's total may be outside 64 bits while the group's is
+            // not: the state keeps it exact and judges the group's.
+            PackedLane::IntegerSum => state.add_integer_exact(self.total, false),
             PackedLane::Average {
                 digits,
                 result_scale,

@@ -1038,6 +1038,12 @@ enum AggregateValue {
         /// accumulation (the Q4 canonical mismatch, 2026-08-02).
         float_output: bool,
     },
+    /// The total of a SUM typed as a 64-bit integer, while it is outside
+    /// that type: more rows may bring it back.
+    WideIntegerSum {
+        total: i128,
+        unsigned: bool,
+    },
     Average {
         sum: f64,
         count: u64,
@@ -1298,6 +1304,21 @@ impl AggregateState {
             .ok_or(ExecError::NumericOverflow)?;
             return self.update_decimal_sum_exact(units, scale, false);
         }
+        // An integer-typed SUM keeps its exact total: see `add_integer_exact`.
+        if aggregate.function == AggregateFunction::Sum
+            && let Some(unsigned) = integer_sum_carrier(aggregate)
+            && matches!(
+                self.value,
+                AggregateValue::Sum(_) | AggregateValue::WideIntegerSum { .. }
+            )
+        {
+            let amount = if unsigned {
+                i128::from(mysql_u64(value)?)
+            } else {
+                i128::from(mysql_i64(value)?)
+            };
+            return self.add_integer_exact(amount, unsigned);
+        }
         match &mut self.value {
             // Handled by the early return above, before the NULL skip.
             AggregateValue::JsonObjectAgg { .. } => {}
@@ -1351,6 +1372,12 @@ impl AggregateState {
                     _ => *accumulator | bits,
                 };
                 *seen = true;
+            }
+            // Taken by the integer SUM branch above.
+            AggregateValue::WideIntegerSum { .. } => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "integer sum updated outside its exact path",
+                ));
             }
             AggregateValue::DecimalSum { units, scale, .. } => {
                 let text = match value {
@@ -1513,7 +1540,31 @@ impl AggregateState {
             }
             return Ok(());
         }
-        match (&mut self.value, other.value) {
+        // Two integer-typed SUMs add exactly, whichever of them has left
+        // 64 bits on the way.
+        let other_value = match (integer_sum_carrier(aggregate), other.value) {
+            (Some(unsigned), AggregateValue::WideIntegerSum { total, .. })
+                if aggregate.function == AggregateFunction::Sum =>
+            {
+                return self.add_integer_exact(total, unsigned);
+            }
+            (Some(unsigned), AggregateValue::Sum(Some(right)))
+                if aggregate.function == AggregateFunction::Sum
+                    && matches!(
+                        self.value,
+                        AggregateValue::Sum(_) | AggregateValue::WideIntegerSum { .. }
+                    ) =>
+            {
+                let amount = if unsigned {
+                    i128::from(mysql_u64(&right)?)
+                } else {
+                    i128::from(mysql_i64(&right)?)
+                };
+                return self.add_integer_exact(amount, unsigned);
+            }
+            (_, value) => value,
+        };
+        match (&mut self.value, other_value) {
             (
                 AggregateValue::JsonArrayAgg { items: left },
                 AggregateValue::JsonArrayAgg { items: right },
@@ -1533,7 +1584,9 @@ impl AggregateState {
                 )?);
             }
             (
-                AggregateValue::Sum(_) | AggregateValue::DecimalSum { .. },
+                AggregateValue::Sum(_)
+                | AggregateValue::DecimalSum { .. }
+                | AggregateValue::WideIntegerSum { .. },
                 AggregateValue::Sum(None),
             )
             | (AggregateValue::Minimum(_), AggregateValue::Minimum(None))
@@ -1840,43 +1893,73 @@ impl AggregateState {
         true
     }
 
-    /// Packed signed SUM keeps the same checked arithmetic and NULL state.
+    /// Packed signed SUM keeps the per-row update's total and NULL state.
     pub(super) fn add_dense_signed(&mut self, amount: i64) -> Result<(), ExecError> {
         match &mut self.value {
             AggregateValue::Sum(Some(Value::Int64(total))) => {
-                *total = total
-                    .checked_add(amount)
-                    .ok_or(ExecError::NumericOverflow)?;
+                if let Some(sum) = total.checked_add(amount) {
+                    *total = sum;
+                    return Ok(());
+                }
             }
             value @ AggregateValue::Sum(None) => {
                 *value = AggregateValue::Sum(Some(Value::Int64(amount)));
+                return Ok(());
             }
-            _ => {
-                return Err(ExecError::InvalidPhysicalPlan(
-                    "dense sum requires a matching integer state",
-                ));
-            }
+            _ => {}
         }
-        Ok(())
+        self.add_integer_exact(i128::from(amount), false)
     }
 
-    /// Packed unsigned SUM keeps the same checked arithmetic and NULL state.
+    /// Packed unsigned SUM keeps the per-row update's total and NULL state.
     pub(super) fn add_dense_unsigned(&mut self, amount: u64) -> Result<(), ExecError> {
         match &mut self.value {
             AggregateValue::Sum(Some(Value::UInt64(total))) => {
-                *total = total
-                    .checked_add(amount)
-                    .ok_or(ExecError::NumericOverflow)?;
+                if let Some(sum) = total.checked_add(amount) {
+                    *total = sum;
+                    return Ok(());
+                }
             }
             value @ AggregateValue::Sum(None) => {
                 *value = AggregateValue::Sum(Some(Value::UInt64(amount)));
+                return Ok(());
             }
+            _ => {}
+        }
+        self.add_integer_exact(i128::from(amount), true)
+    }
+
+    /// Adds `amount` to a SUM typed as a 64-bit integer, keeping the exact
+    /// total.
+    ///
+    /// `MySQL` sums integers into a DECIMAL, so a running total that leaves
+    /// 64 bits and comes back - the largest value, then 1, then -1 - is an
+    /// ordinary answer there. Checking every addition against the carrier
+    /// refused such a total, and refused or answered it depending on which
+    /// rows a batch, a morsel or a segment happened to add first. The total
+    /// is kept in 128 bits once it leaves the carrier and judged once, when
+    /// the group is finished.
+    pub(super) fn add_integer_exact(
+        &mut self,
+        amount: i128,
+        unsigned: bool,
+    ) -> Result<(), ExecError> {
+        let held = match &self.value {
+            AggregateValue::Sum(None) => 0,
+            AggregateValue::Sum(Some(Value::Int64(total))) => i128::from(*total),
+            AggregateValue::Sum(Some(Value::UInt64(total))) => i128::from(*total),
+            AggregateValue::WideIntegerSum { total, .. } => *total,
             _ => {
                 return Err(ExecError::InvalidPhysicalPlan(
-                    "dense sum requires a matching integer state",
+                    "integer sum requires a matching integer state",
                 ));
             }
-        }
+        };
+        let total = held.checked_add(amount).ok_or(ExecError::NumericOverflow)?;
+        self.value = match integer_sum_value(total, unsigned) {
+            Some(value) => AggregateValue::Sum(Some(value)),
+            None => AggregateValue::WideIntegerSum { total, unsigned },
+        };
         Ok(())
     }
 
@@ -2279,6 +2362,11 @@ impl AggregateState {
                 } else {
                     Value::Utf8(units.format(scale)?)
                 }
+            }
+            // A total that ends outside its 64-bit type has no value of
+            // that type to answer with.
+            AggregateValue::WideIntegerSum { total, unsigned } => {
+                integer_sum_value(total, unsigned).ok_or(ExecError::NumericOverflow)?
             }
             AggregateValue::Sum(value)
             | AggregateValue::Minimum(value)
@@ -3375,14 +3463,23 @@ pub(super) fn build_hash_aggregate(
     // A grouped aggregate the segments can be folded one at a time. Tried
     // after the settled memo, which answers an unchanged table outright,
     // and before the general path, which reads every row.
-    if let Some(rows) = try_grouped_segment_fold(
+    //
+    // A segment's finished integer SUM has to fit its type on its own, and
+    // so does each merge of two; the table's total can fit where one of
+    // those does not. Such a fold is abandoned like any other it cannot
+    // finish, and the general path keeps the exact total.
+    let segment_fold = match try_grouped_segment_fold(
         input,
         group_by,
         aggregates,
         memory,
         collation,
         key_collations,
-    )? {
+    ) {
+        Err(ExecError::NumericOverflow) => None,
+        folded => folded?,
+    };
+    if let Some(rows) = segment_fold {
         if let Some(key) = &memo_key {
             let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
             if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
@@ -4824,6 +4921,10 @@ enum SpilledAggregateValue {
         scale: u8,
         float_output: bool,
     },
+    WideIntegerSum {
+        total: String,
+        unsigned: bool,
+    },
     Average {
         sum: f64,
         count: u64,
@@ -4873,6 +4974,12 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
             scale,
             float_output,
         },
+        AggregateValue::WideIntegerSum { total, unsigned } => {
+            SpilledAggregateValue::WideIntegerSum {
+                total: total.to_string(),
+                unsigned,
+            }
+        }
         AggregateValue::Average { sum, count } => SpilledAggregateValue::Average { sum, count },
         AggregateValue::DecimalAverage {
             units,
@@ -5016,6 +5123,12 @@ fn revive_aggregate_state(
             scale,
             float_output,
         },
+        SpilledAggregateValue::WideIntegerSum { total, unsigned } => {
+            AggregateValue::WideIntegerSum {
+                total: total.parse().map_err(|_| ExecError::NumericOverflow)?,
+                unsigned,
+            }
+        }
         SpilledAggregateValue::Average { sum, count } => AggregateValue::Average { sum, count },
         SpilledAggregateValue::DecimalAverage {
             units,
@@ -5112,6 +5225,7 @@ const AGGREGATE_BIT_FOLD: u8 = 9;
 const AGGREGATE_GROUP_CONCAT: u8 = 10;
 const AGGREGATE_JSON_ARRAY: u8 = 11;
 const AGGREGATE_BINARY_BIT_FOLD: u8 = 12;
+const AGGREGATE_WIDE_INTEGER_SUM: u8 = 13;
 
 // Keep each spill tag beside its payload layout.
 #[allow(clippy::too_many_lines)]
@@ -5186,6 +5300,11 @@ fn encode_aggregate_state(encoder: &mut spill::Encoder, state: &SpilledAggregate
             encoder.str(units);
             encoder.u8(*scale);
             encoder.bool(*float_output);
+        }
+        SpilledAggregateValue::WideIntegerSum { total, unsigned } => {
+            encoder.u8(AGGREGATE_WIDE_INTEGER_SUM);
+            encoder.str(total);
+            encoder.bool(*unsigned);
         }
         SpilledAggregateValue::Average { sum, count } => {
             encoder.u8(AGGREGATE_AVERAGE);
@@ -5272,6 +5391,10 @@ fn decode_aggregate_state(
             units: decoder.string()?,
             scale: decoder.u8()?,
             float_output: decoder.bool()?,
+        },
+        AGGREGATE_WIDE_INTEGER_SUM => SpilledAggregateValue::WideIntegerSum {
+            total: decoder.string()?,
+            unsigned: decoder.bool()?,
         },
         AGGREGATE_AVERAGE => SpilledAggregateValue::Average {
             sum: decoder.f64()?,
@@ -7270,6 +7393,25 @@ pub(super) fn update_aggregate_states(
         }
     }
     Ok(())
+}
+
+/// Whether `aggregate` is typed as a 64-bit integer, and as the unsigned
+/// one: the carrier an integer SUM answers in.
+fn integer_sum_carrier(aggregate: &CompiledAggregate) -> Option<bool> {
+    match aggregate.data_type {
+        Some(DataType::Int64) => Some(false),
+        Some(DataType::UInt64) => Some(true),
+        _ => None,
+    }
+}
+
+/// `total` as a value of its 64-bit carrier, when it fits one.
+fn integer_sum_value(total: i128, unsigned: bool) -> Option<Value> {
+    if unsigned {
+        u64::try_from(total).ok().map(Value::UInt64)
+    } else {
+        i64::try_from(total).ok().map(Value::Int64)
+    }
 }
 
 pub(super) fn aggregate_uses_float(aggregate: &CompiledAggregate) -> bool {
