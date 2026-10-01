@@ -62,6 +62,9 @@ const DEFAULT_MAX_COMPACTION_OUTPUT_BYTES: usize = 128 * 1024 * 1024;
 const DEFAULT_COMPACTION_FILE_PRESSURE: usize = 16;
 const DEFAULT_COMPACTION_DISK_RESERVE_BYTES: u64 = 64 * 1024 * 1024;
 const SIZE_TIER_RATIO: u64 = 4;
+/// Segments one size-tier pass takes at most when the tier holds more than
+/// the fan-in.
+const MAX_WIDENED_FAN_IN: usize = 64;
 static PROJECTED_SCAN_POOL: OnceLock<Result<rayon::ThreadPool, String>> = OnceLock::new();
 
 /// Threads available to decode projected column chunks.
@@ -1051,6 +1054,7 @@ impl TableStore {
         }
         let _published = self.publication.publishing();
         let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.layer_index = LayerIndexSlot::default();
         next_manifest.generation = next_manifest
             .generation
             .checked_add(1)
@@ -1230,6 +1234,7 @@ impl TableStore {
 
         let _published = self.publication.publishing();
         let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.layer_index = LayerIndexSlot::default();
         next_manifest.generation = next_manifest
             .generation
             .checked_add(1)
@@ -1461,6 +1466,7 @@ impl TableStore {
     ) -> Result<(), StoreError> {
         let inputs = input_files.iter().collect::<std::collections::HashSet<_>>();
         let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.layer_index = LayerIndexSlot::default();
         next_manifest.generation = next_manifest
             .generation
             .checked_add(1)
@@ -1633,6 +1639,7 @@ impl TableStore {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.layer_index = LayerIndexSlot::default();
         next_manifest.generation = next_manifest
             .generation
             .checked_add(1)
@@ -1940,13 +1947,39 @@ impl TableStore {
         }
         candidates.sort_by_key(|candidate| (candidate.size, candidate.index));
         if candidates.len() >= self.options.compaction_fan_in {
-            for window in candidates.windows(self.options.compaction_fan_in) {
+            for (start, window) in candidates
+                .windows(self.options.compaction_fan_in)
+                .enumerate()
+            {
                 let selected = window.iter().collect::<Vec<_>>();
                 if !self.admits_window(&selected)
                     || !ranges_overlap(&selected)
                     || splits_a_layer(&selected, &candidates)
                 {
                     continue;
+                }
+                // A table that flushes faster than one merge of the fan-in
+                // takes falls behind for good at a fixed width: each pass
+                // retires a few segments while more than that arrive, and
+                // every pass plans over a longer list. The pass takes the
+                // rest of the tier with it while the size ratio, the row
+                // budget and the overlap hold.
+                let mut widened = selected.clone();
+                let behind = candidates.len() >= self.options.compaction_file_pressure;
+                for candidate in candidates
+                    .iter()
+                    .skip(start + self.options.compaction_fan_in)
+                    .take(MAX_WIDENED_FAN_IN.saturating_sub(self.options.compaction_fan_in))
+                    .filter(|_| behind)
+                {
+                    widened.push(candidate);
+                    if !self.admits_window(&widened) || !ranges_overlap(&widened) {
+                        widened.pop();
+                        break;
+                    }
+                }
+                if widened.len() > selected.len() && !splits_a_layer(&widened, &candidates) {
+                    return Ok(Some(plan_for(&widened)));
                 }
                 return Ok(Some(plan_for(&selected)));
             }
