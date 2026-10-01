@@ -11,6 +11,13 @@ use temporal::{
 };
 pub(crate) use temporal::{has_timestamp_offset, shift_temporal_value};
 
+/// The instant, in microseconds since the epoch, of a date and time
+/// written in `zone`; UTC without one. `None` for text that is no date.
+pub(crate) fn zoned_text_micros(text: &str, zone: Option<&str>) -> Option<i64> {
+    let utc = temporal::convert_tz(text, zone.unwrap_or("+00:00"), "+00:00")?;
+    pintail_types::parse_datetime_micros(&utc)
+}
+
 use std::{cmp::Ordering, sync::Arc};
 
 use crate::collation::Collation;
@@ -1686,6 +1693,8 @@ impl CompiledExpr {
                     | ScalarFunction::ToSeconds
                     | ScalarFunction::YearWeek
                     | ScalarFunction::TimeToSec
+                    | ScalarFunction::PeriodAdd
+                    | ScalarFunction::PeriodDiff
                     | ScalarFunction::RegexpLike { .. }
                     | ScalarFunction::RegexpInstr
                     | ScalarFunction::TimestampDiff { .. }
@@ -1921,6 +1930,8 @@ impl CompiledExpr {
                     | ScalarFunction::ToSeconds
                     | ScalarFunction::YearWeek
                     | ScalarFunction::TimeToSec
+                    | ScalarFunction::PeriodAdd
+                    | ScalarFunction::PeriodDiff
                     | ScalarFunction::RegexpLike { .. }
                     | ScalarFunction::RegexpInstr
                     | ScalarFunction::TimestampDiff { .. }
@@ -2783,6 +2794,15 @@ fn evaluate_eager_scalar_inner(
             values.get(1),
         ),
         ScalarFunction::Cast(target) => {
+            if let DataType::Time64 { fsp } = target
+                && let Value::Utf8(text) = &values[0]
+                && matches!(
+                    argument_types.first().copied().flatten(),
+                    None | Some(DataType::Utf8 | DataType::Binary)
+                )
+            {
+                return Ok(cast_text_time(text, fsp).map_or(Value::Null, Value::Utf8));
+            }
             if let Some(value) = cast_partial_calendar(&values[0], target, values.get(1)) {
                 return Ok(value);
             }
@@ -2811,6 +2831,15 @@ fn evaluate_eager_scalar_inner(
             }
         }
         ScalarFunction::DeclaredCast { target, characters } => {
+            if let DataType::Time64 { fsp } = target
+                && let Value::Utf8(text) = &values[0]
+                && matches!(
+                    argument_types.first().copied().flatten(),
+                    None | Some(DataType::Utf8 | DataType::Binary)
+                )
+            {
+                return Ok(cast_text_time(text, fsp).map_or(Value::Null, Value::Utf8));
+            }
             if matches!(target, DataType::Int64 | DataType::UInt64)
                 && matches!(argument_types.first(), Some(Some(DataType::Decimal { .. })))
                 && !matches!(values[0], Value::Null)
@@ -3688,7 +3717,7 @@ fn evaluate_eager_scalar_inner(
                 return Ok(value);
             }
             let fsp = match data_type { Some(DataType::Time64 { fsp }) => fsp, _ => 0 };
-            Ok(cast_mysql_time(&scalar_string(&values[0])?, fsp).map_or(Value::Null, Value::Utf8))
+            Ok(cast_text_time(&scalar_string(&values[0])?, fsp).map_or(Value::Null, Value::Utf8))
         }
 
         ScalarFunction::DatePart(part) => {
@@ -3846,7 +3875,7 @@ fn evaluate_eager_scalar_inner(
             ) {
                 Some(Value::Utf8(time)) => time,
                 Some(_) => return Ok(Value::Null),
-                None => match cast_mysql_time(&scalar_string(&values[0])?, 6) {
+                None => match cast_text_time(&scalar_string(&values[0])?, 6) {
                     Some(time) => time,
                     None => return Ok(Value::Null),
                 },
@@ -4143,6 +4172,63 @@ fn evaluate_eager_scalar_inner(
             };
             Ok(Value::UInt64(mysql_yearweek(value, mode)))
         }
+        ScalarFunction::PeriodAdd | ScalarFunction::PeriodDiff => {
+            // A period is YYMM or YYYYMM. Both arguments are read as
+            // integers; the unsigned 64-bit month count wraps as MySQL's does.
+            let name = if matches!(function, ScalarFunction::PeriodAdd) {
+                "period_add"
+            } else {
+                "period_diff"
+            };
+            let integer = |index: usize| {
+                let value = &values[index];
+                let argument_type = argument_types.get(index).copied().flatten();
+                // A fraction rounds; text is read by its integer prefix.
+                if let Some(rounded) = rounded_integer_operand(value, argument_type) {
+                    return mysql_i64(&rounded);
+                }
+                match value {
+                    // An unsigned value past the signed range reads as its
+                    // two's-complement negative, which is no period.
+                    Value::UInt64(number) => Ok(i64::from_ne_bytes(number.to_ne_bytes())),
+                    Value::Utf8(_) | Value::Binary(_) => {
+                        mysql_i64(&cast_scalar(value, Some(DataType::Int64))?)
+                    }
+                    other => mysql_i64(other),
+                }
+            };
+            let valid = |period: i64| period > 0 && (1..=12).contains(&(period % 100));
+            let months = |period: i64| {
+                let period = u64::try_from(period).unwrap_or(0);
+                let year = match period / 100 {
+                    year @ 0..=69 => year + 2000,
+                    year @ 70..=99 => year + 1900,
+                    year => year,
+                };
+                year.wrapping_mul(12).wrapping_add(period % 100).wrapping_sub(1)
+            };
+            let first = integer(0)?;
+            let second = integer(1)?;
+            if !valid(first) || (matches!(function, ScalarFunction::PeriodDiff) && !valid(second)) {
+                return Err(ExecError::WrongArguments(name));
+            }
+            if matches!(function, ScalarFunction::PeriodDiff) {
+                let difference = months(first).wrapping_sub(months(second));
+                return Ok(Value::Int64(i64::from_ne_bytes(difference.to_ne_bytes())));
+            }
+            let moved = months(first).wrapping_add(u64::from_ne_bytes(second.to_ne_bytes()));
+            let period = if moved == 0 {
+                0
+            } else {
+                let year = match moved / 12 {
+                    year @ 0..=69 => year + 2000,
+                    year @ 70..=99 => year + 1900,
+                    year => year,
+                };
+                year.wrapping_mul(100).wrapping_add(moved % 12 + 1)
+            };
+            Ok(Value::Int64(i64::from_ne_bytes(period.to_ne_bytes())))
+        }
         ScalarFunction::TimeToSec => {
             let text = scalar_string(&values[0])?;
             // A stored date or datetime with a zero month or day still has
@@ -4155,7 +4241,12 @@ fn evaluate_eager_scalar_inner(
             } else {
                 text
             };
-            let Some(time) = cast_mysql_time(&text, 6) else {
+            let time = if stored_temporal(argument_types, 0) {
+                cast_mysql_time(&text, 6)
+            } else {
+                cast_text_time(&text, 6)
+            };
+            let Some(time) = time else {
                 return Ok(Value::Null);
             };
             let parsed = parse_temporal_micros(&time).ok_or(ExecError::InvalidDateTime)?;
@@ -4312,7 +4403,17 @@ fn evaluate_eager_scalar_inner(
             let text = scalar_string(&values[0])?;
             let from = scalar_string(&values[1])?;
             let to = scalar_string(&values[2])?;
-            Ok(temporal::convert_tz_bounded(&text, &from, &to).map_or(Value::Null, Value::Utf8))
+            let converted = temporal::convert_tz_bounded(&text, &from, &to);
+            // Under ALLOW_INVALID_DATES a day past its month's end is the
+            // day it runs into, and the answer carries six fraction digits.
+            if converted.is_none()
+                && allows_invalid_dates(values.get(3))
+                && let Some(rolled) = temporal::rolled_calendar_text(&text)
+            {
+                return Ok(temporal::convert_tz_bounded(&rolled, &from, &to)
+                    .map_or(Value::Null, Value::Utf8));
+            }
+            Ok(converted.map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::NormalizeTimestampOffset => {
             let text = scalar_string(&values[0])?;
@@ -5771,6 +5872,39 @@ fn cast_decimal_integer(value: &Value, target: DataType) -> Result<Value, ExecEr
     }
 }
 
+/// Text read as a TIME and rendered with `fsp` fraction digits, rounded
+/// and clamped to the type's range.
+fn cast_text_time(text: &str, fsp: u8) -> Option<String> {
+    let time = temporal::text_time_of(text)?;
+    format_mysql_time(
+        time.negative,
+        time.hours,
+        time.minutes,
+        time.seconds,
+        &time.fraction,
+        fsp,
+    )
+}
+
+/// Text read as the TIME or DATETIME argument of `ADDTIME`, `SUBTIME` and
+/// `TIMEDIFF`.
+fn text_temporal_micros(text: &str) -> Option<TemporalMicros> {
+    let time = temporal::text_time_of(text)?;
+    if time.datetime {
+        return parse_temporal_micros(text);
+    }
+    let fsp = u8::try_from(time.fraction.len().min(6)).unwrap_or(6);
+    let rendered = format_mysql_time(
+        time.negative,
+        time.hours,
+        time.minutes,
+        time.seconds,
+        &time.fraction,
+        6,
+    )?;
+    parse_temporal_micros(&rendered).map(|parsed| TemporalMicros { fsp, ..parsed })
+}
+
 fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
     let text = text.trim();
     let unsigned = text.trim_start_matches(['-', '+']);
@@ -6004,6 +6138,11 @@ fn temporal_argument(
             .is_some_and(|whole| whole > 8_385_959)
     {
         return Ok(None);
+    }
+    if matches!(data_type, Some(DataType::Utf8 | DataType::Binary))
+        && matches!(value, Value::Utf8(_))
+    {
+        return Ok(text_temporal_micros(&text));
     }
     if matches!(data_type, Some(DataType::Utf8 | DataType::Binary)) {
         let trimmed = text.trim();

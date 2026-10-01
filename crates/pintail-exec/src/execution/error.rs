@@ -53,6 +53,9 @@ pub enum ExecError {
     },
     /// An expression operation received an impossible bound type.
     InvalidExpressionType,
+    /// A function was called with arguments it has no answer for; the
+    /// function's name as `MySQL` reports it.
+    WrongArguments(&'static str),
     /// Binary bitwise arguments differ in byte length.
     BinaryBitwiseLength,
     /// Aggregate bitwise arguments exceed the supported 511-byte width.
@@ -172,6 +175,7 @@ impl fmt::Display for ExecError {
             Self::InvalidExpressionType => {
                 formatter.write_str("bound expression has an invalid physical type")
             }
+            Self::WrongArguments(name) => write!(formatter, "Incorrect arguments to {name}"),
             Self::BinaryBitwiseLength => formatter.write_str("Binary operands of bitwise operators must be of equal length"),
             Self::BinaryBitwiseAggregateWidth => formatter.write_str("Aggregate bitwise functions cannot accept arguments longer than 511 bytes; consider using the SUBSTRING() function"),
             Self::InvalidJsonPath { position } => write!(

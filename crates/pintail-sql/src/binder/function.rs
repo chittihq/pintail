@@ -399,8 +399,17 @@ pub(super) fn bind_window_function(
     }
     let window = BoundWindow {
         function: window_function,
-        partition_by,
-        order_by,
+        partition_by: partition_by
+            .into_iter()
+            .map(BoundExpr::instant_key)
+            .collect(),
+        order_by: order_by
+            .into_iter()
+            .map(|key| crate::BoundWindowOrderKey {
+                expr: key.expr.instant_key(),
+                ..key
+            })
+            .collect(),
         frame,
         data_type,
         nullable,
@@ -625,6 +634,8 @@ pub(super) fn bind_scalar_function(
             ScalarFunction::YearWeek
         }
         "TIME_TO_SEC" if args.len() == 1 => ScalarFunction::TimeToSec,
+        "PERIOD_ADD" if args.len() == 2 => ScalarFunction::PeriodAdd,
+        "PERIOD_DIFF" if args.len() == 2 => ScalarFunction::PeriodDiff,
         "SEC_TO_TIME" if args.len() == 1 => ScalarFunction::SecToTime,
         "ADDTIME" if args.len() == 2 => ScalarFunction::AddTime,
         "SUBTIME" if args.len() == 2 => ScalarFunction::SubTime,
@@ -2270,7 +2281,7 @@ pub(super) fn bind_scalar(
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::TimeToSec => (
+        ScalarFunction::TimeToSec | ScalarFunction::PeriodAdd | ScalarFunction::PeriodDiff => (
             Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
         ),
@@ -2455,6 +2466,11 @@ pub(super) fn bind_scalar(
         }
         ScalarFunction::DateInterval { .. } | ScalarFunction::TimestampDiff { .. } => {
             args.len() == 2 && crate::session_parse_mode().allow_invalid_dates
+        }
+        // CONVERT_TZ takes it fourth: under ALLOW_INVALID_DATES a day past
+        // its month's end is converted as the day it runs into.
+        ScalarFunction::ConvertTz => {
+            args.len() == 3 && crate::session_parse_mode().allow_invalid_dates
         }
         _ => false,
     };

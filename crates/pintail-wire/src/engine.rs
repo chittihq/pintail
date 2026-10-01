@@ -212,6 +212,8 @@ pub enum SqlRejection {
     SubqueryRows,
     /// 3143: a JSON path expression does not parse.
     InvalidJsonPath,
+    /// 1210: a function's arguments have no answer.
+    WrongArguments,
     /// 3513: binary bitwise operands have unequal lengths.
     BinaryBitwiseLength,
     /// 3514: aggregate binary width exceeds 511 bytes.
@@ -1624,6 +1626,10 @@ fn query_execution_error(error: ExecError) -> QueryError {
         },
         ExecError::CharacterConversion(_) => QueryError::Rejected {
             rejection: SqlRejection::CharacterConversion,
+            message: error.to_string(),
+        },
+        ExecError::WrongArguments(_) => QueryError::Rejected {
+            rejection: SqlRejection::WrongArguments,
             message: error.to_string(),
         },
         ExecError::BinaryBitwiseLength => QueryError::Rejected {

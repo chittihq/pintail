@@ -215,10 +215,193 @@ pub(crate) fn rewrite_predicate(expr: BoundExpr) -> BoundExpr {
         }
         kind => {
             let expr = BoundExpr { kind, ..expr };
+            let expr = rewrite_timestamp_constant(&expr).unwrap_or(expr);
             let expr = rewrite_session_reading(&expr).unwrap_or(expr);
             rewrite_comparison(&expr).unwrap_or(expr)
         }
     }
+}
+
+/// A source `TIMESTAMP` column read as it is or through the session's
+/// zone, with that zone.
+fn timestamp_reading(expr: &BoundExpr) -> Option<(&BoundColumn, Option<&str>)> {
+    match &expr.kind {
+        BoundExprKind::Column(column) if column.timestamp => Some((column, None)),
+        BoundExprKind::Scalar {
+            function: ScalarFunction::SessionTimestamp,
+            args,
+        } => {
+            let [source, zone] = args.as_slice() else {
+                return None;
+            };
+            let BoundExprKind::Column(column) = &source.kind else {
+                return None;
+            };
+            let BoundExprKind::Literal(Value::Utf8(zone)) = &zone.kind else {
+                return None;
+            };
+            column.timestamp.then_some((column, Some(zone.as_str())))
+        }
+        _ => None,
+    }
+}
+
+/// The zero date written as text, with or without a clock.
+fn is_zero_date(text: &str) -> bool {
+    let text = text.trim();
+    let Some(rest) = text.strip_prefix("0000-00-00") else {
+        return false;
+    };
+    let Some(clock) = rest.strip_prefix(" 00:00:00") else {
+        return rest.is_empty();
+    };
+    clock.is_empty()
+        || clock
+            .strip_prefix('.')
+            .is_some_and(|fraction| fraction.bytes().all(|digit| digit == b'0'))
+}
+
+/// The zero `TIMESTAMP` as the column stores it.
+fn zero_literal(column: &BoundColumn) -> Option<BoundExpr> {
+    let fsp = usize::from(column_fsp(column)?);
+    let mut text = "0000-00-00 00:00:00".to_owned();
+    if fsp > 0 {
+        text.push('.');
+        text.extend(std::iter::repeat_n('0', fsp));
+    }
+    Some(BoundExpr {
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+        kind: BoundExprKind::Literal(Value::Utf8(text)),
+    })
+}
+
+/// A `TIMESTAMP` column compared with a constant no `TIMESTAMP` can hold.
+///
+/// `MySQL` decides such a comparison from the constant alone. Written in
+/// the session's zone, a constant that falls before the first `TIMESTAMP`
+/// instant is below every stored value - the zero `TIMESTAMP` included,
+/// which an ordinary comparison would place under it - and one past the
+/// last instant is above every stored value. So `<`, `<=` and `=` against
+/// a constant before the range hold for no row and `>`, `>=` and `<>` for
+/// every row whose column is not NULL; past the range it is the reverse.
+/// Under a zone east of UTC the constants before the range reach into
+/// 1970-01-01 itself. `BETWEEN`, `IN` and a constant that is computed are
+/// compared as written.
+///
+/// The zero date as a constant is the zero `TIMESTAMP` whatever its
+/// spelling and whatever the column's fraction digits.
+fn rewrite_timestamp_constant(expr: &BoundExpr) -> Option<BoundExpr> {
+    const FIRST: i64 = 1_000_000;
+    const PAST_LAST: i64 = 2_147_483_648_000_000;
+    match &expr.kind {
+        BoundExprKind::Binary {
+            op:
+                op @ (BinaryOp::Equal
+                | BinaryOp::NotEqual
+                | BinaryOp::Less
+                | BinaryOp::LessOrEqual
+                | BinaryOp::Greater
+                | BinaryOp::GreaterOrEqual),
+            left,
+            right,
+        } => {
+            // Only a constant written as text: one that was computed
+            // arrives typed, and is compared as it is.
+            let written = |side: &BoundExpr| side.data_type == Some(DataType::Utf8);
+            let (subject, literal, op) = match (&left.kind, &right.kind) {
+                (_, BoundExprKind::Literal(Value::Utf8(text))) if written(right) => {
+                    (left, text, *op)
+                }
+                (BoundExprKind::Literal(Value::Utf8(text)), _) if written(left) => {
+                    (right, text, mirror(*op))
+                }
+                _ => return None,
+            };
+            let (column, zone) = timestamp_reading(subject)?;
+            if is_zero_date(literal) {
+                return Some(BoundExpr {
+                    data_type: Some(DataType::Boolean),
+                    nullable: expr.nullable,
+                    kind: BoundExprKind::Binary {
+                        op,
+                        left: Box::new(column_expr(column)),
+                        right: Box::new(zero_literal(column)?),
+                    },
+                });
+            }
+            let instant = crate::expression::zoned_text_micros(literal, zone)?;
+            let (before, after) = (instant < FIRST, instant >= PAST_LAST);
+            if !before && !after {
+                return None;
+            }
+            let holds = match op {
+                BinaryOp::Less | BinaryOp::LessOrEqual => after,
+                BinaryOp::Greater | BinaryOp::GreaterOrEqual => before,
+                BinaryOp::NotEqual => true,
+                _ => false,
+            };
+            Some(decided_for_present(column, holds))
+        }
+        BoundExprKind::Scalar {
+            function: function @ ScalarFunction::InList { .. },
+            args,
+        } => {
+            let (subject, candidates) = args.split_first()?;
+            let (column, _) = timestamp_reading(subject)?;
+            let zero = |candidate: &BoundExpr| matches!(&candidate.kind, BoundExprKind::Literal(Value::Utf8(text)) if is_zero_date(text));
+            if !candidates.iter().any(zero) {
+                return None;
+            }
+            let canonical = zero_literal(column)?;
+            let mut rewritten = vec![subject.clone()];
+            rewritten.extend(candidates.iter().map(|candidate| {
+                if zero(candidate) {
+                    canonical.clone()
+                } else {
+                    candidate.clone()
+                }
+            }));
+            Some(BoundExpr {
+                data_type: expr.data_type,
+                nullable: expr.nullable,
+                kind: BoundExprKind::Scalar {
+                    function: *function,
+                    args: rewritten,
+                },
+            })
+        }
+        _ => None,
+    }
+}
+
+/// A comparison whose answer is `holds` for every row where the column is
+/// present and NULL where it is not.
+fn decided_for_present(column: &BoundColumn, holds: bool) -> BoundExpr {
+    let boolean = |kind, nullable| BoundExpr {
+        data_type: Some(DataType::Boolean),
+        nullable,
+        kind,
+    };
+    if !column.nullable {
+        return boolean(BoundExprKind::Literal(Value::Boolean(holds)), false);
+    }
+    // `c IS NOT NULL OR NULL` is true or NULL; `c IS NULL AND NULL` is
+    // false or NULL.
+    boolean(
+        BoundExprKind::Binary {
+            op: if holds { BinaryOp::Or } else { BinaryOp::And },
+            left: Box::new(boolean(
+                BoundExprKind::IsNull {
+                    expr: Box::new(column_expr(column)),
+                    negated: holds,
+                },
+                false,
+            )),
+            right: Box::new(boolean(BoundExprKind::Literal(Value::Null), true)),
+        },
+        true,
+    )
 }
 
 /// The column and fixed offset of a session-zone `TIMESTAMP` reading:

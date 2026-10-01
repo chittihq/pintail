@@ -802,7 +802,10 @@ impl<'catalog> Binder<'catalog> {
             &projection_items,
             &expression_tables,
             Some(&resolve_subquery),
-        )?;
+        )?
+        .into_iter()
+        .map(BoundExpr::instant_key)
+        .collect::<Vec<_>>();
         // HAVING resolves grouping columns before SELECT aliases; an alias
         // still outranks an unrelated source column with the same name.
         let having_expr = select
@@ -8389,6 +8392,29 @@ fn bind_order_by(
                     bound.projection.len() - 1
                 }
                 Err(error) => return Err(error),
+            };
+            // A session-zone reading of a TIMESTAMP sorts by the instant it
+            // reads, through a hidden column: the stored column for a plain
+            // projection, the grouping key for a grouped one.
+            let instant = bound
+                .projection
+                .get(index)
+                .and_then(|projection| projection.expr.session_timestamp_source())
+                .filter(|source| match source.kind {
+                    BoundExprKind::Column(_) => allow_hidden,
+                    BoundExprKind::GroupKey(_) => !bound.distinct && bound.union_all.is_empty(),
+                    _ => false,
+                })
+                .cloned();
+            let index = match instant {
+                Some(expr) => {
+                    bound.projection.push(BoundProjection {
+                        name: format!("<order-{}>", bound.projection.len()),
+                        expr,
+                    });
+                    bound.projection.len() - 1
+                }
+                None => index,
             };
             if let Some(projection) = bound.projection.get(index) {
                 ensure_supported_text_collation(&[&projection.expr])?;

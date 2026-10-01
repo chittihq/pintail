@@ -488,6 +488,19 @@ impl BoundExpr {
         }
     }
 
+    /// The key this expression sorts and groups by. A session-zone reading
+    /// of a `TIMESTAMP` column is ordered and grouped by the instant the
+    /// column stores, as `MySQL` orders it: in the hour a zone repeats when
+    /// its clocks go back, two instants read as the same wall clock and the
+    /// reading alone would order them by that.
+    #[must_use]
+    pub fn instant_key(self) -> Self {
+        match self.session_timestamp_source() {
+            Some(source) if matches!(source.kind, BoundExprKind::Column(_)) => source.clone(),
+            _ => self,
+        }
+    }
+
     /// The column a session-zone reading wraps, when this is one.
     #[must_use]
     pub fn session_timestamp_source(&self) -> Option<&Self> {
@@ -1356,6 +1369,11 @@ pub enum ScalarFunction {
     YearWeek,
     /// `TIME_TO_SEC(time)`.
     TimeToSec,
+    /// `PERIOD_ADD(period, months)`: a `YYMM` or `YYYYMM` period moved by
+    /// a number of months.
+    PeriodAdd,
+    /// `PERIOD_DIFF(period, period)`: the months between two periods.
+    PeriodDiff,
     /// `SEC_TO_TIME(seconds)`, clamped to `MySQL`'s TIME range.
     SecToTime,
     /// `ADDTIME(expr1, expr2)`: a time or datetime plus a time.
