@@ -13,6 +13,18 @@
 //! `sel < n` keeps `n` rows in ten thousand, scattered through every block.
 //! No block statistic can skip anything; only the selection can. Every
 //! answer is checked against a direct computation over the generator.
+//!
+//! Two more columns change their selectivity along the key, so a filter on
+//! them keeps nearly every row of some segments and nearly none of others:
+//! `status` is 1 for 99 rows in a hundred of the first half of the table
+//! and for one in a hundred of the second, and `seen` rises with the key
+//! (with jitter, and NULL once in 29 rows), so a window over it is all of
+//! the early segments, none of the late ones and a ragged edge between.
+//! `band` is 1 for every row of the first half and, in the second, for the
+//! first thousand rows of each hundred thousand: one unbroken run a
+//! segment rather than scattered rows. The `phased` cases measure what a
+//! scan pays when the share it keeps moves under it, beside one filter
+//! that keeps nearly everything throughout.
 
 use std::collections::BTreeMap;
 
@@ -46,6 +58,9 @@ fn schema() -> TableSchema {
             Column::new(10, "note", DataType::Utf8, false),
             Column::new(11, "city", DataType::Utf8, false),
             Column::new(12, "score", DataType::Int64, true),
+            Column::new(13, "status", DataType::Int64, false),
+            Column::new(14, "seen", DataType::Int64, true),
+            Column::new(15, "band", DataType::Int64, false),
         ],
     )
     .expect("schema")
@@ -116,11 +131,30 @@ fn generate(id: u64) -> Gen {
     }
 }
 
+/// `status` of row `id` in a table of `rows`: mostly 1 in the first half,
+/// mostly 0 in the second.
+fn status(id: u64, rows: u64) -> u64 {
+    let flip = (mix(id) >> 50) % 100;
+    u64::from(if id <= rows / 2 { flip < 99 } else { flip < 1 })
+}
+
+/// `seen` of row `id`: the key plus a jitter of up to a twentieth of the
+/// table, NULL once in 29 rows.
+fn seen(id: u64, rows: u64) -> Option<u64> {
+    (!id.is_multiple_of(29)).then(|| id + (mix(id) >> 45) % (rows / 20).max(1))
+}
+
+/// `band` of row `id`: 1 through the first half, then 1 for the first
+/// thousand rows of each hundred thousand.
+fn band(id: u64, rows: u64) -> u64 {
+    u64::from(id <= rows / 2 || (id - 1) % CHUNK < 1000)
+}
+
 fn cents(value: u64) -> String {
     format!("{}.{:02}", value / 100, value % 100)
 }
 
-fn row(id: u64) -> StoredRow {
+fn row(id: u64, rows: u64) -> StoredRow {
     let g = generate(id);
     StoredRow::new(
         PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
@@ -139,6 +173,11 @@ fn row(id: u64) -> StoredRow {
             g.score.map_or(Value::Null, |score| {
                 Value::Int64(i64::try_from(score).expect("small"))
             }),
+            Value::Int64(i64::try_from(status(id, rows)).expect("small")),
+            seen(id, rows).map_or(Value::Null, |seen| {
+                Value::Int64(i64::try_from(seen).expect("small"))
+            }),
+            Value::Int64(i64::try_from(band(id, rows)).expect("small")),
         ],
         id + 1,
         false,
@@ -191,7 +230,7 @@ impl Fixture {
         while start <= rows {
             let end = (start + CHUNK).min(rows + 1);
             table
-                .bulk_ingest_snapshot((start..end).map(row).collect())
+                .bulk_ingest_snapshot((start..end).map(|id| row(id, rows)).collect())
                 .expect("rows");
             start = end;
         }
@@ -349,6 +388,143 @@ fn expected(rows: u64) -> BTreeMap<u64, Answers> {
         .collect()
 }
 
+/// A label, the filter as SQL, and the same test over a row's key.
+type Phase = (&'static str, String, Box<dyn Fn(u64) -> bool>);
+
+/// The cases whose filter keeps a different share of each segment, with
+/// their answers from one pass over the generator.
+fn phased(rows: u64) -> Vec<(String, String, Vec<String>)> {
+    let (low, high) = (rows / 3, rows * 2 / 3);
+    let filters: [Phase; 7] = [
+        (
+            "phased dense>runs",
+            "band = 1".to_owned(),
+            Box::new(move |id| band(id, rows) == 1),
+        ),
+        (
+            "phased dense>sparse",
+            "status = 1".to_owned(),
+            Box::new(move |id| status(id, rows) == 1),
+        ),
+        (
+            "phased sparse>dense",
+            "status = 0".to_owned(),
+            Box::new(move |id| status(id, rows) == 0),
+        ),
+        (
+            "phased window head",
+            format!("seen < {}", rows / 2),
+            Box::new(move |id| seen(id, rows).is_some_and(|seen| seen < rows / 2)),
+        ),
+        (
+            "phased window mid",
+            format!("seen >= {low} AND seen < {high}"),
+            Box::new(move |id| seen(id, rows).is_some_and(|seen| seen >= low && seen < high)),
+        ),
+        (
+            "phased window tail",
+            format!("seen >= {}", rows / 2),
+            Box::new(move |id| seen(id, rows).is_some_and(|seen| seen >= rows / 2)),
+        ),
+        (
+            "phased dense all",
+            "sel < 9500".to_owned(),
+            Box::new(|id| mix(id) % 10_000 < 9500),
+        ),
+    ];
+    let mut totals: Vec<Totals> = filters.iter().map(|_| Totals::default()).collect();
+    for id in 1..=rows {
+        let mut generated = None;
+        for (index, (_, _, keep)) in filters.iter().enumerate() {
+            if !keep(id) {
+                continue;
+            }
+            let g = generated.get_or_insert_with(|| generate(id));
+            let t = &mut totals[index];
+            t.count += 1;
+            t.amount += g.amount;
+            t.qty += g.qty;
+            keep_min(&mut t.note, &g.note);
+            keep_max(&mut t.city, &g.city);
+            if let Some(score) = g.score {
+                *t.score.get_or_insert(0) += score;
+            }
+        }
+    }
+    let text = |value: &Option<String>| value.clone().unwrap_or_else(|| "NULL".to_owned());
+    filters
+        .iter()
+        .zip(&totals)
+        .map(|((label, filter, _), t)| {
+            (
+                (*label).to_owned(),
+                format!(
+                    "SELECT COUNT(*), SUM(amount), SUM(qty), MIN(note), MAX(city), SUM(score) \
+                     FROM wide WHERE {filter}"
+                ),
+                vec![format!(
+                    "{}|{}|{}|{}|{}|{}",
+                    t.count,
+                    cents(t.amount),
+                    t.qty,
+                    text(&t.note),
+                    text(&t.city),
+                    t.score
+                        .map_or_else(|| "NULL".to_owned(), |score| score.to_string())
+                )],
+            )
+        })
+        .collect()
+}
+
+/// Lean aggregates whose cost is the fold itself, one per way the fold
+/// meets its rows: every row of a batch with no NULL among them, every row
+/// of nullable columns, and half the rows picked by a filter. The answers
+/// come from the generator's own arithmetic, without building its text.
+fn folds(rows: u64) -> Vec<(String, String, Vec<String>)> {
+    let (mut amount, mut price) = (0_u64, 0_u64);
+    let (mut scored, mut score, mut shipped) = (0_u64, 0_u64, 0_u64);
+    let (mut picked, mut picked_amount, mut picked_price) = (0_u64, 0_u64, 0_u64);
+    for id in 1..=rows {
+        let h = mix(id);
+        let row_amount = 100 + (h >> 24) % 9_999_900;
+        let row_price = 1 + (id * 7919) % 99_999;
+        amount += row_amount;
+        price += row_price;
+        if !id.is_multiple_of(11) {
+            scored += 1;
+            score += (h >> 33) % 1000;
+        }
+        shipped += u64::from(!id.is_multiple_of(7));
+        if h % 10_000 < 5000 {
+            picked += 1;
+            picked_amount += row_amount;
+            picked_price += row_price;
+        }
+    }
+    vec![
+        (
+            "fold whole run".to_owned(),
+            "SELECT COUNT(*), SUM(amount), SUM(price) FROM wide WHERE qty > 0".to_owned(),
+            vec![format!("{rows}|{}|{}", cents(amount), cents(price))],
+        ),
+        (
+            "fold nullable".to_owned(),
+            "SELECT COUNT(score), SUM(score), COUNT(shipped) FROM wide WHERE qty > 0".to_owned(),
+            vec![format!("{scored}|{score}|{shipped}")],
+        ),
+        (
+            "fold picked half".to_owned(),
+            "SELECT COUNT(*), SUM(amount), SUM(price) FROM wide WHERE sel < 5000".to_owned(),
+            vec![format!(
+                "{picked}|{}|{}",
+                cents(picked_amount),
+                cents(picked_price)
+            )],
+        ),
+    ]
+}
+
 #[test]
 #[ignore = "measurement, not an assertion"]
 fn late_materialization_cost() {
@@ -400,10 +576,19 @@ fn late_materialization_cost() {
             ));
         }
     }
+    // Their labels all start with the word, and their expected answers
+    // cost a pass over the generator.
+    if only.as_ref().is_none_or(|only| only.contains("phased")) {
+        cases.extend(phased(rows));
+    }
+    if only.as_ref().is_none_or(|only| only.contains("fold")) {
+        cases.extend(folds(rows));
+    }
     for (label, sql, expected) in &cases {
+        // `LATE_ONLY` may name several substrings, separated by commas.
         if only
             .as_ref()
-            .is_some_and(|only| !label.contains(only.as_str()))
+            .is_some_and(|only| !only.split(',').any(|part| label.contains(part)))
         {
             continue;
         }
@@ -412,7 +597,7 @@ fn late_materialization_cost() {
         let mut times: Vec<f64> = (0..runs).map(|_| fixture.run(sql, false).1).collect();
         times.sort_by(f64::total_cmp);
         println!(
-            "{label:<16} median {:>8.2}ms  min {:>8.2}ms  {stats}",
+            "{label:<20} median {:>8.2}ms  min {:>8.2}ms  {stats}",
             times[runs / 2],
             times[0]
         );
