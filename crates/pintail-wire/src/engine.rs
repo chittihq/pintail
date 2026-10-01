@@ -263,6 +263,46 @@ pub struct ReplicaEngine {
     /// Per tables directory, its entries as last listed, so a stamp lists
     /// the directory again only when the directory itself moved.
     listings: Arc<Mutex<HashMap<PathBuf, TableListing>>>,
+    /// The longest a statement waits for a table recopied after a schema
+    /// change before it is refused (see [`Self::execute_answer`]).
+    recopy_wait: Duration,
+}
+
+/// How long a statement waits, by default, for a table being recopied after
+/// a schema change: `PINTAIL_TABLE_RECOPY_WAIT_MS`, else ten seconds. Zero
+/// refuses at once.
+fn default_recopy_wait() -> Duration {
+    static WAIT: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *WAIT.get_or_init(|| {
+        Duration::from_millis(
+            std::env::var("PINTAIL_TABLE_RECOPY_WAIT_MS")
+                .ok()
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or(10_000),
+        )
+    })
+}
+
+/// How often a waiting statement asks whether the recopy has finished.
+const RECOPY_POLL: Duration = Duration::from_millis(25);
+
+/// Records whether a result began to reach its reader, so a statement is
+/// only ever retried while nothing of it has been sent.
+struct TrackedSink<'a> {
+    inner: &'a mut dyn RowSink,
+    begun: bool,
+}
+
+impl RowSink for TrackedSink<'_> {
+    fn begin(&mut self, fields: &[QueryField]) -> bool {
+        self.begun = true;
+        self.inner.begin(fields)
+    }
+
+    fn rows(&mut self, rows: ResultRows) -> bool {
+        self.begun = true;
+        self.inner.rows(rows)
+    }
 }
 
 impl std::fmt::Debug for ReplicaEngine {
@@ -412,6 +452,7 @@ impl ReplicaEngine {
             signatures: Arc::new(Mutex::new(HashMap::new())),
             signature_reader: Arc::new(Mutex::new(None)),
             listings: Arc::new(Mutex::new(HashMap::new())),
+            recopy_wait: default_recopy_wait(),
         }
     }
 
@@ -756,6 +797,34 @@ impl ReplicaEngine {
         self
     }
 
+    /// Sets the longest a statement waits for a table recopied after a
+    /// schema change; zero refuses at once.
+    #[must_use]
+    pub const fn with_recopy_wait(mut self, wait: Duration) -> Self {
+        self.recopy_wait = wait;
+        self
+    }
+
+    /// Whether a table of `database_id` is being copied again after a schema
+    /// change: its copy is running and its schema history holds more than
+    /// the generation it was first copied with. A first copy, and a copy an
+    /// operator asked for, are not: nobody can say when those end.
+    fn schema_recopy_running(&self, database_id: &str) -> bool {
+        let Ok(metadata) = MetaStore::open(&self.metadata_path) else {
+            return false;
+        };
+        let Ok(tables) = metadata.tables(database_id) else {
+            return false;
+        };
+        tables.iter().any(|table| {
+            table.state == "snapshotting"
+                && !table.copy_complete
+                && metadata
+                    .schema_history(database_id, &table.name)
+                    .is_ok_and(|history| history.len() > 1)
+        })
+    }
+
     /// The configured concurrency ceiling; zero means unbounded.
     #[must_use]
     pub fn max_concurrent_queries(&self) -> usize {
@@ -809,8 +878,62 @@ impl ReplicaEngine {
     /// # Errors
     ///
     /// Returns the same errors as [`Self::execute_with_deadline`].
-    #[allow(clippy::too_many_lines)]
+    ///
+    /// A statement that reads a table being recopied after a schema change
+    /// waits for the copy, up to the engine's recopy wait and its own
+    /// deadline, rather than being refused: a source `ALTER TABLE` whose new
+    /// column needs values for the rows already held recopies the table, and
+    /// for the second or so that takes a client would otherwise see an error
+    /// where the source itself only made it wait. Past the wait the refusal
+    /// stands. Nothing is retried once any of the result has been sent.
     pub fn execute_answer(
+        &self,
+        database_id: &str,
+        sql: &str,
+        max_rows: usize,
+        deadline: Option<Instant>,
+        mut sink: Option<&mut dyn RowSink>,
+    ) -> Result<Answer, QueryError> {
+        let give_up = Instant::now().checked_add(self.recopy_wait);
+        let mut waiting = false;
+        let mut asked_again = false;
+        loop {
+            let mut tracked = sink.as_mut().map(|inner| TrackedSink {
+                inner: &mut **inner,
+                begun: false,
+            });
+            let result = self.execute_answer_once(
+                database_id,
+                sql,
+                max_rows,
+                deadline,
+                tracked.as_mut().map(|sink| sink as &mut dyn RowSink),
+            );
+            let retryable = matches!(result, Err(QueryError::NotReady(_)))
+                && !tracked.as_ref().is_some_and(|sink| sink.begun)
+                && give_up.is_some_and(|give_up| Instant::now() < give_up)
+                && deadline.is_none_or(|deadline| Instant::now() < deadline);
+            if !retryable {
+                return result;
+            }
+            if waiting || self.schema_recopy_running(database_id) {
+                // Once a recopy has been seen running, the statement is
+                // asked again until it answers or the wait runs out: the
+                // copy ending is only seen by asking.
+                waiting = true;
+                std::thread::sleep(RECOPY_POLL);
+            } else if asked_again {
+                return result;
+            } else {
+                // No recopy runs now, but one may have ended between the
+                // refusal and this look: ask once more before it stands.
+                asked_again = true;
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn execute_answer_once(
         &self,
         database_id: &str,
         sql: &str,
@@ -2270,6 +2393,101 @@ mod admission_tests {
         );
         meta.finish_table_resnapshot("db", "a", "ready").unwrap();
         assert!(engine.execute("db", "SELECT COUNT(*) FROM a", 10).is_ok());
+    }
+
+    /// A source ALTER whose new column needs values recopies the table; the
+    /// statements that arrive meanwhile wait for the copy instead of being
+    /// refused, and are refused only when the copy outlasts the wait.
+    #[test]
+    fn a_statement_waits_for_a_table_recopied_after_a_schema_change() {
+        const NOW: &str = "2026-09-07T00:00:00Z";
+        let directory = tempfile::tempdir().unwrap();
+        let metadata_path = directory.path().join("meta.db");
+        let mut meta = MetaStore::open(&metadata_path).unwrap();
+        meta.create_local_database("db", "scratch", NOW).unwrap();
+        std::fs::create_dir_all(directory.path().join("databases/db/tables")).unwrap();
+        let writer = LocalDatabase::new(directory.path(), &metadata_path, "db");
+        writer.recover().unwrap();
+        for sql in [
+            "CREATE TABLE a (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))",
+            "INSERT INTO a VALUES (1), (2)",
+        ] {
+            writer.execute(&parse_statement(sql).unwrap()).unwrap();
+        }
+        let engine = ReplicaEngine::new(directory.path(), &metadata_path)
+            .with_recopy_wait(Duration::from_secs(20));
+        let count = |engine: &ReplicaEngine| engine.execute("db", "SELECT COUNT(*) FROM a", 10);
+        assert_eq!(count(&engine).unwrap().rows, vec![vec![Value::UInt64(2)]]);
+
+        // A second schema generation, as a streamed ALTER records one, and
+        // the recopy it queued begins.
+        let columns = meta
+            .schema_history("db", "a")
+            .unwrap()
+            .last()
+            .map(|record| record.columns_json.clone())
+            .or_else(|| {
+                let database = meta.database("db").unwrap().unwrap();
+                let report: ProbeReport =
+                    serde_json::from_str(database.probe_json.as_deref()?).ok()?;
+                let table = report.tables.into_iter().find(|table| table.name == "a")?;
+                serde_json::to_string(&table.columns).ok()
+            })
+            .expect("the table's columns");
+        let version = meta
+            .schema_history("db", "a")
+            .unwrap()
+            .last()
+            .map_or(2, |record| record.version + 1);
+        meta.record_schema_history(
+            "db",
+            "a",
+            version,
+            Some("ALTER TABLE a ADD COLUMN region INT NOT NULL DEFAULT 7"),
+            &columns,
+            NOW,
+        )
+        .unwrap();
+        if meta.schema_history("db", "a").unwrap().len() < 2 {
+            meta.record_schema_history(
+                "db",
+                "a",
+                version + 1,
+                Some("ALTER TABLE a"),
+                &columns,
+                NOW,
+            )
+            .unwrap();
+        }
+        meta.begin_table_resnapshot("db", "a").unwrap();
+
+        // The copy outlasts a short wait: refused, after waiting.
+        let impatient = ReplicaEngine::new(directory.path(), &metadata_path)
+            .with_recopy_wait(Duration::from_millis(150));
+        let started = Instant::now();
+        assert!(matches!(count(&impatient), Err(QueryError::NotReady(_))));
+        assert!(started.elapsed() >= Duration::from_millis(150));
+        // No wait at all: refused at once, as before.
+        let unwilling =
+            ReplicaEngine::new(directory.path(), &metadata_path).with_recopy_wait(Duration::ZERO);
+        assert!(matches!(count(&unwilling), Err(QueryError::NotReady(_))));
+
+        // The copy ends while a statement waits: it answers.
+        let finisher = {
+            let metadata_path = metadata_path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                MetaStore::open(&metadata_path)
+                    .unwrap()
+                    .finish_table_resnapshot("db", "a", "ready")
+                    .unwrap();
+            })
+        };
+        let started = Instant::now();
+        let answered = count(&engine).expect("the statement waits for the copy");
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert_eq!(answered.rows.len(), 1);
+        finisher.join().unwrap();
     }
 
     #[test]
