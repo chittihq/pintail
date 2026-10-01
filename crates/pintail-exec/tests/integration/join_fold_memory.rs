@@ -293,7 +293,7 @@ fn every_way_out_of_a_fused_join_answers_the_same_or_fails_cleanly() {
             roomy.peak >> 20,
             roomy.notes
         );
-        for mib in [6_usize, 16, 64, 256] {
+        for mib in [4_usize, 6, 16, 64, 256] {
             // Another statement with the same answer: not a replay.
             let edge = PICKS + u64::try_from(mib).expect("ceiling");
             let run = fixture.run(&sql.replace("$EDGE", &edge.to_string()), mib << 20);
@@ -315,6 +315,15 @@ fn every_way_out_of_a_fused_join_answers_the_same_or_fails_cleanly() {
                     }
                     if run.peak > mib << 20 {
                         failures.push(format!("{label} at {mib} MiB: peak {}", run.peak));
+                    }
+                    // Thirty thousand groups at most: the runs the aggregate
+                    // writes follow what its map holds, not how often the
+                    // ceiling is close.
+                    if run.spill_files > 3_000 {
+                        failures.push(format!(
+                            "{label} at {mib} MiB: {} spill files",
+                            run.spill_files
+                        ));
                     }
                 }
                 Err(error) => {

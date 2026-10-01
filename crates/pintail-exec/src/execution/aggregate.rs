@@ -3920,6 +3920,9 @@ fn try_sma_fold(
 const WAVE_ROWS_FLOOR: usize = 1_024;
 /// Bytes a wave leaves free below the ceiling for the merge that follows it.
 const WAVE_RESERVE_FLOOR: usize = 256 * 1024;
+/// Fewest bytes the group map holds before pressure alone writes it out as
+/// a run.
+const MIN_PRESSED_RUN: usize = 64 * 1024;
 
 fn aggregate_round_batches() -> usize {
     rayon::current_num_threads().clamp(8, 64)
@@ -4618,6 +4621,16 @@ fn build_buffered_hash_aggregate(
         let outside = held_before.saturating_sub(groups_reserved);
         let own_limit = memory.limit().saturating_sub(outside);
         let pressed = |used: usize| used.saturating_sub(outside) > own_limit.saturating_mul(3) / 4;
+        // Pressure alone does not make a run worth writing: the batches a
+        // round holds and the bound a wave reserves are the aggregate's own
+        // too, and under a ceiling of a few megabytes they pass the line by
+        // themselves. The map was then written out before every group it
+        // merged - ninety thousand runs of a group or two for thirty
+        // thousand groups - freeing nothing each time. A run is written
+        // under pressure once the map holds a real share of what a spill
+        // can free; a reservation the ceiling refuses still spills whatever
+        // the map holds.
+        let worth_a_run = |map_bytes: usize| map_bytes >= (own_limit / 16).max(MIN_PRESSED_RUN);
         while batches.len() < round {
             let batch = match first_batches.pop_front() {
                 Some(batch) => Some(batch),
@@ -4755,7 +4768,7 @@ fn build_buffered_hash_aggregate(
             // ceiling is close, and if the build still runs out while the map
             // holds groups, spill, hand back what the failed build took, and
             // build once more.
-            if pressed(memory.used()) && !groups.is_empty() {
+            if pressed(memory.used()) && worth_a_run(groups_reserved) && !groups.is_empty() {
                 spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
                 memory.release(groups_reserved);
                 groups_reserved = 0;
@@ -4800,6 +4813,9 @@ fn build_buffered_hash_aggregate(
                 }
                 Err(error) => return Err(error),
             };
+            // What the map has grown by since the partials were built: its
+            // new entries and what their states took.
+            let mut merge_began = memory.used();
             for partial in partials {
                 for entry in partial {
                     let mut pending = Some(entry);
@@ -4813,13 +4829,16 @@ fn build_buffered_hash_aggregate(
                         // path, which is why this query failed where it should
                         // have spilled once anything else held a large share of
                         // the budget.
-                        if pressed(memory.used()) && !groups.is_empty() {
+                        let map_bytes = groups_reserved
+                            .saturating_add(memory.used().saturating_sub(merge_began));
+                        if pressed(memory.used()) && worth_a_run(map_bytes) && !groups.is_empty() {
                             groups_reserved = groups_reserved
                                 .saturating_add(memory.used().saturating_sub(used_before_merge));
                             spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
                             memory.release(groups_reserved);
                             groups_reserved = 0;
                             used_before_merge = memory.used();
+                            merge_began = used_before_merge;
                         }
                         match merge_partial_group(
                             &mut groups,
@@ -4842,6 +4861,7 @@ fn build_buffered_hash_aggregate(
                                 memory.release(groups_reserved);
                                 groups_reserved = 0;
                                 used_before_merge = memory.used();
+                                merge_began = used_before_merge;
                                 pending = Some(returned);
                             }
                             Err((error, _)) => return Err(error),
@@ -4866,7 +4886,7 @@ fn build_buffered_hash_aggregate(
         // of the ceiling those sets hit it first and the query fails where it
         // should have spilled. Larger batches make that ordinary rather than
         // rare, since a batch in flight is then a real share of the budget.
-        let under_pressure = pressed(memory.used());
+        let under_pressure = pressed(memory.used()) && worth_a_run(groups_reserved);
         if (groups_reserved > own_limit / 2 || under_pressure) && !groups.is_empty() {
             spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
             memory.release(groups_reserved);
