@@ -322,7 +322,7 @@ for (let cycle = 1; cycle <= cycles; cycle++) {
   await Bun.sleep(between(300, 2500))
   // What the replica shows before it dies.
   let before: Awaited<ReturnType<typeof journalView>> | undefined
-  try { if (alive()) before = await journalView() } catch {}
+  try { if (alive()) before = await journalView() } catch (error) { record.beforeError = String(error).slice(0, 200) }
   await Bun.sleep(between(0, 1200))
   // The kill.
   const logBefore = currentLog
@@ -364,11 +364,11 @@ for (let cycle = 1; cycle <= cycles; cycle++) {
   let maximum = 0
   if (before) for (const id of before.view.keys()) if (id > maximum) maximum = id
   const missing = new Map<number, number>()
-  let polls = 0
+  let polls = 0, pollErrors = 0
   const pollUntil = Date.now() + between(500, 2500)
   while (before && Date.now() < pollUntil && alive()) {
     let now: Awaited<ReturnType<typeof journalView>>
-    try { now = await journalView() } catch { await Bun.sleep(30); continue }
+    try { now = await journalView() } catch (error) { pollErrors++; record.pollError = String(error).slice(0, 200); await Bun.sleep(30); continue }
     polls++
     let reappeared = 0, regressed = 0
     const samples: string[] = []
@@ -383,6 +383,7 @@ for (let cycle = 1; cycle <= cycles; cycle++) {
     await Bun.sleep(40)
   }
   record.polls = polls
+  if (pollErrors) record.pollErrors = pollErrors
   // Quiesce and compare everything.
   await pauseWriter()
   const lost = [...missing].filter(([id, seen]) => { const at = deletedAt.get(id); return at === undefined || at > seen + 100 })
