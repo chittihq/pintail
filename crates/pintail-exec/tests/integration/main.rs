@@ -10,6 +10,7 @@ mod block_skip_bench;
 mod block_value_skipping;
 mod build_keys_through_joins;
 mod clustered_build_keys;
+mod column_fold_edges;
 mod column_statistics;
 mod computed_aggregate_arguments;
 mod conditional_count_windows;
