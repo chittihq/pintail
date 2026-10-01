@@ -325,6 +325,7 @@ impl LogicalPlanner {
             mut windows,
             limit,
             recursive,
+            outer_set: _,
         } = query;
 
         // Sorting a joined result materializes projected decimal values in

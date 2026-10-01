@@ -1941,6 +1941,38 @@ pub enum BoundJoinKind {
     Cross,
 }
 
+/// A correlated scalar aggregate subquery rewritten to answer many outer
+/// rows in one execution.
+///
+/// The outer rows' values are read from virtual relations the executor
+/// serves from memory: one per outer relation the subquery refers to, each
+/// carrying an ordinal column (the position of the outer tuple) followed by
+/// the columns of that relation the subquery may read. The query joins them
+/// to its own tables, groups by the ordinal, and projects the ordinal and
+/// then the subquery's value. An ordinal with no row is an outer tuple no
+/// inner row matched.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OuterSetQuery {
+    /// The grouped query: ordinal, then value.
+    pub query: BoundQuery,
+    /// The subquery as written. Two subqueries of one statement with the
+    /// same text and the same outer columns ask the same question.
+    pub text: String,
+    /// The virtual relations, in the order their columns make up a tuple.
+    pub relations: Vec<OuterSetRelation>,
+}
+
+/// One virtual relation of an [`OuterSetQuery`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OuterSetRelation {
+    /// Synthetic identity its scans carry.
+    pub table_id: TableId,
+    /// The outer columns it serves, as the enclosing query knows them.
+    /// Column `n` of the relation (1-based) is the ordinal for `n = 1` and
+    /// `columns[n - 2]` otherwise.
+    pub columns: Vec<BoundColumn>,
+}
+
 /// A first-stage bound query ready for logical planning.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundQuery {
@@ -1979,6 +2011,10 @@ pub struct BoundQuery {
     /// Recursive-CTE fixpoint: this query is the anchor and `member`
     /// re-executes against the working table until no new rows appear.
     pub recursive: Option<Box<BoundRecursive>>,
+    /// For a correlated scalar aggregate subquery: the same question asked
+    /// of a whole set of outer rows at once. The dependent path answers it
+    /// from this form when it can and row by row otherwise.
+    pub outer_set: Option<std::sync::Arc<OuterSetQuery>>,
     /// The one collation every text comparison in this plan uses.
     ///
     /// Resolved once, at the end of binding, so the row loop dispatches on a

@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2243;
+const EXPECTED_CASES: usize = 2249;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -2212,6 +2212,48 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "correlated subqueries over joins",
             "SELECT u.id FROM users AS u WHERE EXISTS (SELECT o.status FROM orders AS o \
              WHERE o.user_id = u.id GROUP BY o.status) ORDER BY u.id",
+        ),
+        // Correlated scalar aggregates over a join, answered for every
+        // outer row in one execution: SUM and AVG over no rows are NULL
+        // where COUNT is 0, a NULL outer value matches nothing, a nested IN
+        // may be correlated to the same outer row, and HAVING and ORDER BY
+        // read the same answers the select list shows.
+        ordered(
+            "correlated aggregates over joins",
+            "SELECT u.id, (SELECT SUM(o.total) FROM orders AS o JOIN users AS v ON v.id = o.user_id \
+             WHERE o.user_id = u.id AND o.status = 'shipped') AS total, (SELECT COUNT(*) FROM \
+             orders AS o JOIN users AS v ON v.id = o.user_id WHERE o.user_id = u.id AND \
+             o.status = 'shipped') AS n FROM users AS u ORDER BY u.id",
+        ),
+        ordered(
+            "correlated aggregates over joins",
+            "SELECT e.id, (SELECT COUNT(*) FROM events AS f JOIN users AS v ON v.id = f.id \
+             WHERE f.note = e.note) AS n, (SELECT MAX(f.id) FROM events AS f LEFT JOIN users AS v \
+             ON v.id = f.id WHERE f.note = e.note AND f.id <> e.id) AS other FROM events AS e \
+             ORDER BY e.id",
+        ),
+        ordered(
+            "correlated aggregates over joins",
+            "SELECT u.id, (SELECT COUNT(DISTINCT o.status) FROM orders AS o WHERE o.user_id = u.id \
+             AND o.id IN (SELECT p.id FROM orders AS p WHERE p.user_id = u.id AND p.total > 10)) \
+             AS n FROM users AS u ORDER BY u.id",
+        ),
+        ordered(
+            "correlated aggregates over joins",
+            "SELECT u.id, (SELECT AVG(o.total) FROM orders AS o JOIN users AS v ON v.id = o.user_id \
+             WHERE o.user_id = u.id) AS mean FROM users AS u HAVING mean IS NULL OR mean > 20 \
+             ORDER BY mean DESC, u.id",
+        ),
+        ordered(
+            "correlated aggregates over joins",
+            "SELECT u.id, (SELECT MIN(o.total) FROM orders AS o JOIN users AS v ON v.id = o.user_id \
+             WHERE o.user_id = u.id) AS least FROM users AS u ORDER BY least, u.id LIMIT 3",
+        ),
+        ordered(
+            "correlated aggregates over joins",
+            "SELECT u.id, (SELECT o.status FROM orders AS o JOIN users AS v ON v.id = o.user_id \
+             WHERE o.user_id = u.id ORDER BY o.placed_at DESC, o.id DESC LIMIT 1) AS latest \
+             FROM users AS u ORDER BY u.id",
         ),
         ordered(
             "correlated NOT IN over nullable columns",

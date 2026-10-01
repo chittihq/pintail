@@ -15,6 +15,7 @@ pub(crate) mod membership;
 mod memo;
 mod morsel;
 mod order;
+mod outer_set;
 mod packed_fold;
 mod packed_group;
 mod points;
@@ -2140,6 +2141,9 @@ pub struct MemoryTracker {
     /// Present while the execution is profiled; operators built under this
     /// tracker wrap themselves and record here.
     profile: Option<std::sync::Arc<ProfileSink>>,
+    /// Answers of the statement's set-at-a-time subqueries, shared by the
+    /// operators that each hold a copy of one (`outer_set`).
+    outer_sets: outer_set::StatementSets,
 }
 
 impl Clone for MemoryTracker {
@@ -2156,6 +2160,7 @@ impl Clone for MemoryTracker {
             shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: self.spill.clone(),
             profile: self.profile.clone(),
+            outer_sets: std::sync::Arc::clone(&self.outer_sets),
         }
     }
 }
@@ -2219,6 +2224,7 @@ impl MemoryTracker {
             shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: spill::QuerySpill::new(),
             profile: None,
+            outer_sets: outer_set::StatementSets::default(),
         }
     }
 
@@ -2235,7 +2241,13 @@ impl MemoryTracker {
             shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: self.spill.clone(),
             profile: self.profile.clone(),
+            outer_sets: std::sync::Arc::clone(&self.outer_sets),
         }
+    }
+
+    /// The statement's set-at-a-time subquery answers.
+    fn outer_sets(&self) -> &outer_set::StatementSets {
+        &self.outer_sets
     }
 
     /// Returns the hard byte limit.
@@ -3608,6 +3620,9 @@ pub(super) struct DependentRow<'a> {
     pub(super) provider: &'a dyn ScanProvider,
     pub(super) memory: &'a MemoryTracker,
     pub(super) collation: Collation,
+    /// Batches the operator holds beyond `batch` and will ask about next,
+    /// so a set-at-a-time subquery answers them in the same execution.
+    pub(super) ahead: &'a [RecordBatch],
 }
 
 /// Answers the subquery at `slot` for the current row: from the memo when the
@@ -3657,7 +3672,11 @@ pub(super) fn resolve_dependent_expr_subqueries(
     match &mut expression.kind {
         BoundExprKind::ScalarSubquery(query) => {
             let slot = memo.next_slot();
-            let value = if let Some(value) = dependent_answer_from_index(
+            let value = if let Some(form) = query.outer_set.clone()
+                && let Some(value) = outer_set::answer(slot, query, &form, context, memo)?
+            {
+                value
+            } else if let Some(value) = dependent_answer_from_index(
                 slot,
                 query,
                 dependent_index::SubqueryForm::Scalar,
@@ -3924,6 +3943,16 @@ static DEPENDENT_SUBQUERY_EXECUTIONS: std::sync::atomic::AtomicU64 =
 #[must_use]
 pub fn dependent_subquery_executions() -> u64 {
     DEPENDENT_SUBQUERY_EXECUTIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static DEPENDENT_SET_EXECUTIONS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Executions of a correlated scalar subquery's set-at-a-time form, each
+/// answering every outer row of a batch, since process start.
+#[must_use]
+pub fn dependent_set_executions() -> u64 {
+    DEPENDENT_SET_EXECUTIONS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 static DEPENDENT_MEMO_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -5350,6 +5379,7 @@ fn precompute_dependent_aggregate_arguments(
                 provider,
                 memory,
                 collation,
+                ahead: &[],
             };
             memo.begin_row();
             for expression in &expressions {
@@ -5806,7 +5836,10 @@ fn build_operator_inner(
                     .collect::<Vec<_>>();
                 let mut rows = Vec::new();
                 let mut memo = DependentMemo::for_expressions(std::iter::once(&predicate));
-                while let Some(batch) = input.next_batch(memory)? {
+                let window = outer_set::window_rows(std::iter::once(&predicate));
+                let mut held = std::collections::VecDeque::new();
+                while let Some(batch) = outer_set::next_held(&mut input, memory, &mut held, window)?
+                {
                     let batch_bytes = batch.estimated_bytes();
                     for row in batch.selection().selected_rows() {
                         let mut expression = predicate.clone();
@@ -5817,6 +5850,7 @@ fn build_operator_inner(
                             provider,
                             memory,
                             collation,
+                            ahead: held.as_slices().0,
                         };
                         memo.begin_row();
                         resolve_dependent_expr_subqueries(&mut expression, &context, &mut memo)?;
@@ -5979,7 +6013,11 @@ fn build_operator_inner(
                 let mut memo = DependentMemo::for_expressions(
                     expressions.iter().map(|projection| &projection.expr),
                 );
-                while let Some(batch) = input.next_batch(memory)? {
+                let window =
+                    outer_set::window_rows(expressions.iter().map(|projection| &projection.expr));
+                let mut held = std::collections::VecDeque::new();
+                while let Some(batch) = outer_set::next_held(&mut input, memory, &mut held, window)?
+                {
                     let batch_bytes = batch.estimated_bytes();
                     for row in batch.selection().selected_rows() {
                         let mut values = Vec::with_capacity(expressions.len());
@@ -5990,6 +6028,7 @@ fn build_operator_inner(
                             provider,
                             memory,
                             collation,
+                            ahead: held.as_slices().0,
                         };
                         memo.begin_row();
                         for projection in &expressions {

@@ -399,6 +399,7 @@ fn rewrite(
         set_ops: Vec::new(),
         limit: None,
         recursive: None,
+        outer_set: None,
     };
     let mut derived = derive(
         target.table_name.clone(),

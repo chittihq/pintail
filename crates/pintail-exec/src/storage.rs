@@ -2329,7 +2329,7 @@ fn build_prewhere_spec(
 }
 
 /// Most values an IN list or a join key set may hand the side index.
-const INDEX_LOOKUP_VALUES: usize = 4_096;
+pub(crate) const INDEX_LOOKUP_VALUES: usize = 4_096;
 
 /// The side-index lookup a scan's own predicates imply: a top-level
 /// equality or IN list of literals, integer literals on an integer column

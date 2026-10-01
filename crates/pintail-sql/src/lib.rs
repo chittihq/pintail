@@ -52,11 +52,12 @@ pub use bound::{
     BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable,
     BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_DIV_PRECISION_INCREMENT,
     DEFAULT_TEXT_COLLATION, DatePart, IntervalUnit, JSON_TEXT_COLLATION, MembershipError,
-    MembershipLookup, OrderValueKind, PreparedMembership, SUPPORTED_TEXT_COLLATIONS,
-    ScalarFunction, UnaryOp, WindowFunction, aggregate_column_collations, comparison_collation,
-    session_default_collation, session_div_precision_increment, session_select_limit,
-    session_timestamp_zone, set_session_default_collation, set_session_div_precision_increment,
-    set_session_select_limit, set_session_timestamp_zone,
+    MembershipLookup, OrderValueKind, OuterSetQuery, OuterSetRelation, PreparedMembership,
+    SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp, WindowFunction,
+    aggregate_column_collations, comparison_collation, session_default_collation,
+    session_div_precision_increment, session_select_limit, session_timestamp_zone,
+    set_session_default_collation, set_session_div_precision_increment, set_session_select_limit,
+    set_session_timestamp_zone,
 };
 pub use hints::max_execution_time_hint;
 pub use metadata::{

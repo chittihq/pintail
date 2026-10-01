@@ -405,6 +405,7 @@ fn rewrite(
         set_ops: Vec::new(),
         limit: None,
         recursive: None,
+        outer_set: None,
     };
     let mut derived = derive(
         branch.table_name.clone(),

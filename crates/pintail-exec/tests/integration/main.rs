@@ -83,6 +83,7 @@ mod observation_folds;
 mod ordered_group_limit;
 mod ordinal_keys_under_writes;
 mod out_of_range_diagnostics;
+mod outer_set_subquery;
 mod overlay_filter_model;
 mod packed_group_keys;
 mod packed_lane_folds;

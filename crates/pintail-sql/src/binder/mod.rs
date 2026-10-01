@@ -2,6 +2,7 @@ mod dependency;
 mod function;
 mod keyed_branch;
 mod outer_aggregate;
+mod outer_set;
 mod pre_aggregate;
 mod rollup;
 mod row;
@@ -106,7 +107,11 @@ impl<'catalog> Binder<'catalog> {
         };
         let result = nested.bind_query(query, ctes);
         self.next_derived_id.set(nested.next_derived_id.get());
-        result
+        let mut bound = result?;
+        bound.outer_set = self
+            .outer_set_form(query, ctes, visible_tables, &bound)
+            .map(std::sync::Arc::new);
+        Ok(bound)
     }
 
     fn bind_subquery_outputs(
@@ -583,6 +588,7 @@ impl<'catalog> Binder<'catalog> {
             set_ops: Vec::new(),
             limit: None,
             recursive: None,
+            outer_set: None,
         }
     }
 
@@ -1029,6 +1035,7 @@ impl<'catalog> Binder<'catalog> {
             union_distinct: false,
             set_ops: Vec::new(),
             recursive: None,
+            outer_set: None,
             windows,
             limit: None,
         })
@@ -2412,6 +2419,7 @@ impl<'catalog> Binder<'catalog> {
             set_ops: Vec::new(),
             limit: None,
             recursive: None,
+            outer_set: None,
         };
         let table_id = self.next_derived_id.get();
         self.next_derived_id.set(table_id.saturating_sub(1));

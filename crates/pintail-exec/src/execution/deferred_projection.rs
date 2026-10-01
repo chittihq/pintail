@@ -274,6 +274,7 @@ pub(super) fn build(
                 provider,
                 memory,
                 collation,
+                ahead: &[],
             };
             eager_memo.begin_row();
             for (projection, eager) in expressions.iter().zip(&eager) {
@@ -362,6 +363,7 @@ pub(super) fn build(
                 provider,
                 memory,
                 collation,
+                ahead: &[],
             };
             memo.begin_row();
             for (index, projection) in &deferred {

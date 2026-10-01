@@ -41,6 +41,7 @@ use pintail_types::Value;
 
 use super::MemoryTracker;
 use super::dependent_index::{IndexState, IndexStats};
+use super::outer_set::SetState;
 
 /// Entries one memo holds at most. Above this the key set is doing no
 /// sharing worth its bookkeeping, and the bound keeps the pathological
@@ -74,6 +75,9 @@ pub(crate) struct DependentMemo {
     /// executions, once one is planned (`dependent_index`).
     pub(super) indexes: HashMap<SubquerySlot, IndexState>,
     pub(super) index_stats: IndexStats,
+    /// Per subquery slot, the answers its set-at-a-time form has given
+    /// (`outer_set`), or the fact that it declined.
+    pub(super) outer_sets: HashMap<SubquerySlot, SetState>,
 }
 
 impl DependentMemo {
@@ -94,6 +98,7 @@ impl DependentMemo {
             misses: 0,
             indexes: HashMap::new(),
             index_stats: IndexStats::default(),
+            outer_sets: HashMap::new(),
         }
     }
 
@@ -382,6 +387,7 @@ mod tests {
             misses: 0,
             indexes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
+            outer_sets: std::collections::HashMap::new(),
         };
         memo.insert(&memory, 0, vec![Value::UInt64(1)], &[Value::UInt64(1)]);
         memo.insert(&memory, 0, vec![Value::UInt64(2)], &[Value::UInt64(2)]);
@@ -413,6 +419,7 @@ mod tests {
             misses: 0,
             indexes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
+            outer_sets: std::collections::HashMap::new(),
         };
         memo.insert(&memory, 0, vec![Value::Null], &[Value::UInt64(0)]);
         memo.insert(
@@ -447,6 +454,7 @@ mod tests {
             misses: 0,
             indexes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
+            outer_sets: std::collections::HashMap::new(),
         };
         let average = Value::DecimalAverage(Box::new(pintail_types::DecimalQuotient {
             label: "0.3333".to_owned(),
@@ -484,6 +492,7 @@ mod tests {
             misses: 0,
             indexes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
+            outer_sets: std::collections::HashMap::new(),
         };
         memo.insert(&memory, 0, vec![Value::UInt64(1)], &[Value::UInt64(9)]);
         assert!(memo.entries.is_empty());

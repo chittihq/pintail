@@ -225,11 +225,15 @@ fn run(fixture: &Fixture, sql: &str) -> (Vec<Vec<String>>, u64) {
 }
 
 /// Scans of the parcel in an open zone that are ok: NULL without one.
+///
+/// `LIMIT 1` changes no answer - an ungrouped aggregate is one row - and
+/// keeps both subqueries on the per-row path, whose executions these tests
+/// count; without it they are answered a batch at a time.
 const OK_SCANS: &str = "(SELECT SUM(s.ok = 1) FROM scans s INNER JOIN zones z ON z.id = s.zone_id \
-                        WHERE s.parcel_id = p.id AND z.open = 1)";
+                        WHERE s.parcel_id = p.id AND z.open = 1 LIMIT 1)";
 /// Every scan of the parcel.
 const ALL_SCANS: &str = "(SELECT COUNT(*) FROM scans s2 INNER JOIN zones z2 ON z2.id = s2.zone_id \
-                         WHERE s2.parcel_id = p.id)";
+                         WHERE s2.parcel_id = p.id LIMIT 1)";
 
 const PARCELS: u64 = 300;
 

@@ -4538,6 +4538,7 @@ pub(super) fn execute_nested_loop_join(
                         provider,
                         memory,
                         collation,
+                        ahead: &[],
                     };
                     if memory.remaining() < memory.limit() / 2 {
                         super::record_dependent_memo(memo.finish(memory));

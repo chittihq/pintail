@@ -375,6 +375,7 @@ fn materialize_query(
         set_ops: Vec::new(),
         limit: None,
         recursive: None,
+        outer_set: None,
         text_collation: query.text_collation,
     }
 }
