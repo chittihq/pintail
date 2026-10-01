@@ -155,8 +155,8 @@ fn spilled_aggregation_matches_the_in_memory_groups_exactly() {
 /// descriptor limit and was skipped for that reason, which left the suite
 /// encoding the defect as expected. Now it is the ceiling that proves the
 /// bound: one writer while building, fan-in plus one while a pass merges,
-/// nothing once the last row is out, at run counts that differ by at least
-/// a factor of two across the sweep.
+/// nothing once the last row is out, at run counts that fall by at least
+/// half across the sweep.
 #[test]
 fn every_ceiling_between_spilling_and_fitting_aggregates_exactly() {
     let reference = run_aggregated(256 * 1024 * 1024).expect("in-memory aggregation");
@@ -192,15 +192,9 @@ fn every_ceiling_between_spilling_and_fitting_aggregates_exactly() {
         "ceilings that did not aggregate exactly within the descriptor bound:\n  {}",
         failures.join("\n  ")
     );
-    // The most and the fewest runs, wherever in the sweep they fall: the
-    // rows come out of the memtable packed, and the aggregate that takes
-    // them by column spills less at the tightest ceiling and more at the
-    // loosest than it did over row values, so the counts no longer fall
-    // from the first ceiling to the last.
-    let most = run_counts.iter().copied().max().unwrap_or(0);
-    let fewest = run_counts.iter().copied().min().unwrap_or(0);
+    let (first, last) = (run_counts[0], run_counts[run_counts.len() - 1]);
     assert!(
-        most > bound && most >= fewest.saturating_mul(2),
+        first > bound && first >= last.saturating_mul(2),
         "the sweep must span very different run counts, got {run_counts:?}"
     );
 }
