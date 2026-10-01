@@ -1262,6 +1262,7 @@ impl TableStore {
             unique_keys,
         )?;
         let segment_path = self.directory.join(&segment.file_name);
+        crash_point("store.flush.after_segment")?;
         let mut next_manifest = self.manifest.as_ref().clone();
         next_manifest.generation = next_manifest
             .generation
@@ -1279,12 +1280,14 @@ impl TableStore {
             .ok_or(StoreError::SequenceOverflow)?;
         next_manifest.segments.push(segment);
         manifest::publish(&self.directory, &next_manifest)?;
+        crash_point("store.flush.after_manifest")?;
 
         self.manifest = Arc::new(next_manifest);
         self.memtable.clear();
         if self.truncate_wal_on_flush {
             self.wal.reset()?;
         }
+        crash_point("store.flush.after_wal_reset")?;
         Ok(FlushOutcome {
             row_count: rows.len(),
             segment_path: Some(segment_path),
@@ -1395,7 +1398,9 @@ impl TableStore {
             .retain(|meta| !inputs.contains(&meta.file_name));
         next_manifest.segments.extend(outputs);
         let _published = self.publication.publishing();
+        crash_point("store.merge.before_publish")?;
         manifest::publish(&self.directory, &next_manifest)?;
+        crash_point("store.merge.after_publish")?;
         let previous = std::mem::replace(&mut self.manifest, Arc::new(next_manifest));
         self.retired.push(RetiredGeneration {
             readers: Arc::downgrade(&previous),
@@ -1449,6 +1454,7 @@ impl TableStore {
             .ok_or(StoreError::SequenceOverflow)?;
         let _published = self.publication.publishing();
         manifest::publish(&self.directory, &next_manifest)?;
+        crash_point("store.merge.after_reserve")?;
         self.manifest = Arc::new(next_manifest);
         let directory = self.directory.clone();
         let schema = self.schema.clone();
@@ -2058,6 +2064,14 @@ impl TableStore {
         row_count <= self.options.max_compaction_input_rows
             && largest <= smallest.saturating_mul(SIZE_TIER_RATIO)
     }
+}
+
+/// A crash-consistency boundary of the store: between two durable steps of a
+/// flush or of a merge's publication. In a build with failpoints it is the
+/// failpoint of the same name, which stops the process there as a kill at
+/// that instant would; otherwise nothing.
+fn crash_point(site: &'static str) -> Result<(), StoreError> {
+    pintail_failpoint::hit(site).map_err(|error| StoreError::io("recovery failpoint", error))
 }
 
 fn plan_for(window: &[&CompactionCandidate]) -> CompactionPlan {
