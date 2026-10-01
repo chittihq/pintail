@@ -662,8 +662,47 @@ impl NativeUnits {
     /// Parses one canonical text value into units, returning `None` unless
     /// the units regenerate the identical text (the round-trip guarantee the
     /// v2 writer requires before storing units instead of text).
+    ///
+    /// The guarantee is decided from the text's shape rather than by
+    /// formatting the units back: a scan interleaving changed rows into a
+    /// packed column asks this once per changed value, and building a
+    /// string to compare against cost several times the parse.
     #[must_use]
     pub fn parse_exact(self, text: &str) -> Option<i64> {
+        match self {
+            // The parser takes only `YYYY-MM-DD` of a real calendar day,
+            // which is the one text its day count formats back to.
+            Self::Date => pintail_types::parse_date_days(text),
+            // As for a date, with exactly the declared fraction digits.
+            Self::DateTime { fsp } => {
+                let length = match fsp {
+                    0 => 19,
+                    1..=6 => 20 + usize::from(fsp),
+                    _ => return None,
+                };
+                if text.len() != length {
+                    return None;
+                }
+                pintail_types::parse_datetime_micros(text)
+            }
+            Self::Decimal { scale } => {
+                if !decimal_text_is_canonical(text.as_bytes(), scale) {
+                    return None;
+                }
+                let scaled = pintail_types::parse_decimal_scaled(text, scale)?;
+                // A negative sign on zero does not format back.
+                if scaled == 0 && text.starts_with('-') {
+                    return None;
+                }
+                i64::try_from(scaled).ok()
+            }
+        }
+    }
+
+    /// [`Self::parse_exact`] as it is defined: the units, when formatting
+    /// them regenerates the text.
+    #[cfg(test)]
+    fn parse_round_trip(self, text: &str) -> Option<i64> {
         match self {
             Self::Date => {
                 let days = pintail_types::parse_date_days(text)?;
@@ -696,6 +735,29 @@ impl NativeUnits {
             )),
         }
     }
+}
+
+/// Whether decimal text has the one shape fixed-scale formatting produces:
+/// an optional minus, integer digits without a leading zero (or the single
+/// digit zero), and exactly `scale` fraction digits after a dot when the
+/// scale is not zero.
+fn decimal_text_is_canonical(bytes: &[u8], scale: u8) -> bool {
+    let digits = bytes.strip_prefix(b"-").unwrap_or(bytes);
+    let scale = usize::from(scale);
+    let integer = if scale == 0 {
+        digits
+    } else {
+        let Some(split) = digits.len().checked_sub(scale + 1) else {
+            return false;
+        };
+        if digits[split] != b'.' || !digits[split + 1..].iter().all(u8::is_ascii_digit) {
+            return false;
+        }
+        &digits[..split]
+    };
+    !integer.is_empty()
+        && integer.iter().all(u8::is_ascii_digit)
+        && (integer.len() == 1 || integer[0] != b'0')
 }
 
 /// Whether a stored column's wire type is valid for its schema type: the
@@ -6742,6 +6804,117 @@ mod native_units_tests {
         assert_eq!(decimal.parse_exact("-0.05"), Some(-5));
         // "123.4" parses but formats back as "123.40": not canonical input.
         assert_eq!(decimal.parse_exact("123.4"), None);
+    }
+
+    /// The exact parse decides from the text's shape what its definition
+    /// decides by formatting the units back; the two must agree on every
+    /// text, canonical or not.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn parse_exact_agrees_with_the_round_trip_it_stands_for() {
+        // Every calendar day the canonical text can carry, and the same
+        // days as datetimes at each precision.
+        let first = pintail_types::parse_date_days("0000-01-01").expect("first day");
+        let last = pintail_types::parse_date_days("9999-12-31").expect("last day");
+        for days in first..=last {
+            let text = pintail_types::format_date_days(days).expect("in range");
+            assert_eq!(NativeUnits::Date.parse_exact(&text), Some(days), "{text}");
+            if days % 97 == 0 {
+                for fsp in 0..=6_u8 {
+                    let units = NativeUnits::DateTime { fsp };
+                    for fraction in ["", ".0", ".5", ".123", ".000000", ".123456", ".1234567"] {
+                        let text = format!("{text} 23:59:07{fraction}");
+                        assert_eq!(
+                            units.parse_exact(&text),
+                            units.parse_round_trip(&text),
+                            "{text} at fsp {fsp}"
+                        );
+                    }
+                }
+            }
+        }
+        let texts = [
+            "",
+            "-",
+            "+",
+            ".",
+            "0",
+            "-0",
+            "+0",
+            "00",
+            "007",
+            "7",
+            "-7",
+            "+7",
+            "7.",
+            ".7",
+            "0.0",
+            "-0.0",
+            "0.00",
+            "-0.00",
+            "0.000",
+            "1.5",
+            "1.50",
+            "1.500",
+            "-1.50",
+            "+1.50",
+            "01.50",
+            "1.5a",
+            "1..50",
+            "1.5.0",
+            " 1.50",
+            "1.50 ",
+            "12345678901234567.89",
+            "92233720368547758.07",
+            "92233720368547758.08",
+            "-92233720368547758.08",
+            "-92233720368547758.09",
+            "9223372036854775807",
+            "9223372036854775808",
+            "-9223372036854775808",
+            "-9223372036854775809",
+            "0.05",
+            "-0.05",
+            "100",
+            "-100",
+            "1e5",
+            "0x10",
+            "1,50",
+            "2024-02-29",
+            "2023-02-29",
+            "2024-2-29",
+            "2024-02-29 ",
+            "0000-00-00",
+            "2024-13-01",
+            "2024-00-10",
+            "2024-02-30",
+            "1969-12-31",
+            "2024-02-29 00:00:00",
+            "2024-02-29 24:00:00",
+            "2024-02-29 23:60:00",
+            "2024-02-29 23:59:60",
+            "2024-02-29T23:59:59",
+            "2024-02-29 23:59:59.",
+            "2024-02-29 23:59:59.1",
+            "2024-02-29 23:59:59.12",
+            "2024-02-29 23:59:59.120",
+            "2024-02-29 23:59:59.1200000",
+            "1969-12-31 23:59:59.999999",
+            "0000-01-01 00:00:00",
+            "9999-12-31 23:59:59.999999",
+        ];
+        let mut kinds = vec![NativeUnits::Date];
+        kinds.extend((0..=7_u8).map(|fsp| NativeUnits::DateTime { fsp }));
+        kinds.extend([0_u8, 1, 2, 3, 6, 18].map(|scale| NativeUnits::Decimal { scale }));
+        for units in kinds {
+            for text in texts {
+                assert_eq!(
+                    units.parse_exact(text),
+                    units.parse_round_trip(text),
+                    "{text:?} as {units:?}"
+                );
+            }
+        }
     }
 
     #[test]
