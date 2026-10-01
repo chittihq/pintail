@@ -1005,13 +1005,24 @@ impl ExactUnits {
             })
     }
 
-    /// The units as decimal text at `scale`; a total past 65 digits
-    /// overflows, as it does in `MySQL`.
+    /// The units as decimal text at `scale`.
+    ///
+    /// A total is not held to the 65 digits a column may declare: `MySQL`
+    /// carries a decimal in nine groups of nine digits, the fraction in as
+    /// many groups as its scale needs and the integer part in the rest, and
+    /// a sum answers whatever those hold - a DECIMAL(65,30) column sums to
+    /// 45 integer digits. Past them the total overflows.
     fn format(&self, scale: u8) -> Result<String, ExecError> {
         match self {
             Self::Narrow(units) => Ok(pintail_types::format_decimal_scaled(*units, scale)),
-            Self::Wide(units) if units.digits() > 65 => Err(ExecError::NumericOverflow),
-            Self::Wide(units) => Ok(pintail_types::format_decimal_wide(units, scale)),
+            Self::Wide(units) => {
+                let fraction_groups = usize::from(scale).div_ceil(9);
+                let integer_digits = 9 * 9_usize.saturating_sub(fraction_groups);
+                if units.digits().saturating_sub(usize::from(scale)) > integer_digits {
+                    return Err(ExecError::NumericOverflow);
+                }
+                Ok(pintail_types::format_decimal_wide(units, scale))
+            }
         }
     }
 
@@ -8399,5 +8410,40 @@ mod extreme_cache_tests {
                 "{function:?} merged"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod wide_total_tests {
+    use super::ExactUnits;
+
+    const LARGEST: &str = "99999999999999999999999999999999999.999999999999999999999999999999";
+
+    #[test]
+    fn a_decimal_total_is_not_held_to_65_digits() {
+        let value = ExactUnits::parse(LARGEST, 30).expect("a 65-digit decimal");
+        let mut total = ExactUnits::Narrow(0);
+        for _ in 0..42_001 {
+            total = total.plus(&value).expect("exact");
+        }
+        assert_eq!(
+            total.format(30).expect("70 digits"),
+            "4200099999999999999999999999999999999999.999999999999999999999999957999"
+        );
+    }
+
+    #[test]
+    fn a_decimal_total_overflows_past_its_integer_groups() {
+        // At scale 30 the fraction takes four groups of nine digits and
+        // the integer part the other five: 45 digits.
+        let mut total = ExactUnits::parse(LARGEST, 30).expect("a 65-digit decimal");
+        for _ in 0..30 {
+            total = total.plus(&total).expect("exact");
+        }
+        assert_eq!(total.format(30).expect("45 digits").find('.'), Some(45));
+        for _ in 0..4 {
+            total = total.plus(&total).expect("exact");
+        }
+        assert!(total.format(30).is_err());
     }
 }

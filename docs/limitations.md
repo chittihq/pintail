@@ -254,6 +254,11 @@ stays readable as a list of things to fix.
   `div_precision_increment`). Pintail always folds the stored quotient, the
   temporary-table answer, so a query MySQL happens to answer by streaming
   can differ from it from the fifth decimal place on.
+- A grouped `SUM` or `AVG` over a `DECIMAL` whose total passes 65 digits
+  answers the exact total. MySQL, where it groups through a temporary
+  table, keeps the running total in a 65-digit column and holds it to that
+  column's largest value row by row, so its answer depends on the order of
+  the rows and is not the total. An ungrouped total agrees with MySQL.
 - A double `SUM`, `AVG`, `STDDEV` or `VARIANCE` can differ from MySQL in its
   last digits where MySQL reads the rows in an order of its own:
   `WITH ROLLUP` and other groupings MySQL sorts first, and a join MySQL
