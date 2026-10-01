@@ -710,6 +710,27 @@ impl CompiledExpr {
         }
     }
 
+    /// The column and scale of a DECIMAL column read as a double: the
+    /// shape the binder gives a statistical aggregate's decimal argument.
+    pub(crate) fn decimal_column_as_double(&self) -> Option<(usize, u8)> {
+        let Self::Scalar {
+            function: ScalarFunction::Cast(DataType::Float64),
+            args,
+            argument_types,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let [Self::Column(index)] = args.as_slice() else {
+            return None;
+        };
+        match argument_types.first() {
+            Some(Some(DataType::Decimal { scale, .. })) => Some((*index, *scale)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn evaluate_predicate_direct(
         &self,
         batch: &RecordBatch,

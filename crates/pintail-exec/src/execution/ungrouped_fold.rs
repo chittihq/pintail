@@ -24,6 +24,7 @@ use super::aggregate::{
     AggregateState, CompiledAggregate, aggregate_uses_float, decimal_average_scale,
     update_aggregate_states,
 };
+use super::distinct_keys::UnitKind;
 use super::packed_fold::{FoldRows, fold_rows};
 use super::{ExecError, MemoryTracker};
 use crate::RecordBatch;
@@ -234,7 +235,14 @@ fn fold_column(
     memory: &MemoryTracker,
 ) -> Result<bool, ExecError> {
     if aggregate.distinct {
-        return fold_distinct_text(batch, rows, aggregate, state, memory);
+        return fold_distinct(batch, rows, aggregate, state, memory);
+    }
+    if matches!(
+        aggregate.function,
+        AggregateFunction::StdDev { .. } | AggregateFunction::Variance { .. }
+    ) && let Some(folded) = fold_decimal_moments(batch, rows, aggregate, state)?
+    {
+        return Ok(folded);
     }
     let Some(expression) = &aggregate.expr else {
         if aggregate.function == AggregateFunction::Count {
@@ -664,11 +672,64 @@ pub(super) fn ranked_ascii_order(
     Some(left.len().cmp(&right.len()))
 }
 
-/// `COUNT(DISTINCT text)` over a dictionary-coded column: each entry
-/// present among the valid rows enters the distinct set once per batch,
-/// through the same insert the per-row update makes, instead of once per
-/// row. `false`, with nothing applied, for every other distinct shape.
-fn fold_distinct_text(
+/// Largest magnitude of decimal units a double holds exactly.
+const EXACT_DOUBLE_UNITS: u64 = 1 << 53;
+/// Largest scale whose power of ten a double holds exactly.
+const EXACT_DOUBLE_SCALE: u8 = 22;
+
+/// `STDDEV`/`VARIANCE` over a DECIMAL column. The binder hands the
+/// aggregate the column read as a double, which the per-row update gets by
+/// formatting the row's units and parsing the text: the double nearest the
+/// decimal. Units within 2^53 over a power of ten within 10^22 are two
+/// exact doubles, and their quotient rounds once to that same nearest
+/// double, so the fold divides instead. `None` when the argument is not
+/// that shape; `Some(false)`, with nothing applied, for a batch holding a
+/// value outside the exact range or text the units do not derive.
+fn fold_decimal_moments(
+    batch: &RecordBatch,
+    rows: &FoldRows<'_>,
+    aggregate: &CompiledAggregate,
+    state: &mut AggregateState,
+) -> Result<Option<bool>, ExecError> {
+    let Some((index, scale)) = aggregate
+        .expr
+        .as_ref()
+        .and_then(super::CompiledExpr::decimal_column_as_double)
+    else {
+        return Ok(None);
+    };
+    let Some((typed, validity)) = batch.column(index).and_then(super::ColumnVector::typed) else {
+        return Ok(Some(false));
+    };
+    let TypedValues::Decimal128 {
+        values: DecimalUnits::Narrow(units),
+        ..
+    } = typed
+    else {
+        return Ok(Some(false));
+    };
+    if typed.unit_kind() != Some(UnitKind::Decimal { scale }) || scale > EXACT_DOUBLE_SCALE {
+        return Ok(Some(false));
+    }
+    let mut widest = 0_u64;
+    for_valid(rows, units, validity, |_, value| {
+        widest = widest.max(value.unsigned_abs());
+    });
+    if widest > EXACT_DOUBLE_UNITS {
+        return Ok(Some(false));
+    }
+    let divisor = 10_f64.powi(i32::from(scale));
+    #[allow(clippy::cast_precision_loss)] // checked exact above
+    state
+        .fold_observations(valid_values(rows, units, validity).map(|value| value as f64 / divisor))
+        .map(Some)
+}
+
+/// `COUNT(DISTINCT column)` by column: a DECIMAL, DATE or DATETIME column
+/// by its packed units, a dictionary-coded text column by the entries
+/// present, and any other text column by each row's bytes with no value
+/// built. `false`, with nothing applied, for every other distinct shape.
+fn fold_distinct(
     batch: &RecordBatch,
     rows: &FoldRows<'_>,
     aggregate: &CompiledAggregate,
@@ -686,21 +747,110 @@ fn fold_distinct_text(
     else {
         return Ok(false);
     };
+    let Some((typed, validity)) = column.typed() else {
+        return Ok(false);
+    };
+    // Units are the key only while the state keys by the same kind: a
+    // batch packed any other way takes the per-row update, which reads its
+    // text back to the state's units.
+    if let Some(kind) = state.distinct_units() {
+        if typed.unit_kind() != Some(kind) {
+            return Ok(false);
+        }
+        let (TypedValues::Decimal128 {
+            values: DecimalUnits::Narrow(units),
+            ..
+        }
+        | TypedValues::Temporal { units, .. }) = typed
+        else {
+            return Ok(false);
+        };
+        let step = kind.step();
+        let mut previous = None;
+        let mut keys = Vec::with_capacity(rows.len());
+        for_valid(rows, units, validity, |_, value| {
+            if previous == Some(value) {
+                return;
+            }
+            previous = Some(value);
+            keys.push(i128::from(if step == 1 {
+                value
+            } else {
+                value.div_euclid(step)
+            }));
+        });
+        state.update_distinct_count_ints(&mut keys, &mut Vec::new(), memory)?;
+        return Ok(true);
+    }
     if column.data_type() != DataType::Utf8 {
         return Ok(false);
     }
-    let Some((TypedValues::Utf8(text), validity)) = column.typed() else {
+    let TypedValues::Utf8(text) = typed else {
         return Ok(false);
     };
-    let Some((codes, entries)) = text.dictionary() else {
+    fold_distinct_text(column, text, validity, rows, aggregate, state, memory)
+}
+
+/// The text half of [`fold_distinct`]: a dictionary-coded column inserts
+/// each entry present once, and any other column stages every valid row's
+/// key and inserts the batch together. `false`, with nothing applied, when
+/// the dictionary is too large for a per-code table or the state's set no
+/// longer keys text by weight.
+fn fold_distinct_text(
+    column: &crate::ColumnVector,
+    text: &StrColumn,
+    validity: &ValidityMask,
+    rows: &FoldRows<'_>,
+    aggregate: &CompiledAggregate,
+    state: &mut AggregateState,
+    memory: &MemoryTracker,
+) -> Result<bool, ExecError> {
+    if let Some((codes, entries)) = text.dictionary() {
+        let Some(first) = first_row_per_code(rows, codes, entries.len(), validity) else {
+            return Ok(false);
+        };
+        for (code, _) in first
+            .into_iter()
+            .enumerate()
+            .filter(|(_, row)| *row != u32::MAX)
+        {
+            state.update_distinct_count_text(aggregate, &entries[code], memory)?;
+        }
+        return Ok(true);
+    }
+    let Some(mut stager) = state.stage_distinct_texts() else {
         return Ok(false);
     };
-    let Some(first) = first_row_per_code(rows, codes, entries.len(), validity) else {
-        return Ok(false);
+    let views = text.views();
+    let heap = text.heap();
+    // Rows that are not UTF-8 wait for the per-row update, which reads
+    // them its own way.
+    let mut unreadable = Vec::new();
+    let mut visit = |row: usize| {
+        views[row].with_bytes(heap, |bytes| {
+            if let Ok(text) = std::str::from_utf8(bytes) {
+                stager.stage(text, memory)
+            } else {
+                unreadable.push(row);
+                Ok(())
+            }
+        })
     };
-    for row in first.into_iter().filter(|row| *row != u32::MAX) {
+    match rows {
+        FoldRows::Span(span) => span
+            .clone()
+            .filter(|row| validity.is_valid(*row))
+            .try_for_each(&mut visit)?,
+        FoldRows::Picked(picked) => picked
+            .iter()
+            .map(|row| *row as usize)
+            .filter(|row| validity.is_valid(*row))
+            .try_for_each(&mut visit)?,
+    }
+    stager.finish(memory)?;
+    for row in unreadable {
         let value = column
-            .value_owned(row as usize)
+            .value_owned(row)
             .ok_or(ExecError::InvalidBatch("aggregate row outside its batch"))?;
         state.update_with_number(aggregate, &value, None, memory)?;
     }

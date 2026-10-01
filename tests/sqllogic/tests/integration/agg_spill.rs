@@ -208,6 +208,11 @@ fn every_ceiling_between_spilling_and_fitting_aggregates_exactly() {
 /// Set in the child process that runs under a lowered descriptor limit.
 const DESCRIPTOR_PROBE: &str = "PINTAIL_DESCRIPTOR_PROBE";
 const DESCRIPTOR_LIMIT: u64 = 48;
+/// A memory ceiling low enough that the aggregation spills more runs than
+/// [`DESCRIPTOR_LIMIT`]. It follows what a group's states cost: when a
+/// distinct text set got smaller, twelve megabytes held enough groups for
+/// forty-three runs to do, and the probe no longer crossed the limit.
+const PROBE_CEILING: usize = 10 * 1024 * 1024;
 
 /// Handle counters can miss a descriptor something else holds; the kernel
 /// cannot. A fresh child process lowers its own soft `RLIMIT_NOFILE` to 48
@@ -231,7 +236,7 @@ fn a_spilling_aggregation_completes_under_a_low_descriptor_limit() {
         .expect("lower the soft descriptor limit of this process");
         let reference = run_aggregated(256 * 1024 * 1024).expect("in-memory aggregation");
         let (spilled, metrics) =
-            run_aggregated_with_metrics(12 * 1024 * 1024).expect("spilled aggregation");
+            run_aggregated_with_metrics(PROBE_CEILING).expect("spilled aggregation");
         assert_eq!(spilled, reference);
         assert!(
             metrics.files > DESCRIPTOR_LIMIT,

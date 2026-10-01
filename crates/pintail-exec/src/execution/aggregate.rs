@@ -20,6 +20,7 @@ use rayon::prelude::*;
 // operator, so its trait method has to be in scope.
 use crate::BatchStream as _;
 
+use super::distinct_keys::{TextKeys, UnitKind};
 use super::fused_join_fold::{Lane, UniqueKeyGroups, fold_morsel, plan_lanes};
 use super::join::{
     BuildRow, JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
@@ -135,6 +136,32 @@ pub(super) struct AggregateGroup {
 /// with many groups must not each pin down a multi-megabyte array.
 const DISTINCT_BITMAP_MAX_SPAN: i128 = 1 << 20;
 
+/// Span per member under which a set past [`DISTINCT_BITMAP_MAX_SPAN`]
+/// still moves to a bitmap: at 128 values a member the bitmap is sixteen
+/// bytes a member, no more than the hashed set holds at its fullest
+/// (a sixteen-byte key and a control byte, at seven eighths load). A set
+/// of two million prices spread over ten million cents, or of seconds
+/// spread over three years, is this shape, and no fixed cap small enough
+/// for a query of many groups admits it.
+const DENSE_PROMOTE_SPAN_PER_KEY: i128 = 128;
+
+/// Span per member a bitmap may grow to before it goes back to a hashed
+/// set: thirty-two bytes a member, what the hashed set holds just after
+/// it doubles. Twice the promotion density, so a set sent back to hashing
+/// has to double its members before it qualifies again and the two
+/// conversions cannot alternate insert by insert.
+const DENSE_KEEP_SPAN_PER_KEY: i128 = 256;
+
+/// The widest span a bitmap of `members` keys may cover: the fixed cap, or
+/// `per_key` values a member when that is wider.
+fn bitmap_span_cap(members: usize, per_key: i128) -> i128 {
+    DISTINCT_BITMAP_MAX_SPAN.max(
+        i128::try_from(members)
+            .unwrap_or(i128::MAX)
+            .saturating_mul(per_key),
+    )
+}
+
 /// Distinct integer keys seen before a bitmap is tried. Below this a
 /// `HashSet`'s overhead already beats any bitmap wide enough to be exact,
 /// so there is nothing to gain from converting yet.
@@ -174,13 +201,42 @@ struct BitmapSeen {
 /// move again into a bitmap (e86), which trades the hash-and-probe per key
 /// for one bit test/set. A key that later widens the span past the cap
 /// demotes back to `Ints` - `Ints`'s own running span only ever grows, so
-/// this happens at most once per group. The first non-integer key
-/// migrates whichever of the two is active to normalized Values.
+/// this happens at most once per group. A set whose first key is text
+/// keys by collation weight (`Texts`). Any other mix of keys migrates
+/// whichever form is active to normalized Values.
+///
+/// Under a [`KeyDomain`] with `units`, the integer keys are a DECIMAL or
+/// temporal column's packed units and stand for the canonical text those
+/// units format to.
 enum DistinctSeen {
     Ints(Box<IntsSeen>),
     /// Exact membership over `min..min + bits.len() * 64`.
     Bitmap(Box<BitmapSeen>),
+    /// Boxed for the same reason as [`IntsSeen`].
+    Texts(Box<TextKeys>),
     Values(HashSet<Value>),
+}
+
+/// How a DISTINCT set reads its keys: the collation text compares under,
+/// and what integer keys stand for.
+#[derive(Clone, Copy)]
+struct KeyDomain {
+    collation: Collation,
+    /// `Some` when integer keys are a column's packed units.
+    units: Option<UnitKind>,
+}
+
+impl KeyDomain {
+    /// The normalized value an integer key stands for.
+    fn normalized_int(self, key: i128) -> Result<Value, ExecError> {
+        let value = match self.units {
+            Some(kind) => Value::Utf8(kind.text_of_key(key).ok_or(ExecError::InvalidBatch(
+                "a distinct unit key outside its column's type",
+            ))?),
+            None => int_key_value(key),
+        };
+        Ok(normalized_hash_key(value, self.collation).unwrap_or(Value::Null))
+    }
 }
 
 /// The boxing above is a memory decision, and it is invisible: adding an
@@ -211,12 +267,64 @@ impl std::hash::Hasher for IntKeyHasher {
         unreachable!("integer distinct keys hash through write_i128");
     }
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn write_i128(&mut self, value: i128) {
-        let low = value as u64;
-        let high = (value >> 64) as u64;
-        self.0 = crate::batch::mix64(low ^ high.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        self.0 = int_key_hash(value);
     }
+}
+
+/// The hash an integer distinct key takes in its set.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn int_key_hash(value: i128) -> u64 {
+    let low = value as u64;
+    let high = (value >> 64) as u64;
+    crate::batch::mix64(low ^ high.wrapping_mul(0x9e37_79b9_7f4a_7c15))
+}
+
+/// Members a hashed set holds before a batch of keys is put in table
+/// order first: below this the table sits in cache whatever the order.
+const ORDERED_INSERT_MIN_MEMBERS: usize = 1 << 15;
+
+/// Reorders `items` so that keys landing near each other in a hash table
+/// of `capacity` entries come together. A set of millions of distinct keys
+/// is far larger than the cache, and inserting a batch in arrival order
+/// misses on every key; in table order the inserts walk the table once.
+/// The table places a key by the low bits of its hash, so one counting
+/// pass over the top bits of that position is enough. Only the order
+/// changes, never which keys are inserted.
+pub(super) fn order_by_table_position<T: Copy>(
+    items: &mut Vec<T>,
+    scratch: &mut Vec<T>,
+    capacity: usize,
+    hash: impl Fn(&T) -> u64,
+) {
+    const WINDOW_BITS: u32 = 12;
+    let buckets = capacity.max(1).next_power_of_two();
+    let bits = buckets.trailing_zeros();
+    if bits <= WINDOW_BITS || items.len() < 2 {
+        return;
+    }
+    let mask = buckets as u64 - 1;
+    let shift = bits - WINDOW_BITS;
+    #[allow(clippy::cast_possible_truncation)] // a window index is 12 bits
+    let window = |item: &T| ((hash(item) & mask) >> shift) as usize;
+    let mut starts = vec![0_usize; (1 << WINDOW_BITS) + 1];
+    for item in items.iter() {
+        starts[window(item) + 1] += 1;
+    }
+    for index in 0..(1 << WINDOW_BITS) {
+        starts[index + 1] += starts[index];
+    }
+    let Some(first) = items.first().copied() else {
+        return;
+    };
+    scratch.clear();
+    scratch.resize(items.len(), first);
+    for item in items.iter() {
+        let slot = &mut starts[window(item)];
+        scratch[*slot] = *item;
+        *slot += 1;
+    }
+    std::mem::swap(items, scratch);
 }
 
 /// splitmix-style hasher for the two-pass `(group sentinel, seen)` map keys:
@@ -273,6 +381,17 @@ fn int_distinct_key(value: &Value) -> Option<i128> {
     }
 }
 
+/// The packed units a `COUNT(DISTINCT column)` keys by, when the column is
+/// a DECIMAL, DATE or DATETIME. Only COUNT: every other DISTINCT aggregate
+/// reads a merged key back as the value it adds.
+fn distinct_unit_kind(aggregate: &CompiledAggregate) -> Option<UnitKind> {
+    if !aggregate.distinct || aggregate.function != AggregateFunction::Count {
+        return None;
+    }
+    aggregate.expr.as_ref()?.column_index()?;
+    UnitKind::of_type(aggregate.input_type?)
+}
+
 fn int_key_value(key: i128) -> Value {
     i64::try_from(key).map_or_else(
         |_| Value::UInt64(u64::try_from(key).expect("distinct int keys fit u64")),
@@ -287,16 +406,89 @@ impl DistinctSeen {
         &mut self,
         value: &Value,
         memory: &MemoryTracker,
-        collation: Collation,
+        domain: KeyDomain,
     ) -> Result<bool, ExecError> {
-        if let Some(key) = int_distinct_key(value) {
-            return self.insert_int(key, memory, collation);
+        if let Some(kind) = domain.units {
+            // A unit-keyed column's value arriving as text - a row the
+            // store has not packed - keys by the same units when it is
+            // spelled canonically. Any other spelling is a different text,
+            // and sends the set to normalized values.
+            if !matches!(self, Self::Values(_))
+                && let Value::Utf8(text) = value
+                && let Some(key) = kind.key_of_text(text)
+            {
+                return self.insert_int(key, memory, domain);
+            }
+        } else if let Some(key) = int_distinct_key(value) {
+            return self.insert_int(key, memory, domain);
+        } else if let Value::Utf8(text) = value
+            && let Some(new) = self.insert_text(text, memory, domain.collation)?
+        {
+            return Ok(new);
         }
-        self.migrate_to_values(memory, collation)?;
+        self.migrate_to_values(memory, domain)?;
+        let key = normalized_hash_key(value.clone(), domain.collation).unwrap_or(Value::Null);
+        self.insert_normalized(key, memory)
+    }
+
+    /// Inserts a batch of integer keys, answering how many were new. A
+    /// large hashed set takes them in table order (see
+    /// [`order_by_table_position`]); `keys` comes back reordered.
+    fn insert_ints(
+        &mut self,
+        keys: &mut Vec<i128>,
+        scratch: &mut Vec<i128>,
+        memory: &MemoryTracker,
+        domain: KeyDomain,
+    ) -> Result<u64, ExecError> {
+        if let Self::Ints(ints) = self
+            && ints.set.len() >= ORDERED_INSERT_MIN_MEMBERS
+        {
+            reserve_hash_set_entries(
+                &mut ints.set,
+                keys.len(),
+                size_of::<i128>().saturating_add(HASH_ENTRY_OVERHEAD),
+                0,
+                memory,
+            )?;
+            order_by_table_position(keys, scratch, ints.set.capacity(), |key| int_key_hash(*key));
+        }
+        let mut added = 0_u64;
+        for key in keys.iter() {
+            if self.insert_int(*key, memory, domain)? {
+                added += 1;
+            }
+        }
+        Ok(added)
+    }
+
+    /// Inserts `text` by its collation weight, when the set is empty or
+    /// already keyed that way; `None` when it holds integers or values.
+    fn insert_text(
+        &mut self,
+        text: &str,
+        memory: &MemoryTracker,
+        collation: Collation,
+    ) -> Result<Option<bool>, ExecError> {
+        if let Self::Ints(ints) = self {
+            if !ints.set.is_empty() {
+                return Ok(None);
+            }
+            *self = Self::Texts(Box::new(TextKeys::new(collation)));
+        }
+        match self {
+            Self::Texts(keys) => keys.insert(text, collation, memory).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// Inserts an already normalized key into a set of values.
+    fn insert_normalized(&mut self, key: Value, memory: &MemoryTracker) -> Result<bool, ExecError> {
         let Self::Values(set) = self else {
-            unreachable!()
+            return Err(ExecError::InvalidPhysicalPlan(
+                "a normalized distinct key needs a set of values",
+            ));
         };
-        let key = normalized_hash_key(value.clone(), collation).unwrap_or(Value::Null);
         reserve_hash_set_entries(
             set,
             1,
@@ -316,7 +508,7 @@ impl DistinctSeen {
         &mut self,
         key: i128,
         memory: &MemoryTracker,
-        collation: Collation,
+        domain: KeyDomain,
     ) -> Result<bool, ExecError> {
         match self {
             Self::Ints(ints) => {
@@ -333,7 +525,8 @@ impl DistinctSeen {
                     *min = (*min).min(key);
                     *max = (*max).max(key);
                 }
-                if set.len() >= DISTINCT_BITMAP_MIN_COUNT && *max - *min < DISTINCT_BITMAP_MAX_SPAN
+                if set.len() >= DISTINCT_BITMAP_MIN_COUNT
+                    && *max - *min < bitmap_span_cap(set.len(), DENSE_PROMOTE_SPAN_PER_KEY)
                 {
                     self.promote_to_bitmap(memory)?;
                 }
@@ -373,15 +566,13 @@ impl DistinctSeen {
                 let old_span = i128::try_from(span).unwrap_or(i128::MAX);
                 let needed_min = (*min).min(key);
                 let needed_max = (*min + old_span - 1).max(key);
-                if needed_max - needed_min >= DISTINCT_BITMAP_MAX_SPAN {
+                let cap = bitmap_span_cap(*count, DENSE_KEEP_SPAN_PER_KEY);
+                if needed_max - needed_min >= cap {
                     self.demote_bitmap_to_ints(key);
-                    return self.insert_int(key, memory, collation);
+                    return self.insert_int(key, memory, domain);
                 }
                 let needed_span = needed_max - needed_min + 1;
-                let headroom_span = needed_span
-                    .saturating_mul(2)
-                    .min(DISTINCT_BITMAP_MAX_SPAN)
-                    .max(needed_span);
+                let headroom_span = needed_span.saturating_mul(2).min(cap).max(needed_span);
                 let extra = headroom_span - needed_span;
                 let (grow_min, grow_max) = if key > *min + old_span - 1 {
                     (needed_min, needed_max + extra)
@@ -389,9 +580,13 @@ impl DistinctSeen {
                     (needed_min - extra, needed_max)
                 };
                 self.grow_bitmap(grow_min, grow_max, memory)?;
-                self.insert_int(key, memory, collation)
+                self.insert_int(key, memory, domain)
             }
-            Self::Values(_) => self.insert_value(&int_key_value(key), memory, collation),
+            Self::Texts(_) => {
+                self.migrate_to_values(memory, domain)?;
+                self.insert_int(key, memory, domain)
+            }
+            Self::Values(_) => self.insert_normalized(domain.normalized_int(key)?, memory),
         }
     }
 
@@ -498,50 +693,44 @@ impl DistinctSeen {
         &mut self,
         key: Value,
         memory: &MemoryTracker,
-        collation: Collation,
+        domain: KeyDomain,
     ) -> Result<bool, ExecError> {
         if let Some(int) = int_distinct_key(&key) {
-            return self.insert_int(int, memory, collation);
+            return self.insert_int(int, memory, domain);
         }
-        self.migrate_to_values(memory, collation)?;
-        let Self::Values(set) = self else {
-            unreachable!()
-        };
-        reserve_hash_set_entries(
-            set,
-            1,
-            size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD),
-            0,
-            memory,
-        )?;
-        if set.contains(&key) {
-            return Ok(false);
-        }
-        memory.reserve(key.heap_bytes())?;
-        set.insert(key);
-        Ok(true)
+        self.migrate_to_values(memory, domain)?;
+        self.insert_normalized(key, memory)
     }
 
+    /// Respells the set as normalized values: an integer as itself, a unit
+    /// key as the canonical text it stands for, a text key as the hex of
+    /// its collation weight.
     fn migrate_to_values(
         &mut self,
         memory: &MemoryTracker,
-        collation: Collation,
+        domain: KeyDomain,
     ) -> Result<(), ExecError> {
-        let ints: Vec<i128> = match self {
-            Self::Ints(ints) => std::mem::take(&mut ints.set).into_iter().collect(),
-            Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits).collect(),
+        let keys: Vec<Value> = match self {
+            Self::Ints(ints) => std::mem::take(&mut ints.set)
+                .into_iter()
+                .map(|key| domain.normalized_int(key))
+                .collect::<Result<_, _>>()?,
+            Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits)
+                .map(|key| domain.normalized_int(key))
+                .collect::<Result<_, _>>()?,
+            Self::Texts(keys) => std::mem::replace(keys.as_mut(), TextKeys::new(domain.collation))
+                .into_normalized(domain.collation)
+                .map(Value::Utf8)
+                .collect(),
             Self::Values(_) => return Ok(()),
         };
-        let mut set = HashSet::with_capacity(ints.len());
+        let mut set = HashSet::with_capacity(keys.len());
         memory.reserve(
-            ints.len()
-                .saturating_mul(size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD)),
+            keys.len()
+                .saturating_mul(size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD))
+                .saturating_add(keys.iter().map(Value::heap_bytes).sum::<usize>()),
         )?;
-        for key in ints {
-            if let Some(key) = normalized_hash_key(int_key_value(key), collation) {
-                set.insert(key);
-            }
-        }
+        set.extend(keys);
         *self = Self::Values(set);
         Ok(())
     }
@@ -557,9 +746,22 @@ impl DistinctSeen {
         &mut self,
         other: Self,
         memory: &MemoryTracker,
-        collation: Collation,
+        domain: KeyDomain,
     ) -> Result<Result<u64, Self>, ExecError> {
-        if matches!(self, Self::Values(_)) || matches!(other, Self::Values(_)) {
+        // Two sets of text keys union key by key, and an empty set takes
+        // the other whole.
+        if let Self::Texts(theirs) = other {
+            return match self {
+                Self::Ints(ints) if ints.set.is_empty() => {
+                    let added = theirs.len() as u64;
+                    *self = Self::Texts(theirs);
+                    Ok(Ok(added))
+                }
+                Self::Texts(mine) => mine.union(*theirs, domain.collation, memory).map(Ok),
+                _ => Ok(Err(Self::Texts(theirs))),
+            };
+        }
+        if matches!(self, Self::Values(_) | Self::Texts(_)) || matches!(other, Self::Values(_)) {
             return Ok(Err(other));
         }
         if let (Self::Bitmap(mine), Self::Bitmap(theirs)) = (&mut *self, &other)
@@ -598,19 +800,22 @@ impl DistinctSeen {
         let members: Box<dyn Iterator<Item = i128> + '_> = match &other {
             Self::Ints(ints) => Box::new(ints.set.iter().copied()),
             Self::Bitmap(bitmap) => Box::new(bitmap_members(bitmap.min, &bitmap.bits)),
-            Self::Values(_) => unreachable!("checked above"),
+            Self::Values(_) | Self::Texts(_) => unreachable!("checked above"),
         };
         let mut added = 0_u64;
         for key in members {
-            if self.insert_int(key, memory, collation)? {
+            if self.insert_int(key, memory, domain)? {
                 added += 1;
             }
         }
         Ok(Ok(added))
     }
 
-    fn drain_values(self) -> Vec<Value> {
+    /// Every key as [`Self::absorb`] takes it back: integers and unit keys
+    /// as integers, everything else normalized.
+    fn drain_values(self, collation: Collation) -> Vec<Value> {
         match self {
+            Self::Texts(keys) => keys.into_normalized(collation).map(Value::Utf8).collect(),
             Self::Ints(ints) => ints.set.into_iter().map(int_key_value).collect(),
             Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits)
                 .map(int_key_value)
@@ -681,6 +886,30 @@ impl OpenDistinctBits<'_> {
     }
 }
 
+/// A COUNT(DISTINCT) state's text set taking one batch of values: each is
+/// staged, and [`Self::finish`] inserts them together and counts the new
+/// ones. The state's count is stale until then.
+pub(super) struct TextStager<'a> {
+    keys: &'a mut TextKeys,
+    count: &'a mut u64,
+    collation: Collation,
+}
+
+impl TextStager<'_> {
+    pub(super) fn stage(&mut self, text: &str, memory: &MemoryTracker) -> Result<(), ExecError> {
+        self.keys.stage(text, self.collation, memory)
+    }
+
+    pub(super) fn finish(self, memory: &MemoryTracker) -> Result<(), ExecError> {
+        let added = self.keys.flush(memory)?;
+        *self.count = self
+            .count
+            .checked_add(added)
+            .ok_or(ExecError::NumericOverflow)?;
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct AggregateState {
     value: AggregateValue,
@@ -688,6 +917,11 @@ pub(super) struct AggregateState {
     /// Copied from the aggregate this state accumulates, so the distinct set
     /// and the extreme comparison use the collation the plan resolved.
     collation: Collation,
+    /// What the distinct set's integer keys stand for, when they are a
+    /// DECIMAL or temporal column's packed units: set for a
+    /// `COUNT(DISTINCT column)` of such a column, whose merge never reads
+    /// a key back as a value.
+    units: Option<UnitKind>,
     /// f64 of the current Minimum/Maximum extreme when known (typed path).
     /// Guides comparisons: strict f64 inequality between correctly-rounded
     /// values transfers to the exact ordering (rounding is monotone), so only
@@ -933,6 +1167,7 @@ impl AggregateState {
         };
         Self {
             collation: aggregate.collation,
+            units: distinct_unit_kind(aggregate),
             value,
             seen: aggregate.distinct.then(|| {
                 DistinctSeen::Ints(Box::new(IntsSeen {
@@ -970,7 +1205,11 @@ impl AggregateState {
         let Some(seen) = &mut self.seen else {
             return self.update(aggregate, key, memory);
         };
-        if !seen.absorb(key.clone(), memory, self.collation)? {
+        let domain = KeyDomain {
+            collation: self.collation,
+            units: self.units,
+        };
+        if !seen.absorb(key.clone(), memory, domain)? {
             return Ok(());
         }
         let seen = self.seen.take();
@@ -1029,7 +1268,14 @@ impl AggregateState {
             return Ok(());
         }
         if let Some(seen) = &mut self.seen
-            && !seen.insert_value(value, memory, self.collation)?
+            && !seen.insert_value(
+                value,
+                memory,
+                KeyDomain {
+                    collation: self.collation,
+                    units: self.units,
+                },
+            )?
         {
             return Ok(());
         }
@@ -1247,7 +1493,11 @@ impl AggregateState {
                 if let (AggregateValue::Count(count), Some(mine)) =
                     (&mut self.value, &mut self.seen)
                 {
-                    match mine.union_ints(seen, memory, self.collation)? {
+                    let domain = KeyDomain {
+                        collation: self.collation,
+                        units: self.units,
+                    };
+                    match mine.union_ints(seen, memory, domain)? {
                         Ok(added) => {
                             *count = count.checked_add(added).ok_or(ExecError::NumericOverflow)?;
                             return Ok(());
@@ -1255,7 +1505,7 @@ impl AggregateState {
                         Err(returned) => seen = returned,
                     }
                 }
-                for key in seen.drain_values() {
+                for key in seen.drain_values(self.collation) {
                     self.absorb_distinct(aggregate, &key, memory)?;
                 }
             }
@@ -1681,7 +1931,14 @@ impl AggregateState {
             return Ok(());
         }
         if let Some(seen) = &mut self.seen
-            && !seen.insert_value(value, memory, self.collation)?
+            && !seen.insert_value(
+                value,
+                memory,
+                KeyDomain {
+                    collation: self.collation,
+                    units: self.units,
+                },
+            )?
         {
             return Ok(());
         }
@@ -1794,13 +2051,16 @@ impl AggregateState {
         key: i128,
         memory: &MemoryTracker,
     ) -> Result<(), ExecError> {
-        let collation = self.collation;
+        let domain = KeyDomain {
+            collation: self.collation,
+            units: self.units,
+        };
         let Some(seen) = &mut self.seen else {
             return Err(ExecError::InvalidPhysicalPlan(
                 "distinct update on a non-distinct aggregate state",
             ));
         };
-        if !seen.insert_int(key, memory, collation)? {
+        if !seen.insert_int(key, memory, domain)? {
             return Ok(());
         }
         match &mut self.value {
@@ -1812,6 +2072,84 @@ impl AggregateState {
                 "distinct int count applied to a non-count aggregate",
             )),
         }
+    }
+
+    /// COUNT(DISTINCT) over a batch of raw integer keys, which come back
+    /// reordered: each new key counts once, as inserting them one at a
+    /// time through [`Self::update_distinct_count_int`] would count them.
+    pub(super) fn update_distinct_count_ints(
+        &mut self,
+        keys: &mut Vec<i128>,
+        scratch: &mut Vec<i128>,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        let domain = KeyDomain {
+            collation: self.collation,
+            units: self.units,
+        };
+        let (Some(seen), AggregateValue::Count(count)) = (&mut self.seen, &mut self.value) else {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "distinct int count applied to a non-count aggregate",
+            ));
+        };
+        let added = seen.insert_ints(keys, scratch, memory, domain)?;
+        *count = count.checked_add(added).ok_or(ExecError::NumericOverflow)?;
+        Ok(())
+    }
+
+    /// This COUNT(DISTINCT) state's set opened for a batch of text values,
+    /// while it keys text by collation weight: `None` when it holds
+    /// integers, units or normalized values.
+    pub(super) fn stage_distinct_texts(&mut self) -> Option<TextStager<'_>> {
+        if self.units.is_some() {
+            return None;
+        }
+        let (Some(seen), AggregateValue::Count(count)) = (&mut self.seen, &mut self.value) else {
+            return None;
+        };
+        if let DistinctSeen::Ints(ints) = seen {
+            if !ints.set.is_empty() {
+                return None;
+            }
+            *seen = DistinctSeen::Texts(Box::new(TextKeys::new(self.collation)));
+        }
+        let DistinctSeen::Texts(keys) = seen else {
+            return None;
+        };
+        Some(TextStager {
+            keys,
+            count,
+            collation: self.collation,
+        })
+    }
+
+    /// What this COUNT(DISTINCT) state's integer keys stand for, when they
+    /// are a column's packed units: a caller holding units of this kind
+    /// inserts `kind.key_of_units(units)` through
+    /// [`Self::update_distinct_count_int`].
+    pub(super) const fn distinct_units(&self) -> Option<UnitKind> {
+        self.units
+    }
+
+    /// COUNT(DISTINCT) on a text value: keyed by its collation weight with
+    /// no `Value` built, while the set holds text keys; through the general
+    /// update otherwise.
+    pub(super) fn update_distinct_count_text(
+        &mut self,
+        aggregate: &CompiledAggregate,
+        text: &str,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if self.units.is_none()
+            && let (Some(seen), AggregateValue::Count(count)) = (&mut self.seen, &mut self.value)
+            && let Some(new) = seen.insert_text(text, memory, self.collation)?
+        {
+            if new {
+                *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
+            }
+            return Ok(());
+        }
+        self.update_with_number(aggregate, &Value::Utf8(text.to_owned()), None, memory)
     }
 
     /// MIN/MAX on packed units: comparisons run on the integer units and
@@ -3406,6 +3744,7 @@ fn try_sma_fold(
                     value,
                     seen: None,
                     collation: aggregate.collation,
+                    units: None,
                     extreme_number: None,
                     extreme_units: None,
                 },
@@ -4451,7 +4790,12 @@ enum SpilledAggregateValue {
 }
 
 fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState, ExecError> {
-    let AggregateState { value, seen, .. } = state;
+    let AggregateState {
+        value,
+        seen,
+        collation,
+        ..
+    } = state;
     let value = match value {
         AggregateValue::Count(count) => SpilledAggregateValue::Count(count),
         AggregateValue::Sum(sum) => SpilledAggregateValue::Sum(sum),
@@ -4517,7 +4861,7 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
     };
     Ok(SpilledAggregateState {
         value,
-        seen: seen.map(DistinctSeen::drain_values),
+        seen: seen.map(|seen| seen.drain_values(collation)),
     })
 }
 
@@ -6550,6 +6894,15 @@ pub(super) fn update_state_from_typed_column(
             state.update_distinct_count_int(key, memory)?;
             return Ok(true);
         }
+        // COUNT(DISTINCT decimal or temporal column): dedup on the packed
+        // units, which stand for the canonical text the row would format.
+        if let Some(kind) = state.distinct_units()
+            && typed.unit_kind() == Some(kind)
+            && let Some(units) = typed.units_at(row)
+        {
+            state.update_distinct_count_int(kind.key_of_units(units), memory)?;
+            return Ok(true);
+        }
         return Ok(false);
     }
     match aggregate.function {
@@ -6955,12 +7308,17 @@ mod fold_cache_tests {
 #[cfg(test)]
 mod distinct_bitmap_tests {
     use super::{
-        DISTINCT_BITMAP_MAX_SPAN, DISTINCT_BITMAP_MIN_COUNT, DistinctSeen, IntsSeen, MemoryTracker,
-        int_key_value,
+        DISTINCT_BITMAP_MAX_SPAN, DISTINCT_BITMAP_MIN_COUNT, DistinctSeen, IntsSeen, KeyDomain,
+        MemoryTracker, int_key_value,
     };
     use crate::collation::Collation;
     use pintail_types::Value;
     use std::collections::HashSet;
+
+    const PLAIN: KeyDomain = KeyDomain {
+        collation: Collation::Utf8mb40900AiCi,
+        units: None,
+    };
 
     fn ints() -> DistinctSeen {
         DistinctSeen::Ints(Box::new(IntsSeen {
@@ -6968,6 +7326,79 @@ mod distinct_bitmap_tests {
             min: i128::MAX,
             max: i128::MIN,
         }))
+    }
+
+    /// Batches of keys inserted together, reordered once the set is large,
+    /// count exactly the keys new to the set: under a plain domain, and
+    /// under one whose keys are a DATETIME's units.
+    #[test]
+    fn batched_inserts_count_each_new_key_once() {
+        let memory = MemoryTracker::new(usize::MAX);
+        for domain in [
+            PLAIN,
+            KeyDomain {
+                collation: Collation::Utf8mb40900AiCi,
+                units: Some(super::UnitKind::DateTime { fsp: 0 }),
+            },
+        ] {
+            let mut seen = ints();
+            let mut model = HashSet::new();
+            let mut random = 11_u64;
+            let mut scratch = Vec::new();
+            for _ in 0..10 {
+                let mut keys: Vec<i128> = (0..40_000)
+                    .map(|_| {
+                        random = crate::batch::mix64(random);
+                        // Spread too thin for a bitmap, over few enough
+                        // values that batches repeat keys.
+                        i128::from(random % 300_000) * 2_003
+                    })
+                    .collect();
+                let expected = keys.iter().filter(|key| model.insert(**key)).count() as u64;
+                let added = seen
+                    .insert_ints(&mut keys, &mut scratch, &memory, domain)
+                    .expect("insert");
+                assert_eq!(added, expected);
+            }
+            assert!(matches!(seen, DistinctSeen::Ints(_)), "stays hashed");
+            let drained: HashSet<i128> = seen
+                .drain_values(Collation::default())
+                .iter()
+                .map(|value| super::int_distinct_key(value).expect("integer keys"))
+                .collect();
+            assert_eq!(drained, model);
+        }
+    }
+
+    /// A set wider than the fixed cap moves to a bitmap once it is dense
+    /// enough for the bitmap to be the smaller of the two, and goes on
+    /// counting exactly.
+    #[test]
+    fn a_wide_set_moves_to_a_bitmap_once_it_is_dense() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut seen = ints();
+        let mut model = HashSet::new();
+        let mut random = 3_u64;
+        let span = u64::try_from(DISTINCT_BITMAP_MAX_SPAN).expect("small") * 10;
+        for step in 0..300_000 {
+            random = crate::batch::mix64(random);
+            let key = i128::from(random % span) - 5_000_000;
+            assert_eq!(
+                seen.insert_int(key, &memory, PLAIN).expect("insert"),
+                model.insert(key),
+                "insert {step}"
+            );
+            if step == 20_000 {
+                assert!(matches!(seen, DistinctSeen::Ints(_)), "still too sparse");
+            }
+        }
+        assert!(matches!(seen, DistinctSeen::Bitmap(_)), "dense by now");
+        let drained: HashSet<i128> = seen
+            .drain_values(Collation::default())
+            .iter()
+            .map(|value| super::int_distinct_key(value).expect("integer keys"))
+            .collect();
+        assert_eq!(drained, model);
     }
 
     /// The general (hashed) path's answer for a batch of keys, including
@@ -6988,10 +7419,7 @@ mod distinct_bitmap_tests {
         keys.extend([0, 1, 2, 2, 2]); // duplicates
         let mut inserted_new = 0;
         for &key in &keys {
-            if seen
-                .insert_int(key, &memory, Collation::default())
-                .expect("insert")
-            {
+            if seen.insert_int(key, &memory, PLAIN).expect("insert") {
                 inserted_new += 1;
             }
         }
@@ -7003,7 +7431,7 @@ mod distinct_bitmap_tests {
         // drain_values must recover exactly the distinct set, not the
         // insertion count or anything bitmap-shaped.
         let mut drained: Vec<i128> = seen
-            .drain_values()
+            .drain_values(Collation::default())
             .into_iter()
             .map(|value| match value {
                 Value::Int64(value) => i128::from(value),
@@ -7027,16 +7455,11 @@ mod distinct_bitmap_tests {
         let memory = MemoryTracker::new(usize::MAX);
         let mut seen = ints();
         for key in 0..(DISTINCT_BITMAP_MIN_COUNT as i128) {
-            seen.insert_int(key, &memory, Collation::default())
-                .expect("insert");
+            seen.insert_int(key, &memory, PLAIN).expect("insert");
         }
         // One key far enough away that min..=max exceeds the cap.
-        seen.insert_int(
-            DISTINCT_BITMAP_MAX_SPAN + 100,
-            &memory,
-            Collation::default(),
-        )
-        .expect("insert");
+        seen.insert_int(DISTINCT_BITMAP_MAX_SPAN + 100, &memory, PLAIN)
+            .expect("insert");
         assert!(
             matches!(seen, DistinctSeen::Ints(_)),
             "a span past DISTINCT_BITMAP_MAX_SPAN must stay hashed rather than allocate a huge table"
@@ -7049,8 +7472,7 @@ mod distinct_bitmap_tests {
         let mut seen = ints();
         let mut keys: Vec<i128> = (0..(DISTINCT_BITMAP_MIN_COUNT as i128 + 10)).collect();
         for &key in &keys {
-            seen.insert_int(key, &memory, Collation::default())
-                .expect("insert");
+            seen.insert_int(key, &memory, PLAIN).expect("insert");
         }
         assert!(matches!(seen, DistinctSeen::Bitmap(_)), "promotes first");
         // Far outside the bitmap's window, and wide enough on its own to
@@ -7058,7 +7480,7 @@ mod distinct_bitmap_tests {
         let far = DISTINCT_BITMAP_MAX_SPAN * 2;
         keys.push(far);
         let inserted = seen
-            .insert_int(far, &memory, Collation::default())
+            .insert_int(far, &memory, PLAIN)
             .expect("insert past the window");
         assert!(inserted, "a genuinely new key must still count as new");
         assert!(
@@ -7066,7 +7488,7 @@ mod distinct_bitmap_tests {
             "outgrowing the bitmap's window demotes back to the general set"
         );
         let mut drained: Vec<i128> = seen
-            .drain_values()
+            .drain_values(Collation::default())
             .into_iter()
             .map(|value| match value {
                 Value::Int64(value) => i128::from(value),
@@ -7086,14 +7508,11 @@ mod distinct_bitmap_tests {
         let memory = MemoryTracker::new(usize::MAX);
         let mut seen = ints();
         for key in 0..(DISTINCT_BITMAP_MIN_COUNT as i128) {
-            seen.insert_int(key, &memory, Collation::default())
-                .expect("insert");
+            seen.insert_int(key, &memory, PLAIN).expect("insert");
         }
         assert!(matches!(seen, DistinctSeen::Bitmap(_)));
         assert!(
-            !seen
-                .insert_int(0, &memory, Collation::default())
-                .expect("re-insert"),
+            !seen.insert_int(0, &memory, PLAIN).expect("re-insert"),
             "a key already in the bitmap must report itself as not new"
         );
     }
@@ -7102,8 +7521,7 @@ mod distinct_bitmap_tests {
         let memory = MemoryTracker::new(usize::MAX);
         let mut seen = ints();
         for key in keys {
-            seen.insert_int(key, &memory, Collation::default())
-                .expect("insert");
+            seen.insert_int(key, &memory, PLAIN).expect("insert");
         }
         seen
     }
@@ -7133,11 +7551,11 @@ mod distinct_bitmap_tests {
                 .difference(&before)
                 .count();
             let added = mine
-                .union_ints(theirs, &memory, Collation::default())
+                .union_ints(theirs, &memory, PLAIN)
                 .expect("union")
                 .unwrap_or_else(|_| panic!("integer sets union in place"));
             assert_eq!(added, expected as u64);
-            let mut drained: Vec<Value> = mine.drain_values();
+            let mut drained: Vec<Value> = mine.drain_values(Collation::default());
             drained.sort_by_key(|value| match value {
                 Value::Int64(value) => i128::from(*value),
                 Value::UInt64(value) => i128::from(*value),

@@ -4,6 +4,7 @@ mod budget;
 mod columnar_sort;
 mod deferred_projection;
 mod dependent_index;
+pub(crate) mod distinct_keys;
 mod error;
 mod fused_join_fold;
 pub(crate) mod gather;

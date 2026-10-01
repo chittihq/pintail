@@ -328,6 +328,22 @@ impl TypedValues {
         }
     }
 
+    /// What this vector's packed units are, when its text is derived from
+    /// them: two rows then hold the same text exactly when their units
+    /// agree. `None` for a vector that keeps text as it was written.
+    pub(crate) const fn unit_kind(&self) -> Option<crate::execution::distinct_keys::UnitKind> {
+        use crate::execution::distinct_keys::UnitKind;
+        match self {
+            Self::Decimal128 { text, .. } | Self::Temporal { text, .. } => match text.kind {
+                TextKind::Ready => None,
+                TextKind::Decimal { scale } => Some(UnitKind::Decimal { scale }),
+                TextKind::Date => Some(UnitKind::Date),
+                TextKind::DateTime { fsp } => Some(UnitKind::DateTime { fsp }),
+            },
+            _ => None,
+        }
+    }
+
     /// The decimal scale when this vector carries scaled decimal units.
     pub(crate) fn decimal_scale(&self) -> Option<u8> {
         match self {
@@ -429,7 +445,7 @@ fn canonical_temporal_text(
 /// one), and, when `scale` is non-zero, a point and exactly `scale`
 /// fraction digits. A negative zero is not canonical, since zero formats
 /// unsigned.
-fn canonical_decimal_text(text: &str, scale: u8) -> bool {
+pub(crate) fn canonical_decimal_text(text: &str, scale: u8) -> bool {
     let bytes = text.as_bytes();
     let (negative, unsigned) = match bytes.split_first() {
         Some((b'-', rest)) => (true, rest),

@@ -29,6 +29,7 @@ mod dependent_subquery_ratio;
 mod dependent_text_scalar_index;
 mod dictionary_text;
 mod distinct_grouping;
+mod distinct_unit_keys;
 mod enum_empty_member;
 mod enum_ordinal;
 mod fanout_join_aggregates;
