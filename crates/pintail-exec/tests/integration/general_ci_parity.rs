@@ -7,10 +7,10 @@
 use pintail_exec::collation::{compare_general_ci, general_ci_sort_key};
 
 const CORPUS: &[&str] = &[
-    "student",
-    "STUDENT",
-    "Student",
-    "teacher",
+    "steward",
+    "STEWARD",
+    "Steward",
+    "tenant",
     "admin",
     "ADMIN",
     "superadmin",
@@ -102,12 +102,12 @@ const MYSQL_ORDER: &[&str] = &[
     "ß",
     "SS",
     "ss",
-    "STUDENT",
-    "Student",
-    "student",
+    "STEWARD",
+    "Steward",
+    "steward",
     "superadmin",
     "support",
-    "teacher",
+    "tenant",
     "u",
     "ü",
     "_",
@@ -194,7 +194,7 @@ fn the_executor_dispatches_on_the_collation_it_was_given() {
     use pintail_exec::collation::Collation;
     use std::cmp::Ordering;
 
-    for (left, right) in [("student", "student   "), ("", " "), ("a", "a  ")] {
+    for (left, right) in [("steward", "steward   "), ("", " "), ("a", "a  ")] {
         assert_eq!(
             pintail_exec::compare_collated_text(left, right, Collation::Utf8mb4GeneralCi),
             Ordering::Equal,
@@ -210,7 +210,7 @@ fn the_executor_dispatches_on_the_collation_it_was_given() {
     // Case and accent folding agree between the two, so they cannot be used to
     // tell the dispatch apart - asserted so a future change that breaks one
     // does not look like a dispatch failure.
-    for (left, right) in [("student", "STUDENT"), ("Ärger", "arger")] {
+    for (left, right) in [("steward", "STEWARD"), ("Ärger", "arger")] {
         for collation in [Collation::Utf8mb4GeneralCi, Collation::Utf8mb40900AiCi] {
             assert_eq!(
                 pintail_exec::compare_collated_text(left, right, collation),

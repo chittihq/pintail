@@ -286,8 +286,8 @@ fn a_composite_key_table_answers_through_the_overlay() {
         1,
         vec![
             Column::new(1, "user_id", DataType::Int64, false),
-            Column::new(2, "course_id", DataType::Int64, false),
-            Column::new(3, "progress", DataType::Int64, true),
+            Column::new(2, "item_id", DataType::Int64, false),
+            Column::new(3, "score", DataType::Int64, true),
         ],
     )
     .expect("schema");
@@ -300,13 +300,13 @@ fn a_composite_key_table_answers_through_the_overlay() {
         },
     )
     .expect("table");
-    let row = |user: i64, course: i64, progress: i64, version: u64, deleted: bool| {
+    let row = |user: i64, item: i64, score: i64, version: u64, deleted: bool| {
         StoredRow::new(
-            PrimaryKey::new(vec![KeyPart::Int64(user), KeyPart::Int64(course)]).expect("key"),
+            PrimaryKey::new(vec![KeyPart::Int64(user), KeyPart::Int64(item)]).expect("key"),
             vec![
                 Value::Int64(user),
-                Value::Int64(course),
-                Value::Int64(progress),
+                Value::Int64(item),
+                Value::Int64(score),
             ],
             version,
             deleted,
@@ -314,28 +314,28 @@ fn a_composite_key_table_answers_through_the_overlay() {
     };
     let mut rows = Vec::new();
     for user in 1..=400_i64 {
-        for course in 1..=200_i64 {
-            rows.push(row(user, course, (user * course) % 101, 1, false));
+        for item in 1..=200_i64 {
+            rows.push(row(user, item, (user * item) % 101, 1, false));
         }
     }
     table.bulk_ingest_snapshot(rows).expect("ingest");
     let mut model: std::collections::BTreeMap<(i64, i64), i64> = (1..=400_i64)
-        .flat_map(|user| (1..=200_i64).map(move |course| ((user, course), (user * course) % 101)))
+        .flat_map(|user| (1..=200_i64).map(move |item| ((user, item), (user * item) % 101)))
         .collect();
     let mut writes = Vec::new();
     for k in 0..500_i64 {
-        let (user, course) = (1 + (k * 37) % 400, 1 + (k * 53) % 200);
-        writes.push(row(user, course, 1_000 + k, 2, false));
-        model.insert((user, course), 1_000 + k);
+        let (user, item) = (1 + (k * 37) % 400, 1 + (k * 53) % 200);
+        writes.push(row(user, item, 1_000 + k, 2, false));
+        model.insert((user, item), 1_000 + k);
     }
     for k in 0..60_i64 {
-        let (user, course) = (1 + (k * 91) % 400, 1 + (k * 17) % 200);
-        writes.push(row(user, course, 0, 2, true));
-        model.remove(&(user, course));
+        let (user, item) = (1 + (k * 91) % 400, 1 + (k * 17) % 200);
+        writes.push(row(user, item, 0, 2, true));
+        model.remove(&(user, item));
     }
-    for course in 201..=205 {
-        writes.push(row(7, course, -7, 2, false));
-        model.insert((7, course), -7);
+    for item in 201..=205 {
+        writes.push(row(7, item, -7, 2, false));
+        model.insert((7, item), -7);
     }
     table.ingest_cdc(writes).expect("cdc");
     let entry = TableEntry::new(
@@ -360,23 +360,23 @@ fn a_composite_key_table_answers_through_the_overlay() {
     let count = model.len() as u64;
     let sum: i64 = model.values().sum();
     assert_eq!(
-        fixture.run("SELECT COUNT(*), SUM(progress) FROM t"),
+        fixture.run("SELECT COUNT(*), SUM(score) FROM t"),
         vec![vec![Value::UInt64(count), Value::Int64(sum)]]
     );
     let expected = model
         .iter()
         .filter(|((user, _), _)| *user == 7)
-        .map(|((_, course), progress)| vec![Value::Int64(*course), Value::Int64(*progress)])
+        .map(|((_, item), score)| vec![Value::Int64(*item), Value::Int64(*score)])
         .collect::<Vec<_>>();
     assert_eq!(
-        fixture.run("SELECT course_id, progress FROM t WHERE user_id = 7 ORDER BY course_id"),
+        fixture.run("SELECT item_id, score FROM t WHERE user_id = 7 ORDER BY item_id"),
         expected
     );
-    let ordered = fixture.run("SELECT user_id, course_id FROM t");
+    let ordered = fixture.run("SELECT user_id, item_id FROM t");
     let keys = ordered
         .iter()
         .map(|row| match (&row[0], &row[1]) {
-            (Value::Int64(user), Value::Int64(course)) => (*user, *course),
+            (Value::Int64(user), Value::Int64(item)) => (*user, *item),
             other => panic!("unexpected {other:?}"),
         })
         .collect::<Vec<_>>();
