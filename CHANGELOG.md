@@ -116,6 +116,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- SUM of an integer column is a DECIMAL, as in MySQL (it was an integer
+  that failed past 64 bits). The total is exact at any size. A client
+  that reads DECIMAL as text - the HTTP API's JSON, and drivers that do
+  not convert it - now sees `"123"` where it saw `123`.
+- UPPER and LOWER map one character to one character by the collation's
+  own table, as MySQL does, instead of the full Unicode mapping. Comparing
+  two columns whose collations tie is error 1267, and a UNION of them
+  error 1271, where both were answered before.
 - `PINTAIL_LAYER_INDEX_MB` sizes the key index over a table's newer
   segments; the fixed 256 MB cache it replaces is gone.
 - A select-list subquery under a LIMIT is not run for rows the LIMIT
