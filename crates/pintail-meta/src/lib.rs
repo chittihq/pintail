@@ -182,6 +182,23 @@ impl StoredSetting {
 /// Serializes schema migration across the connections of one process.
 static MIGRATING: Mutex<()> = Mutex::new(());
 
+/// The row versions a CDC apply is writing past the durable checkpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CdcApplyIntent {
+    /// The highest row version stored when the checkpoint was taken.
+    pub floor: u64,
+    /// The highest row version the apply writes.
+    pub highest: u64,
+    /// The checkpoint the apply starts from: its binlog file.
+    pub binlog_file: String,
+    /// The checkpoint the apply starts from: its position in that file.
+    pub binlog_pos: u64,
+}
+
+fn cdc_apply_intent_key(database_id: &str) -> String {
+    format!("cdc.apply_intent.{database_id}")
+}
+
 impl MetaStore {
     /// Opens a control-plane database and applies all pending migrations.
     ///
@@ -1133,10 +1150,62 @@ impl MetaStore {
                 (database_id, now),
             )
             .context("failed to mark database streaming")?;
+        // The rows this checkpoint covers are no longer an unfinished apply.
+        transaction
+            .execute(
+                "DELETE FROM settings WHERE key = ?1",
+                [cdc_apply_intent_key(database_id)],
+            )
+            .context("failed to clear the CDC apply intent")?;
         pintail_failpoint::hit("meta.before_commit")?;
         transaction
             .commit()
             .context("failed to commit CDC checkpoint")
+    }
+
+    /// Records, before a CDC apply writes any row, which row versions it is
+    /// about to write past the durable checkpoint. The checkpoint commit
+    /// clears it, so finding one at startup means the apply it describes did
+    /// not finish and the rows it names may already be stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the intent cannot be persisted.
+    pub fn record_cdc_apply_intent(
+        &self,
+        database_id: &str,
+        intent: &CdcApplyIntent,
+    ) -> Result<()> {
+        self.set_setting(
+            &cdc_apply_intent_key(database_id),
+            &format!(
+                "{}:{}:{}:{}",
+                intent.floor, intent.highest, intent.binlog_pos, intent.binlog_file
+            ),
+        )
+    }
+
+    /// The apply a CDC stream started and did not checkpoint, when there is
+    /// one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the setting cannot be read.
+    pub fn cdc_apply_intent(&self, database_id: &str) -> Result<Option<CdcApplyIntent>> {
+        let Some(stored) = self.setting(&cdc_apply_intent_key(database_id))? else {
+            return Ok(None);
+        };
+        let mut fields = stored.splitn(4, ':');
+        let mut number = || fields.next().and_then(|field| field.parse::<u64>().ok());
+        let (Some(floor), Some(highest), Some(binlog_pos)) = (number(), number(), number()) else {
+            return Ok(None);
+        };
+        Ok(Some(CdcApplyIntent {
+            floor,
+            highest,
+            binlog_pos,
+            binlog_file: fields.next().unwrap_or_default().to_owned(),
+        }))
     }
 
     /// Marks one table as requiring a new snapshot.

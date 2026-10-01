@@ -3,7 +3,7 @@
 //! A seeded generator plays the source: typed inserts, updates that keep or
 //! move the key, deletes, multi-table transactions large enough to spill,
 //! added columns and truncates. Every transaction goes through the real apply
-//! path - `stage_row_change`, `commit_pending`, `apply_column_change`,
+//! path - `stage_row_change`, `seal_transaction`, `flush_batch`, `apply_column_change`,
 //! `truncate_target` - and between transactions the store is flushed,
 //! compacted, reclaimed or reopened. A crash stops the apply at one recovery
 //! point; the restart reopens every table from its tracked schema, resumes at
@@ -30,8 +30,9 @@ use pintail_store::{StoreOptions, TableStore};
 use pintail_types::{DataType, KeyMode, KeyPart, PrimaryKey, Value};
 
 use crate::{
-    CdcError, CdcTarget, GtidIdentity, PendingTransaction, StreamPosition, apply_column_change,
-    commit_pending, stage_row_change, truncate_target,
+    ApplyBatch, CdcError, CdcTarget, DurablePoint, GtidIdentity, PendingTransaction, PhaseTimes,
+    StreamPosition, apply_column_change, flush_batch, resume_floor, seal_transaction,
+    stage_row_change, stored_version_floor, truncate_target,
 };
 
 thread_local! {
@@ -58,6 +59,13 @@ const RECOVERY_POINTS: [&str; 6] = [
     "cdc.after_checkpoint_commit",
     "cdc.ddl.after_history",
     "cdc.ddl.after_evolve",
+];
+/// The recovery points inside one batch flush.
+const BATCH_RECOVERY_POINTS: [&str; 4] = [
+    "cdc.after_ingest",
+    "cdc.after_first_table_sync",
+    "cdc.before_checkpoint_commit",
+    "cdc.after_checkpoint_commit",
 ];
 
 struct Rng(u64);
@@ -229,6 +237,7 @@ struct Simulation {
     targets: Vec<CdcTarget>,
     blocked: BTreeSet<usize>,
     position: StreamPosition,
+    durable: DurablePoint,
     pending: PendingTransaction,
     log: Vec<Transaction>,
     trace: Vec<String>,
@@ -286,6 +295,11 @@ impl Simulation {
             metadata,
             targets,
             blocked: BTreeSet::new(),
+            durable: DurablePoint {
+                file: position.file.clone(),
+                pos: position.pos,
+                floor: 0,
+            },
             position,
             pending: PendingTransaction::default(),
             log: Vec::new(),
@@ -503,11 +517,40 @@ impl Simulation {
         self.pending = PendingTransaction::default();
     }
 
-    /// Applies one source transaction through the real apply path.
+    /// Applies one source transaction through the real apply path, as a
+    /// batch of its own.
     fn deliver(&mut self, index: usize) -> Result<(), CdcError> {
+        let mut batch = ApplyBatch::default();
+        self.stage(index, &mut batch)?;
+        self.flush(&mut batch)
+    }
+
+    /// Stores a batch and checkpoints it, as the stream does.
+    fn flush(&mut self, batch: &mut ApplyBatch) -> Result<(), CdcError> {
+        flush_batch(
+            &mut self.targets,
+            &mut self.metadata,
+            DATABASE,
+            &self.position,
+            batch,
+            &mut self.durable,
+            &mut PhaseTimes::default(),
+        )
+        .map(drop)
+    }
+
+    /// Reads one source transaction and closes it into `batch`. A schema
+    /// change applies as it is read, so it only ever meets an empty batch.
+    fn stage(&mut self, index: usize, batch: &mut ApplyBatch) -> Result<(), CdcError> {
         let transaction = self.log[index].clone();
         self.open_transaction(&transaction);
         let base = transaction.sequence * 100_000;
+        // What the stream asks at every transaction's first event. A replay
+        // of rows a crash left stored past the checkpoint is in order; only
+        // a source whose numbering restarted is not.
+        if let Some(reason) = self.position.out_of_order(base)? {
+            return Err(CdcError::NeedsResync { reason });
+        }
         let statement = format!("-- simulated transaction {}", transaction.sequence);
         match &transaction.change {
             Change::Rows(ops) => {
@@ -575,14 +618,7 @@ impl Simulation {
             }
         }
         self.position.pos = transaction.commit_position();
-        commit_pending(
-            &mut self.targets,
-            &mut self.metadata,
-            DATABASE,
-            &mut self.position,
-            &mut self.pending,
-        )?;
-        Ok(())
+        seal_transaction(&mut self.position, &mut self.pending, batch)
     }
 
     /// Reopens everything from disk and replays the source past the durable
@@ -626,6 +662,18 @@ impl Simulation {
         let resume = checkpoint.binlog_pos.unwrap_or(0);
         self.position = StreamPosition::from_checkpoint(checkpoint, SourceFlavor::Mysql)
             .expect("resume position");
+        self.position.floor = resume_floor(
+            &self.metadata,
+            DATABASE,
+            &self.position,
+            stored_version_floor(&self.targets),
+        )
+        .expect("resume floor");
+        self.durable = DurablePoint {
+            file: self.position.file.clone(),
+            pos: self.position.pos,
+            floor: self.position.floor,
+        };
         let replay = (0..self.log.len())
             .filter(|&index| self.log[index].commit_position() > resume)
             .collect::<Vec<_>>();
@@ -763,6 +811,11 @@ impl Simulation {
         for step in 0..steps {
             let roll = self.rng.below(100);
             let crash = roll >= 92;
+            if (60..72).contains(&roll) || roll >= 96 {
+                self.burst(step, crash);
+                self.verify(step);
+                continue;
+            }
             let change = match self.rng.below(100) {
                 _ if (72..92).contains(&roll) => None,
                 0..=5 => self.generate_add_column(),
@@ -801,6 +854,47 @@ impl Simulation {
             }
             Err(error) if error.to_string().contains(CRASH_MARKER) => self.restart(step),
             Err(error) => self.fail(step, &format!("apply failed: {error}")),
+        }
+    }
+
+    /// Commits several source transactions as one batch - one WAL record per
+    /// table, one checkpoint for all of them - optionally dying at a
+    /// recovery point inside the flush.
+    fn burst(&mut self, step: usize, crash: bool) {
+        let first = self.log.len();
+        for _ in 0..2 + self.rng.below(5) {
+            let change = self.generate_rows();
+            let sequence = self.log.len() as u64 + 1;
+            self.log.push(Transaction { sequence, change });
+        }
+        let site = crash.then(|| {
+            BATCH_RECOVERY_POINTS
+                [usize::try_from(self.rng.below(BATCH_RECOVERY_POINTS.len() as u64)).expect("site")]
+        });
+        ARMED.with(|armed| armed.set(site));
+        self.trace.push(format!(
+            "batch of {}: {}{}",
+            self.log.len() - first,
+            self.log[first..]
+                .iter()
+                .map(describe)
+                .collect::<Vec<_>>()
+                .join("; "),
+            site.map(|s| format!(" crash@{s}")).unwrap_or_default()
+        ));
+        let mut batch = ApplyBatch::default();
+        let outcome = (first..self.log.len())
+            .try_for_each(|index| self.stage(index, &mut batch))
+            .and_then(|()| self.flush(&mut batch));
+        match outcome {
+            Ok(()) => {
+                ARMED.with(|armed| armed.set(None));
+                if site.is_some() {
+                    self.restart(step);
+                }
+            }
+            Err(error) if error.to_string().contains(CRASH_MARKER) => self.restart(step),
+            Err(error) => self.fail(step, &format!("batched apply failed: {error}")),
         }
     }
 

@@ -1,9 +1,11 @@
 //! Native row-binlog CDC for Pintail.
 //!
 //! The stream buffers one source transaction, converts FULL before/after
-//! images into versioned Pintail rows, synchronizes every touched table WAL,
-//! and only then advances the `SQLite` source checkpoint. A crash therefore
-//! replays at least once with deterministic versions.
+//! images into versioned Pintail rows, and closes it into the open batch.
+//! A batch of whole transactions is written to every touched table WAL,
+//! synchronized, and only then does one `SQLite` checkpoint advance the
+//! source position past all of them. A crash therefore replays at least once
+//! with deterministic versions.
 
 mod ddl;
 mod decoder;
@@ -23,14 +25,14 @@ use std::{
     io::{Seek as _, Write as _},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
 
 use chrono::Utc;
-use futures_util::StreamExt as _;
+use futures_util::{FutureExt as _, StreamExt as _};
 use mysql_async::{
     BinlogStream, BinlogStreamRequest, Error as MysqlError, Pool,
     binlog::{
@@ -40,7 +42,7 @@ use mysql_async::{
     },
     prelude::Queryable as _,
 };
-use pintail_meta::{MetaStore, SnapshotCheckpointRecord};
+use pintail_meta::{CdcApplyIntent, MetaStore, SnapshotCheckpointRecord};
 use pintail_probe::{ProbeReport, SourceFlavor, SourceTable, probe as probe_source};
 use pintail_snapshot::{
     SnapshotError, SnapshotOptions, SnapshotPosition, SnapshotTarget, run_snapshot,
@@ -495,6 +497,9 @@ async fn run_cdc_inner(
         options.server_id
     };
     let mut pending = PendingTransaction::default();
+    let mut batch = ApplyBatch::default();
+    let mut durable;
+    let mut phases = PhaseTimes::default();
     let mut commits = 0_usize;
     let cycle_started = Instant::now();
     let mut mutations = 0_usize;
@@ -512,7 +517,55 @@ async fn run_cdc_inner(
     loop {
         // Every path back here - start, reconnect, recopy - rebuilt the
         // position from its checkpoint, which does not carry the floor.
-        position.floor = position.floor.max(stored_version_floor(&targets));
+        position.floor = position.floor.max(resume_floor(
+            &metadata,
+            database_id,
+            &position,
+            stored_version_floor(&targets),
+        )?);
+        durable = DurablePoint {
+            file: position.file.clone(),
+            pos: position.pos,
+            floor: position.floor,
+        };
+        // Writes out the closed transactions waiting in the batch: one WAL
+        // record and one sync per touched table, one checkpoint for all of
+        // them. Every place that needs the stores and the checkpoint to
+        // agree with the stream - a schema change, a return, a reconnect -
+        // calls it first.
+        macro_rules! flush {
+            () => {
+                if !batch.is_empty() {
+                    let flushed = flush_batch(
+                        &mut targets,
+                        &mut metadata,
+                        database_id,
+                        &position,
+                        &mut batch,
+                        &mut durable,
+                        &mut phases,
+                    )?;
+                    commits += flushed.transactions;
+                    mutations += flushed.mutations;
+                    for index in flushed.passed_fences {
+                        // The durable position is past the snapshot's; the
+                        // fence has done its job across however many cycles
+                        // it took.
+                        if snapshot_fences.remove(&index).is_some() {
+                            metadata.delete_setting(&fence_key(
+                                database_id,
+                                &targets[index].source.name.to_ascii_lowercase(),
+                            ))?;
+                        }
+                    }
+                    progress(CdcProgress {
+                        commits,
+                        mutations,
+                        checkpoint: flushed.checkpoint,
+                    });
+                }
+            };
+        }
         let mut stream = match open_stream(
             pool,
             &metadata,
@@ -578,8 +631,26 @@ async fn run_cdc_inner(
         // keyless table, keyed by version, overwrote one another, and a row
         // event compared against a snapshot fence always fell below it.
         let mut logged_position = position.pos;
-        while let Some(event) = stream.next().await {
-            let commits_before = commits;
+        loop {
+            // A stream with nothing more to hand over right now is the end
+            // of the batch: the transactions already closed are written out
+            // before the wait, so a quiet source is mirrored as each
+            // transaction arrives and only a busy one is batched.
+            let mut waiting = Instant::now();
+            let next = if batch.is_empty() {
+                stream.next().await
+            } else if let Some(next) = stream.next().now_or_never() {
+                next
+            } else {
+                flush!();
+                waiting = Instant::now();
+                stream.next().await
+            };
+            phases.read += waiting.elapsed();
+            let Some(event) = next else {
+                break;
+            };
+            let closed_before = commits + batch.transactions;
             let event = match event {
                 Ok(event) => {
                     reconnect_attempts = 0;
@@ -611,6 +682,7 @@ async fn run_cdc_inner(
                     });
                     pending.ordinal = 0;
                     if let Some(reason) = position.out_of_order(event_position)? {
+                        flush!();
                         metadata.mark_database_needs_resync(database_id, &reason)?;
                         out_of_order = Some(CdcError::NeedsResync { reason });
                         break;
@@ -668,13 +740,12 @@ async fn run_cdc_inner(
                                 || (position.file == *fence_file && event_position <= *fence_pos)
                         },
                     );
-                    if !fenced && snapshot_fences.remove(&target_index).is_some() {
-                        // The stream passed the snapshot position; the fence
-                        // has done its job across however many cycles it took.
-                        metadata.delete_setting(&fence_key(
-                            database_id,
-                            &targets[target_index].source.name.to_ascii_lowercase(),
-                        ))?;
+                    if !fenced && snapshot_fences.contains_key(&target_index) {
+                        // The stream passed the snapshot position. The fence
+                        // goes once the checkpoint has passed it too: lifted
+                        // here, a replay from a checkpoint still behind the
+                        // snapshot would apply rows the snapshot holds.
+                        pending.passed_fences.insert(target_index);
                     }
                     // Placing the row image against the tracked schema is what
                     // detects a missed schema change: it succeeds for every
@@ -709,6 +780,10 @@ async fn run_cdc_inner(
                         // genuinely broken keeps failing on the same width, and
                         // must not probe-storm MySQL once per row it sends.
                         if drift_heals.insert((target_index, row_columns)) {
+                            // The heal changes the store's schema, and the
+                            // rows waiting in the batch were shaped for the
+                            // one before it.
+                            flush!();
                             heal_schema_drift(
                                 pool,
                                 &report.database,
@@ -734,7 +809,8 @@ async fn run_cdc_inner(
                     }
                     match alignment {
                         Some(Ok(alignment)) => {
-                            if decode_rows_event(
+                            let decoding = Instant::now();
+                            let failed = decode_rows_event(
                                 &rows_event,
                                 table_map,
                                 &targets[target_index].source,
@@ -747,7 +823,9 @@ async fn run_cdc_inner(
                                 &metadata,
                                 &mut pending,
                                 options.max_transaction_bytes,
-                            )? {
+                            )?;
+                            phases.decode += decoding.elapsed();
+                            if failed {
                                 blocked_targets.insert(target_index);
                             }
                         }
@@ -795,30 +873,12 @@ async fn run_cdc_inner(
                     }
                     position.pos = event_position;
                     if non_transactional && rows_event.flags().contains(RowsEventFlags::STMT_END) {
-                        let outcome = commit_pending(
-                            &mut targets,
-                            &mut metadata,
-                            database_id,
-                            &mut position,
-                            &mut pending,
-                        )?;
-                        commits += 1;
-                        mutations += outcome;
-                        emit_progress(&progress, commits, mutations, &position)?;
+                        seal_transaction(&mut position, &mut pending, &mut batch)?;
                     }
                 }
                 EventData::XidEvent(_) => {
                     position.pos = event_position;
-                    let outcome = commit_pending(
-                        &mut targets,
-                        &mut metadata,
-                        database_id,
-                        &mut position,
-                        &mut pending,
-                    )?;
-                    commits += 1;
-                    mutations += outcome;
-                    emit_progress(&progress, commits, mutations, &position)?;
+                    seal_transaction(&mut position, &mut pending, &mut batch)?;
                 }
                 EventData::QueryEvent(query) => {
                     let statement = query.query().into_owned();
@@ -857,6 +917,9 @@ async fn run_cdc_inner(
                                 "cdc unreadable ddl db={database_id} \
                                  quarantining the tables it names: {error}"
                             );
+                            // The transactions before the statement are
+                            // stored before anything it names is set aside.
+                            flush!();
                             // Only tables the stream still follows: one a DROP took
                             // out stays in `targets`, and quarantining it as live
                             // hid that a CREATE of the same name makes a new table.
@@ -929,16 +992,8 @@ async fn run_cdc_inner(
                             // event arrived, which for the last event in the
                             // log is never.
                             position.pos = event_position;
-                            let outcome = commit_pending(
-                                &mut targets,
-                                &mut metadata,
-                                database_id,
-                                &mut position,
-                                &mut pending,
-                            )?;
-                            commits += 1;
-                            mutations += outcome;
-                            emit_progress(&progress, commits, mutations, &position)?;
+                            seal_transaction(&mut position, &mut pending, &mut batch)?;
+                            flush!();
                             continue;
                         }
                     };
@@ -953,18 +1008,13 @@ async fn run_cdc_inner(
                             || parsed.names_tracked_schema);
                     let actions = parsed.actions;
                     if tracks_schema && pending.has_mutations() {
-                        let outcome = commit_pending(
-                            &mut targets,
-                            &mut metadata,
-                            database_id,
-                            &mut position,
-                            &mut pending,
-                        )?;
-                        commits += 1;
-                        mutations += outcome;
-                        emit_progress(&progress, commits, mutations, &position)?;
+                        seal_transaction(&mut position, &mut pending, &mut batch)?;
                     }
                     if tracks_schema {
+                        // A schema change is a batch boundary: every
+                        // transaction before it is stored and checkpointed
+                        // under the schema it was written with.
+                        flush!();
                         apply_ddl_actions(
                             pool,
                             metadata_path,
@@ -982,16 +1032,13 @@ async fn run_cdc_inner(
                         .await?;
                     }
                     position.pos = event_position;
-                    let outcome = commit_pending(
-                        &mut targets,
-                        &mut metadata,
-                        database_id,
-                        &mut position,
-                        &mut pending,
-                    )?;
-                    commits += 1;
-                    mutations += outcome;
-                    emit_progress(&progress, commits, mutations, &position)?;
+                    seal_transaction(&mut position, &mut pending, &mut batch)?;
+                    if tracks_schema {
+                        // And the change itself is checkpointed before the
+                        // next transaction is read, so a restart never
+                        // applies it twice.
+                        flush!();
+                    }
                 }
                 // A connection replays its preamble before any replication
                 // progress: a fake rotate, then the format description at the
@@ -1012,23 +1059,26 @@ async fn run_cdc_inner(
                 }
             }
             // Asked to stop, or out of time: honoured only on the event that
-            // committed, so the position handed back never splits a source
-            // transaction.
-            let yielding = commits > commits_before
+            // closed a transaction, so the position handed back never splits
+            // one. The batch is written out there and then, whatever its
+            // size, so whoever asked waits for one transaction and one
+            // flush, not for a batch to fill.
+            let closed = commits + batch.transactions;
+            let yielding = closed > closed_before
                 && !options.blocking
                 && (options.stop.as_ref().is_some_and(CycleStop::requested)
                     || options
                         .max_duration
                         .is_some_and(|maximum| cycle_started.elapsed() >= maximum));
-            if yielding
-                || options
-                    .max_commits
-                    .is_some_and(|maximum| commits >= maximum)
-            {
+            let spent = options.max_commits.is_some_and(|maximum| closed >= maximum);
+            if yielding || spent || batch.is_due(options.max_commits) {
+                flush!();
+            }
+            if yielding || spent {
                 stream.close().await?;
                 pintail_log::log_debug!(
                     "cdc cycle done db={database_id} events={events_read} commits={commits} \
-                     mutations={mutations} pos={}:{}",
+                     mutations={mutations} pos={}:{} {phases}",
                     position.file,
                     position.pos
                 );
@@ -1036,6 +1086,9 @@ async fn run_cdc_inner(
                 return finish_result(commits, mutations, &position, targets);
             }
         }
+        // However the stream ended, the transactions it closed are stored
+        // before anything rebuilds the position from the checkpoint.
+        flush!();
         if let Some(error) = out_of_order {
             drop(stream);
             position = resnapshot_context
@@ -1110,7 +1163,7 @@ async fn run_cdc_inner(
         // logs nothing at all.
         pintail_log::log_debug!(
             "cdc cycle done db={database_id} events={events_read} commits={commits} \
-             mutations={mutations} pos={}:{}",
+             mutations={mutations} pos={}:{} {phases}",
             position.file,
             position.pos
         );
@@ -2400,6 +2453,8 @@ struct PendingTransaction {
     discarded_targets: BTreeSet<usize>,
     retained_bytes: usize,
     ordinal: u32,
+    /// Targets whose snapshot fence this transaction's events are past.
+    passed_fences: BTreeSet<usize>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -2908,54 +2963,285 @@ fn push_mutations(
     Ok(())
 }
 
-fn commit_pending(
-    targets: &mut [CdcTarget],
-    metadata: &mut MetaStore,
+/// Most source transactions one batch carries.
+const BATCH_TRANSACTIONS: usize = 16_384;
+/// Row bytes a batch carries before it is written out whatever its age. A
+/// table's share of a batch is one WAL record, and this keeps a batch of
+/// small transactions well under the record limit.
+const BATCH_BYTES: usize = 32 * 1024 * 1024;
+/// Longest a closed transaction waits in the batch while the stream keeps
+/// delivering. It bounds how stale a query can be on a mirror that is
+/// behind; one that has caught up flushes as soon as the stream goes quiet.
+const BATCH_AGE: Duration = Duration::from_millis(250);
+/// Threads one flush spreads its tables over.
+const FLUSH_WORKERS: usize = 8;
+/// Rows below which a flush writes its tables one after another: starting
+/// threads costs more than encoding a few rows.
+const PARALLEL_INGEST_ROWS: usize = 512;
+
+/// Whole source transactions closed by the stream and not yet stored.
+///
+/// A transaction enters only at its commit, so the batch never holds part of
+/// one, and each table receives its share as a single WAL record: a reader
+/// sees every transaction of the batch on that table or none of them.
+#[derive(Default)]
+struct ApplyBatch {
+    /// Rows per target, in source commit order.
+    rows: BTreeMap<usize, Vec<StoredRow>>,
+    transactions: usize,
+    mutations: usize,
+    bytes: usize,
+    highest_version: Option<u64>,
+    opened: Option<Instant>,
+    /// Where the last closed transaction ended: the position the batch's
+    /// checkpoint records.
+    file: String,
+    pos: u64,
+    passed_fences: BTreeSet<usize>,
+}
+
+impl ApplyBatch {
+    const fn is_empty(&self) -> bool {
+        self.transactions == 0
+    }
+
+    /// Whether the batch has grown or aged enough to be written out. A
+    /// commit budget makes every transaction its own batch: the budget
+    /// exists so a caller can stop after exactly that many.
+    fn is_due(&self, commit_budget: Option<usize>) -> bool {
+        !self.is_empty()
+            && (commit_budget.is_some()
+                || self.transactions >= BATCH_TRANSACTIONS
+                || self.bytes >= BATCH_BYTES
+                || self
+                    .opened
+                    .is_some_and(|opened| opened.elapsed() >= BATCH_AGE))
+    }
+}
+
+/// The last position the checkpoint durably holds, and the highest row
+/// version stored when it was taken.
+#[derive(Default)]
+struct DurablePoint {
+    file: String,
+    pos: u64,
+    floor: u64,
+}
+
+/// Where one catch-up's time went, for the debug line that ends it.
+#[derive(Default)]
+struct PhaseTimes {
+    batches: usize,
+    read: Duration,
+    decode: Duration,
+    ingest: Duration,
+    sync: Duration,
+    checkpoint: Duration,
+}
+
+impl std::fmt::Display for PhaseTimes {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "batches={} read_ms={} decode_ms={} ingest_ms={} sync_ms={} checkpoint_ms={}",
+            self.batches,
+            self.read.as_millis(),
+            self.decode.as_millis(),
+            self.ingest.as_millis(),
+            self.sync.as_millis(),
+            self.checkpoint.as_millis()
+        )
+    }
+}
+
+/// What one flush made durable.
+struct FlushedBatch {
+    transactions: usize,
+    mutations: usize,
+    checkpoint: CdcCheckpoint,
+    passed_fences: BTreeSet<usize>,
+}
+
+/// The version floor a stream starts from.
+///
+/// The floor is the highest row version the targets hold, and a transaction
+/// versioned at or below it means the source's numbering restarted. A
+/// process that died between writing a batch and checkpointing it left rows
+/// above the checkpoint, though, and the replay of those same transactions
+/// then read as a restarted source: every kill in that window cost a full
+/// copy of the database. The apply records what it is about to write before
+/// it writes; when that record is still there, names this checkpoint, and
+/// accounts for everything stored, the floor is the one the checkpoint had.
+fn resume_floor(
+    metadata: &MetaStore,
     database_id: &str,
+    position: &StreamPosition,
+    stored: u64,
+) -> Result<u64, CdcError> {
+    Ok(match metadata.cdc_apply_intent(database_id)? {
+        Some(intent)
+            if intent.binlog_file == position.file
+                && intent.binlog_pos == position.pos
+                && stored <= intent.highest =>
+        {
+            intent.floor.min(stored)
+        }
+        _ => stored,
+    })
+}
+
+/// Closes the open transaction into the batch at its commit.
+fn seal_transaction(
     position: &mut StreamPosition,
     pending: &mut PendingTransaction,
-) -> Result<usize, CdcError> {
-    let mut grouped = BTreeMap::<usize, Vec<StoredRow>>::new();
+    batch: &mut ApplyBatch,
+) -> Result<(), CdcError> {
     for mutation in pending.take_mutations()? {
-        grouped
+        let version = mutation.row.version();
+        batch.highest_version = Some(
+            batch
+                .highest_version
+                .map_or(version, |highest| highest.max(version)),
+        );
+        batch.bytes = batch.bytes.saturating_add(mutation.row.estimated_bytes());
+        batch.mutations += 1;
+        batch
+            .rows
             .entry(mutation.target_index)
             .or_default()
             .push(mutation.row);
     }
-    let mutation_count = grouped.values().map(Vec::len).sum();
-    if let Some(highest) = grouped.values().flatten().map(StoredRow::version).max() {
+    if let Some(highest) = batch.highest_version {
         position.floor = position.floor.max(highest);
     }
-    let mut touched = Vec::with_capacity(grouped.len());
-    for (target_index, rows) in grouped {
-        let target = &mut targets[target_index];
-        target
-            .store
-            .ingest_cdc(rows)
-            .map_err(|error| CdcError::from(error).for_table(&target.source.name))?;
-        touched.push(target_index);
+    position.commit_gtid()?;
+    batch.file.clone_from(&position.file);
+    batch.pos = position.pos;
+    batch.transactions += 1;
+    batch.opened.get_or_insert_with(Instant::now);
+    batch.passed_fences.append(&mut pending.passed_fences);
+    *pending = PendingTransaction::default();
+    Ok(())
+}
+
+/// Runs `apply` over `items`, on several threads when there are several.
+/// Reports the failure of the earliest item, so the same input fails the
+/// same way however the threads interleave.
+fn for_each_table<T: Send>(
+    items: Vec<T>,
+    parallel: bool,
+    apply: impl Fn(T) -> Result<(), CdcError> + Sync,
+) -> Result<(), CdcError> {
+    if !parallel || items.len() < 2 {
+        return items.into_iter().try_for_each(apply);
     }
+    let workers = items.len().min(FLUSH_WORKERS);
+    let queue = Mutex::new(items.into_iter().enumerate());
+    let failure = Mutex::new(None::<(usize, CdcError)>);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let next = queue.lock().unwrap_or_else(PoisonError::into_inner).next();
+                    let Some((order, item)) = next else {
+                        break;
+                    };
+                    if let Err(error) = apply(item) {
+                        let mut failure = failure.lock().unwrap_or_else(PoisonError::into_inner);
+                        if failure.as_ref().is_none_or(|(first, _)| order < *first) {
+                            *failure = Some((order, error));
+                        }
+                    }
+                }
+            });
+        }
+    });
+    match failure.into_inner().unwrap_or_else(PoisonError::into_inner) {
+        Some((_, error)) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Stores every transaction in the batch and checkpoints the position of the
+/// last one: each touched table gets its rows as one WAL record, every such
+/// WAL is synchronized, and one metadata commit then moves the checkpoint
+/// past the whole batch. A crash anywhere before that commit leaves the
+/// checkpoint where it was, and the replay writes the same rows at the same
+/// versions.
+fn flush_batch(
+    targets: &mut [CdcTarget],
+    metadata: &mut MetaStore,
+    database_id: &str,
+    position: &StreamPosition,
+    batch: &mut ApplyBatch,
+    durable: &mut DurablePoint,
+    phases: &mut PhaseTimes,
+) -> Result<FlushedBatch, CdcError> {
+    let started = Instant::now();
+    let mut rows = std::mem::take(&mut batch.rows);
+    let touched = rows.keys().copied().collect::<BTreeSet<_>>();
+    if let Some(highest) = batch.highest_version {
+        metadata.record_cdc_apply_intent(
+            database_id,
+            &CdcApplyIntent {
+                floor: durable.floor,
+                highest,
+                binlog_file: durable.file.clone(),
+                binlog_pos: durable.pos,
+            },
+        )?;
+    }
+    let work = targets
+        .iter_mut()
+        .enumerate()
+        .filter_map(|(index, target)| rows.remove(&index).map(|rows| (target, rows)))
+        .collect::<Vec<_>>();
+    for_each_table(
+        work,
+        batch.mutations >= PARALLEL_INGEST_ROWS,
+        |(target, rows)| {
+            target
+                .store
+                .ingest_cdc(rows)
+                .map(drop)
+                .map_err(|error| CdcError::from(error).for_table(&target.source.name))
+        },
+    )?;
+    let ingested = Instant::now();
+    phases.ingest += ingested - started;
     recovery_point("cdc.after_ingest")?;
-    for (index, target_index) in touched.iter().enumerate() {
-        let target = &mut targets[*target_index];
+    let synchronize = |target: &mut CdcTarget| {
         target
             .store
             .checkpoint()
-            .map_err(|error| CdcError::from(error).for_table(&target.source.name))?;
-        if index == 0 && touched.len() > 1 {
-            recovery_point("cdc.after_first_table_sync")?;
-        }
+            .map_err(|error| CdcError::from(error).for_table(&target.source.name))
+    };
+    let mut unsynchronized = targets
+        .iter_mut()
+        .enumerate()
+        .filter(|(index, _)| touched.contains(index))
+        .map(|(_, target)| target)
+        .collect::<Vec<_>>();
+    if unsynchronized.len() > 1 {
+        synchronize(unsynchronized.remove(0))?;
+        recovery_point("cdc.after_first_table_sync")?;
     }
-    position.commit_gtid()?;
-    let checkpoint = position.checkpoint()?;
+    for_each_table(unsynchronized, true, synchronize)?;
+    let synchronized = Instant::now();
+    phases.sync += synchronized - ingested;
+    let checkpoint = CdcCheckpoint {
+        binlog_file: batch.file.clone(),
+        binlog_pos: batch.pos,
+        ..position.checkpoint()?
+    };
     let touched_names = touched
         .iter()
         .map(|index| targets[*index].source.name.clone())
         .collect::<Vec<_>>();
     let checkpoint_record = SnapshotCheckpointRecord {
-        kind: checkpoint.kind,
-        gtid_set: checkpoint.gtid_set,
-        binlog_file: Some(checkpoint.binlog_file),
+        kind: checkpoint.kind.clone(),
+        gtid_set: checkpoint.gtid_set.clone(),
+        binlog_file: Some(checkpoint.binlog_file.clone()),
         binlog_pos: Some(checkpoint.binlog_pos),
     };
     recovery_point("cdc.before_checkpoint_commit")?;
@@ -2966,8 +3252,21 @@ fn commit_pending(
         &Utc::now().to_rfc3339(),
     )?;
     recovery_point("cdc.after_checkpoint_commit")?;
-    *pending = PendingTransaction::default();
-    Ok(mutation_count)
+    phases.checkpoint += synchronized.elapsed();
+    phases.batches += 1;
+    durable.file.clone_from(&batch.file);
+    durable.pos = batch.pos;
+    if let Some(highest) = batch.highest_version {
+        durable.floor = durable.floor.max(highest);
+    }
+    let flushed = FlushedBatch {
+        transactions: batch.transactions,
+        mutations: batch.mutations,
+        checkpoint,
+        passed_fences: std::mem::take(&mut batch.passed_fences),
+    };
+    *batch = ApplyBatch::default();
+    Ok(flushed)
 }
 
 /// A crash-consistency boundary on the apply path. In a build with
@@ -2981,20 +3280,6 @@ fn recovery_point(site: &'static str) -> Result<(), CdcError> {
     })?;
     #[cfg(test)]
     simulation::crash_if_armed(site)?;
-    Ok(())
-}
-
-fn emit_progress(
-    progress: &ProgressListener,
-    commits: usize,
-    mutations: usize,
-    position: &StreamPosition,
-) -> Result<(), CdcError> {
-    progress(CdcProgress {
-        commits,
-        mutations,
-        checkpoint: position.checkpoint()?,
-    });
     Ok(())
 }
 
@@ -3531,6 +3816,67 @@ mod tests {
             records[0].orphaned_at.is_some(),
             "the table stays dropped until its old files are gone"
         );
+    }
+
+    /// A process killed between writing a batch and checkpointing it leaves
+    /// rows above the checkpoint. Their replay is in order; only rows nobody
+    /// announced, or a checkpoint that has moved since, keep the stored floor.
+    #[test]
+    fn rows_an_unfinished_apply_left_past_the_checkpoint_do_not_raise_the_floor() {
+        let workspace = tempfile::tempdir().expect("CDC workspace");
+        let mut metadata =
+            MetaStore::open(&workspace.path().join("pintail-meta.db")).expect("metadata");
+        metadata
+            .upsert_database("source", "app", b"unused", "2026-09-24T00:00:00Z")
+            .expect("database");
+        let checkpoint = |pos| SnapshotCheckpointRecord {
+            kind: "filepos".to_owned(),
+            gtid_set: None,
+            binlog_file: Some("mysql-bin.000003".to_owned()),
+            binlog_pos: Some(pos),
+        };
+        let at = |pos| {
+            StreamPosition::from_checkpoint(checkpoint(pos), SourceFlavor::Mysql).expect("position")
+        };
+        let floor = |metadata: &MetaStore, pos, stored| {
+            crate::resume_floor(metadata, "source", &at(pos), stored).expect("floor")
+        };
+        assert_eq!(floor(&metadata, 900, 500), 500, "nothing was announced");
+
+        metadata
+            .record_cdc_apply_intent(
+                "source",
+                &pintail_meta::CdcApplyIntent {
+                    floor: 200,
+                    highest: 500,
+                    binlog_file: "mysql-bin.000003".to_owned(),
+                    binlog_pos: 900,
+                },
+            )
+            .expect("intent");
+        assert_eq!(
+            floor(&metadata, 900, 500),
+            200,
+            "the whole batch was stored"
+        );
+        assert_eq!(
+            floor(&metadata, 900, 350),
+            200,
+            "part of the batch was stored"
+        );
+        assert_eq!(
+            floor(&metadata, 900, 150),
+            150,
+            "none of the batch was stored"
+        );
+        assert_eq!(floor(&metadata, 900, 501), 501, "rows nobody announced");
+        assert_eq!(floor(&metadata, 901, 500), 500, "another checkpoint");
+
+        metadata
+            .commit_cdc_checkpoint("source", &checkpoint(950), &[], "2026-09-24T00:00:01Z")
+            .expect("checkpoint");
+        assert_eq!(metadata.cdc_apply_intent("source").expect("intent"), None);
+        assert_eq!(floor(&metadata, 950, 500), 500, "the apply finished");
     }
 
     #[test]
