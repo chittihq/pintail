@@ -2767,6 +2767,7 @@ fn fold_span(
                     group_by.len(),
                     aggregates,
                     collation,
+                    key_collations,
                 )?,
             });
         }
@@ -2888,6 +2889,7 @@ fn try_grouped_segment_fold(
                     group_by.len(),
                     aggregates,
                     collation,
+                    key_collations,
                 )?,
             });
         }
@@ -2966,18 +2968,28 @@ fn try_grouped_segment_fold(
         };
         merged = Some(match merged {
             None => rows,
-            Some(base) => {
-                merge_finished_aggregate_rows(base, rows, group_by.len(), aggregates, collation)?
-            }
+            Some(base) => merge_finished_aggregate_rows(
+                base,
+                rows,
+                group_by.len(),
+                aggregates,
+                collation,
+                key_collations,
+            )?,
         });
     }
     if !fold.outside.is_empty() {
         let rows = aggregate_over(&fold.outside)?;
         merged = Some(match merged {
             None => rows,
-            Some(base) => {
-                merge_finished_aggregate_rows(base, rows, group_by.len(), aggregates, collation)?
-            }
+            Some(base) => merge_finished_aggregate_rows(
+                base,
+                rows,
+                group_by.len(),
+                aggregates,
+                collation,
+                key_collations,
+            )?,
         });
     }
     let Some(rows) = merged else {
@@ -3000,28 +3012,39 @@ fn try_grouped_segment_fold(
     Ok(Some(rows))
 }
 
+/// Merges two finished aggregations over disjoint rows into one.
+///
+/// Each key is matched under its own collation, as the aggregations that
+/// produced the rows grouped it. Matching every key under the plan's one
+/// collation merged groups the query keeps apart: with a case-sensitive key
+/// beside a case-insensitive one, `a` and `A` of the first became one group
+/// as soon as the rows came from two segments.
 fn merge_finished_aggregate_rows(
     mut base: Vec<Vec<Value>>,
     delta: Vec<Vec<Value>>,
     group_len: usize,
     aggregates: &[CompiledAggregate],
     collation: Collation,
+    key_collations: &[Collation],
 ) -> Result<Vec<Vec<Value>>, ExecError> {
+    let normalized = |row: &[Value]| {
+        row[..group_len]
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                normalized_group_value(
+                    value.clone(),
+                    key_collations.get(position).copied().unwrap_or(collation),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
     let mut index = HashMap::<Vec<Value>, usize>::new();
     for (position, row) in base.iter().enumerate() {
-        let key = row[..group_len]
-            .iter()
-            .cloned()
-            .map(|value| normalized_group_value(value, collation))
-            .collect::<Vec<_>>();
-        index.insert(key, position);
+        index.insert(normalized(row), position);
     }
     for row in delta {
-        let key = row[..group_len]
-            .iter()
-            .cloned()
-            .map(|value| normalized_group_value(value, collation))
-            .collect::<Vec<_>>();
+        let key = normalized(&row);
         if let Some(position) = index.get(&key) {
             for (offset, aggregate) in aggregates.iter().enumerate() {
                 let column = group_len + offset;
@@ -3307,6 +3330,7 @@ pub(super) fn build_hash_aggregate(
                 group_by.len(),
                 aggregates,
                 collation,
+                key_collations,
             )?;
             let payload: usize = merged
                 .iter()
