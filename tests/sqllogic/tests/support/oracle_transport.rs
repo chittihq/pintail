@@ -116,6 +116,12 @@ pub fn execute_all(
             conn.query_drop(format!("SET sql_mode='{mode}'"))
                 .await
                 .map_err(|e| e.to_string())?;
+            conn.query_drop(format!(
+                "SET time_zone='{}'",
+                super::oracle_calendar::session_zone(case.family)
+            ))
+            .await
+            .map_err(|e| e.to_string())?;
             // A family whose shapes MySQL's default optimizer answers wrongly
             // runs under the switch that makes it answer the statement as written.
             let switch = super::mysql_optimizer_switch(case.family);
@@ -208,9 +214,15 @@ pub fn hash(bytes: &[u8]) -> String {
 }
 
 pub fn case_id(case: &OracleCase) -> String {
+    // The session zone is part of a case's identity only when it has one,
+    // so every case in UTC keeps the id it had.
+    let zone = match super::oracle_calendar::session_zone(case.family) {
+        "+00:00" => String::new(),
+        zone => format!("\0{zone}"),
+    };
     hash(
         format!(
-            "fixture-v1\0{}\0{}\0{}",
+            "fixture-v1\0{}\0{}\0{}{zone}",
             case.sql_mode, case.ordered, case.sql
         )
         .as_bytes(),

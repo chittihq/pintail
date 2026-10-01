@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2315;
+const EXPECTED_CASES: usize = 2491;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -486,10 +486,16 @@ fn run_oracle() -> Result<(), String> {
                 continue;
             }
         };
+        assert!(
+            pintail_exec::set_session_time_zone(Some(oracle_calendar::session_zone(case.family))),
+            "session zone of {}",
+            case.family
+        );
         let actual = pintail_sql::with_parse_mode(
             pintail_sql::ParseMode::from_sql_mode(case.sql_mode),
             || execute_pintail(&case.sql, &catalog, &provider),
         );
+        assert!(pintail_exec::set_session_time_zone(None));
         let id = oracle_transport::case_id(case);
         let entry = known.get(&id);
         if let Some(entry) = entry {

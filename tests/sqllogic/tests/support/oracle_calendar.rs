@@ -102,6 +102,38 @@ const ROWS: [(i64, [Option<&str>; 3]); 12] = [
     ),
 ];
 
+/// Instants in the `TIMESTAMP(6)` and `TIMESTAMP` columns, as stored and
+/// so in UTC: the zero
+/// `TIMESTAMP`, the first and last instants the type holds, both sides of
+/// the hour a zone west of UTC repeats when its clocks go back - two pairs
+/// there read as the same wall clock - and both sides of the hour it skips
+/// when they go forward.
+const INSTANTS: [(i64, &str, &str); 14] = [
+    (101, "0000-00-00 00:00:00.000000", "0000-00-00 00:00:00"),
+    (102, "1970-01-01 00:00:01.000000", "1970-01-01 00:00:01"),
+    (103, "1970-01-01 12:00:00.000000", "1970-01-01 12:00:00"),
+    (104, "2024-11-03 04:30:00.000000", "2024-11-03 04:30:00"),
+    (105, "2024-11-03 05:00:00.000000", "2024-11-03 05:00:00"),
+    (106, "2024-11-03 05:30:00.000000", "2024-11-03 05:30:00"),
+    (107, "2024-11-03 05:59:59.999999", "2024-11-03 05:59:59"),
+    (108, "2024-11-03 06:00:00.000000", "2024-11-03 06:00:00"),
+    (109, "2024-11-03 06:30:00.000000", "2024-11-03 06:30:00"),
+    (110, "2024-11-03 06:30:00.250000", "2024-11-03 06:30:01"),
+    (111, "2024-03-10 06:59:59.999999", "2024-03-10 06:59:59"),
+    (112, "2024-03-10 07:00:00.000000", "2024-03-10 07:00:00"),
+    (113, "2024-06-15 12:00:00.000000", "2024-06-15 12:00:00"),
+    (114, "2038-01-19 03:14:07.000000", "2038-01-19 03:14:07"),
+];
+
+/// The families whose cases run in a session time zone other than UTC, by
+/// the prefix they share; the zone is the rest of the family's name.
+const ZONE_FAMILY: &str = "session zone ";
+
+/// The session time zone a case runs in on both engines.
+pub fn session_zone(family: &str) -> &str {
+    family.strip_prefix(ZONE_FAMILY).unwrap_or("+00:00")
+}
+
 /// The `MySQL` fixture: written under `ALLOW_INVALID_DATES` alone, which
 /// keeps zero parts and a day past its month's end as written.
 pub fn sql() -> String {
@@ -118,9 +150,16 @@ pub fn sql() -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "SET SESSION sql_mode='ALLOW_INVALID_DATES'; \
+        "SET SESSION sql_mode='ALLOW_INVALID_DATES'; SET time_zone='+00:00'; \
          CREATE TABLE {TABLE} (id BIGINT PRIMARY KEY, d DATE NULL, dt DATETIME NULL, \
-         dt3 DATETIME(3) NULL); INSERT INTO {TABLE} VALUES {rows};"
+         dt3 DATETIME(3) NULL, ts TIMESTAMP(6) NULL, ts0 TIMESTAMP NULL, KEY by_ts0 (ts0)); \
+         INSERT INTO {TABLE} (id, d, dt, dt3) VALUES {rows}; \
+         INSERT INTO {TABLE} (id, ts, ts0) VALUES {instants};",
+        instants = INSTANTS
+            .iter()
+            .map(|(id, precise, whole)| format!("({id},'{precise}','{whole}')"))
+            .collect::<Vec<_>>()
+            .join(",")
     )
 }
 
@@ -132,20 +171,40 @@ pub fn schema() -> TableSchema {
             Column::new(2, "d", DataType::Date32, true),
             Column::new(3, "dt", DataType::DateTime64 { fsp: 0 }, true),
             Column::new(4, "dt3", DataType::DateTime64 { fsp: 3 }, true),
+            Column::new(5, "ts", DataType::DateTime64 { fsp: 6 }, true).with_timestamp(true),
+            Column::new(6, "ts0", DataType::DateTime64 { fsp: 0 }, true).with_timestamp(true),
         ],
     )
     .expect("calendar schema")
 }
 
 pub fn rows() -> Vec<StoredRow> {
-    ROWS.iter()
-        .map(|(id, values)| {
-            let mut row = vec![Value::Int64(*id)];
-            row.extend(
-                values
-                    .iter()
-                    .map(|value| value.map_or(Value::Null, |value| Value::Utf8(value.to_owned()))),
-            );
+    let dates = ROWS.iter().map(|(id, values)| {
+        let mut row = vec![Value::Int64(*id)];
+        row.extend(
+            values
+                .iter()
+                .map(|value| value.map_or(Value::Null, |value| Value::Utf8(value.to_owned()))),
+        );
+        row.extend([Value::Null, Value::Null]);
+        (id, row)
+    });
+    let instants = INSTANTS.iter().map(|(id, precise, whole)| {
+        (
+            id,
+            vec![
+                Value::Int64(*id),
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                Value::Utf8((*precise).to_owned()),
+                Value::Utf8((*whole).to_owned()),
+            ],
+        )
+    });
+    dates
+        .chain(instants)
+        .map(|(id, row)| {
             StoredRow::new(
                 PrimaryKey::new(vec![KeyPart::Int64(*id)]).expect("key"),
                 row,
@@ -157,7 +216,7 @@ pub fn rows() -> Vec<StoredRow> {
 }
 
 pub fn row_count() -> u64 {
-    u64::try_from(ROWS.len()).expect("few rows")
+    u64::try_from(ROWS.len() + INSTANTS.len()).expect("few rows")
 }
 
 #[allow(clippy::too_many_lines)] // one table of shapes
@@ -511,6 +570,54 @@ fn interval_cases(push: &mut impl FnMut(&'static str, &'static str, String)) {
             "time column against text",
             format!("SELECT id FROM bounds WHERE {predicate} ORDER BY id"),
         );
+    }
+    // TIMESTAMP columns read in a session zone: ordered by the instant they
+    // store, so the hour a zone repeats comes out in the order it happened;
+    // grouped and deduplicated by instant when the mode has no zero-date
+    // rule; and compared with constants no TIMESTAMP holds, which MySQL
+    // decides from the constant alone.
+    for family in [
+        "timestamp instants",
+        "session zone +05:30",
+        "session zone -08:00",
+        "session zone America/New_York",
+    ] {
+        const PLAIN: &str = "NO_ENGINE_SUBSTITUTION";
+        let instants = format!("{TABLE} WHERE id > 100");
+        for sql in [
+            format!("SELECT id, ts, ts0 FROM {instants} ORDER BY ts, id"),
+            format!("SELECT id, ts0 FROM {instants} ORDER BY ts0 DESC, id LIMIT 6"),
+            format!("SELECT id, RANK() OVER (ORDER BY ts0) FROM {instants} ORDER BY id"),
+            format!("SELECT id, ts0 FROM (SELECT id, ts0 FROM {instants}) d ORDER BY ts0, id"),
+        ] {
+            push("", family, sql);
+        }
+        for sql in [
+            format!("SELECT ts0, COUNT(*), MIN(id) FROM {instants} GROUP BY ts0 ORDER BY ts0"),
+            format!("SELECT DISTINCT ts0 FROM {instants} ORDER BY ts0"),
+            format!("SELECT COUNT(DISTINCT ts0), COUNT(DISTINCT ts) FROM {instants}"),
+            format!(
+                "SELECT ts0, COUNT(*) FROM (SELECT ts0 FROM {instants}) d GROUP BY ts0 ORDER BY ts0"
+            ),
+        ] {
+            push(PLAIN, family, sql);
+        }
+        for constant in [
+            "1970-01-01 00:00:01",
+            "1969-12-31 23:59:59",
+            "1970-01-01 05:30:00",
+            "2038-01-19 03:14:08",
+            "2040-01-01 00:00:00",
+            "0000-00-00 00:00:00",
+        ] {
+            for operator in ["<", "<=", "=", ">=", ">", "<>"] {
+                push(
+                    PLAIN,
+                    family,
+                    format!("SELECT id FROM {instants} AND ts {operator} '{constant}' ORDER BY id"),
+                );
+            }
+        }
     }
     // A TIME where a date is read is the statement's date at that time;
     // measured against CURDATE() the answer does not depend on the day.
