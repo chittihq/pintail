@@ -478,6 +478,40 @@ fn interval_cases(push: &mut impl FnMut(&'static str, &'static str, String)) {
         "SELECT id, PERIOD_ADD(202400 + id, id), PERIOD_DIFF(202400 + id, 199900 + id)          FROM bounds WHERE id BETWEEN 1 AND 12 ORDER BY id"
             .to_owned(),
     );
+    // A TIME column against a text constant. Text that is exactly a TIME -
+    // spaces around it, a short form, a fraction - compares as that TIME;
+    // text MySQL would have to cut or clamp to read as one never equals a
+    // TIME, and orders against the column as text.
+    for constant in [
+        "00:00:00x",
+        "00:00:00 ",
+        " 00:00:00",
+        "00:00:00.0",
+        "0:0:0",
+        "000000",
+        "100:00:00x",
+        "838:59:59",
+        "839:00:00",
+    ] {
+        for operator in ["=", "<>", "<", "<=", ">", ">=", "<=>"] {
+            push(
+                "",
+                "time column against text",
+                format!("SELECT id FROM bounds WHERE clock {operator} '{constant}' ORDER BY id"),
+            );
+        }
+    }
+    for predicate in [
+        "LENGTH(clock) = 15 AND clock = '00:00:00x'",
+        "clock IN ('00:00:00x')",
+        "clock NOT IN ('00:00:00x')",
+    ] {
+        push(
+            "",
+            "time column against text",
+            format!("SELECT id FROM bounds WHERE {predicate} ORDER BY id"),
+        );
+    }
     // A TIME where a date is read is the statement's date at that time;
     // measured against CURDATE() the answer does not depend on the day.
     push(

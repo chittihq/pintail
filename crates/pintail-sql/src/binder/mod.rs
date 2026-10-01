@@ -7484,6 +7484,32 @@ fn time_column_constant(target: &BoundExpr, operand: BoundExpr) -> BoundExpr {
             _ => false,
         }
     }
+    // A text constant that is exactly a TIME compares as that TIME, rounded
+    // to the column's precision; one MySQL would have to cut or clamp to
+    // read as a TIME stays text, and the column is compared with it as text.
+    if matches!(target.kind, BoundExprKind::Column(_))
+        && let Some(DataType::Time64 { fsp }) = target.data_type
+        && let BoundExprKind::Literal(Value::Utf8(text)) = &operand.kind
+        && is_plain_text(&operand)
+    {
+        let exact = pintail_types::exact_time_text(text)
+            .as_deref()
+            .and_then(pintail_types::parse_time_micros)
+            .map(|micros| {
+                pintail_types::format_time_micros(
+                    pintail_types::round_micros_to_fsp(micros, fsp),
+                    fsp,
+                )
+            });
+        return match exact {
+            Some(time) => BoundExpr {
+                kind: BoundExprKind::Literal(Value::Utf8(time)),
+                data_type: Some(DataType::Time64 { fsp }),
+                nullable: false,
+            },
+            None => operand,
+        };
+    }
     if matches!(target.kind, BoundExprKind::Column(_))
         && let Some(DataType::Time64 { fsp }) = target.data_type
         && !is_time(&operand)

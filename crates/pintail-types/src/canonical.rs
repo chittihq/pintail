@@ -470,6 +470,170 @@ pub fn parse_time_micros(text: &str) -> Option<i64> {
     Some(if negative { -total } else { total })
 }
 
+/// A duration read from text: the fields `MySQL` takes when it reads text
+/// that is not a date and time as a TIME.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DurationText<'a> {
+    /// Hours, with any leading day count folded in.
+    pub hours: u64,
+    /// Minutes, below 60.
+    pub minutes: u64,
+    /// Seconds, below 60.
+    pub seconds: u64,
+    /// The fraction digits as written.
+    pub fraction: &'a str,
+    /// How many bytes of the text were read; the rest is dropped.
+    pub read: usize,
+}
+
+/// Reads unsigned text as a duration the way `MySQL` reads a TIME: an
+/// optional day count and a space, then `H:M:S`, `H:M`, or one number read
+/// as `HHMMSS`, then an optional fraction. A day count needs two characters
+/// after it, and a colon separates fields only when a digit follows it.
+/// Whatever follows is left unread. `None` where `MySQL` answers NULL:
+/// nothing readable, a field past 32 bits, a minute or second past 59, or
+/// an exponent.
+#[must_use]
+pub fn read_duration_text(body: &str) -> Option<DurationText<'_>> {
+    let bytes = body.as_bytes();
+    let end = bytes.len();
+    let is_digit = |at: usize| bytes.get(at).is_some_and(u8::is_ascii_digit);
+    let number = |position: &mut usize| -> Option<u64> {
+        let mut value = 0_u64;
+        while is_digit(*position) {
+            value = value
+                .checked_mul(10)?
+                .checked_add(u64::from(bytes[*position] - b'0'))?;
+            *position += 1;
+        }
+        u32::try_from(value).is_ok().then_some(value)
+    };
+    let mut position = 0;
+    let value = number(&mut position)?;
+    let end_of_number = position;
+    while bytes.get(position).is_some_and(u8::is_ascii_whitespace) {
+        position += 1;
+    }
+    // Days, hours, minutes, seconds.
+    let mut fields = [0_u64; 4];
+    let mut next = if end - position > 1 && position != end_of_number && is_digit(position) {
+        fields[0] = value;
+        1
+    } else if end - position > 1 && bytes[position] == b':' && is_digit(position + 1) {
+        fields[1] = value;
+        position += 1;
+        2
+    } else {
+        // One number: nothing after it belongs to the time.
+        position = end_of_number;
+        fields[1] = value / 10_000;
+        fields[2] = value / 100 % 100;
+        fields[3] = value % 100;
+        4
+    };
+    while next < 4 {
+        fields[next] = number(&mut position)?;
+        next += 1;
+        if next == 4 || end - position < 2 || bytes[position] != b':' || !is_digit(position + 1) {
+            break;
+        }
+        position += 1;
+    }
+    let fraction_start = position + 1;
+    let mut fraction = "";
+    if bytes.get(position) == Some(&b'.') && is_digit(position + 1) {
+        position += 1;
+        while is_digit(position) {
+            position += 1;
+        }
+        fraction = &body[fraction_start..position];
+    } else if end - position == 1 && bytes[position] == b'.' {
+        position += 1;
+    }
+    let exponent = bytes
+        .get(position)
+        .is_some_and(|byte| byte.eq_ignore_ascii_case(&b'e'))
+        && (is_digit(position + 1)
+            || (matches!(bytes.get(position + 1), Some(b'+' | b'-')) && is_digit(position + 2)));
+    if exponent || position == 0 || fields[2] > 59 || fields[3] > 59 {
+        return None;
+    }
+    Some(DurationText {
+        hours: fields[0] * 24 + fields[1],
+        minutes: fields[2],
+        seconds: fields[3],
+        fraction,
+        read: position,
+    })
+}
+
+/// A text constant that is exactly a TIME, as `HH:MM:SS.ffffff`: a
+/// duration, or a date and time whose clock it is, read to its end and
+/// inside the type's range. `None` for text `MySQL` would have to cut or
+/// clamp to make a TIME of - it compares such a constant with a TIME
+/// column as text instead.
+#[must_use]
+pub fn exact_time_text(text: &str) -> Option<String> {
+    const DAY: i64 = 86_400 * 1_000_000;
+    const MAX: i64 = (838 * 3_600 + 59 * 60 + 59) * 1_000_000;
+    let body = text.trim_start_matches(|character: char| character.is_ascii_whitespace());
+    let (negative, body) = body
+        .strip_prefix('-')
+        .map_or((false, body), |rest| (true, rest));
+    let trimmed = body.trim_end();
+    if trimmed.len() >= 12 {
+        let whole = trimmed.split('.').next().unwrap_or(trimmed);
+        let dashed;
+        let calendar = if whole.len() == 14 && whole.bytes().all(|byte| byte.is_ascii_digit()) {
+            dashed = format!(
+                "{}-{}-{} {}:{}:{}{}",
+                &whole[..4],
+                &whole[4..6],
+                &whole[6..8],
+                &whole[8..10],
+                &whole[10..12],
+                &whole[12..14],
+                &trimmed[14..]
+            );
+            Some(dashed.as_str())
+        } else {
+            trimmed
+                .split_once(|character: char| character.is_ascii_whitespace())
+                .filter(|(date, _)| date.bytes().filter(|byte| *byte == b'-').count() == 2)
+                .map(|_| trimmed)
+        };
+        if let Some(calendar) = calendar {
+            if calendar.starts_with("0000-00-00 00:00:00")
+                && calendar[19..]
+                    .bytes()
+                    .all(|byte| byte == b'.' || byte == b'0')
+            {
+                return Some(format_time_micros(0, 6));
+            }
+            let micros = parse_datetime_lenient_micros(calendar)?;
+            return Some(format_time_micros(micros.rem_euclid(DAY), 6));
+        }
+    }
+    let duration = read_duration_text(body)?;
+    if !body[duration.read..].trim().is_empty() {
+        return None;
+    }
+    let digits = duration.fraction.as_bytes();
+    let mut micros = fraction_micros(&duration.fraction[..digits.len().min(6)])?;
+    if digits.get(6).is_some_and(|digit| *digit >= b'5') {
+        micros += 1;
+    }
+    let seconds = i64::try_from(
+        duration
+            .hours
+            .checked_mul(3_600)?
+            .checked_add(duration.minutes * 60 + duration.seconds)?,
+    )
+    .ok()?;
+    let total = seconds.checked_mul(1_000_000)?.checked_add(micros)?;
+    (total <= MAX).then(|| format_time_micros(if negative { -total } else { total }, 6))
+}
+
 /// Formats signed microseconds as `MySQL` TIME text with exactly `fsp`
 /// fraction digits, clamped to the type's +/-838:59:59 as `MySQL`
 /// clamps a value written into a TIME column.

@@ -13,10 +13,10 @@ mod value;
 mod wide;
 
 pub use canonical::{
-    civil_from_days, div_decimal_round_half_up, format_date_days, format_datetime_micros,
-    format_decimal_scaled, format_time_micros, parse_date_days, parse_datetime_lenient_micros,
-    parse_datetime_micros, parse_decimal_rounded, parse_decimal_scaled, parse_time_micros,
-    round_micros_to_fsp,
+    DurationText, civil_from_days, div_decimal_round_half_up, exact_time_text, format_date_days,
+    format_datetime_micros, format_decimal_scaled, format_time_micros, parse_date_days,
+    parse_datetime_lenient_micros, parse_datetime_micros, parse_decimal_rounded,
+    parse_decimal_scaled, parse_time_micros, read_duration_text, round_micros_to_fsp,
 };
 pub use charset::{CharacterSet, utf8_prefix};
 pub use json::mysql_json_text;
