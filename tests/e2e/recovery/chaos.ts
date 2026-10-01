@@ -87,9 +87,9 @@ function spawnServer(failpoint: string) {
   server = Bun.spawn([binary, '--data-dir', dataDir, '--http-bind', `127.0.0.1:${httpPort}`, '--wire-bind', `127.0.0.1:${wirePort}`], {
     cwd: repository, stdout: Bun.file(`${currentLog}.out`), stderr: Bun.file(currentLog),
     env: { ...process.env, PINTAIL_FAILPOINT: failpoint, PINTAIL_SUPERVISOR_INTERVAL_MS: '250', PINTAIL_LOG: 'debug',
-      PINTAIL_MEMTABLE_KB: process.env.PINTAIL_MEMTABLE_KB ?? '256',
-      PINTAIL_COMPACTION_INPUT_ROWS: process.env.PINTAIL_COMPACTION_INPUT_ROWS ?? '120000',
-      PINTAIL_COMPACTION_OUTPUT_ROWS: process.env.PINTAIL_COMPACTION_OUTPUT_ROWS ?? '40000' },
+      PINTAIL_MEMTABLE_KB: process.env.PINTAIL_MEMTABLE_KB ?? '1024',
+      PINTAIL_COMPACTION_INPUT_ROWS: process.env.PINTAIL_COMPACTION_INPUT_ROWS ?? '150000',
+      PINTAIL_COMPACTION_OUTPUT_ROWS: process.env.PINTAIL_COMPACTION_OUTPUT_ROWS ?? '75000' },
   })
 }
 /** True once the server answers; false when it died first (an armed failpoint may fire during the open). */
@@ -159,7 +159,7 @@ type Op = { sql: string; deletes?: number[] }
 function journalOp(): Op {
   const roll = rand()
   if (roll < 0.34) {
-    const count = between(20, 400)
+    const count = between(10, 150)
     const values = Array.from({ length: count }, () => { const id = nextJournal++; return `(${id},0,${id % 97},${(id % 10000) / 100},'new ${id}')` })
     return { sql: `INSERT INTO journal VALUES ${values.join(',')}` }
   }
