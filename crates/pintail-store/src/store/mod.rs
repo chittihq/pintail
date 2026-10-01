@@ -179,16 +179,41 @@ pub struct StoreOptions {
     pub transactional: bool,
 }
 
+/// The sizes an operator may override for every table of the process:
+/// `PINTAIL_MEMTABLE_KB` (memtable bytes that request a flush),
+/// `PINTAIL_COMPACTION_INPUT_ROWS` and `PINTAIL_COMPACTION_OUTPUT_ROWS` (the
+/// rows one merge reads and the rows one of its outputs holds). Read once.
+/// Small values make a modest table walk through every flush and merge
+/// shape, which is what a crash harness needs to reach them in seconds.
+fn size_overrides() -> (Option<usize>, Option<u64>, Option<u64>) {
+    static OVERRIDES: OnceLock<(Option<usize>, Option<u64>, Option<u64>)> = OnceLock::new();
+    fn read(name: &str) -> Option<u64> {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|value| *value > 0)
+    }
+    *OVERRIDES.get_or_init(|| {
+        (
+            read("PINTAIL_MEMTABLE_KB")
+                .and_then(|kilobytes| usize::try_from(kilobytes.saturating_mul(1024)).ok()),
+            read("PINTAIL_COMPACTION_INPUT_ROWS"),
+            read("PINTAIL_COMPACTION_OUTPUT_ROWS"),
+        )
+    })
+}
+
 impl Default for StoreOptions {
     fn default() -> Self {
+        let (memtable_bytes, input_rows, output_rows) = size_overrides();
         Self {
-            memtable_bytes: DEFAULT_MEMTABLE_BYTES,
+            memtable_bytes: memtable_bytes.unwrap_or(DEFAULT_MEMTABLE_BYTES),
             transactional: false,
             block_rows: DEFAULT_BLOCK_ROWS,
             wal_sync: WalSync::Checkpoint,
             compaction_fan_in: DEFAULT_COMPACTION_FAN_IN,
-            max_compaction_input_rows: DEFAULT_MAX_COMPACTION_INPUT_ROWS,
-            max_compaction_rows: DEFAULT_MAX_COMPACTION_ROWS,
+            max_compaction_input_rows: input_rows.unwrap_or(DEFAULT_MAX_COMPACTION_INPUT_ROWS),
+            max_compaction_rows: output_rows.unwrap_or(DEFAULT_MAX_COMPACTION_ROWS),
             max_compaction_output_bytes: DEFAULT_MAX_COMPACTION_OUTPUT_BYTES,
             compaction_file_pressure: DEFAULT_COMPACTION_FILE_PRESSURE,
             compaction_disk_reserve_bytes: DEFAULT_COMPACTION_DISK_RESERVE_BYTES,
