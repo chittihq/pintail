@@ -1148,6 +1148,26 @@ impl SelectionMask {
         Ok(())
     }
 
+    /// Deselects every row outside `rows`.
+    pub(crate) fn keep_only(&mut self, rows: std::ops::Range<usize>) {
+        let end = rows.end.min(self.len);
+        let start = rows.start.min(end);
+        for (index, word) in self.words.iter_mut().enumerate() {
+            let low = index * 64;
+            let high = low + 64;
+            if high <= start || low >= end {
+                *word = 0;
+                continue;
+            }
+            if low < start {
+                *word &= u64::MAX << (start - low);
+            }
+            if high > end {
+                *word &= u64::MAX >> (high - end);
+            }
+        }
+    }
+
     /// Intersects this mask with another mask of equal length.
     ///
     /// # Errors
@@ -1756,6 +1776,39 @@ mod tests {
                 actual: 4
             })
         );
+    }
+
+    #[test]
+    fn keeps_only_the_rows_of_a_range_at_every_word_edge() {
+        for (start, end) in [
+            (0, 0),
+            (0, 1),
+            (0, 64),
+            (1, 63),
+            (63, 65),
+            (64, 128),
+            (70, 200),
+            (128, 150),
+            (149, 150),
+            (0, 150),
+            (140, 400),
+        ] {
+            let mut mask = SelectionMask::all(150);
+            mask.set(3, false).expect("row");
+            mask.set(64, false).expect("row");
+            mask.set(127, false).expect("row");
+            let expected = mask
+                .selected_rows()
+                .filter(|row| (start..end).contains(row))
+                .collect::<Vec<_>>();
+            mask.keep_only(start..end);
+            assert_eq!(
+                mask.selected_rows().collect::<Vec<_>>(),
+                expected,
+                "{start}..{end}"
+            );
+            assert_eq!(mask.count(), expected.len(), "{start}..{end}");
+        }
     }
 }
 

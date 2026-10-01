@@ -192,7 +192,7 @@ const QUIET: u64 = 140_000;
 const ROOMY: usize = 1 << 32;
 /// Ceilings from one the general path barely fits to one that holds most of
 /// the groups: the fold stops at a different point under each.
-const TIGHT: &[usize] = &[32 << 20, 96 << 20];
+const TIGHT: &[usize] = &[16 << 20, 32 << 20, 96 << 20];
 
 /// Queries the fold takes on a quiet first batch: a text MIN has no two-pass
 /// lane, and an expression key is the fold's before it is the two-pass's.
@@ -201,7 +201,7 @@ const SHAPES: &[&str] = &[
     "SELECT lane + 0, COUNT(*), MIN(seen_at), MAX(seen_at), SUM(weight) FROM sightings \
      GROUP BY lane + 0",
     // A float sum and a DISTINCT keep the fold serial.
-    "SELECT lane, COUNT(DISTINCT weight), MAX(seen_at), SUM(ratio) FROM sightings GROUP BY lane",
+    "SELECT lane, COUNT(DISTINCT tag), MAX(seen_at), SUM(ratio) FROM sightings GROUP BY lane",
 ];
 
 #[test]
@@ -243,7 +243,16 @@ fn keys_that_keep_coming_leave_the_fold_and_answer_as_the_general_path() {
                     fold_note(&answer.note)
                 )),
             );
-            if let Ok(general) = general_tight {
+            {
+                // The route a busy first batch chooses answers too: keyed by
+                // packed units, it once folded a stored batch whole and met
+                // the ceiling where this path spills.
+                let general = general_tight.unwrap_or_else(|error| {
+                    panic!(
+                        "{sql}: a busy first batch failed at {} MiB: {error}",
+                        ceiling >> 20
+                    )
+                });
                 assert!(
                     general.rows == reference.rows,
                     "{sql}: general tight differs"

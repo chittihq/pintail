@@ -18,6 +18,8 @@ use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchem
 
 const ROWS: u64 = 800_000;
 const TEAMS: u64 = 25;
+/// Text keys that fill most of the dense slots a text key is given.
+const DESKS: u64 = 900;
 
 fn schema() -> TableSchema {
     TableSchema::new(
@@ -30,6 +32,7 @@ fn schema() -> TableSchema {
             Column::new(5, "ticket", DataType::Int64, true),
             Column::new(6, "device", DataType::Int64, true),
             Column::new(7, "seen_at", DataType::DateTime64 { fsp: 0 }, true),
+            Column::new(8, "desk", DataType::Utf8, false),
         ],
     )
     .expect("schema")
@@ -83,6 +86,7 @@ impl Fixture {
                             id % 24,
                             id % 60
                         )),
+                        Value::Utf8(format!("desk-{:03}", id % DESKS)),
                     ],
                     id + 1,
                     false,
@@ -150,35 +154,60 @@ impl Fixture {
 
 const SETS: &str = "COUNT(DISTINCT member), COUNT(DISTINCT ticket), COUNT(DISTINCT device)";
 
-/// Each shape, with the smallest ceiling it has to answer under. Below
-/// that a batch folded whole can still outgrow the ceiling before anything
-/// is there to spill; such a run may fail with a memory error and must
-/// never answer differently.
+/// Ceilings from one a single stored batch's distinct entries outgrow to
+/// one that holds most of the sets.
+const CEILINGS: &[usize] = &[16, 24, 40, 64, 128];
+
+/// Every shape answers under every ceiling. A stored batch holds more rows
+/// than a tight ceiling has room to fold at once - its distinct entries
+/// alone pass the ceiling - so the two-pass takes such a batch in pieces
+/// and spills between them; folded whole it failed before anything was
+/// there to spill.
 #[test]
 fn wide_distinct_sets_of_a_few_groups_spill_under_a_tight_ceiling() {
     let fixture = Fixture::new();
-    for (label, columns, key, answers_from) in [
+    let mut failures = Vec::new();
+    for (label, columns, key, groups) in [
         // Dense slots and pooled partials: the two-pass with no map entry.
-        ("a text key and distinct sets alone", "", "team", 64_usize),
-        ("a text key beside a count", ", COUNT(ticket)", "team", 128),
-        // Shapes the two-pass leaves to the general path today.
+        ("a text key and distinct sets alone", "", "team", TEAMS),
+        (
+            "a text key beside a count",
+            ", COUNT(ticket)",
+            "team",
+            TEAMS,
+        ),
+        // A presence or temporal lane beside the sets.
         (
             "a text key beside a temporal lane",
             ", MAX(seen_at)",
             "team",
-            16,
+            TEAMS,
         ),
         (
             "an integer key beside temporal lanes",
             ", MIN(seen_at), MAX(seen_at)",
             "squad",
-            16,
+            TEAMS,
         ),
         (
             "an expression key beside a temporal lane",
             ", MAX(seen_at)",
             "squad + 1",
-            16,
+            TEAMS,
+        ),
+        (
+            "an expression key beside a presence lane",
+            ", COUNT(seen_at)",
+            "squad + 1",
+            TEAMS,
+        ),
+        // Dense slots nearly full, every group with sets of its own to
+        // move into the maps when the slots are given up.
+        (
+            "many text keys in the dense slots",
+            ", COUNT(ticket), MAX(seen_at)",
+            "desk",
+            DESKS,
         ),
     ] {
         let sql =
@@ -188,29 +217,32 @@ fn wide_distinct_sets_of_a_few_groups_spill_under_a_tight_ceiling() {
             .unwrap_or_else(|error| panic!("{label}: {error}"));
         assert_eq!(
             roomy.len(),
-            usize::try_from(TEAMS).expect("teams"),
+            usize::try_from(groups).expect("groups"),
             "{label}: groups"
         );
-        for mib in [16_usize, 64, 128] {
+        for mib in CEILINGS.iter().copied() {
             // Another statement with the same answer, so the run is not a
             // replay of the roomy one.
             let edge = ROWS + u64::try_from(mib).expect("ceiling");
             match fixture.answer(&sql.replace("$EDGE", &edge.to_string()), mib << 20) {
                 Ok((tight, files, peak)) => {
-                    assert!(tight == roomy, "{label} at {mib} MiB: answer");
-                    assert!(files > 0, "{label} at {mib} MiB: the sets fit, widen them");
-                    assert!(peak <= mib << 20, "{label} at {mib} MiB: peak {peak}");
                     eprintln!("{label} at {mib} MiB: {files} spill files, peak {peak}");
+                    if tight != roomy {
+                        failures.push(format!("{label} at {mib} MiB: answer differs"));
+                    }
+                    if files == 0 {
+                        failures.push(format!("{label} at {mib} MiB: the sets fit, widen them"));
+                    }
+                    if peak > mib << 20 {
+                        failures.push(format!("{label} at {mib} MiB: peak {peak}"));
+                    }
                 }
                 Err(error) => {
-                    assert!(mib < answers_from, "{label} at {mib} MiB: {error}");
-                    assert!(
-                        error.contains("memory limit exceeded"),
-                        "{label} at {mib} MiB: {error}"
-                    );
                     eprintln!("{label} at {mib} MiB: {error}");
+                    failures.push(format!("{label} at {mib} MiB: {error}"));
                 }
             }
         }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

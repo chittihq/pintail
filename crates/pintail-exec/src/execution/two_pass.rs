@@ -1,7 +1,7 @@
 //! Two-pass partitioned aggregation: scatter lanes, dense slots and
 //! the string interning used to keep group keys comparable.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use pintail_sql::{AggregateFunction, DatePart};
 use pintail_types::{DataType, Value};
@@ -154,7 +154,7 @@ pub(super) fn two_pass_lanes(
         // One mask bit per lane plus the key bit.
         return None;
     }
-    let lanes = aggregates
+    aggregates
         .iter()
         .map(|aggregate| {
             if aggregate.distinct {
@@ -287,21 +287,7 @@ pub(super) fn two_pass_lanes(
                 | AggregateFunction::JsonObjectAgg => None,
             }
         })
-        .collect::<Option<Vec<_>>>()?;
-    // A presence or temporal lane does not bring a COUNT(DISTINCT) query
-    // here that was not here without it: a join report of a few groups
-    // with wide distinct sets ran out of memory on this path under a tight
-    // ceiling, where the general path it took before spills and answers.
-    let distinct = lanes
-        .iter()
-        .any(|lane| matches!(lane, TwoPassLane::Distinct { .. }));
-    let added = lanes.iter().any(|lane| {
-        matches!(
-            lane,
-            TwoPassLane::Present { .. } | TwoPassLane::Temporal { .. }
-        )
-    });
-    (!(distinct && added)).then_some(lanes)
+        .collect::<Option<Vec<_>>>()
 }
 
 /// One worker's scatter output for one partition: struct-of-arrays rows.
@@ -1116,6 +1102,43 @@ fn fold_odd_batch(
     Ok(odd_bytes)
 }
 
+/// Fewest rows a piece of an oversized batch holds: below this the pieces
+/// cost more to schedule than their groups cost to hold.
+const SLICE_ROWS_FLOOR: usize = 1_024;
+
+/// Cuts `batch` into pieces of at most `slice_rows` visible rows each. A
+/// piece is the batch itself under a selection narrowed to a run of its
+/// rows, so the columns are shared and nothing is copied; each carries the
+/// part of `bytes` its rows are of the whole.
+fn slice_batch(
+    batch: &RecordBatch,
+    slice_rows: usize,
+    bytes: usize,
+    pieces: &mut VecDeque<(RecordBatch, usize)>,
+) {
+    let total = batch.visible_row_count().max(1);
+    let mut cut = |rows: std::ops::Range<usize>, held: usize| {
+        let mut piece = batch.clone();
+        piece.selection_mut().keep_only(rows);
+        pieces.push_back((piece, bytes.saturating_mul(held) / total));
+    };
+    let (mut start, mut held, mut position) = (0_usize, 0_usize, 0_usize);
+    while position < batch.row_count() {
+        let end = position.saturating_add(slice_rows).min(batch.row_count());
+        let rows = batch.selection().count_in(position..end);
+        if held > 0 && held + rows > slice_rows {
+            cut(start..position, held);
+            start = position;
+            held = 0;
+        }
+        held += rows;
+        position = end;
+    }
+    if held > 0 {
+        cut(start..batch.row_count(), held);
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn streaming_two_pass(
     input: &mut PullOperator,
@@ -1223,8 +1246,16 @@ fn streaming_two_pass(
     let mut odd_reserved = 0_usize;
     let mut odd_batches = 0_usize;
     let mut batch = Some(first);
+    // A batch larger than one flush of the window, cut into pieces the
+    // window takes one at a time, each with its share of the batch's bytes.
+    // The input is not pulled again until the last piece is taken.
+    let mut sliced: VecDeque<(RecordBatch, usize)> = VecDeque::new();
+    let slice_rows = (flush_bytes / scatter_row_bytes.max(1)).max(SLICE_ROWS_FLOOR);
     loop {
-        let Some(current) = batch.take() else {
+        let slice = sliced.pop_front();
+        let fresh = slice.is_none();
+        let Some((current, held_bytes)) = slice.or_else(|| batch.take().map(|batch| (batch, 0)))
+        else {
             break;
         };
         for (slot, key_column) in key_columns.iter().enumerate() {
@@ -1256,7 +1287,13 @@ fn streaming_two_pass(
                 key_set_members[slot] = strings.declared_set_members().cloned();
             }
         }
-        let current = match laned_batch(current, keys, key_exprs, lanes) {
+        // A piece of a batch already cut carries its lanes.
+        let carried = if fresh {
+            laned_batch(current, keys, key_exprs, lanes)
+        } else {
+            Ok(current)
+        };
+        let current = match carried {
             Ok(current) => current,
             Err(current) => {
                 // No lane can carry this batch: its rows go straight to
@@ -1306,6 +1343,21 @@ fn streaming_two_pass(
                 continue;
             }
         };
+        let (current, held_bytes) = if fresh {
+            let bytes = current.estimated_bytes();
+            if current.visible_row_count() > slice_rows {
+                // Applied whole, a batch this large adds more groups and
+                // distinct entries in one flush than the half of the ceiling
+                // the window is sized to leave free, and a flush that runs
+                // out part-way cannot be replayed. Its pieces are flushed,
+                // and their groups spilled, one window at a time.
+                slice_batch(&current, slice_rows, bytes, &mut sliced);
+                continue;
+            }
+            (current, bytes)
+        } else {
+            (current, held_bytes)
+        };
         // String sources prepare their (tiny, per-distinct-value) dictionary
         // translations serially, then scatter rows in parallel from the
         // read-only tables; batches whose strings decoded without codes
@@ -1325,7 +1377,7 @@ fn streaming_two_pass(
             let rows = current.visible_row_count();
             let need = rows
                 .saturating_mul(scatter_row_bytes)
-                .saturating_add(current.estimated_bytes());
+                .saturating_add(held_bytes);
             if memory.reserve(need).is_err() {
                 two_pass_relieve(
                     &mut TwoPassState {
@@ -1472,7 +1524,9 @@ fn streaming_two_pass(
                     );
                 }
             }
-            batch = input.next_batch(memory)?;
+            if sliced.is_empty() {
+                batch = input.next_batch(memory)?;
+            }
             continue;
         }
         let rows = current.visible_row_count();
@@ -1640,7 +1694,9 @@ fn streaming_two_pass(
                 );
             }
         }
-        batch = input.next_batch(memory)?;
+        if sliced.is_empty() {
+            batch = input.next_batch(memory)?;
+        }
     }
     two_pass_relieve(
         &mut TwoPassState {
