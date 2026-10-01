@@ -102,6 +102,48 @@ count between runs of the same binary:
 The suite uses the system allocator, not the server's. Counts inside the
 allocator are therefore not the server's.
 
+## Seeing where the time goes: samply
+
+Instruction counts say whether work was added; a sampling profile says
+where the wall clock went, thread by thread. `scripts/profile-samply.ts`
+records one with [samply](https://github.com/mstange/samply) and saves it
+as a file, without opening a browser:
+
+```sh
+cargo install samply --locked
+sudo sysctl -w kernel.perf_event_paranoid=1     # samply needs perf events
+
+# a statement against an existing replica, result memo off
+PINTAIL_PROFILE_PASSWORD=... bun run scripts/profile-samply.ts server \
+  --binary target/release/pintail --data-dir <replica dir> \
+  --db <database id> --email <login> --sql-file q.sql --out q.json.gz
+
+# one case of the instruction suite, in process
+PINTAIL_SUITE_EVENTS=5000000 PINTAIL_SUITE_PAUSE_MS=300 \
+  bun run scripts/profile-samply.ts shape zoned_all_days --out shape.json.gz
+```
+
+The release profile already carries line tables, so frames resolve to
+file and line with the ordinary release binary. `server` warms the
+statement, attaches to the running process and executes it five times
+with a pause between, so each execution is its own burst on the timeline;
+`<out>.statements.json` holds each execution's start and end. Samples are
+taken on and off CPU: a thread's row in the timeline is empty where it
+slept, which is what shows idle pool workers.
+
+To view a profile, on the recording machine or any other that has the two
+files samply wrote (`q.json.gz` and `q.json.syms.json`, kept together):
+
+```sh
+samply load q.json.gz
+```
+
+It serves the profile to the Firefox profiler in the local browser; over
+ssh, forward the port it prints (`ssh -L 3000:127.0.0.1:3000`, with
+`samply load --port 3000 --no-open`). Nothing is uploaded unless you press
+the profiler's upload button. Profiles carry statement text in the
+sidecar and symbol names; keep them out of the repository.
+
 ## What it cannot see
 
 - **Scaling across threads.** One worker per pool by construction.
