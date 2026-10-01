@@ -573,6 +573,23 @@ async fn run_cdc_inner(
                 }
             };
         }
+        // Closes the open transaction into the batch. One that spilled is
+        // staged in the stores a piece at a time, and the transactions
+        // before it have to be stored first: see `seal_transaction`.
+        macro_rules! seal {
+            () => {
+                if pending.spill.is_some() {
+                    flush!();
+                }
+                seal_transaction(
+                    &mut position,
+                    &mut pending,
+                    &mut batch,
+                    &mut targets,
+                    STAGE_BYTES,
+                )?;
+            };
+        }
         let mut stream = match open_stream(
             pool,
             &metadata,
@@ -880,12 +897,12 @@ async fn run_cdc_inner(
                     }
                     position.pos = event_position;
                     if non_transactional && rows_event.flags().contains(RowsEventFlags::STMT_END) {
-                        seal_transaction(&mut position, &mut pending, &mut batch)?;
+                        seal!();
                     }
                 }
                 EventData::XidEvent(_) => {
                     position.pos = event_position;
-                    seal_transaction(&mut position, &mut pending, &mut batch)?;
+                    seal!();
                 }
                 EventData::QueryEvent(query) => {
                     let statement = query.query().into_owned();
@@ -999,7 +1016,7 @@ async fn run_cdc_inner(
                             // event arrived, which for the last event in the
                             // log is never.
                             position.pos = event_position;
-                            seal_transaction(&mut position, &mut pending, &mut batch)?;
+                            seal!();
                             flush!();
                             continue;
                         }
@@ -1015,7 +1032,7 @@ async fn run_cdc_inner(
                             || parsed.names_tracked_schema);
                     let actions = parsed.actions;
                     if tracks_schema && pending.has_mutations() {
-                        seal_transaction(&mut position, &mut pending, &mut batch)?;
+                        seal!();
                     }
                     if tracks_schema {
                         // A schema change is a batch boundary: every
@@ -1039,7 +1056,7 @@ async fn run_cdc_inner(
                         .await?;
                     }
                     position.pos = event_position;
-                    seal_transaction(&mut position, &mut pending, &mut batch)?;
+                    seal!();
                     if tracks_schema {
                         // And the change itself is checkpointed before the
                         // next transaction is read, so a restart never
@@ -2518,9 +2535,14 @@ impl PendingTransaction {
         Ok(())
     }
 
-    fn take_mutations(&mut self) -> Result<Vec<PendingMutation>, CdcError> {
-        let mut mutations =
-            Vec::with_capacity(self.spilled_mutations.saturating_add(self.mutations.len()));
+    /// Hands the transaction's mutations to `each` in the order they were
+    /// staged, reading a spilled transaction back one row at a time: it
+    /// spilled because it does not fit in memory, and reading it back whole
+    /// at its commit held it there anyway.
+    fn for_each_mutation(
+        &mut self,
+        mut each: impl FnMut(PendingMutation) -> Result<(), CdcError>,
+    ) -> Result<(), CdcError> {
         if let Some(spill) = &mut self.spill {
             spill
                 .flush()
@@ -2533,16 +2555,16 @@ impl PendingTransaction {
                 let mutation =
                     mutation.map_err(|error| CdcError::TransactionSpill(error.to_string()))?;
                 if !self.discarded_targets.contains(&mutation.target_index) {
-                    mutations.push(mutation);
+                    each(mutation)?;
                 }
             }
         }
-        mutations.extend(
-            self.mutations
-                .drain(..)
-                .filter(|mutation| !self.discarded_targets.contains(&mutation.target_index)),
-        );
-        Ok(mutations)
+        for mutation in std::mem::take(&mut self.mutations) {
+            if !self.discarded_targets.contains(&mutation.target_index) {
+                each(mutation)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2998,6 +3020,10 @@ const BATCH_BYTES: usize = 32 * 1024 * 1024;
 /// delivering. It bounds how stale a query can be on a mirror that is
 /// behind; one that has caught up flushes as soon as the stream goes quiet.
 const BATCH_AGE: Duration = Duration::from_millis(250);
+/// Row bytes of a spilled transaction held in memory while it is stored.
+/// Past this, the table holding the most is written out as segments its
+/// readers do not see until the transaction's batch is stored.
+const STAGE_BYTES: usize = 32 * 1024 * 1024;
 /// Threads one flush spreads its tables over.
 const FLUSH_WORKERS: usize = 8;
 /// Rows below which a flush writes its tables one after another: starting
@@ -3023,6 +3049,9 @@ struct ApplyBatch {
     file: String,
     pos: u64,
     passed_fences: BTreeSet<usize>,
+    /// Targets holding staged pieces of a spilled transaction. Storing the
+    /// batch publishes them, and the batch is due as soon as it has any.
+    staged: BTreeSet<usize>,
 }
 
 impl ApplyBatch {
@@ -3036,6 +3065,7 @@ impl ApplyBatch {
     fn is_due(&self, commit_budget: Option<usize>) -> bool {
         !self.is_empty()
             && (commit_budget.is_some()
+                || !self.staged.is_empty()
                 || self.transactions >= BATCH_TRANSACTIONS
                 || self.bytes >= BATCH_BYTES
                 || self
@@ -3116,26 +3146,89 @@ fn resume_floor(
 }
 
 /// Closes the open transaction into the batch at its commit.
+///
+/// A transaction that spilled is read back a row at a time. No more than
+/// `stage_bytes` of it waits in memory: past that, the table holding the
+/// most rows has them written to its store as staged segments, which no
+/// reader sees until the batch is stored and every staged table publishes
+/// its pieces in one step. Memory therefore stays bounded however large the
+/// transaction, and a reader still sees all of it on a table or none.
+///
+/// The caller stores the batch before sealing a spilled transaction. Staging
+/// puts this transaction's rows in segments, and rows of an earlier
+/// transaction reaching the same table's memtable afterwards would be read
+/// as the newer ones.
 fn seal_transaction(
     position: &mut StreamPosition,
     pending: &mut PendingTransaction,
     batch: &mut ApplyBatch,
+    targets: &mut [CdcTarget],
+    stage_bytes: usize,
 ) -> Result<(), CdcError> {
-    for mutation in pending.take_mutations()? {
-        let version = mutation.row.version();
-        batch.highest_version = Some(
-            batch
-                .highest_version
-                .map_or(version, |highest| highest.max(version)),
-        );
-        batch.bytes = batch.bytes.saturating_add(mutation.row.estimated_bytes());
-        batch.mutations += 1;
-        batch
-            .rows
-            .entry(mutation.target_index)
-            .or_default()
-            .push(mutation.row);
+    let spilled = pending.spill.is_some();
+    if spilled {
+        if !batch.is_empty() {
+            return Err(CdcError::TransactionSpill(
+                "a spilled transaction was sealed into a batch that still held others".to_owned(),
+            ));
+        }
+        // Pieces a failed attempt left behind belong to no transaction.
+        for target in targets.iter_mut() {
+            target.store.discard_staged();
+        }
     }
+    let mut waiting: BTreeMap<usize, (usize, Vec<StoredRow>)> = BTreeMap::new();
+    let mut waiting_bytes = 0_usize;
+    let mut staged = BTreeSet::new();
+    let mut highest_version = batch.highest_version;
+    let mut mutations = 0_usize;
+    let mut bytes = 0_usize;
+    pending.for_each_mutation(|mutation| {
+        let version = mutation.row.version();
+        highest_version = Some(highest_version.map_or(version, |highest| highest.max(version)));
+        mutations += 1;
+        let row_bytes = mutation.row.estimated_bytes();
+        if !spilled {
+            bytes = bytes.saturating_add(row_bytes);
+            batch
+                .rows
+                .entry(mutation.target_index)
+                .or_default()
+                .push(mutation.row);
+            return Ok(());
+        }
+        let held = waiting.entry(mutation.target_index).or_default();
+        held.0 = held.0.saturating_add(row_bytes);
+        held.1.push(mutation.row);
+        waiting_bytes = waiting_bytes.saturating_add(row_bytes);
+        if waiting_bytes >= stage_bytes
+            && let Some(index) = waiting
+                .iter()
+                .max_by_key(|(_, (held_bytes, _))| *held_bytes)
+                .map(|(index, _)| *index)
+            && let Some((held_bytes, rows)) = waiting.remove(&index)
+        {
+            waiting_bytes = waiting_bytes.saturating_sub(held_bytes);
+            stage_rows(targets, index, rows)?;
+            staged.insert(index);
+        }
+        Ok(())
+    })?;
+    for (index, (held_bytes, rows)) in waiting {
+        if staged.contains(&index) {
+            stage_rows(targets, index, rows)?;
+        } else {
+            bytes = bytes.saturating_add(held_bytes);
+            batch.rows.entry(index).or_default().extend(rows);
+        }
+    }
+    if !staged.is_empty() {
+        recovery_point("cdc.after_stage")?;
+    }
+    batch.staged.append(&mut staged);
+    batch.highest_version = highest_version;
+    batch.mutations += mutations;
+    batch.bytes = batch.bytes.saturating_add(bytes);
     if let Some(highest) = batch.highest_version {
         position.floor = position.floor.max(highest);
     }
@@ -3146,6 +3239,35 @@ fn seal_transaction(
     batch.opened.get_or_insert_with(Instant::now);
     batch.passed_fences.append(&mut pending.passed_fences);
     *pending = PendingTransaction::default();
+    Ok(())
+}
+
+fn stage_rows(
+    targets: &mut [CdcTarget],
+    index: usize,
+    rows: Vec<StoredRow>,
+) -> Result<(), CdcError> {
+    let target = targets
+        .get_mut(index)
+        .ok_or_else(|| CdcError::TransactionSpill(format!("no target {index} to stage rows in")))?;
+    target
+        .store
+        .stage_cdc(rows)
+        .map_err(|error| CdcError::from(error).for_table(&target.source.name))
+}
+
+fn publish_staged_tables(
+    targets: &mut [CdcTarget],
+    staged: &BTreeSet<usize>,
+) -> Result<(), CdcError> {
+    for index in staged {
+        let target = &mut targets[*index];
+        target
+            .store
+            .publish_staged()
+            .map_err(|error| CdcError::from(error).for_table(&target.source.name))?;
+        recovery_point("cdc.after_staged_publish")?;
+    }
     Ok(())
 }
 
@@ -3204,7 +3326,11 @@ fn flush_batch(
 ) -> Result<FlushedBatch, CdcError> {
     let started = Instant::now();
     let mut rows = std::mem::take(&mut batch.rows);
-    let touched = rows.keys().copied().collect::<BTreeSet<_>>();
+    let touched = rows
+        .keys()
+        .chain(&batch.staged)
+        .copied()
+        .collect::<BTreeSet<_>>();
     if let Some(highest) = batch.highest_version {
         metadata.record_cdc_apply_intent(
             database_id,
@@ -3234,6 +3360,10 @@ fn flush_batch(
             recovery_point("cdc.after_table_ingest")
         },
     )?;
+    // The pieces of a spilled transaction become visible here, a table at a
+    // time and each table's in one step, after the record of what this
+    // batch writes and before the checkpoint that covers it.
+    publish_staged_tables(targets, &batch.staged)?;
     let ingested = Instant::now();
     phases.ingest += ingested - started;
     recovery_point("cdc.after_ingest")?;
@@ -4303,7 +4433,13 @@ mod tests {
 
         assert!(pending.spill.is_some());
         assert!(pending.mutations.is_empty());
-        let mutations = pending.take_mutations().expect("read spill");
+        let mut mutations = Vec::new();
+        pending
+            .for_each_mutation(|mutation| {
+                mutations.push(mutation);
+                Ok(())
+            })
+            .expect("read spill");
         assert_eq!(mutations.len(), 1);
         assert_eq!(mutations[0].target_index, 2);
         assert_eq!(mutations[0].row, row);

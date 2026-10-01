@@ -52,7 +52,9 @@ const CRASH_MARKER: &str = "simulated crash at";
 const DATABASE: &str = "sim";
 const SID: [u8; 16] = [0x5a; 16];
 const BINLOG_FILE: &str = "mysql-bin.000001";
-const RECOVERY_POINTS: [&str; 6] = [
+const RECOVERY_POINTS: [&str; 8] = [
+    "cdc.after_stage",
+    "cdc.after_staged_publish",
     "cdc.after_ingest",
     "cdc.after_first_table_sync",
     "cdc.before_checkpoint_commit",
@@ -61,7 +63,9 @@ const RECOVERY_POINTS: [&str; 6] = [
     "cdc.ddl.after_evolve",
 ];
 /// The recovery points inside one batch flush.
-const BATCH_RECOVERY_POINTS: [&str; 4] = [
+const BATCH_RECOVERY_POINTS: [&str; 6] = [
+    "cdc.after_stage",
+    "cdc.after_staged_publish",
     "cdc.after_ingest",
     "cdc.after_first_table_sync",
     "cdc.before_checkpoint_commit",
@@ -231,6 +235,10 @@ struct Simulation {
     metadata_path: PathBuf,
     options: StoreOptions,
     maximum_bytes: usize,
+    /// Row bytes of a spilled transaction held before a table's share is
+    /// staged. A couple of kilobytes stages most spilled transactions in
+    /// more than one piece.
+    stage_bytes: usize,
     sources: Vec<SourceTable>,
     models: Vec<TableModel>,
     metadata: MetaStore,
@@ -290,6 +298,11 @@ impl Simulation {
             metadata_path,
             options,
             maximum_bytes,
+            stage_bytes: if maximum_bytes == 1 << 12 {
+                1 << 11
+            } else {
+                1 << 25
+            },
             sources,
             models,
             metadata,
@@ -527,6 +540,10 @@ impl Simulation {
 
     /// Stores a batch and checkpoints it, as the stream does.
     fn flush(&mut self, batch: &mut ApplyBatch) -> Result<(), CdcError> {
+        // A transaction that staged was stored the moment it was sealed.
+        if batch.is_empty() {
+            return Ok(());
+        }
         flush_batch(
             &mut self.targets,
             &mut self.metadata,
@@ -618,7 +635,22 @@ impl Simulation {
             }
         }
         self.position.pos = transaction.commit_position();
-        seal_transaction(&mut self.position, &mut self.pending, batch)
+        // As the stream does: the batch is stored before a spilled
+        // transaction is sealed, and again straight after one that staged.
+        if self.pending.spill.is_some() {
+            self.flush(batch)?;
+        }
+        seal_transaction(
+            &mut self.position,
+            &mut self.pending,
+            batch,
+            &mut self.targets,
+            self.stage_bytes,
+        )?;
+        if !batch.staged.is_empty() {
+            self.flush(batch)?;
+        }
+        Ok(())
     }
 
     /// Reopens everything from disk and replays the source past the durable
