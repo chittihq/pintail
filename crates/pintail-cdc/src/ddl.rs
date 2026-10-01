@@ -59,6 +59,8 @@ pub(crate) struct AddedColumn {
     /// Nullable with nothing else declared but a comment: no default, no
     /// generated value, nothing the rows the table already holds would need.
     pub(crate) plain_nullable: bool,
+    /// Declared with a generated value that is computed on read, not stored.
+    pub(crate) virtual_generated: bool,
     pub(crate) position: AddedPosition,
 }
 
@@ -69,7 +71,7 @@ pub(crate) struct AddedColumn {
 /// the probe no longer shows, and the statement is then the only record of
 /// what the column was.
 pub(crate) fn added_columns(statement: &str) -> Option<Vec<AddedColumn>> {
-    use sqlparser::ast::{ColumnOption, MySQLColumnPosition};
+    use sqlparser::ast::{ColumnOption, GeneratedExpressionMode, MySQLColumnPosition};
     let mut added = Vec::new();
     for statement in parse_source_ddl(statement).ok()? {
         let Statement::AlterTable(alter) = statement else {
@@ -89,6 +91,16 @@ pub(crate) fn added_columns(statement: &str) -> Option<Vec<AddedColumn>> {
                 declared_type: column_def.data_type.to_string(),
                 plain_nullable: column_def.options.iter().all(|option| {
                     matches!(option.option, ColumnOption::Null | ColumnOption::Comment(_))
+                }),
+                virtual_generated: column_def.options.iter().any(|option| {
+                    matches!(
+                        &option.option,
+                        ColumnOption::Generated {
+                            generation_expr: Some(_),
+                            generation_expr_mode,
+                            ..
+                        } if !matches!(generation_expr_mode, Some(GeneratedExpressionMode::Stored))
+                    )
                 }),
                 position: match column_position {
                     Some(MySQLColumnPosition::First) => AddedPosition::First,
@@ -1036,6 +1048,26 @@ mod migration_family_tests {
             ),
             "classified as {:?}",
             parsed.actions,
+        );
+    }
+
+    /// Only a value computed on read is one a source may leave out of its
+    /// row images; a stored one and a plain column are always there.
+    #[test]
+    fn tells_a_virtual_generated_column_from_a_stored_one() {
+        use crate::ddl::added_columns;
+        let added = added_columns(
+            "ALTER TABLE events ADD COLUMN a INT GENERATED ALWAYS AS (CHAR_LENGTH(name)) VIRTUAL, \
+             ADD COLUMN b INT AS (id + 1), ADD COLUMN c INT AS (id + 1) STORED, \
+             ADD COLUMN d INT NULL",
+        )
+        .expect("added columns");
+        assert_eq!(
+            added
+                .iter()
+                .map(|column| (column.name.as_str(), column.virtual_generated))
+                .collect::<Vec<_>>(),
+            vec![("a", true), ("b", true), ("c", false), ("d", false)]
         );
     }
 

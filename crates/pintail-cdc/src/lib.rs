@@ -2205,15 +2205,13 @@ fn apply_column_change(
     // were written against. The probe is asked only about a column the
     // statement does not fully describe, and only while the source still
     // shows exactly what the statement did; past that the table is copied.
-    let named = |columns: &[pintail_probe::SourceColumn], name: &str| {
-        columns
-            .iter()
-            .any(|column| column.name.eq_ignore_ascii_case(name))
-    };
-    let moved_past = dropped.iter().any(|name| named(&source.columns, name))
-        || added.iter().any(|name| {
-            !named(&source.columns, name) || named(&targets[index].source.columns, name)
-        });
+    let moved_past = source_moved_past(
+        &targets[index].source,
+        &source,
+        statement,
+        (added, dropped),
+        every_column_tracked,
+    );
     let source = match schema_as_of_statement(
         &targets[index].source,
         statement,
@@ -2306,6 +2304,65 @@ fn apply_column_change(
     }
     targets[index].source = source;
     Ok(())
+}
+
+/// Whether the probed table is no longer what `statement` left: a column it
+/// dropped is there, or one it added is missing or was already tracked.
+fn source_moved_past(
+    tracked: &SourceTable,
+    probed: &SourceTable,
+    statement: &str,
+    (added, dropped): (&[String], &[String]),
+    every_column_tracked: bool,
+) -> bool {
+    let named = |columns: &[pintail_probe::SourceColumn], name: &str| {
+        columns
+            .iter()
+            .any(|column| column.name.eq_ignore_ascii_case(name))
+    };
+    let skipped = if every_column_tracked {
+        Vec::new()
+    } else {
+        added_columns_the_probe_skips(tracked, probed, statement, added, dropped)
+    };
+    let skipped_by_the_probe = |name: &str| {
+        skipped
+            .iter()
+            .any(|column| column.eq_ignore_ascii_case(name))
+    };
+    dropped.iter().any(|name| named(&probed.columns, name))
+        || added.iter().any(|name| {
+            (!named(&probed.columns, name) && !skipped_by_the_probe(name))
+                || named(&tracked.columns, name)
+        })
+}
+
+/// The columns `statement` adds that a probe leaves out by design.
+///
+/// A source whose virtual generated columns the mirror does not hold never
+/// shows such a column in a probe. One the statement itself declares that
+/// way is then missing because it is skipped, not because the source
+/// changed the table again - as long as the source declares exactly as many
+/// columns as the statement leaves.
+fn added_columns_the_probe_skips(
+    tracked: &SourceTable,
+    probed: &SourceTable,
+    statement: &str,
+    added: &[String],
+    dropped: &[String],
+) -> Vec<String> {
+    let declared_count = |table: &SourceTable| usize::try_from(table.source_column_count).ok();
+    let expected_count =
+        declared_count(tracked).map(|count| (count + added.len()).saturating_sub(dropped.len()));
+    if expected_count.is_none() || declared_count(probed) != expected_count {
+        return Vec::new();
+    }
+    ddl::added_columns(statement)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|column| column.virtual_generated)
+        .map(|column| column.name)
+        .collect()
 }
 
 /// The table as one `ADD COLUMN` / `DROP COLUMN` statement left it, worked
