@@ -2449,9 +2449,9 @@ fn evaluate_eager_scalar_inner(
             }
             let text = scalar_string(&values[0])?;
             Ok(Value::Utf8(if function == ScalarFunction::Lower {
-                text.to_lowercase()
+                collation.lower(&text)
             } else {
-                text.to_uppercase()
+                collation.upper(&text)
             }))
         }
         ScalarFunction::Soundex => Ok(Value::Utf8(mysql_soundex(&scalar_string(&values[0])?))),

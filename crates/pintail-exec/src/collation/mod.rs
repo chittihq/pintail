@@ -15,10 +15,15 @@
 //! `JOIN`, `GROUP BY` and `ORDER BY` on its text columns was refused.
 
 pub(crate) mod ai_ci_ascii;
+mod case_table;
 mod general_ci_table;
 mod thai;
 mod unicode_ci_table;
 
+use case_table::{
+    CaseRun, LOWER_LATIN1, LOWER_UNICODE_900, LOWER_UNICODE_BASIC, UPPER_LATIN1, UPPER_UNICODE_900,
+    UPPER_UNICODE_BASIC,
+};
 use general_ci_table::GENERAL_CI_EXCEPTIONS;
 use unicode_ci_table::{
     UNICODE_CI_ARENA, UNICODE_CI_IMPLICIT, UNICODE_CI_SEQUENCES, UNICODE_CI_SINGLES,
@@ -114,6 +119,129 @@ impl Collation {
             Self::Utf8mb4Bin => "utf8mb4_bin",
             Self::Json => "json",
         }
+    }
+
+    /// `text` as `UPPER` spells it under this collation.
+    #[must_use]
+    pub fn upper(self, text: &str) -> String {
+        self.cased(text, true)
+    }
+
+    /// `text` as `LOWER` spells it under this collation.
+    #[must_use]
+    pub fn lower(self, text: &str) -> String {
+        self.cased(text, false)
+    }
+
+    /// `MySQL` changes case one character to one character, by a table that
+    /// belongs to the collation: `ß` has no single upper-case character and
+    /// stays `ß`, and a dotted capital `İ` lowers to `i` alone. The full
+    /// Unicode mapping answers `SS` and `i` plus a combining dot.
+    fn cased(self, text: &str, upper: bool) -> String {
+        if text.is_ascii() {
+            return if upper {
+                text.to_ascii_uppercase()
+            } else {
+                text.to_ascii_lowercase()
+            };
+        }
+        let (runs, bounded): (&[CaseRun], bool) = match (self, upper) {
+            (Self::Utf8mb40900AiCi | Self::Utf8mb40900AsCs, true) => (UPPER_UNICODE_900, true),
+            (Self::Utf8mb40900AiCi | Self::Utf8mb40900AsCs, false) => (LOWER_UNICODE_900, true),
+            (
+                Self::Utf8mb4GeneralCi | Self::Utf8mb4UnicodeCi | Self::Utf8mb4Bin | Self::Json,
+                true,
+            ) => (UPPER_UNICODE_BASIC, true),
+            (
+                Self::Utf8mb4GeneralCi | Self::Utf8mb4UnicodeCi | Self::Utf8mb4Bin | Self::Json,
+                false,
+            ) => (LOWER_UNICODE_BASIC, true),
+            (Self::Latin1SwedishCi | Self::Latin1Bin, true) => (UPPER_LATIN1, false),
+            (Self::Latin1SwedishCi | Self::Latin1Bin, false) => (LOWER_LATIN1, false),
+            // The other single-byte character sets have tables of their
+            // own, not measured here.
+            (
+                Self::Latin2GeneralCi
+                | Self::Latin2Bin
+                | Self::Tis620ThaiCi
+                | Self::Tis620Bin
+                | Self::Koi8RGeneralCi
+                | Self::Koi8RBin,
+                _,
+            ) => {
+                return if upper {
+                    text.to_uppercase()
+                } else {
+                    text.to_lowercase()
+                };
+            }
+        };
+        if !bounded {
+            return text
+                .chars()
+                .map(|character| map_case(character, runs, upper))
+                .collect();
+        }
+        // A multi-byte text changes case in place, each mapped character
+        // written over the bytes already read. A mapping that needs more
+        // bytes than its source overwrites the start of the next character,
+        // and the conversion ends at the first byte sequence that no
+        // longer reads as a character (or at a character that no longer
+        // fits): `LOWER('Ⱥbc')` is `ⱥ` alone, because the three bytes of
+        // `ⱥ` took the place of `Ⱥ` and of `b`.
+        let mut bytes = text.as_bytes().to_vec();
+        let (mut read, mut written) = (0, 0);
+        while let Some((character, width)) = leading_character(&bytes[read..]) {
+            let mapped = map_case(character, runs, upper);
+            let mut encoded = [0_u8; 4];
+            let encoded = mapped.encode_utf8(&mut encoded).as_bytes();
+            let Some(slot) = bytes.get_mut(written..written + encoded.len()) else {
+                break;
+            };
+            slot.copy_from_slice(encoded);
+            read += width;
+            written += encoded.len();
+        }
+        bytes.truncate(written);
+        String::from_utf8(bytes)
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+    }
+}
+
+/// The character `bytes` starts with and its encoded width, or `None` at
+/// the end and at bytes that do not start one.
+fn leading_character(bytes: &[u8]) -> Option<(char, usize)> {
+    let width = match *bytes.first()? {
+        0x00..=0x7f => 1,
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return None,
+    };
+    let character = std::str::from_utf8(bytes.get(..width)?)
+        .ok()?
+        .chars()
+        .next()?;
+    Some((character, width))
+}
+
+/// One character through a case table.
+fn map_case(character: char, runs: &[CaseRun], upper: bool) -> char {
+    if character.is_ascii() {
+        return if upper {
+            character.to_ascii_uppercase()
+        } else {
+            character.to_ascii_lowercase()
+        };
+    }
+    let code = u32::from(character);
+    let index = runs.partition_point(|run| run.1 < code);
+    match runs.get(index) {
+        Some(&(first, _, step, delta)) if code >= first && (code - first) % step == 0 => code
+            .checked_add_signed(delta)
+            .and_then(char::from_u32)
+            .unwrap_or(character),
+        _ => character,
     }
 }
 
@@ -766,4 +894,55 @@ pub fn compare_tis620(left: &str, right: &str, binary: bool) -> std::cmp::Orderi
         tis620_weights(right, binary),
         u16::from(b' '),
     )
+}
+
+#[cfg(test)]
+mod case_tests {
+    use super::Collation;
+
+    #[test]
+    fn case_maps_one_character_to_one_character() {
+        let modern = Collation::Utf8mb40900AiCi;
+        assert_eq!(modern.upper("straße"), "STRAßE");
+        assert_eq!(modern.lower("İstanbul"), "istanbul");
+        assert_eq!(modern.upper("ǰ ŉ ﬁ"), "ǰ ŉ ﬁ");
+        assert_eq!(modern.upper("ÿ µ Ÿ"), "Ÿ Μ Ÿ");
+        assert_eq!(modern.lower("ÿ µ Ÿ"), "ÿ µ ÿ");
+        assert_eq!(modern.upper("plain Text"), "PLAIN TEXT");
+        assert_eq!(modern.lower(""), "");
+    }
+
+    #[test]
+    fn the_case_table_belongs_to_the_collation() {
+        let modern = Collation::Utf8mb40900AsCs;
+        let older = Collation::Utf8mb4GeneralCi;
+        assert_eq!(modern.upper("Ꭰ ꭰ"), "Ꭰ Ꭰ");
+        assert_eq!(older.upper("Ꭰ ꭰ"), "Ꭰ ꭰ");
+        assert_eq!(modern.lower("ⴀ Ⴀ ⴧ Ⴧ"), "ⴀ ⴀ ⴧ ⴧ");
+        assert_eq!(Collation::Utf8mb4Bin.lower("ⴀ Ⴀ ⴧ Ⴧ"), "ⴀ Ⴀ ⴧ Ⴧ");
+        assert_eq!(modern.upper("𐐀 𐐨"), "𐐀 𐐀");
+        assert_eq!(Collation::Utf8mb4UnicodeCi.upper("𐐀 𐐨"), "𐐀 𐐨");
+        assert_eq!(older.upper("straße"), "STRAßE");
+    }
+
+    #[test]
+    fn a_mapping_that_needs_more_bytes_ends_the_result() {
+        let modern = Collation::Utf8mb40900AiCi;
+        // Three bytes written over a two-byte character and the next one.
+        assert_eq!(modern.lower("Ⱥb"), "ⱥ");
+        assert_eq!(modern.lower("ȺbcȺ"), "ⱥ");
+        assert_eq!(modern.lower("ȾȾȾ"), "ⱦ");
+        assert_eq!(modern.upper("ɐx"), "Ɐ");
+        assert_eq!(modern.upper("ȺbcȺ"), "ȺBCȺ");
+        // The older table does not know the letter, and nothing grows.
+        assert_eq!(Collation::Utf8mb4GeneralCi.lower("ȺbcȺ"), "ȺbcȺ");
+    }
+
+    #[test]
+    fn a_single_byte_character_set_keeps_what_it_cannot_spell() {
+        let western = Collation::Latin1SwedishCi;
+        assert_eq!(western.upper("straße"), "STRAßE");
+        assert_eq!(western.upper("ÿ µ Ÿ"), "ÿ µ Ÿ");
+        assert_eq!(western.lower("ÄÖÜ Ÿ"), "äöü Ÿ");
+    }
 }

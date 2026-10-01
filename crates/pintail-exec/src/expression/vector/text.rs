@@ -80,9 +80,9 @@ pub(super) fn packed_text(
             // first, which is the cost this avoids.
             if let Some(coded) = source.map_dictionary(|text| {
                 if upper {
-                    text.to_uppercase()
+                    collation.upper(text)
                 } else {
-                    text.to_lowercase()
+                    collation.lower(text)
                 }
             }) {
                 return Some(ColumnVector::from_typed(
@@ -93,9 +93,9 @@ pub(super) fn packed_text(
             }
             let mapped = each_text(column, |text| {
                 if upper {
-                    text.to_uppercase()
+                    collation.upper(text)
                 } else {
-                    text.to_lowercase()
+                    collation.lower(text)
                 }
             })?;
             let mut text = StrColumn::default();
