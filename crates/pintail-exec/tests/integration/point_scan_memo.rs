@@ -137,7 +137,7 @@ fn point_aggregates_sharing_a_first_run_keep_different_answers() {
         let sql = format!("SELECT COUNT(*), SUM(amount) FROM events WHERE {predicate}");
         assert_eq!(
             fixture.run(&sql),
-            vec![Value::UInt64(count), Value::Int64(sum)],
+            vec![Value::UInt64(count), Value::Utf8(sum.to_string())],
             "{sql}"
         );
     }
@@ -147,7 +147,7 @@ fn point_aggregates_sharing_a_first_run_keep_different_answers() {
         let sql = format!("SELECT COUNT(*), SUM(amount) FROM events WHERE {predicate}");
         assert_eq!(
             fixture.run(&sql),
-            vec![Value::UInt64(count), Value::Int64(sum)],
+            vec![Value::UInt64(count), Value::Utf8(sum.to_string())],
             "{sql} on the second pass"
         );
     }
@@ -160,6 +160,7 @@ fn the_same_point_aggregate_answers_the_same_twice() {
     let fixture = Fixture::new();
     let sql = "SELECT COUNT(*), SUM(amount) FROM events WHERE id IN (100, 900, 1700)";
     let first = fixture.run(sql);
-    assert_eq!(first, vec![Value::UInt64(3), Value::Int64(2700)]);
+    let expected = vec![Value::UInt64(3), Value::Utf8("2700".to_owned())];
+    assert_eq!(first, expected);
     assert_eq!(fixture.run(sql), first, "a memoized replay agrees");
 }

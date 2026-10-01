@@ -157,7 +157,7 @@ fn check(fixture: &Fixture) {
     let sum: i64 = fixture.model.values().map(|(_, amount)| amount).sum();
     assert_eq!(
         fixture.run("SELECT COUNT(*), SUM(amount) FROM t"),
-        vec![vec![Value::UInt64(count), Value::Int64(sum)]]
+        vec![vec![Value::UInt64(count), Value::Utf8(sum.to_string())]]
     );
     let expected_grp = fixture
         .model
@@ -268,7 +268,7 @@ fn an_all_deleted_first_segment_does_not_end_the_scan() {
     };
     assert_eq!(
         fixture.run("SELECT COUNT(*), SUM(amount) FROM t"),
-        vec![vec![Value::UInt64(800), Value::Int64(1_600)]]
+        vec![vec![Value::UInt64(800), Value::Utf8("1600".to_owned())]]
     );
     assert_eq!(
         fixture.run("SELECT id FROM t WHERE grp = 2 ORDER BY id LIMIT 2"),
@@ -357,7 +357,7 @@ fn a_composite_key_table_answers_through_the_overlay() {
     let sum: i64 = model.values().sum();
     assert_eq!(
         fixture.run("SELECT COUNT(*), SUM(score) FROM t"),
-        vec![vec![Value::UInt64(count), Value::Int64(sum)]]
+        vec![vec![Value::UInt64(count), Value::Utf8(sum.to_string())]]
     );
     let expected = model
         .iter()

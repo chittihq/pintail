@@ -6170,6 +6170,21 @@ fn numeric_aggregate_input(
     }
 }
 
+/// Decimal digits of an integer type as a SUM argument, or `None` for a
+/// type that does not sum as an integer.
+fn summed_integer_digits(data_type: DataType) -> Option<u8> {
+    match data_type {
+        DataType::Boolean => Some(1),
+        DataType::Int8 | DataType::UInt8 => Some(3),
+        DataType::Int16 | DataType::UInt16 => Some(5),
+        DataType::Int32 | DataType::UInt32 => Some(10),
+        DataType::Int64 => Some(19),
+        DataType::UInt64 => Some(20),
+        DataType::Year => Some(4),
+        _ => None,
+    }
+}
+
 fn aggregate_result_type(
     function: AggregateFunction,
     expr: Option<&BoundExpr>,
@@ -6208,6 +6223,18 @@ fn aggregate_result_type(
                     Some(DataType::Decimal {
                         precision: precision.saturating_add(10).min(MAX_DECIMAL_PRECISION),
                         scale,
+                    }),
+                    true,
+                ));
+            }
+            // MySQL sums integers into a DECIMAL too: the argument's digits
+            // plus 22, scale 0. No total overflows it, and what the sum is
+            // then divided or multiplied by follows decimal arithmetic.
+            if let Some(digits) = input_type.and_then(summed_integer_digits) {
+                return Ok((
+                    Some(DataType::Decimal {
+                        precision: digits.saturating_add(22).min(MAX_DECIMAL_PRECISION),
+                        scale: 0,
                     }),
                     true,
                 ));

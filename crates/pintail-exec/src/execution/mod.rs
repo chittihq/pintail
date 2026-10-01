@@ -9009,7 +9009,7 @@ mod tests {
         );
         assert_eq!(
             batch.column(2).expect("totals").values(),
-            [Value::UInt64(4), Value::UInt64(2)]
+            [Value::Utf8("4".to_owned()), Value::Utf8("2".to_owned())]
         );
         assert_eq!(
             batch.column(3).expect("minimums").values(),
@@ -9073,7 +9073,7 @@ mod tests {
         );
         assert_eq!(
             batch.column(2).and_then(|column| column.value(row)),
-            Some(&Value::UInt64(3))
+            Some(&Value::Utf8("3".to_owned()))
         );
         assert_eq!(
             batch.column(3).and_then(|column| column.value(row)),

@@ -120,6 +120,7 @@ impl Fixture {
             for row in batch.selection().selected_rows() {
                 match batch.column(1).and_then(|column| column.value_owned(row)) {
                     Some(Value::Int64(sum)) => total += sum,
+                    Some(Value::Utf8(sum)) => total += sum.parse::<i64>().expect("sum"),
                     other => panic!("unexpected sum {other:?}"),
                 }
             }

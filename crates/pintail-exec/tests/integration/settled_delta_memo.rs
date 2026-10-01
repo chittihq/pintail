@@ -132,10 +132,8 @@ fn an_aggregate_over_appended_rows_extends_the_settled_answer() {
 
     // The settled answer, which fills the memo.
     let (rows, merges) = fixture.run(sql);
-    assert_eq!(
-        rows,
-        vec![Value::UInt64(SETTLED), Value::Int64(settled_sum)]
-    );
+    let settled_text = Value::Utf8(settled_sum.to_string());
+    assert_eq!(rows, vec![Value::UInt64(SETTLED), settled_text]);
     assert_eq!(merges, 0, "nothing to extend yet");
 
     // Pure inserts above every segment key, which is what the delta covers.
@@ -152,7 +150,7 @@ fn an_aggregate_over_appended_rows_extends_the_settled_answer() {
         rows,
         vec![
             Value::UInt64(SETTLED + APPENDED),
-            Value::Int64(settled_sum + appended_sum)
+            Value::Utf8((settled_sum + appended_sum).to_string())
         ],
         "the extended answer counts the appended rows"
     );

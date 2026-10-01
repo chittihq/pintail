@@ -9,7 +9,8 @@
 //! - a DOUBLE SUM or AVG adds its rows in row order, and a variance runs
 //!   its recurrence over them in that order, whatever the key;
 //! - an integer SUM whose running total leaves 64 bits and comes back is
-//!   its total, and one that ends outside them is refused.
+//!   its total, and so is one that ends outside them: an integer SUM is a
+//!   DECIMAL.
 
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
@@ -425,6 +426,7 @@ fn a_double_sum_adds_its_rows_in_row_order() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn an_integer_sum_whose_running_total_leaves_64_bits_is_its_total() {
     let mut fixture = fixture();
     // Clean segments first, then with a written row, which sends the
@@ -448,20 +450,99 @@ fn an_integer_sum_whose_running_total_leaves_64_bits_is_its_total() {
             "SELECT SUM(DISTINCT stock) FROM parts",
         ] {
             let rows = run(&fixture, sql);
-            let total = rows[0]
-                .iter()
-                .find(|value| matches!(value, Value::Int64(total) if *total > 100))
-                .unwrap_or(&Value::Null);
-            assert_eq!(total, &Value::Int64(i64::MAX), "{sql} (written: {written})");
+            assert_eq!(
+                decimal_total(&rows[0]),
+                Some(i128::from(i64::MAX)),
+                "{sql} (written: {written})"
+            );
         }
-        // A total that ends outside 64 bits has no integer to answer with,
-        // and is refused rather than answered wrong.
-        for sql in [
-            "SELECT SUM(stock) FROM parts WHERE id < 100000",
-            "SELECT crate, SUM(stock) FROM parts WHERE id < 100000 GROUP BY crate",
+        // A total that ends outside 64 bits is an ordinary DECIMAL: every
+        // fold that adds integers answers it, as do the expressions over
+        // it. One query per fold: ungrouped, a plain key, an expression
+        // key, two keys, a filter, DISTINCT, a join folded into its probe
+        // (grouped and not), a window, and a sum of sums.
+        let past = i128::from(i64::MAX) + 1;
+        for (sql, expected) in [
+            ("SELECT SUM(stock) FROM parts WHERE id < 100000", past),
+            (
+                "SELECT crate, SUM(stock) FROM parts WHERE id < 100000 GROUP BY crate \
+                 HAVING SUM(stock) > 9223372036854775807",
+                past,
+            ),
+            (
+                "SELECT crate + 0 AS k, SUM(stock) FROM parts WHERE id < 100000 GROUP BY k \
+                 HAVING SUM(stock) <> 0",
+                past,
+            ),
+            (
+                "SELECT maker, crate, SUM(stock) FROM parts WHERE id < 100000 AND crate = 5 \
+                 GROUP BY maker, crate HAVING SUM(stock) <> 0",
+                past,
+            ),
+            (
+                "SELECT SUM(stock) FROM parts WHERE id < 100000 AND id % 5 = 0",
+                past,
+            ),
+            (
+                "SELECT SUM(DISTINCT stock) FROM parts WHERE id < 100000",
+                past,
+            ),
+            (
+                "SELECT SUM(p.stock) FROM parts p JOIN parts q ON q.id = p.crate \
+                 WHERE p.id < 100000",
+                past,
+            ),
+            (
+                "SELECT q.crate, SUM(p.stock) FROM parts p JOIN parts q ON q.id = p.crate \
+                 WHERE p.id < 100000 GROUP BY q.crate HAVING SUM(p.stock) <> 0",
+                past,
+            ),
+            (
+                "SELECT SUM(stock) OVER (ORDER BY id) FROM parts WHERE id IN (5, 60005) \
+                 ORDER BY id DESC LIMIT 1",
+                past,
+            ),
+            (
+                "SELECT SUM(t.s) FROM (SELECT crate, SUM(stock) AS s FROM parts \
+                 WHERE id < 100000 GROUP BY crate) t",
+                past,
+            ),
+            ("SELECT SUM(stock) * 2 FROM parts", past * 2 - 2),
+            ("SELECT SUM(stock) + SUM(stock) FROM parts", past * 2 - 2),
+            ("SELECT SUM(stock) + 1 FROM parts", past),
         ] {
-            let refused = try_run(&fixture, sql).expect_err("a total past 64 bits");
-            assert!(refused.contains("NumericOverflow"), "{sql}: {refused}");
+            let rows = run(&fixture, sql);
+            assert_eq!(
+                decimal_total(&rows[0]),
+                Some(expected),
+                "{sql} (written: {written})"
+            );
+        }
+        // Dividing a sum is decimal division, at four more places.
+        for (sql, expected) in [
+            (
+                "SELECT SUM(stock) / 2 FROM parts",
+                "4611686018427387903.5000",
+            ),
+            (
+                "SELECT AVG(stock) FROM parts WHERE id IN (5, 60005)",
+                "4611686018427387904.0000",
+            ),
+        ] {
+            let rows = run(&fixture, sql);
+            assert_eq!(
+                rows[0][0].text(),
+                Some(expected),
+                "{sql} (written: {written})"
+            );
         }
     }
+}
+
+/// The one cell of `row` that spells an integer past 100: an integer SUM
+/// answers as a DECIMAL, whose value is carried as its digits.
+fn decimal_total(row: &[Value]) -> Option<i128> {
+    row.iter()
+        .filter_map(|value| value.text()?.parse::<i128>().ok())
+        .find(|total| *total > 100)
 }

@@ -137,7 +137,7 @@ fn a_correlated_subquery_inside_an_aggregate_argument_is_answered() {
         text(answer(
             "SELECT COUNT(*), SUM(s.open = 1 AND EXISTS (SELECT 1 FROM counters c WHERE c.shop_id = s.shop_id)) FROM shops s"
         )),
-        text(vec![Value::UInt64(3), Value::Int64(1)]),
+        text(vec![Value::UInt64(3), Value::Utf8("1".to_owned())]),
     );
     assert_eq!(
         text(answer(

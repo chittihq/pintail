@@ -332,7 +332,7 @@ fn fold_column(
         // update's checked integer total. A batch whose own total leaves
         // the type is handed back, so the per-row update decides it.
         (AggregateFunction::Sum, TypedValues::Int64(values))
-            if plain_integer && aggregate.data_type == Some(DataType::Int64) =>
+            if plain_integer && aggregate.sum_carrier == Some(DataType::Int64) =>
         {
             let mut total = 0_i64;
             let mut count = 0_u64;
@@ -353,7 +353,7 @@ fn fold_column(
             Ok(true)
         }
         (AggregateFunction::Sum, TypedValues::UInt64(values))
-            if plain_integer && aggregate.data_type == Some(DataType::UInt64) =>
+            if plain_integer && aggregate.sum_carrier == Some(DataType::UInt64) =>
         {
             let mut total = 0_u64;
             let mut count = 0_u64;

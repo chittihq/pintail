@@ -199,6 +199,7 @@ fn expected_group_3() -> (u64, i64, u64) {
 fn a_small_probe_side_filters_the_build_and_every_join_kind_answers_exactly() {
     let fixture = Fixture::new();
     let (matched_rows, sum, dims_with_facts) = expected_group_3();
+    let sum = Value::Utf8(sum.to_string());
     let dims_in_group = (1..=DIMS).filter(|id| id % 40 == 3).count() as u64;
 
     // LEFT JOIN: every group-3 dimension appears, matched or not.
@@ -213,7 +214,7 @@ fn a_small_probe_side_filters_the_build_and_every_join_kind_answers_exactly() {
         vec![vec![
             Value::UInt64(matched_rows + unmatched),
             Value::UInt64(matched_rows),
-            Value::Int64(sum)
+            sum.clone()
         ]]
     );
     assert_eq!(metrics.files, 0, "the filtered build fits without spilling");
@@ -225,10 +226,7 @@ fn a_small_probe_side_filters_the_build_and_every_join_kind_answers_exactly() {
          WHERE d.grp = 3",
         TIGHT,
     );
-    assert_eq!(
-        rows,
-        vec![vec![Value::UInt64(matched_rows), Value::Int64(sum)]]
-    );
+    assert_eq!(rows, vec![vec![Value::UInt64(matched_rows), sum]]);
     assert_eq!(metrics.files, 0);
 
     // Semi and anti joins keep or drop probe rows by whether a match exists.
@@ -292,10 +290,8 @@ fn a_probe_side_past_the_read_ahead_takes_the_whole_build() {
         .fold((0_u64, 0_i64), |(count, sum), fact| {
             (count + 1, sum + fact_amount(fact))
         });
-    assert_eq!(
-        rows,
-        vec![vec![Value::UInt64(all_matched), Value::Int64(all_sum)]]
-    );
+    let all_sum = Value::Utf8(all_sum.to_string());
+    assert_eq!(rows, vec![vec![Value::UInt64(all_matched), all_sum]]);
     // Every dimension is a small probe side, so the build is the facts
     // that reference one: two thirds of them. The facts are still in the
     // memtable, and the side index's key set leaves out the third that
@@ -311,13 +307,9 @@ fn a_probe_side_past_the_read_ahead_takes_the_whole_build() {
         "SELECT COUNT(*), SUM(f.amount) FROM fact f2 JOIN fact f ON f.id = f2.id",
         TIGHT,
     );
-    assert_eq!(
-        rows,
-        vec![vec![
-            Value::UInt64(FACTS),
-            Value::Int64((1..=FACTS).map(fact_amount).sum())
-        ]]
-    );
+    let every_sum: i64 = (1..=FACTS).map(fact_amount).sum();
+    let every_sum = Value::Utf8(every_sum.to_string());
+    assert_eq!(rows, vec![vec![Value::UInt64(FACTS), every_sum]]);
     assert!(
         metrics.files > 0,
         "an unfiltered build of every fact must spill at this ceiling"
@@ -336,6 +328,7 @@ const JOINED_PROBE_LEFT: &str = "SELECT COUNT(*), COUNT(f.id), SUM(f.amount) FRO
 fn a_probe_side_that_is_a_join_filters_the_build_by_the_rows_it_holds() {
     let fixture = Fixture::new();
     let (matched_rows, sum, dims_with_facts) = expected_group_3();
+    let sum = Value::Utf8(sum.to_string());
     let dims_in_group = (1..=DIMS).filter(|id| id % 40 == 3).count() as u64;
     let unmatched = dims_in_group - dims_with_facts;
     let (rows, metrics) = fixture.run(JOINED_PROBE_LEFT, TIGHT);
@@ -344,7 +337,7 @@ fn a_probe_side_that_is_a_join_filters_the_build_by_the_rows_it_holds() {
         vec![vec![
             Value::UInt64(matched_rows + unmatched),
             Value::UInt64(matched_rows),
-            Value::Int64(sum)
+            sum.clone()
         ]]
     );
     assert_eq!(metrics.files, 0, "the filtered build fits without spilling");
@@ -354,10 +347,7 @@ fn a_probe_side_that_is_a_join_filters_the_build_by_the_rows_it_holds() {
          JOIN fact f ON f.dim_id = d2.id WHERE d.grp = 3",
         TIGHT,
     );
-    assert_eq!(
-        rows,
-        vec![vec![Value::UInt64(matched_rows), Value::Int64(sum)]]
-    );
+    assert_eq!(rows, vec![vec![Value::UInt64(matched_rows), sum]]);
     assert_eq!(metrics.files, 0);
 
     // A joined probe with nothing in it leaves nothing to build.
@@ -430,7 +420,10 @@ fn an_on_clause_conjunct_of_one_input_filters_it_in_its_scan() {
          WHERE d.grp = 3",
         ROOMY,
     );
-    assert_eq!(rows, vec![vec![Value::UInt64(count), Value::Int64(sum)]]);
+    assert_eq!(
+        rows,
+        vec![vec![Value::UInt64(count), Value::Utf8(sum.to_string())]]
+    );
 
     let dims_in_group = (1..=DIMS).filter(|id| id % 40 == 3).count() as u64;
     let dims_matched = (1..=FACTS)

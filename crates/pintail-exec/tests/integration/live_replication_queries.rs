@@ -536,7 +536,7 @@ impl World {
                 vec![
                     Value::Utf8((*spelling).to_owned()),
                     Value::UInt64(*count),
-                    Value::Int64(*sum),
+                    Value::Utf8(sum.to_string()),
                 ]
             })
             .collect::<Vec<_>>();
@@ -616,7 +616,8 @@ impl World {
         let sum = if facts.is_empty() {
             Value::Null
         } else {
-            Value::Int64(facts.values().map(|fact| fact.amount).sum::<i64>())
+            let total = facts.values().map(|fact| fact.amount).sum::<i64>();
+            Value::Utf8(total.to_string())
         };
         let sql = "SELECT COUNT(*), SUM(amount) FROM facts";
         assert_eq!(
@@ -718,7 +719,7 @@ impl World {
                 vec![
                     Value::Utf8(name.clone()),
                     Value::UInt64(*count),
-                    Value::Int64(*sum),
+                    Value::Utf8(sum.to_string()),
                 ]
             })
             .collect::<Vec<_>>();
@@ -746,7 +747,7 @@ impl World {
             if matched == 0 {
                 Value::Null
             } else {
-                Value::Int64(matched_sum)
+                Value::Utf8(matched_sum.to_string())
             },
         ]];
         let sql = format!(

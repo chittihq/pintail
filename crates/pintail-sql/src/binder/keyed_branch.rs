@@ -265,7 +265,16 @@ fn candidate(query: &BoundQuery, index: usize) -> Option<Plan> {
             | AggregateFunction::BitOr => Repeated::Ignored,
             AggregateFunction::Average if exact(input) => Repeated::Ignored,
             AggregateFunction::Count => Repeated::Scaled,
-            AggregateFunction::Sum if exact(input) && exact(aggregate.data_type) => {
+            // An integer argument's sum is a scale-0 DECIMAL; it scales by
+            // the repeat count as an integer does.
+            AggregateFunction::Sum
+                if exact(input)
+                    && (exact(aggregate.data_type)
+                        || matches!(
+                            aggregate.data_type,
+                            Some(DataType::Decimal { scale: 0, .. })
+                        )) =>
+            {
                 Repeated::Scaled
             }
             _ => return None,

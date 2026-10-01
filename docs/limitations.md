@@ -254,12 +254,6 @@ stays readable as a list of things to fix.
   `div_precision_increment`). Pintail always folds the stored quotient, the
   temporary-table answer, so a query MySQL happens to answer by streaming
   can differ from it from the fifth decimal place on.
-- `SUM` over an integer answers in a 64-bit integer, where MySQL answers in
-  a `DECIMAL`. A total outside 64 bits - `SUM` of a `BIGINT` column holding
-  the largest value twice - is refused with an out-of-range error instead
-  of returned. A running total that leaves 64 bits and returns is answered,
-  except below a join whose aggregate is folded into the probe and as a
-  window function, where it is refused as well.
 - A double `SUM`, `AVG`, `STDDEV` or `VARIANCE` can differ from MySQL in its
   last digits where MySQL reads the rows in an order of its own:
   `SUM(DISTINCT ...)` and `AVG(DISTINCT ...)` (MySQL adds the distinct

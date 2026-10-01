@@ -176,7 +176,7 @@ pub(super) fn plan_lanes(aggregates: &[CompiledAggregate], left_width: usize) ->
             match (aggregate.function, column) {
                 (AggregateFunction::Count, None) => Some(Lane::CountRows),
                 (AggregateFunction::Count, Some(column)) => Some(Lane::CountValid { column }),
-                (AggregateFunction::Sum, Some(column)) => Some(match aggregate.data_type {
+                (AggregateFunction::Sum, Some(column)) => Some(match aggregate.sum_carrier {
                     Some(pintail_types::DataType::Int64) => Lane::IntegerSum {
                         column,
                         signed: true,
@@ -446,17 +446,11 @@ impl LaneTotals {
                 }
                 Lane::IntegerSum { signed, .. } => {
                     if valid > 0 {
-                        // The total, exact in 128 bits; past the sum's
-                        // type it overflows as the row fold's would.
-                        if signed {
-                            state.add_dense_signed(
-                                i64::try_from(total).map_err(|_| ExecError::NumericOverflow)?,
-                            )?;
-                        } else {
-                            state.add_dense_unsigned(
-                                u64::try_from(total).map_err(|_| ExecError::NumericOverflow)?,
-                            )?;
-                        }
+                        // The total, exact in 128 bits, joins the state
+                        // as it is: a morsel's total may be outside 64
+                        // bits while the group's is not, and a DECIMAL
+                        // answer has no range to leave.
+                        state.add_integer_exact(total, !signed)?;
                     }
                 }
                 Lane::DecimalAverage { result_scale, .. } => {

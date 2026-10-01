@@ -846,7 +846,7 @@ pub(super) mod tests {
             .await
             .unwrap();
         assert_eq!(result.rows.len(), 1);
-        assert_eq!(result.rows[0][0], Value::Int64(3));
+        assert_eq!(result.rows[0][0], Value::Utf8("3".to_owned()));
         let result = backend
             .execute("SELECT (SELECT SUM(numbers.n) FROM lookup WHERE v=0) FROM numbers")
             .await
@@ -859,14 +859,20 @@ pub(super) mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(result.rows[0], vec![Value::Int64(1), Value::Int64(1)]);
-        assert_eq!(result.rows[1], vec![Value::Int64(2), Value::Int64(2)]);
+        assert_eq!(
+            result.rows[0],
+            vec![Value::Int64(1), Value::Utf8("1".to_owned())]
+        );
+        assert_eq!(
+            result.rows[1],
+            vec![Value::Int64(2), Value::Utf8("2".to_owned())]
+        );
         let result = backend.execute("SELECT (SELECT (SELECT SUM(numbers.n) FROM lookup AS second_lookup) FROM lookup) FROM numbers").await.unwrap();
         assert_eq!(result.rows.len(), 1);
-        assert_eq!(result.rows[0][0], Value::Int64(3));
+        assert_eq!(result.rows[0][0], Value::Utf8("3".to_owned()));
         let result = backend.execute("SELECT (SELECT (SELECT SUM(numbers.n+lookup.v) FROM lookup AS inner_lookup) FROM lookup) FROM numbers ORDER BY n").await.unwrap();
-        assert_eq!(result.rows[0][0], Value::Int64(2));
-        assert_eq!(result.rows[1][0], Value::Int64(3));
+        assert_eq!(result.rows[0][0], Value::Utf8("2".to_owned()));
+        assert_eq!(result.rows[1][0], Value::Utf8("3".to_owned()));
     }
 
     #[tokio::test]
@@ -900,7 +906,8 @@ pub(super) mod tests {
         );
         let result = backend.execute("SELECT (SELECT SUM(lookup.v) FROM numbers WHERE numbers.n=lookup.v GROUP BY numbers.n) FROM lookup").await.unwrap();
         assert_eq!(result.rows.len(), 1);
-        assert_eq!(result.rows[0][0], pintail_types::Value::Int64(3));
+        let total = pintail_types::Value::Utf8("3".to_owned());
+        assert_eq!(result.rows[0][0], total);
     }
 
     #[tokio::test]
@@ -928,7 +935,12 @@ pub(super) mod tests {
         let result = backend.execute("SELECT SUM(n) AS total, (SELECT 1 HAVING total IS NULL), COUNT(n) AS amount, (SELECT 1 HAVING amount=0) FROM numbers").await.unwrap();
         assert_eq!(
             result.rows[0],
-            vec![Value::Int64(3), Value::Null, Value::UInt64(2), Value::Null]
+            vec![
+                Value::Utf8("3".to_owned()),
+                Value::Null,
+                Value::UInt64(2),
+                Value::Null
+            ]
         );
         let result = backend
             .execute(
@@ -1020,20 +1032,20 @@ pub(super) mod tests {
             result.rows[0],
             vec![
                 Value::Int64(1),
-                Value::Int64(30),
-                Value::Int64(31),
-                Value::Int64(0),
-                Value::Int64(40)
+                Value::Utf8("30".to_owned()),
+                Value::Utf8("31".to_owned()),
+                Value::Utf8("0".to_owned()),
+                Value::Utf8("40".to_owned())
             ]
         );
         assert_eq!(
             result.rows[1],
             vec![
                 Value::Int64(2),
-                Value::Int64(30),
-                Value::Int64(41),
-                Value::Int64(30),
-                Value::Int64(0)
+                Value::Utf8("30".to_owned()),
+                Value::Utf8("41".to_owned()),
+                Value::Utf8("30".to_owned()),
+                Value::Utf8("0".to_owned())
             ]
         );
     }
@@ -1490,7 +1502,7 @@ pub(super) mod tests {
                 &vec![
                     Value::Int64(n),
                     Value::UInt64(n.unsigned_abs()),
-                    Value::Int64(n * (n + 1) / 2)
+                    Value::Utf8((n * (n + 1) / 2).to_string())
                 ]
             );
         }
@@ -1573,22 +1585,22 @@ pub(super) mod tests {
             result.rows.into_values(),
             vec![
                 vec![
-                    Value::Int64(3),
+                    Value::Utf8("3".to_owned()),
                     Value::Int64(2),
                     Value::UInt64(1),
-                    Value::Int64(3)
+                    Value::Utf8("3".to_owned())
                 ],
                 vec![
-                    Value::Int64(2),
+                    Value::Utf8("2".to_owned()),
                     Value::Int64(1),
                     Value::UInt64(2),
-                    Value::Int64(5)
+                    Value::Utf8("5".to_owned())
                 ],
                 vec![
-                    Value::Int64(5),
+                    Value::Utf8("5".to_owned()),
                     Value::Null,
                     Value::UInt64(3),
-                    Value::Int64(10)
+                    Value::Utf8("10".to_owned())
                 ],
             ]
         );
@@ -1607,12 +1619,13 @@ pub(super) mod tests {
             .await
             .unwrap();
         let result = backend.execute("SELECT n,MIN(n) OVER(ROWS UNBOUNDED PRECEDING),SUM(n) OVER() FROM samples ORDER BY n DESC").await.unwrap();
+        let total = Value::Utf8("8".to_owned());
         assert_eq!(
             result.rows.into_values(),
             vec![
-                vec![Value::Int64(4), Value::Int64(4), Value::Int64(8)],
-                vec![Value::Int64(3), Value::Int64(3), Value::Int64(8)],
-                vec![Value::Int64(1), Value::Int64(1), Value::Int64(8)],
+                vec![Value::Int64(4), Value::Int64(4), total.clone()],
+                vec![Value::Int64(3), Value::Int64(3), total.clone()],
+                vec![Value::Int64(1), Value::Int64(1), total],
             ]
         );
         let result = backend.execute("SELECT n,MIN(n) OVER(ORDER BY n ROWS UNBOUNDED PRECEDING) FROM samples ORDER BY n DESC").await.unwrap();

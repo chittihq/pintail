@@ -206,7 +206,7 @@ fn a_few_parents_join_exactly_the_children_they_have() {
         vec![vec![
             Value::UInt64(count),
             Value::UInt64(count),
-            Value::Int64(sum),
+            Value::Utf8(sum.to_string()),
             Value::Utf8(note.clone())
         ]]
     );
@@ -215,7 +215,7 @@ fn a_few_parents_join_exactly_the_children_they_have() {
             "SELECT COUNT(*), SUM(c.amount) FROM parent p JOIN child c ON c.parent_id = p.id \
              WHERE p.id IN (7, 500, 993)"
         ),
-        vec![vec![Value::UInt64(count), Value::Int64(sum)]]
+        vec![vec![Value::UInt64(count), Value::Utf8(sum.to_string())]]
     );
     // The child scan's own tests, left to the Filters above once the join's
     // keys have chosen a few rows, still decide which of those rows stay.
@@ -226,6 +226,7 @@ fn a_few_parents_join_exactly_the_children_they_have() {
                 && id.to_string().contains('7')
         })
         .collect::<Vec<_>>();
+    let kept_sum: i64 = kept.iter().map(|id| child_amount(*id)).sum();
     assert_eq!(
         fixture.run(
             "SELECT COUNT(*), COUNT(c.id), SUM(c.amount) FROM parent p LEFT JOIN child c \
@@ -235,7 +236,7 @@ fn a_few_parents_join_exactly_the_children_they_have() {
         vec![vec![
             Value::UInt64(kept.len() as u64),
             Value::UInt64(kept.len() as u64),
-            Value::Int64(kept.iter().map(|id| child_amount(*id)).sum())
+            Value::Utf8(kept_sum.to_string())
         ]]
     );
     // A parent with no children keeps its row in a left join, and joins

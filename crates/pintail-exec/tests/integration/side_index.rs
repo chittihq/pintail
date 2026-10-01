@@ -449,6 +449,7 @@ fn int(value: &Value) -> i64 {
     match value {
         Value::Int64(value) => *value,
         Value::UInt64(value) => i64::try_from(*value).expect("fits"),
+        Value::Utf8(text) => text.parse().expect("whole decimal"),
         other => panic!("not an integer: {other:?}"),
     }
 }

@@ -3645,18 +3645,11 @@ pub(super) fn packed_lane(lane: &TwoPassLane, aggregate: &CompiledAggregate) -> 
         TwoPassLane::Int {
             data_type: DataType::Int64,
             ..
-        } if !aggregate.distinct => match (aggregate.function, aggregate.data_type) {
+        } if !aggregate.distinct => match (aggregate.function, aggregate.sum_carrier) {
             (AggregateFunction::Count, _) => Some(PackedLane::Present),
-            (AggregateFunction::Sum, Some(DataType::Decimal { scale: 0, .. })) => {
-                Some(PackedLane::Sum {
-                    scale: 0,
-                    float_output: false,
-                })
-            }
-            // A sum the plan types as an integer is refused when it leaves
-            // the type. Row by row that is wherever the running sum first
-            // leaves it, which depends on the order the rows arrive in;
-            // here it is whether the group's exact total fits.
+            // The group's exact total joins the integer state the per-row
+            // update keeps, which answers it as the plan typed the sum: a
+            // DECIMAL of any width, or an integer refused past its type.
             (AggregateFunction::Sum, Some(DataType::Int64)) => Some(PackedLane::IntegerSum),
             (AggregateFunction::Average, _) => decimal_average_scale(aggregate)
                 .filter(|digits| *digits <= PACKED_AVERAGE_MAX_DIGITS)
@@ -4164,7 +4157,7 @@ fn dense_packed_lanes(
     use crate::batch::TypedValues;
     if !lanes.iter().zip(aggregates).all(|(lane, aggregate)| {
         matches!(lane, TwoPassLane::CountStar)
-            || matches!((lane, aggregate.function, aggregate.data_type),
+            || matches!((lane, aggregate.function, aggregate.sum_carrier),
                 (TwoPassLane::Int { column, data_type }, AggregateFunction::Sum, Some(output))
                     if output == *data_type && batch.column(*column).and_then(crate::ColumnVector::typed)
                         .is_some_and(|(typed, _)| matches!(typed, TypedValues::Int64(_) | TypedValues::UInt64(_))))

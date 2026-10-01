@@ -55,6 +55,13 @@ pub(super) struct CompiledAggregate {
     pub(super) binary_width: Option<u32>,
     pub(super) distinct: bool,
     pub(super) data_type: Option<DataType>,
+    /// The 64-bit integer type a SUM over integers accumulates in, when
+    /// this is one. The answer is a DECIMAL - `MySQL` sums integers into
+    /// one, so no total overflows - and the fold still adds machine
+    /// integers: the total is spelled as a decimal once, when its group is
+    /// finished. A SUM the planner itself types as an integer (a re-folded
+    /// COUNT) carries that type here and answers in it.
+    pub(super) sum_carrier: Option<DataType>,
     /// `GROUP_CONCAT` separator (`MySQL` defaults to a comma).
     pub(super) separator: String,
     /// `GROUP_CONCAT ... ORDER BY` keys as `(expr, ascending, value kind)`.
@@ -108,6 +115,7 @@ impl CompiledAggregate {
                 .and_then(pintail_sql::BoundExpr::binary_width),
             distinct: aggregate.distinct,
             data_type: aggregate.data_type,
+            sum_carrier: sum_carrier(aggregate.function, input_type, aggregate.data_type),
             separator: aggregate
                 .separator
                 .clone()
@@ -939,6 +947,9 @@ pub(super) struct AggregateState {
     /// left from before it made a later batch compare against a value the
     /// state no longer held.
     extreme_units: Option<i128>,
+    /// An integer SUM answered as a DECIMAL: the total accumulates as an
+    /// integer and is spelled as a decimal when the group is finished.
+    decimal_total: bool,
 }
 
 /// Exact decimal units: `i128` while a running total fits one, 512-bit past
@@ -1186,6 +1197,7 @@ impl AggregateState {
             }),
             extreme_number: None,
             extreme_units: None,
+            decimal_total: decimal_integer_total(aggregate),
         }
     }
 
@@ -1291,6 +1303,7 @@ impl AggregateState {
         // unit state on the first value instead of parsing and reformatting
         // canonical text per row.
         if aggregate.function == AggregateFunction::Sum
+            && aggregate.sum_carrier.is_none()
             && let Some(DataType::Decimal { scale, .. }) = aggregate.data_type
         {
             let units = match value {
@@ -2302,6 +2315,7 @@ impl AggregateState {
 
     #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     pub(super) fn finish(self, memory: &MemoryTracker) -> Result<Value, ExecError> {
+        let decimal_total = self.decimal_total;
         Ok(match self.value {
             AggregateValue::Count(count) => Value::UInt64(count),
             AggregateValue::JsonObjectAgg { members } if members.is_empty() => Value::Null,
@@ -2359,6 +2373,16 @@ impl AggregateState {
                 } else {
                     Value::Utf8(units.format(scale)?)
                 }
+            }
+            // A DECIMAL answer spells the total, however wide.
+            AggregateValue::WideIntegerSum { total, .. } if decimal_total => {
+                Value::Utf8(total.to_string())
+            }
+            AggregateValue::Sum(Some(Value::Int64(total))) if decimal_total => {
+                Value::Utf8(total.to_string())
+            }
+            AggregateValue::Sum(Some(Value::UInt64(total))) if decimal_total => {
+                Value::Utf8(total.to_string())
             }
             // A total that ends outside its 64-bit type has no value of
             // that type to answer with.
@@ -2649,10 +2673,7 @@ fn mergeable_across_disjoint_rows(aggregate: &CompiledAggregate) -> bool {
             AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor => {
                 aggregate.data_type != Some(DataType::Binary)
             }
-            AggregateFunction::Sum => matches!(
-                aggregate.data_type,
-                Some(DataType::Int64 | DataType::UInt64)
-            ),
+            AggregateFunction::Sum => aggregate.sum_carrier.is_some(),
             AggregateFunction::Average
             | AggregateFunction::GroupConcat
             | AggregateFunction::JsonArrayAgg
@@ -3191,6 +3212,19 @@ fn merge_finished_value(
         AggregateFunction::Count => {
             add_aggregate_value(Some(current), delta, Some(DataType::UInt64))
         }
+        // Two finished integer totals spelled as decimals add as integers.
+        AggregateFunction::Sum if decimal_integer_total(aggregate) => {
+            let total = |value: &Value| {
+                value
+                    .text()
+                    .and_then(|text| text.parse::<i128>().ok())
+                    .ok_or(ExecError::InvalidExpressionType)
+            };
+            total(&current)?
+                .checked_add(total(delta)?)
+                .map(|sum| Value::Utf8(sum.to_string()))
+                .ok_or(ExecError::NumericOverflow)
+        }
         AggregateFunction::Sum => add_aggregate_value(Some(current), delta, aggregate.data_type),
         AggregateFunction::Minimum => Ok(
             if compare_aggregate_values(delta, &current, aggregate.data_type, aggregate.collation)?
@@ -3682,7 +3716,7 @@ fn try_sma_fold(
                     (_, None) => None,
                     (AggregateFunction::Sum, Some(total)) => match total {
                         pintail_store::SmaSum::Int(total) => {
-                            let value = match aggregate.data_type.map(DataType::storage_type) {
+                            let value = match aggregate.sum_carrier {
                                 Some(DataType::UInt64) => {
                                     Value::UInt64(match u64::try_from(total) {
                                         Ok(total) => total,
@@ -3870,6 +3904,7 @@ fn try_sma_fold(
                     units: None,
                     extreme_number: None,
                     extreme_units: None,
+                    decimal_total: false,
                 },
                 memory,
             )?;
@@ -7486,8 +7521,11 @@ pub(super) fn update_state_from_typed_column(
                     state.update_decimal_average_units(rescaled, result_scale)?;
                     return Ok(true);
                 }
+                // Past 2^53 the hint is no longer the integer it was read
+                // from: the real value carries such a row.
                 if let Some(number) = typed.number_at(row)
                     && number.fract() == 0.0
+                    && number.abs() < 9_007_199_254_740_992.0
                 {
                     state.update_with_number(
                         aggregate,
@@ -7636,14 +7674,42 @@ pub(super) fn update_aggregate_states(
     Ok(())
 }
 
-/// Whether `aggregate` is typed as a 64-bit integer, and as the unsigned
-/// one: the carrier an integer SUM answers in.
+/// Whether `aggregate` adds 64-bit integers, and unsigned ones: the carrier
+/// an integer SUM accumulates in.
 fn integer_sum_carrier(aggregate: &CompiledAggregate) -> Option<bool> {
-    match aggregate.data_type {
+    match aggregate.sum_carrier {
         Some(DataType::Int64) => Some(false),
         Some(DataType::UInt64) => Some(true),
         _ => None,
     }
+}
+
+/// The integer type a SUM of `input` typed as `output` accumulates in: the
+/// output's own when it is an integer, and the input's when the output is
+/// the scale-0 DECIMAL an integer argument sums into.
+pub(super) fn sum_carrier(
+    function: AggregateFunction,
+    input: Option<DataType>,
+    output: Option<DataType>,
+) -> Option<DataType> {
+    if function != AggregateFunction::Sum {
+        return None;
+    }
+    match output? {
+        DataType::Int64 => Some(DataType::Int64),
+        DataType::UInt64 => Some(DataType::UInt64),
+        DataType::Decimal { scale: 0, .. } => match input?.storage_type() {
+            DataType::Int64 | DataType::Boolean => Some(DataType::Int64),
+            DataType::UInt64 => Some(DataType::UInt64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether a SUM's integer total is answered as a DECIMAL.
+fn decimal_integer_total(aggregate: &CompiledAggregate) -> bool {
+    aggregate.sum_carrier.is_some() && matches!(aggregate.data_type, Some(DataType::Decimal { .. }))
 }
 
 /// `total` as a value of its 64-bit carrier, when it fits one.
@@ -8151,6 +8217,7 @@ mod binary_fold_tests {
             binary_width: Some(6),
             distinct: false,
             data_type: Some(DataType::Binary),
+            sum_carrier: None,
             separator: ",".to_owned(),
             order_within: Vec::new(),
             collation: Collation::default(),
@@ -8221,6 +8288,7 @@ mod extreme_cache_tests {
             binary_width: None,
             distinct: false,
             data_type: Some(DataType::DateTime64 { fsp: 0 }),
+            sum_carrier: None,
             separator: ",".to_owned(),
             order_within: Vec::new(),
             collation: Collation::default(),

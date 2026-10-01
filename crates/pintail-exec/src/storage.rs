@@ -4115,6 +4115,7 @@ mod tests {
             SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
 
         let u = Value::UInt64;
+        let d = |sum: u64| Value::Utf8(sum.to_string());
         // The named window carries the same running frame as the inline form.
         assert_eq!(
             execute_values_with_limit(
@@ -4124,7 +4125,7 @@ mod tests {
                 &provider,
                 4 * 1024 * 1024,
             ),
-            vec![u(1), u(3), u(6), u(10), u(15)]
+            vec![d(1), d(3), d(6), d(10), d(15)]
         );
         assert_eq!(
             execute_values_with_limit(
@@ -4136,7 +4137,7 @@ mod tests {
                 &provider,
                 4 * 1024 * 1024,
             ),
-            vec![u(1), u(3), u(6), u(10), u(15)]
+            vec![d(1), d(3), d(6), d(10), d(15)]
         );
         assert_eq!(
             execute_values_with_limit(
@@ -4156,7 +4157,7 @@ mod tests {
                 &provider,
                 4 * 1024 * 1024,
             ),
-            vec![u(1), u(3), u(6), u(10), u(15)]
+            vec![d(1), d(3), d(6), d(10), d(15)]
         );
         let statement = parse_statement(
             "SELECT SUM(id) OVER (w ORDER BY id) FROM events \
@@ -4204,41 +4205,42 @@ mod tests {
             SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
 
         let u = Value::UInt64;
+        let d = |sum: u64| Value::Utf8(sum.to_string());
         for (sql, expected) in [
             // Running total: 1, 3, 6, 10, 15.
             (
                 "SELECT SUM(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) \
                  FROM events",
-                vec![u(1), u(3), u(6), u(10), u(15)],
+                vec![d(1), d(3), d(6), d(10), d(15)],
             ),
             // Moving window of three: 1, 3, 6, 9, 12.
             (
                 "SELECT SUM(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) \
                  FROM events",
-                vec![u(1), u(3), u(6), u(9), u(12)],
+                vec![d(1), d(3), d(6), d(9), d(12)],
             ),
             // Shorthand form means the same as ... AND CURRENT ROW.
             (
                 "SELECT SUM(id) OVER (ORDER BY id ROWS 2 PRECEDING) FROM events",
-                vec![u(1), u(3), u(6), u(9), u(12)],
+                vec![d(1), d(3), d(6), d(9), d(12)],
             ),
             // Centred window: 3, 6, 9, 12, 9.
             (
                 "SELECT SUM(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) \
                  FROM events",
-                vec![u(3), u(6), u(9), u(12), u(9)],
+                vec![d(3), d(6), d(9), d(12), d(9)],
             ),
             // Whole partition regardless of position.
             (
                 "SELECT SUM(id) OVER (ORDER BY id \
                  ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM events",
-                vec![u(15), u(15), u(15), u(15), u(15)],
+                vec![d(15), d(15), d(15), d(15), d(15)],
             ),
             // Strictly future rows: 14, 12, 9, 5, NULL (empty frame).
             (
                 "SELECT SUM(id) OVER (ORDER BY id \
                  ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) FROM events",
-                vec![u(14), u(12), u(9), u(5), Value::Null],
+                vec![d(14), d(12), d(9), d(5), Value::Null],
             ),
             // COUNT over a bounded frame counts framed rows only.
             (
@@ -4298,7 +4300,7 @@ mod tests {
                 &provider,
                 4 * 1024 * 1024,
             ),
-            [1_u64, 3, 10, 21, 20].map(Value::UInt64)
+            [1_u64, 3, 10, 21, 20].map(|sum| Value::Utf8(sum.to_string()))
         );
         assert_eq!(
             execute_values_with_limit(
@@ -4308,7 +4310,7 @@ mod tests {
                 &provider,
                 4 * 1024 * 1024,
             ),
-            [1_u64, 2, 10, 11, 20].map(Value::UInt64)
+            [1_u64, 2, 10, 11, 20].map(|sum| Value::Utf8(sum.to_string()))
         );
         assert_eq!(
             execute_values_with_limit(
@@ -4318,7 +4320,7 @@ mod tests {
                 &provider,
                 4 * 1024 * 1024,
             ),
-            [20_u64, 21, 21, 3, 3].map(Value::UInt64)
+            [20_u64, 21, 21, 3, 3].map(|sum| Value::Utf8(sum.to_string()))
         );
     }
 
@@ -4351,6 +4353,7 @@ mod tests {
             SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
 
         let u = Value::UInt64;
+        let d = |sum: u64| Value::Utf8(sum.to_string());
         for (sql, expected) in [
             (
                 "SELECT LAG(id) OVER (ORDER BY id) FROM events",
@@ -4388,12 +4391,12 @@ mod tests {
             (
                 "SELECT SUM(id) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING \
                  AND CURRENT ROW) FROM events",
-                vec![u(1), u(3), u(6), u(10), u(15)],
+                vec![d(1), d(3), d(6), d(10), d(15)],
             ),
             (
                 "SELECT SUM(id) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING \
                  AND UNBOUNDED FOLLOWING) FROM events",
-                vec![u(15), u(15), u(15), u(15), u(15)],
+                vec![d(15), d(15), d(15), d(15), d(15)],
             ),
         ] {
             assert_eq!(
@@ -5716,13 +5719,7 @@ mod tests {
         let totals = rows.iter().map(|row| row[1].clone()).collect::<Vec<_>>();
         assert_eq!(
             totals,
-            vec![
-                Value::UInt64(3),
-                Value::UInt64(3),
-                Value::UInt64(12),
-                Value::UInt64(12),
-                Value::UInt64(12),
-            ]
+            ["3", "3", "12", "12", "12"].map(|sum| Value::Utf8(sum.to_owned()))
         );
         // Running frame with ORDER BY includes the current row's peers.
         let rows = execute_rows(
@@ -5734,13 +5731,7 @@ mod tests {
         let running = rows.iter().map(|row| row[1].clone()).collect::<Vec<_>>();
         assert_eq!(
             running,
-            vec![
-                Value::UInt64(3),
-                Value::UInt64(3),
-                Value::UInt64(15),
-                Value::UInt64(15),
-                Value::UInt64(15),
-            ]
+            ["3", "3", "15", "15", "15"].map(|sum| Value::Utf8(sum.to_owned()))
         );
         // COUNT(*) over a partition counts its rows.
         let rows = execute_rows(
@@ -5792,13 +5783,13 @@ mod tests {
             vec![
                 vec![
                     Value::Utf8("a".to_owned()),
-                    Value::UInt64(3),
+                    Value::Utf8("3".to_owned()),
                     Value::Utf8("20.0000".to_owned()),
                     Value::UInt64(2),
                 ],
                 vec![
                     Value::Utf8("b".to_owned()),
-                    Value::UInt64(12),
+                    Value::Utf8("12".to_owned()),
                     Value::Utf8("80.0000".to_owned()),
                     Value::UInt64(1),
                 ],
@@ -6135,7 +6126,11 @@ mod tests {
             let id = offset as u64 + 1;
             assert_eq!(row[0], Value::UInt64(id), "group key");
             assert_eq!(row[1], Value::UInt64(1), "count");
-            assert_eq!(row[2], Value::UInt64(id), "integer sums stay exact");
+            assert_eq!(
+                row[2],
+                Value::Utf8(id.to_string()),
+                "integer sums stay exact"
+            );
             assert_eq!(row[3], Value::UInt64(id), "min stays exact");
             assert_eq!(row[4], Value::UInt64(id), "max stays exact");
         }
@@ -6217,11 +6212,8 @@ mod tests {
             let bucket = i64::try_from(offset).expect("bucket");
             assert_eq!(row[0], Value::Int64(bucket), "group key");
             assert_eq!(row[1], Value::UInt64(300), "count");
-            assert_eq!(
-                row[2],
-                Value::Int64(bucket * 300),
-                "integer sums stay exact"
-            );
+            let bucket_sum = Value::Utf8((bucket * 300).to_string());
+            assert_eq!(row[2], bucket_sum, "integer sums stay exact");
             // Bucket b holds ids {b, 1000+b, ..., 299000+b}, except bucket 0
             // whose members start at 1000 because ids begin at 1.
             let id_sum = if bucket == 0 {
@@ -6229,7 +6221,8 @@ mod tests {
             } else {
                 44_850_000 + 300 * u64::try_from(bucket).expect("bucket")
             };
-            assert_eq!(row[3], Value::UInt64(id_sum), "id sums stay exact");
+            let id_sum = Value::Utf8(id_sum.to_string());
+            assert_eq!(row[3], id_sum, "id sums stay exact");
         }
     }
 
@@ -6305,7 +6298,7 @@ mod tests {
         let expect_settled = |row: &[Value]| {
             assert_eq!(row[0], Value::UInt64(1000), "COUNT(id)");
             assert_eq!(row[1], Value::UInt64(750), "COUNT(amount)");
-            assert_eq!(row[2], Value::Int64(2000), "SUM(amount)");
+            assert_eq!(row[2], Value::Utf8("2000".to_owned()), "SUM(amount)");
             assert_eq!(row[3], Value::Int64(2), "MIN(amount)");
             assert_eq!(row[4], Value::Int64(4), "MAX(amount)");
             assert_eq!(row[5], Value::Utf8("1000.00".to_owned()), "SUM(price)");
@@ -6347,7 +6340,7 @@ mod tests {
         );
         assert_eq!(during_ingest[0], Value::UInt64(1001));
         assert_eq!(during_ingest[1], Value::UInt64(751));
-        assert_eq!(during_ingest[2], Value::Int64(2010));
+        assert_eq!(during_ingest[2], Value::Utf8("2010".to_owned()));
         assert_eq!(during_ingest[4], Value::Int64(10), "MAX sees the new row");
         assert_eq!(during_ingest[5], Value::Utf8("1002.00".to_owned()));
         assert_eq!(during_ingest[7], Value::Utf8("2.00".to_owned()));
@@ -6364,7 +6357,11 @@ mod tests {
             "overlapping memtable keys must decline the fold"
         );
         assert_eq!(overlaid[0], Value::UInt64(1001), "count unchanged");
-        assert_eq!(overlaid[2], Value::Int64(2108), "updated amount replaces 2");
+        assert_eq!(
+            overlaid[2],
+            Value::Utf8("2108".to_owned()),
+            "updated amount replaces 2"
+        );
         assert_eq!(overlaid[4], Value::Int64(100));
         assert_eq!(overlaid[7], Value::Utf8("9.99".to_owned()));
     }
