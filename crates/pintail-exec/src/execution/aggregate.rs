@@ -5602,6 +5602,20 @@ fn build_fused_inner_join_aggregate(
         .checked_div(per_morsel_upper)
         .unwrap_or(usize::MAX)
         .clamp(1, default_morsel_limit());
+    // The groups are the build side's, so their count is known before a probe
+    // row is read. When one morsel's copy of them outgrows a quarter of the
+    // ceiling, no round fits: the fold asked for a copy per batch and failed
+    // with a memory error under ceilings several times what the general
+    // operator answers the query in. Nothing has been pulled from the probe
+    // side yet, so the built state goes back to that operator instead.
+    if per_morsel_upper > memory.limit() / 4 {
+        memory.release(unique_reserved);
+        note.set(
+            "not fused into the aggregate: a morsel's groups outgrow a quarter of the ceiling",
+        );
+        *state = Some(Box::new(join));
+        return Ok(None);
+    }
     loop {
         let gather_clock = std::time::Instant::now();
         let round = aggregate_round_batches();
@@ -5615,8 +5629,11 @@ fn build_fused_inner_join_aggregate(
             memory.reserve(bytes)?;
             batch_reserved = batch_reserved.saturating_add(bytes);
             batches.push(batch);
-            // The round leaves half the ceiling for the groups it builds.
-            if memory.used() > memory.limit() / 2 {
+            // The round leaves half the ceiling for the groups it builds,
+            // and holds no more batches than the morsels it may open: a
+            // batch is at least one morsel, each with its own copy of the
+            // groups.
+            if memory.used() > memory.limit() / 2 || batches.len() >= morsel_limit {
                 break;
             }
         }

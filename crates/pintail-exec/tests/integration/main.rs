@@ -47,6 +47,7 @@ mod in_list_segment_prune;
 mod integer_cast_saturation;
 mod join_aggregate_bench;
 mod join_condition_subquery;
+mod join_fold_memory;
 mod join_frees_its_build;
 mod join_group_fold_oracle_shape;
 mod join_key_value_cost;
