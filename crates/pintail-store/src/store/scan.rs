@@ -9,9 +9,10 @@ use std::{
     },
 };
 
-use pintail_types::{KeyPart, PrimaryKey, StoredRow};
+use pintail_types::{PrimaryKey, StoredRow};
 use rayon::prelude::*;
 
+use super::layer::{Cell, LayerRows, LiveCells, SpanKey, SpanRow, push_key_parts};
 use super::{TableSnapshot, projected_scan_pool};
 use crate::{StoreError, segment, segment::ColumnDecode};
 
@@ -257,107 +258,6 @@ pub(super) enum ScanPart {
     },
 }
 
-/// The rows an overlay reads, one per key in key order: a map resolved to
-/// one row per key, and optionally the memtable over it, read together with
-/// the greater version of a key winning.
-///
-/// A layered cluster's newer segments resolve to a map that stays true for
-/// as long as those files exist, so it is kept between scans; the memtable
-/// changes with every write, and copying its rows into that map made every
-/// scan open pay for both.
-#[derive(Clone)]
-pub(super) struct LayerRows {
-    resolved: Arc<BTreeMap<PrimaryKey, StoredRow>>,
-    over: Option<Arc<BTreeMap<PrimaryKey, StoredRow>>>,
-}
-
-impl LayerRows {
-    /// One map of rows already resolved to one per key.
-    pub(super) fn single(resolved: Arc<BTreeMap<PrimaryKey, StoredRow>>) -> Self {
-        Self {
-            resolved,
-            over: None,
-        }
-    }
-
-    /// `resolved` under the rows of `over`.
-    pub(super) fn under(
-        resolved: Arc<BTreeMap<PrimaryKey, StoredRow>>,
-        over: Arc<BTreeMap<PrimaryKey, StoredRow>>,
-    ) -> Self {
-        if resolved.is_empty() {
-            return Self::single(over);
-        }
-        Self {
-            resolved,
-            over: (!over.is_empty()).then_some(over),
-        }
-    }
-
-    /// Whether `other` reads the very same maps.
-    fn same_source(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.resolved, &other.resolved)
-            && match (&self.over, &other.over) {
-                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-                (None, None) => true,
-                _ => false,
-            }
-    }
-
-    /// The rows of a searchable key range (see
-    /// [`bound_range_is_searchable`]), in key order.
-    pub(super) fn range(
-        &self,
-        bounds: (std::ops::Bound<PrimaryKey>, std::ops::Bound<PrimaryKey>),
-    ) -> LayerRange<'_> {
-        LayerRange {
-            over: self
-                .over
-                .as_ref()
-                .map(|over| over.range(bounds.clone()).peekable()),
-            resolved: self.resolved.range(bounds).peekable(),
-        }
-    }
-}
-
-type MapRange<'a> =
-    std::iter::Peekable<std::collections::btree_map::Range<'a, PrimaryKey, StoredRow>>;
-
-/// [`LayerRows::range`]'s iterator.
-pub(super) struct LayerRange<'a> {
-    resolved: MapRange<'a>,
-    over: Option<MapRange<'a>>,
-}
-
-impl<'a> Iterator for LayerRange<'a> {
-    type Item = (&'a PrimaryKey, &'a StoredRow);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let Some(over) = self.over.as_mut() else {
-            return self.resolved.next();
-        };
-        match (self.resolved.peek(), over.peek()) {
-            (Some((under_key, _)), Some((over_key, _))) => match under_key.cmp(over_key) {
-                std::cmp::Ordering::Less => self.resolved.next(),
-                std::cmp::Ordering::Greater => over.next(),
-                std::cmp::Ordering::Equal => {
-                    let under = self.resolved.next()?;
-                    let above = over.next()?;
-                    // The greater version wins, and the resolved row on a
-                    // tie, as when the two were resolved into one map.
-                    Some(if above.1.version() > under.1.version() {
-                        above
-                    } else {
-                        under
-                    })
-                }
-            },
-            (Some(_), None) => self.resolved.next(),
-            (None, _) => over.next(),
-        }
-    }
-}
-
 /// The overlay part in progress: the segment's block boundaries, so a slice
 /// knows the key span it covers and which memtable rows belong to it.
 ///
@@ -402,16 +302,28 @@ impl DecodedColumn {
     /// (ascending, indexing the output). Integer columns stay packed when
     /// every inserted value is of their type or null; any other column, or
     /// a mismatched value, is rebuilt as plain values.
-    #[allow(clippy::too_many_lines)]
+    #[cfg(test)]
     pub(super) fn interleave(self, inserts: &[(usize, &pintail_types::Value)]) -> Self {
+        let cells = inserts
+            .iter()
+            .map(|(at, value)| (*at, Cell::Value(value)))
+            .collect::<Vec<_>>();
+        self.interleave_cells(&cells)
+    }
+
+    /// [`Self::interleave`] for cells, which a packed column takes as they
+    /// are when they come packed from a column of its own shape.
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn interleave_cells(self, inserts: &[(usize, Cell<'_>)]) -> Self {
         if inserts.is_empty() {
             return self;
         }
         match self {
             Self::Int64 { values, validity } => {
-                match typed_inserts(inserts, |value| match value {
-                    pintail_types::Value::Int64(value) => Some(Some(*value)),
-                    pintail_types::Value::Null => Some(None),
+                match typed_inserts(inserts, |cell| match cell {
+                    Cell::Value(pintail_types::Value::Int64(value)) => Some(Some(*value)),
+                    Cell::Int(value) => Some(Some(value)),
+                    Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
                 }) {
                     Some(typed) => {
@@ -425,9 +337,10 @@ impl DecodedColumn {
                 }
             }
             Self::UInt64 { values, validity } => {
-                match typed_inserts(inserts, |value| match value {
-                    pintail_types::Value::UInt64(value) => Some(Some(*value)),
-                    pintail_types::Value::Null => Some(None),
+                match typed_inserts(inserts, |cell| match cell {
+                    Cell::Value(pintail_types::Value::UInt64(value)) => Some(Some(*value)),
+                    Cell::UInt(value) => Some(Some(value)),
+                    Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
                 }) {
                     Some(typed) => {
@@ -441,9 +354,12 @@ impl DecodedColumn {
                 }
             }
             Self::Float64 { bits, validity } => {
-                match typed_inserts(inserts, |value| match value {
-                    pintail_types::Value::Float64(value) => Some(Some(value.get().to_bits())),
-                    pintail_types::Value::Null => Some(None),
+                match typed_inserts(inserts, |cell| match cell {
+                    Cell::Value(pintail_types::Value::Float64(value)) => {
+                        Some(Some(value.get().to_bits()))
+                    }
+                    Cell::Bits(bits) => Some(Some(bits)),
+                    Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
                 }) {
                     Some(typed) => {
@@ -463,9 +379,18 @@ impl DecodedColumn {
                 values,
                 validity,
             } => {
-                match typed_inserts(inserts, |value| match value {
-                    pintail_types::Value::Utf8(text) => units.parse_exact(text).map(Some),
-                    pintail_types::Value::Null => Some(None),
+                match typed_inserts(inserts, |cell| match cell {
+                    Cell::Value(pintail_types::Value::Utf8(text)) => {
+                        units.parse_exact(text).map(Some)
+                    }
+                    // Units read from a column of the same type are the
+                    // units this one holds.
+                    Cell::Units(theirs, value) if theirs == units => Some(Some(value)),
+                    Cell::Text(bytes) => std::str::from_utf8(bytes)
+                        .ok()
+                        .and_then(|text| units.parse_exact(text))
+                        .map(Some),
+                    Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
                 }) {
                     Some(typed) => {
@@ -579,12 +504,13 @@ fn empty_packed_column(data_type: pintail_types::DataType) -> DecodedColumn {
 type Placed<T> = Vec<(usize, Option<T>)>;
 
 /// Text inserts as bytes (`None` for null), or `None` when one is not text.
-fn text_inserts<'a>(inserts: &[(usize, &'a pintail_types::Value)]) -> Option<Placed<&'a [u8]>> {
+fn text_inserts<'a>(inserts: &[(usize, Cell<'a>)]) -> Option<Placed<&'a [u8]>> {
     inserts
         .iter()
-        .map(|(at, value)| match value {
-            pintail_types::Value::Utf8(text) => Some((*at, Some(text.as_bytes()))),
-            pintail_types::Value::Null => Some((*at, None)),
+        .map(|(at, cell)| match *cell {
+            Cell::Value(pintail_types::Value::Utf8(text)) => Some((*at, Some(text.as_bytes()))),
+            Cell::Text(bytes) => Some((*at, Some(bytes))),
+            Cell::Value(pintail_types::Value::Null) | Cell::Null => Some((*at, None)),
             _ => None,
         })
         .collect()
@@ -673,12 +599,12 @@ fn interleave_text(
 /// The inserts as typed values (`None` for null), or `None` when one does
 /// not fit the column's type.
 fn typed_inserts<T>(
-    inserts: &[(usize, &pintail_types::Value)],
-    convert: impl Fn(&pintail_types::Value) -> Option<Option<T>>,
+    inserts: &[(usize, Cell<'_>)],
+    convert: impl Fn(Cell<'_>) -> Option<Option<T>>,
 ) -> Option<Vec<(usize, Option<T>)>> {
     inserts
         .iter()
-        .map(|(at, value)| convert(value).map(|value| (*at, value)))
+        .map(|(at, cell)| convert(*cell).map(|value| (*at, value)))
         .collect()
 }
 
@@ -725,7 +651,7 @@ fn interleave_typed<T: Copy + Default>(
 /// Plain values with `inserts` placed at their final positions.
 fn interleave_values(
     values: Vec<pintail_types::Value>,
-    inserts: &[(usize, &pintail_types::Value)],
+    inserts: &[(usize, Cell<'_>)],
 ) -> Vec<pintail_types::Value> {
     let total = values.len() + inserts.len();
     let mut out = Vec::with_capacity(total);
@@ -734,12 +660,12 @@ fn interleave_values(
     while out.len() < total {
         let at = out.len();
         if next_insert < inserts.len() && inserts[next_insert].0 == at {
-            out.push(inserts[next_insert].1.clone());
+            out.push(inserts[next_insert].1.to_value());
             next_insert += 1;
         } else if let Some(value) = existing.next() {
             out.push(value);
         } else {
-            out.push(inserts[next_insert].1.clone());
+            out.push(inserts[next_insert].1.to_value());
             next_insert += 1;
         }
     }
@@ -755,7 +681,7 @@ fn interleave_values(
 pub(super) struct SpanRows<'a> {
     parts: usize,
     keys: Vec<i128>,
-    rows: Vec<Option<&'a StoredRow>>,
+    rows: Vec<SpanRow<'a>>,
 }
 
 impl<'a> SpanRows<'a> {
@@ -772,7 +698,7 @@ impl<'a> SpanRows<'a> {
         let mut span = Self::new(rows.first().map_or(1, |(key, _)| key.len()));
         for (key, row) in rows {
             span.keys.extend_from_slice(key);
-            span.rows.push(*row);
+            span.rows.push(row.map_or(SpanRow::Mask, SpanRow::Row));
         }
         span
     }
@@ -790,11 +716,15 @@ impl<'a> SpanRows<'a> {
     }
 
     fn is_live(&self, index: usize) -> bool {
-        self.rows[index].is_some()
+        !matches!(self.rows[index], SpanRow::Mask)
     }
 
-    fn live(&self) -> Vec<&'a StoredRow> {
-        self.rows.iter().filter_map(|row| *row).collect()
+    fn live(&self) -> Vec<SpanRow<'a>> {
+        self.rows
+            .iter()
+            .filter(|row| !matches!(row, SpanRow::Mask))
+            .copied()
+            .collect()
     }
 }
 
@@ -1080,10 +1010,10 @@ fn patch_typed<T: Copy + Default>(
 /// Plain values with `patches` written over the rows they name.
 fn patch_values(
     mut values: Vec<pintail_types::Value>,
-    patches: &[(usize, &pintail_types::Value)],
+    patches: &[(usize, Cell<'_>)],
 ) -> Vec<pintail_types::Value> {
-    for (at, value) in patches {
-        values[*at] = (*value).clone();
+    for (at, cell) in patches {
+        values[*at] = cell.to_value();
     }
     values
 }
@@ -1130,16 +1060,27 @@ impl DecodedColumn {
     /// are patched where they stand when every new value is of their type
     /// or null; a text arena is rebuilt; any other column, or a mismatched
     /// value, becomes plain values.
-    #[allow(clippy::too_many_lines)]
+    #[cfg(test)]
     pub(super) fn replace_rows(self, patches: &[(usize, &pintail_types::Value)]) -> Self {
+        let cells = patches
+            .iter()
+            .map(|(at, value)| (*at, Cell::Value(value)))
+            .collect::<Vec<_>>();
+        self.replace_cells(&cells)
+    }
+
+    /// [`Self::replace_rows`] for cells.
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn replace_cells(self, patches: &[(usize, Cell<'_>)]) -> Self {
         if patches.is_empty() {
             return self;
         }
         match self {
             Self::Int64 { values, validity } => {
-                match typed_inserts(patches, |value| match value {
-                    pintail_types::Value::Int64(value) => Some(Some(*value)),
-                    pintail_types::Value::Null => Some(None),
+                match typed_inserts(patches, |cell| match cell {
+                    Cell::Value(pintail_types::Value::Int64(value)) => Some(Some(*value)),
+                    Cell::Int(value) => Some(Some(value)),
+                    Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
                 }) {
                     Some(typed) => {
@@ -1153,9 +1094,10 @@ impl DecodedColumn {
                 }
             }
             Self::UInt64 { values, validity } => {
-                match typed_inserts(patches, |value| match value {
-                    pintail_types::Value::UInt64(value) => Some(Some(*value)),
-                    pintail_types::Value::Null => Some(None),
+                match typed_inserts(patches, |cell| match cell {
+                    Cell::Value(pintail_types::Value::UInt64(value)) => Some(Some(*value)),
+                    Cell::UInt(value) => Some(Some(value)),
+                    Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
                 }) {
                     Some(typed) => {
@@ -1169,9 +1111,12 @@ impl DecodedColumn {
                 }
             }
             Self::Float64 { bits, validity } => {
-                match typed_inserts(patches, |value| match value {
-                    pintail_types::Value::Float64(value) => Some(Some(value.get().to_bits())),
-                    pintail_types::Value::Null => Some(None),
+                match typed_inserts(patches, |cell| match cell {
+                    Cell::Value(pintail_types::Value::Float64(value)) => {
+                        Some(Some(value.get().to_bits()))
+                    }
+                    Cell::Bits(bits) => Some(Some(bits)),
+                    Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
                 }) {
                     Some(typed) => {
@@ -1189,9 +1134,18 @@ impl DecodedColumn {
                 values,
                 validity,
             } => {
-                match typed_inserts(patches, |value| match value {
-                    pintail_types::Value::Utf8(text) => units.parse_exact(text).map(Some),
-                    pintail_types::Value::Null => Some(None),
+                match typed_inserts(patches, |cell| match cell {
+                    Cell::Value(pintail_types::Value::Utf8(text)) => {
+                        units.parse_exact(text).map(Some)
+                    }
+                    // Units read from a column of the same type are the
+                    // units this one holds.
+                    Cell::Units(theirs, value) if theirs == units => Some(Some(value)),
+                    Cell::Text(bytes) => std::str::from_utf8(bytes)
+                        .ok()
+                        .and_then(|text| units.parse_exact(text))
+                        .map(Some),
+                    Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
                 }) {
                     Some(typed) => {
@@ -2307,7 +2261,7 @@ impl ProjectedScanStream {
                 bases,
                 rows,
             } => {
-                let expanded = self.expand_layered(segments, lo, hi, bases, rows);
+                let expanded = self.expand_layered(segments, lo, hi, bases, rows)?;
                 for part in expanded.into_iter().rev() {
                     self.parts.push_front(part);
                 }
@@ -2445,40 +2399,52 @@ impl ProjectedScanStream {
         lo: std::ops::Bound<PrimaryKey>,
         hi: std::ops::Bound<PrimaryKey>,
         bases: Vec<segment::SegmentMeta>,
-        rows: LayerRows,
-    ) -> Vec<ScanPart> {
-        let layerable = self.overlay_key.is_some()
+        mut rows: LayerRows,
+    ) -> Result<Vec<ScanPart>, StoreError> {
+        let keyed = self.overlay_key.is_some();
+        let sparse = keyed
             && bases.iter().all(|base| {
                 segment::read_sparse_index(&self.snapshot.directory, base)
                     .is_ok_and(|sparse| !sparse.is_empty())
             });
-        if !layerable {
+        // The newer segments' keys, read once for the manifest that names
+        // them; their values stay in the segments until a slice asks.
+        let indexed = sparse
+            && rows.resolve(
+                &self.snapshot.manifest.layer_index,
+                &self.snapshot.directory,
+                &self.snapshot.schema,
+            )?;
+        if !indexed {
             pintail_log::log_debug!(
                 "store scan merges a layered cluster row by row: {}",
-                if self.overlay_key.is_none() {
+                if !keyed {
                     "the scan names no integer key to mask by"
-                } else {
+                } else if !sparse {
                     "a base has no sparse index"
+                } else {
+                    "its newer segments' keys cannot be indexed"
                 }
             );
-            return self
+            return Ok(self
                 .snapshot
                 .refine_merge_parts(
                     &self.start,
                     &self.end,
                     VecDeque::from([ScanPart::Merge { segments, lo, hi }]),
                 )
-                .into();
+                .into());
         }
-        let has_rows = |lo: &std::ops::Bound<PrimaryKey>, hi: &std::ops::Bound<PrimaryKey>| {
-            bound_range_is_searchable(lo, hi)
-                && rows.range((lo.clone(), hi.clone())).next().is_some()
+        let has_rows = |lo: &std::ops::Bound<PrimaryKey>,
+                        hi: &std::ops::Bound<PrimaryKey>|
+         -> Result<bool, StoreError> {
+            Ok(bound_range_is_searchable(lo, hi) && rows.range(lo, hi)?.next()?.is_some())
         };
         let mut expanded = Vec::with_capacity(bases.len() * 2 + 1);
         let mut cursor = lo;
         for base in bases {
             let gap_hi = std::ops::Bound::Excluded(base.min_key.clone());
-            if has_rows(&cursor, &gap_hi) {
+            if has_rows(&cursor, &gap_hi)? {
                 expanded.push(ScanPart::MemtableOnly {
                     lo: cursor,
                     hi: gap_hi,
@@ -2491,14 +2457,14 @@ impl ProjectedScanStream {
                 rows: Some(rows.clone()),
             });
         }
-        if has_rows(&cursor, &hi) {
+        if has_rows(&cursor, &hi)? {
             expanded.push(ScanPart::MemtableOnly {
                 lo: cursor,
                 hi,
                 rows: Some(rows),
             });
         }
-        expanded
+        Ok(expanded)
     }
 
     /// Produces the next chunk of memtable-resident rows for a gap part.
@@ -2576,17 +2542,25 @@ impl ProjectedScanStream {
         // path, for however many rows were inserted past the segments.
         let rows_source = self.overlay_rows.clone();
         let wanted = chunk_rows.saturating_mul(max_chunks);
-        let mut live: Vec<&StoredRow> = Vec::new();
+        let mut live: Vec<SpanRow<'_>> = Vec::new();
         let mut last_key = None;
         let mut admission = self.row_admission();
-        for (key, row) in rows_source.range((lo.clone(), hi.clone())) {
+        let mut cursor = rows_source.range(&lo, &hi)?;
+        while let Some((key, row)) = cursor.next()? {
             last_key = Some(key);
-            if row.is_deleted()
-                || admission
-                    .as_mut()
-                    .is_some_and(|admission| !admission.admits(row))
-            {
-                continue;
+            match row {
+                SpanRow::Mask => continue,
+                SpanRow::Row(stored) => {
+                    if admission
+                        .as_mut()
+                        .is_some_and(|admission| !admission.admits(stored))
+                    {
+                        continue;
+                    }
+                }
+                // A layer row the index lookup would reject is read with
+                // the rest and left to the filter above.
+                SpanRow::Layer { .. } => {}
             }
             live.push(row);
             if live.len() >= wanted {
@@ -2597,7 +2571,11 @@ impl ProjectedScanStream {
         // A walk that ran out of rows drained the part, tombstones and all.
         self.memtable_cursor = match last_key {
             Some(key) if live.len() >= wanted => {
-                Some((std::ops::Bound::Excluded(key.clone()), hi.clone()))
+                let key = match key {
+                    SpanKey::Memtable(key) => key.clone(),
+                    SpanKey::Index(entry) => rows_source.index_key(entry)?,
+                };
+                Some((std::ops::Bound::Excluded(key), hi.clone()))
             }
             _ => None,
         };
@@ -2605,17 +2583,24 @@ impl ProjectedScanStream {
             return Ok(Vec::new());
         }
         let schema = &self.snapshot.schema;
-        let build = |rows: &[&StoredRow]| -> Result<ProjectedColumnChunk, StoreError> {
+        let build = |rows: &[SpanRow<'_>]| -> Result<ProjectedColumnChunk, StoreError> {
+            let cells = LiveCells::read(
+                &rows_source,
+                &self.snapshot.directory,
+                schema,
+                rows,
+                projection.clone(),
+                chunk_limit,
+            )?;
             let columns = projection
                 .iter()
-                .map(|position| {
-                    let inserts = rows
-                        .iter()
-                        .enumerate()
-                        .map(|(at, row)| (at, &row.values()[*position]))
+                .enumerate()
+                .map(|(column, position)| {
+                    let inserts = (0..cells.len())
+                        .map(|at| (at, cells.cell(at, column)))
                         .collect::<Vec<_>>();
                     empty_packed_column(schema.columns()[*position].data_type())
-                        .interleave(&inserts)
+                        .interleave_cells(&inserts)
                 })
                 .collect::<Vec<_>>();
             let retained_bytes = size_of::<ProjectedColumnChunk>()
@@ -2993,14 +2978,14 @@ impl ProjectedScanStream {
                 .map(|chunk| vec![chunk]);
         };
         let mut memtable = self.overlay_span_rows(slice, key_ids.len())?;
-        self.mask_unwanted_live_rows(&mut memtable);
         if memtable.is_empty() {
             return self
                 .decode_slice_plain(slice, memory_limit, prewhere)
                 .map(|chunk| vec![chunk]);
         }
+        self.mask_unwanted_live_rows(&mut memtable, memory_limit)?;
         if let Some((predicate_ids, select)) = prewhere.filter(|(ids, _)| !ids.is_empty()) {
-            self.mask_unselected_live_rows(&mut memtable, predicate_ids, select)?;
+            self.mask_unselected_live_rows(&mut memtable, predicate_ids, select, memory_limit)?;
         }
         let live = memtable.live();
         // The overlay's own working set comes out of the slice's allowance
@@ -3019,9 +3004,9 @@ impl ProjectedScanStream {
                 key_ids
                     .len()
                     .saturating_mul(size_of::<i128>())
-                    .saturating_add(size_of::<Option<&StoredRow>>()),
+                    .saturating_add(size_of::<SpanRow<'_>>()),
             )
-            .saturating_add(live.len().saturating_mul(size_of::<&StoredRow>()))
+            .saturating_add(live.len().saturating_mul(size_of::<SpanRow<'_>>()))
             .saturating_add(
                 slice_rows.saturating_mul(size_of::<usize>() + size_of::<std::ops::Range<usize>>()),
             );
@@ -3096,24 +3081,25 @@ impl ProjectedScanStream {
         let span = self.overlay_slice_span(slice);
         let mut rows = SpanRows::new(key_parts);
         if bound_range_is_searchable(&span.0, &span.1) {
-            for (key, row) in self.overlay_rows.range(span) {
-                if key.parts().len() != key_parts {
-                    return Err(StoreError::FormatLimit(
-                        "the memtable overlay's key has a different number of parts".into(),
-                    ));
-                }
-                for part in key.parts() {
-                    rows.keys.push(match part {
-                        KeyPart::Int64(value) => i128::from(*value),
-                        KeyPart::UInt64(value) => i128::from(*value),
-                        _ => {
+            let mut cursor = self.overlay_rows.range(&span.0, &span.1)?;
+            while let Some((key, row)) = cursor.next()? {
+                let before = rows.keys.len();
+                match key {
+                    SpanKey::Memtable(key) => {
+                        if !push_key_parts(key, &mut rows.keys) {
                             return Err(StoreError::FormatLimit(
                                 "the memtable overlay needs integer key parts".into(),
                             ));
                         }
-                    });
+                    }
+                    SpanKey::Index(entry) => rows.keys.extend_from_slice(cursor.index_key(entry)),
                 }
-                rows.rows.push((!row.is_deleted()).then_some(row));
+                if rows.keys.len() - before != key_parts {
+                    return Err(StoreError::FormatLimit(
+                        "the memtable overlay's key has a different number of parts".into(),
+                    ));
+                }
+                rows.rows.push(row);
             }
         }
         Ok(rows)
@@ -3125,11 +3111,12 @@ impl ProjectedScanStream {
     /// positions in the finished chunk, which stays in key order - a
     /// consumer that takes the first value it meets for a group (as the
     /// source does, in key order) must meet the same one.
+    #[allow(clippy::too_many_lines)]
     fn apply_overlay_edits(
         &self,
         segment_chunk: ProjectedColumnChunk,
         edits: &OverlayEdits,
-        live: &[&StoredRow],
+        live: &[SpanRow<'_>],
         decode_limit: usize,
     ) -> Result<ProjectedColumnChunk, StoreError> {
         let misplaced =
@@ -3182,24 +3169,36 @@ impl ProjectedScanStream {
             .iter()
             .filter(|placement| matches!(placement, Placement::Insert(_)))
             .count();
+        // A memtable row's values are its own; a layer row's are read from
+        // its segment here, for the projected columns alone, as packed as
+        // the chunk they are written into.
+        let cells = LiveCells::read(
+            &self.overlay_rows,
+            &self.snapshot.directory,
+            &self.snapshot.schema,
+            live,
+            projection,
+            decode_limit,
+        )?;
+        let layer_bytes = cells.retained_bytes();
         let columns = columns
             .into_iter()
-            .zip(&projection)
-            .map(|(column, position)| {
+            .enumerate()
+            .map(|(index, column)| {
                 let mut replaces = Vec::with_capacity(live.len() - inserted);
                 let mut inserts = Vec::with_capacity(inserted);
-                for (placement, row) in edits.placements.iter().zip(live) {
-                    let value = &row.values()[*position];
+                for (row, placement) in edits.placements.iter().enumerate() {
+                    let cell = cells.cell(row, index);
                     match placement {
-                        Placement::Replace(at) => replaces.push((*at, value)),
-                        Placement::Insert(at) => inserts.push((*at, value)),
+                        Placement::Replace(at) => replaces.push((*at, cell)),
+                        Placement::Insert(at) => inserts.push((*at, cell)),
                     }
                 }
-                let mut column = column.replace_rows(&replaces);
+                let mut column = column.replace_cells(&replaces);
                 if !edits.deletes.is_empty() {
                     compact_decoded_column(&mut column, &surviving, survivors);
                 }
-                column.interleave(&inserts)
+                column.interleave_cells(&inserts)
             })
             .collect::<Vec<_>>();
         let retained_bytes = size_of::<ProjectedColumnChunk>()
@@ -3209,10 +3208,12 @@ impl ProjectedScanStream {
                     .saturating_mul(size_of::<DecodedColumn>()),
             )
             .saturating_add(columns.iter().map(DecodedColumn::retained_bytes).sum());
-        if retained_bytes > decode_limit {
+        // The columns read from the layer were held beside the chunk while
+        // it was edited.
+        if retained_bytes.saturating_add(layer_bytes) > decode_limit {
             return Err(StoreError::MemoryLimitExceeded {
                 used: 0,
-                requested: retained_bytes,
+                requested: retained_bytes.saturating_add(layer_bytes),
                 limit: decode_limit,
             });
         }
@@ -3712,14 +3713,43 @@ impl ProjectedScanStream {
     /// Turns the overlay's live rows the side-index lookup rejects into
     /// masks: such a row still supersedes its segment row, it is only not
     /// interleaved.
-    fn mask_unwanted_live_rows<'a>(&'a self, rows: &mut SpanRows<'a>) {
-        if let Some(mut admission) = self.row_admission() {
-            for row in &mut rows.rows {
-                if row.is_some_and(|row| !admission.admits(row)) {
-                    *row = None;
-                }
+    fn mask_unwanted_live_rows<'a>(
+        &'a self,
+        rows: &mut SpanRows<'a>,
+        memory_limit: usize,
+    ) -> Result<(), StoreError> {
+        let Some(mut admission) = self.row_admission() else {
+            return Ok(());
+        };
+        // A layer row is judged by the one column the lookup reads.
+        let live = rows.live();
+        let cells = if live.iter().any(|row| matches!(row, SpanRow::Layer { .. })) {
+            Some(LiveCells::read(
+                &self.overlay_rows,
+                &self.snapshot.directory,
+                &self.snapshot.schema,
+                &live,
+                vec![admission.position()],
+                memory_limit,
+            )?)
+        } else {
+            None
+        };
+        let mut at = 0;
+        for row in &mut rows.rows {
+            let wanted = match *row {
+                SpanRow::Mask => continue,
+                SpanRow::Row(stored) => admission.admits(stored),
+                SpanRow::Layer { .. } => cells
+                    .as_ref()
+                    .is_none_or(|cells| admission.admits_value(&cells.cell(at, 0).to_value())),
+            };
+            at += 1;
+            if !wanted {
+                *row = SpanRow::Mask;
             }
         }
+        Ok(())
     }
 
     /// Turns the overlay's live rows the scan's own filter rejects into
@@ -3736,46 +3766,61 @@ impl ProjectedScanStream {
         rows: &mut SpanRows<'_>,
         predicate_ids: &[u32],
         select: PrewhereSelect<'_>,
+        memory_limit: usize,
     ) -> Result<(), StoreError> {
         let live = rows.live();
         if live.is_empty() {
             return Ok(());
         }
-        let columns = predicate_ids
+        let positions = predicate_ids
             .iter()
             .map(|id| {
-                let position = self
-                    .snapshot
+                self.snapshot
                     .schema
                     .columns()
                     .iter()
                     .position(|column| column.id() == *id)
                     .ok_or_else(|| {
                         StoreError::FormatLimit(format!("unknown projected column id {id}"))
-                    })?;
-                let inserts = live
-                    .iter()
-                    .enumerate()
-                    .map(|(at, row)| (at, &row.values()[position]))
-                    .collect::<Vec<_>>();
-                Ok(
-                    empty_packed_column(self.snapshot.schema.columns()[position].data_type())
-                        .interleave(&inserts),
-                )
+                    })
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
+        let cells = LiveCells::read(
+            &self.overlay_rows,
+            &self.snapshot.directory,
+            &self.snapshot.schema,
+            &live,
+            positions.clone(),
+            memory_limit,
+        )?;
+        let columns = positions
+            .iter()
+            .enumerate()
+            .map(|(column, position)| {
+                let inserts = (0..live.len())
+                    .map(|at| (at, cells.cell(at, column)))
+                    .collect::<Vec<_>>();
+                empty_packed_column(self.snapshot.schema.columns()[*position].data_type())
+                    .interleave_cells(&inserts)
+            })
+            .collect::<Vec<_>>();
         let Some(kept) = select(&columns, live.len()).map_err(StoreError::FormatLimit)? else {
             return Ok(());
         };
         let kept = kept.into_ranges(live.len()).ranges;
         check_selected_ranges(&kept, live.len())?;
         let mut kept = kept.into_iter().peekable();
-        for (index, row) in rows.rows.iter_mut().filter(|row| row.is_some()).enumerate() {
+        for (index, row) in rows
+            .rows
+            .iter_mut()
+            .filter(|row| !matches!(row, SpanRow::Mask))
+            .enumerate()
+        {
             while kept.peek().is_some_and(|range| range.end <= index) {
                 kept.next();
             }
             if kept.peek().is_none_or(|range| range.start > index) {
-                *row = None;
+                *row = SpanRow::Mask;
             }
         }
         Ok(())
@@ -5390,7 +5435,11 @@ mod overlay_primitive_tests {
     fn packed_columns_stay_packed_under_interleave() {
         let text = |value: &str| Value::Utf8(value.to_owned());
         let check = |column: DecodedColumn, inserts: &[(usize, &Value)], packed: bool| {
-            let expected = interleave_values(column.clone().into_values(), inserts);
+            let cells = inserts
+                .iter()
+                .map(|(at, value)| (*at, super::Cell::Value(value)))
+                .collect::<Vec<_>>();
+            let expected = interleave_values(column.clone().into_values(), &cells);
             let merged = column.interleave(inserts);
             assert_eq!(!matches!(merged, DecodedColumn::Values(_)), packed);
             assert_eq!(merged.into_values(), expected);

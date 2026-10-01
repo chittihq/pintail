@@ -1,10 +1,14 @@
 #[cfg(test)]
 mod lifecycle_tests;
+mod layer;
+#[cfg(test)]
+mod layer_tests;
 mod scan;
 pub(crate) mod side_index;
 mod snapshot;
 mod statistics;
 
+pub(crate) use layer::LayerIndexSlot;
 pub use scan::{
     ColumnValidity, DecodedColumn, PrewhereRanges, PrewhereSelect, ProjectedColumnChunk,
     ProjectedRow, ProjectedScan, ProjectedScanStream, ProjectedValueChunk, ScanStats, ValidityIter,
@@ -281,6 +285,7 @@ pub struct CompactionStatus {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StorageMetrics {
     memtable_bytes: usize,
+    layer_index_bytes: usize,
     segment_count: usize,
     compaction_debt_bytes: u64,
 }
@@ -290,6 +295,14 @@ impl StorageMetrics {
     #[must_use]
     pub fn memtable_bytes(self) -> usize {
         self.memtable_bytes
+    }
+
+    /// Returns the bytes of the key index scans keep for the newer segments
+    /// layered over this table's bases: resolved by the first scan to need
+    /// it, dropped with the manifest generation that names those segments.
+    #[must_use]
+    pub fn layer_index_bytes(self) -> usize {
+        self.layer_index_bytes
     }
 
     /// Returns live immutable segment count.
@@ -1276,6 +1289,7 @@ impl TableStore {
         let compaction = self.compaction_status()?;
         Ok(StorageMetrics {
             memtable_bytes: self.memtable.estimated_bytes(),
+            layer_index_bytes: self.manifest.layer_index.bytes(),
             segment_count: compaction.segment_count(),
             compaction_debt_bytes: compaction.debt_bytes(),
         })

@@ -920,7 +920,7 @@ impl TableSnapshot {
                 let lo = std::ops::Bound::Included(part_lo);
                 let hi = std::ops::Bound::Included(part_hi.clone());
                 let cluster = segments[index..next].to_vec();
-                parts.push_back(match self.layer_cluster(&cluster, &lo, &hi, start, end)? {
+                parts.push_back(match self.layer_cluster(&cluster, &lo, &hi, start, end) {
                     Some((bases, rows)) => ScanPart::Layered {
                         segments: cluster,
                         lo,
@@ -963,7 +963,7 @@ impl TableSnapshot {
             reported_pruned: false,
             parts,
             memtable_cursor: None,
-            overlay_rows: super::scan::LayerRows::single(self.memtable.clone()),
+            overlay_rows: super::layer::LayerRows::single(self.memtable.clone()),
             direct_range: None,
             direct_slice_rows: None,
             slices: std::collections::VecDeque::new(),
@@ -977,21 +977,29 @@ impl TableSnapshot {
         }))
     }
 
-    /// Splits a merge cluster into large base segments and the newer rows
-    /// over them, resolved to one per key, when that is sound and cheap
-    /// (see [`ScanPart::Layered`]); `None` keeps the row-wise merge.
+    /// Splits a merge cluster into large base segments and the newer
+    /// segments over them, when that is sound (see [`ScanPart::Layered`]);
+    /// `None` keeps the row-wise merge.
     ///
     /// Sound: every base has unique keys, no two bases overlap, each lies
-    /// wholly inside the scanned range, and every newer row - in the small
-    /// segments or the memtable - is at least as new as anything a base
-    /// holds, so the resolved row for a key always wins over the base's.
-    /// Cheap: the newer segments hold at most half of the base rows and at
-    /// most [`MAX_LAYER_ROWS`] rows, which are read once and kept for the
-    /// scans that follow while they fit the resolved-layer cache. (The
-    /// bound was a quarter while every open read them again; two flushes
-    /// over a table with three tenths of its rows changed crossed it and
-    /// fell to the row-wise merge.)
-    #[allow(clippy::type_complexity, clippy::too_many_lines)]
+    /// wholly inside the scanned range, and every row that can share a key
+    /// with a base - in a segment whose key span overlaps it, or in the
+    /// memtable - is at least as new as anything that base holds, so the
+    /// newest such row for a key always wins over the base's. A base is
+    /// judged against what overlaps it, not against the whole cluster: a
+    /// merge that folded the changes into the bases of one key range leaves
+    /// output newer than the bases of every other range, which it never
+    /// touches, and both are bases.
+    ///
+    /// However many rows the newer segments hold, up to what their key
+    /// index may hold (see [`layer_index_budget`]): they are read where
+    /// they are stored - their keys once per manifest, their values column
+    /// by column for the rows a slice needs - so what a scan pays grows
+    /// with the rows that changed and nothing is kept as rows. (A bound of
+    /// a million newer rows stood here while they were read into a map of
+    /// rows: a table of twenty million rows with a tenth of them changed
+    /// crossed it and fell to the row-wise merge, tens of seconds a query.)
+    #[allow(clippy::type_complexity)]
     fn layer_cluster(
         &self,
         cluster: &[segment::SegmentMeta],
@@ -999,46 +1007,54 @@ impl TableSnapshot {
         hi: &std::ops::Bound<PrimaryKey>,
         start: &PrimaryKey,
         end: &PrimaryKey,
-    ) -> Result<Option<(Vec<segment::SegmentMeta>, super::scan::LayerRows)>, StoreError> {
-        const MAX_LAYER_ROWS: u64 = 1 << 20;
-        // Bases are the oldest segments, newer ones everything after them in
-        // version order; of the split points that are sound, the one leaving
-        // the most rows in the bases wins.
+    ) -> Option<(Vec<segment::SegmentMeta>, super::layer::LayerRows)> {
         let mut by_age = cluster.iter().collect::<Vec<_>>();
         by_age.sort_by_key(|meta| (meta.min_version, meta.max_version));
-        let mut best: Option<(usize, u64)> = None;
-        let mut base_version = 0;
-        let mut base_rows = 0u64;
-        for split in 1..by_age.len() {
-            let base = by_age[split - 1];
-            let disjoint = by_age[..split - 1]
-                .iter()
-                .all(|other| base.max_key < other.min_key || base.min_key > other.max_key);
-            if !base.unique_keys || !disjoint || *start > base.min_key || base.max_key > *end {
-                break;
-            }
-            base_version = base_version.max(base.max_version);
-            base_rows += base.row_count;
-            let newer = &by_age[split..];
-            let newer_rows = newer.iter().map(|meta| meta.row_count).sum::<u64>();
-            let sound = newer.iter().all(|meta| meta.min_version >= base_version);
-            if sound
-                && newer_rows <= MAX_LAYER_ROWS
-                && newer_rows.saturating_mul(2) <= base_rows
-                && best.is_none_or(|(_, rows)| base_rows > rows)
+        let overlap = |left: &segment::SegmentMeta, right: &segment::SegmentMeta| {
+            left.min_key <= right.max_key && left.max_key >= right.min_key
+        };
+        // Oldest first, so of two segments of one version that overlap the
+        // first is the base and the other lies over it.
+        let mut bases: Vec<segment::SegmentMeta> = Vec::new();
+        let mut newer: Vec<segment::SegmentMeta> = Vec::new();
+        for (index, meta) in by_age.iter().enumerate() {
+            let under_everything = by_age.iter().enumerate().all(|(other_index, other)| {
+                other_index == index
+                    || !overlap(meta, other)
+                    || other.min_version >= meta.max_version
+            });
+            if meta.unique_keys
+                && *start <= meta.min_key
+                && meta.max_key <= *end
+                && under_everything
+                && bases.iter().all(|base| !overlap(base, meta))
             {
-                best = Some((split, base_rows));
+                bases.push((*meta).clone());
+            } else {
+                newer.push((*meta).clone());
             }
         }
-        let Some((split, _)) = best else {
+        // A segment left out of the bases must be at least as new as every
+        // base it overlaps; one that is not would lose to the base it is
+        // read over.
+        let sound = newer.iter().all(|meta| {
+            bases
+                .iter()
+                .all(|base| !overlap(base, meta) || meta.min_version >= base.max_version)
+        });
+        let newer_rows = newer.iter().map(|meta| meta.row_count).sum::<u64>();
+        if bases.is_empty() || !sound {
             log_unlayered_cluster(&by_age);
-            return Ok(None);
-        };
-        let mut bases = by_age[..split]
-            .iter()
-            .map(|meta| (*meta).clone())
-            .collect::<Vec<_>>();
-        let newer = &by_age[split..];
+            return None;
+        }
+        if newer_rows.saturating_mul(super::layer::LAYER_INDEX_ROW_BYTES)
+            > super::layer::layer_index_budget()
+        {
+            pintail_log::log_debug!(
+                "store scan merges a cluster row by row: the key index of its {newer_rows} newer rows would pass its budget"
+            );
+            return None;
+        }
         let base_version = bases.iter().map(|base| base.max_version).max().unwrap_or(0);
         // The memtable must not hold a row older than the bases; its own
         // bound says so without a walk of its rows.
@@ -1054,88 +1070,13 @@ impl TableSnapshot {
             pintail_log::log_debug!(
                 "store scan merges a cluster row by row: a memtable row is older than its bases"
             );
-            return Ok(None);
+            return None;
         }
         bases.sort_by(|left, right| left.min_key.cmp(&right.min_key));
-        // The newer segments' rows resolved to one per key are the same for
-        // every scan that covers those segments whole, for as long as the
-        // files exist: reading them row by row at each open cost a scan of
-        // a table with a tenth of its rows changed more than the scan.
-        let covers_newer = newer.iter().all(|meta| {
-            let above = match lo {
-                std::ops::Bound::Included(bound) => *bound <= meta.min_key,
-                std::ops::Bound::Excluded(bound) => *bound < meta.min_key,
-                std::ops::Bound::Unbounded => true,
-            };
-            let below = match hi {
-                std::ops::Bound::Included(bound) => *bound >= meta.max_key,
-                std::ops::Bound::Excluded(bound) => *bound > meta.max_key,
-                std::ops::Bound::Unbounded => true,
-            };
-            above && below
-        });
-        let cache_key = covers_newer.then(|| {
-            let mut files = newer
-                .iter()
-                .map(|meta| meta.file_name.clone())
-                .collect::<Vec<_>>();
-            files.sort();
-            (self.directory.clone(), files)
-        });
-        if let Some((directory, files)) = &cache_key
-            && let Some(resolved) = resolved_layer_cache().get(directory, files, &self.schema)
-        {
-            return Ok(Some((
-                bases,
-                super::scan::LayerRows::under(resolved, self.memtable.clone()),
-            )));
-        }
-        let mut rows: BTreeMap<PrimaryKey, StoredRow> = BTreeMap::new();
-        let mut keep = |row: StoredRow| match rows.entry(row.key().clone()) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(row);
-            }
-            std::collections::btree_map::Entry::Occupied(mut entry) => {
-                if row.version() > entry.get().version() {
-                    entry.insert(row);
-                }
-            }
-        };
-        let within = |key: &PrimaryKey| {
-            let above = match lo {
-                std::ops::Bound::Included(bound) => key >= bound,
-                std::ops::Bound::Excluded(bound) => key > bound,
-                std::ops::Bound::Unbounded => true,
-            };
-            let below = match hi {
-                std::ops::Bound::Included(bound) => key <= bound,
-                std::ops::Bound::Excluded(bound) => key < bound,
-                std::ops::Bound::Unbounded => true,
-            };
-            above && below
-        };
-        for meta in newer {
-            let mut stream = segment::SegmentRowStream::open(&self.directory, meta, &self.schema)?;
-            if let std::ops::Bound::Included(key) | std::ops::Bound::Excluded(key) = lo {
-                stream.skip_to_key(meta, key)?;
-            }
-            while let Some(row) = stream.next_row()? {
-                if within(row.key()) {
-                    keep(row);
-                } else if matches!(hi, std::ops::Bound::Included(bound) | std::ops::Bound::Excluded(bound) if row.key() > bound)
-                {
-                    break;
-                }
-            }
-        }
-        let resolved = Arc::new(rows);
-        if let Some((directory, files)) = cache_key {
-            resolved_layer_cache().put(directory, files, &self.schema, &resolved);
-        }
-        Ok(Some((
+        Some((
             bases,
-            super::scan::LayerRows::under(resolved, self.memtable.clone()),
-        )))
+            super::layer::LayerRows::layered(newer, self.memtable.clone()),
+        ))
     }
 
     /// Granule-level refinement of merge clusters (docs/decisions.md,
@@ -1518,90 +1459,6 @@ impl TableSnapshot {
 
 /// Says, at debug, why a merge cluster is read row by row: the shape of its
 /// segments, oldest first, is what decides whether it can be layered.
-/// Bytes of resolved layer rows kept between scans, across every table.
-const RESOLVED_LAYER_CACHE_BYTES: usize = 256 << 20;
-
-/// The rows of one set of segment files resolved to one per key, as read
-/// under one schema.
-struct ResolvedLayer {
-    directory: PathBuf,
-    files: Vec<String>,
-    schema: TableSchema,
-    rows: Arc<BTreeMap<PrimaryKey, StoredRow>>,
-    bytes: usize,
-}
-
-/// Resolved layers by the files they came from, least recently used first.
-/// A segment file is never rewritten, so an entry is true for as long as its
-/// files are named; one whose files are gone is simply never asked for again
-/// and leaves as newer entries arrive.
-#[derive(Default)]
-struct ResolvedLayerCache {
-    entries: std::sync::Mutex<std::collections::VecDeque<ResolvedLayer>>,
-}
-
-impl ResolvedLayerCache {
-    fn get(
-        &self,
-        directory: &Path,
-        files: &[String],
-        schema: &TableSchema,
-    ) -> Option<Arc<BTreeMap<PrimaryKey, StoredRow>>> {
-        let mut entries = self
-            .entries
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let index = entries.iter().position(|entry| {
-            entry.directory == directory && entry.files == files && entry.schema == *schema
-        })?;
-        let entry = entries.remove(index)?;
-        let rows = Arc::clone(&entry.rows);
-        entries.push_back(entry);
-        Some(rows)
-    }
-
-    fn put(
-        &self,
-        directory: PathBuf,
-        files: Vec<String>,
-        schema: &TableSchema,
-        rows: &Arc<BTreeMap<PrimaryKey, StoredRow>>,
-    ) {
-        let bytes = rows
-            .iter()
-            .map(|(key, row)| {
-                size_of::<(PrimaryKey, StoredRow)>()
-                    .saturating_add(key.heap_bytes())
-                    .saturating_add(row.estimated_bytes())
-            })
-            .sum::<usize>();
-        if bytes > RESOLVED_LAYER_CACHE_BYTES {
-            return;
-        }
-        let mut entries = self
-            .entries
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // The same files under an older schema, or another scan's copy.
-        entries.retain(|entry| !(entry.directory == directory && entry.files == files));
-        entries.push_back(ResolvedLayer {
-            directory,
-            files,
-            schema: schema.clone(),
-            rows: Arc::clone(rows),
-            bytes,
-        });
-        while entries.iter().map(|entry| entry.bytes).sum::<usize>() > RESOLVED_LAYER_CACHE_BYTES {
-            entries.pop_front();
-        }
-    }
-}
-
-fn resolved_layer_cache() -> &'static ResolvedLayerCache {
-    static CACHE: std::sync::OnceLock<ResolvedLayerCache> = std::sync::OnceLock::new();
-    CACHE.get_or_init(ResolvedLayerCache::default)
-}
-
 fn log_unlayered_cluster(by_age: &[&segment::SegmentMeta]) {
     if !pintail_log::enabled(pintail_log::DEBUG) {
         return;

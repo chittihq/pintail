@@ -35,6 +35,10 @@ pub(crate) struct Manifest {
     /// zero for replicated tables and older manifests).
     pub(crate) committed_version: u64,
     pub(crate) segments: Vec<SegmentMeta>,
+    /// The index of a layered cluster's newer segments its scans last
+    /// resolved; never written, and not carried to the manifest made from
+    /// this one.
+    pub(crate) layer_index: crate::store::LayerIndexSlot,
 }
 
 impl Manifest {
@@ -49,6 +53,7 @@ impl Manifest {
             epoch: 0,
             committed_version: 0,
             segments: Vec::new(),
+            layer_index: crate::store::LayerIndexSlot::default(),
         }
     }
 }
@@ -233,6 +238,7 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
         epoch,
         committed_version,
         segments,
+        layer_index: crate::store::LayerIndexSlot::default(),
     })
 }
 

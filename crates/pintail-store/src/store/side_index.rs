@@ -200,6 +200,16 @@ impl<'a> RowAdmission<'a> {
         }
     }
 
+    /// The schema position of the column the lookup reads.
+    pub(crate) const fn position(&self) -> usize {
+        self.position
+    }
+
+    /// Whether the scan can want a row holding `value` in that column.
+    pub(crate) fn admits_value(&self, value: &Value) -> bool {
+        self.lookup.admits(value)
+    }
+
     /// Whether the scan can want `row` (see [`IndexLookup::admits`]).
     pub(crate) fn admits(&mut self, row: &'a StoredRow) -> bool {
         let Some(value) = row.values().get(self.position) else {
