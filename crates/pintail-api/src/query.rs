@@ -309,23 +309,19 @@ pub(crate) async fn query(
     crate::databases::load_database(&state, &principal, &request.db)?;
     let session = QuerySession::of(&request)?;
     let response = execute_query(&state, &request.db, &request.sql, session).await?;
-    // The answer does not wait for its audit row. Writing the row opens
-    // the metadata store and commits to it, which was a millisecond or
-    // more between the last row and the response; the write now runs
-    // beside the response on a blocking thread. A failed write was
-    // already logged and dropped rather than failing the statement, and a
-    // process that dies in this window loses that one row and nothing
-    // else.
+    // The answer does not wait for its audit row: the row is queued for
+    // the audit writer, which commits it beside the response. A failed
+    // write is logged and dropped rather than failing the statement, and a
+    // process that dies with the row still queued loses that row and
+    // nothing else.
     let rows = response.stats.rows;
-    tokio::task::spawn_blocking(move || {
-        audit::record(
-            &state,
-            &principal,
-            "query.run",
-            Some(("database", &request.db)),
-            Some(serde_json::json!({"sql": request.sql, "rows": rows})),
-        );
-    });
+    audit::record_later(
+        &state,
+        &principal,
+        "query.run",
+        Some(("database", &request.db)),
+        Some(serde_json::json!({"sql": request.sql, "rows": rows})),
+    );
     Ok(Json(response))
 }
 

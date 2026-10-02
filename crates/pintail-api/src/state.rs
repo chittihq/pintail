@@ -197,6 +197,9 @@ struct ApiStateInner {
     /// repair that cannot succeed is retried on a gap rather than every
     /// cadence (`upstream::repair_catalog_drift`).
     catalog_repairs: Mutex<HashMap<String, std::time::Instant>>,
+    /// Audit events of the actions that arrive at the workload's rate,
+    /// waiting for the one thread that writes them (`audit::record_later`).
+    audit: crate::audit::Queue,
 }
 
 #[derive(Clone)]
@@ -282,6 +285,7 @@ impl ApiState {
         let replica_engine = ReplicaEngine::new(data_dir.clone(), metadata_path.clone());
         Ok(Self {
             inner: Some(Arc::new(ApiStateInner {
+                audit: crate::audit::Queue::new(metadata_path.clone()),
                 metadata_path,
                 data_dir,
                 jwt_secret: jwt_secret.into(),
@@ -357,6 +361,11 @@ impl ApiState {
             .as_ref()
             .map(|inner| inner.metadata_path.as_path())
             .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))
+    }
+
+    /// The queue of audit events waiting for their writer.
+    pub(crate) fn audit_queue(&self) -> Option<&crate::audit::Queue> {
+        self.inner.as_ref().map(|inner| &inner.audit)
     }
 
     /// The process-wide query engine. Cloning is cheap (an `Arc` clone of
