@@ -1089,8 +1089,8 @@ impl TableStore {
         let accepted_rows = rows.len();
         let visible_rows = rows
             .into_iter()
-            .filter(|row| self.memtable.apply(row))
-            .count();
+            .map(|row| usize::from(self.memtable.insert(row)))
+            .sum();
         self.last_sequence = sequence;
         let should_flush = self.memtable.estimated_bytes() >= self.options.memtable_bytes;
         if should_flush {
@@ -1651,30 +1651,48 @@ impl TableStore {
     ///
     /// Returns an error when segment encoding or durable publication fails.
     pub fn flush(&mut self) -> Result<FlushOutcome, StoreError> {
-        let rows = self
-            .memtable
-            .snapshot()
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        // The rows themselves when no scan is reading them, not a copy: the
+        // memtable is cleared once they are published, and gets them back if
+        // they are not.
+        let rows = self.memtable.take_rows();
         if rows.is_empty() {
             return Ok(FlushOutcome {
                 row_count: 0,
                 segment_path: None,
             });
         }
+        let _published = self.publication.publishing();
+        let segment_path = match self.publish_flushed(&rows) {
+            Ok(path) => path,
+            Err(error) => {
+                self.memtable.restore(rows);
+                return Err(error);
+            }
+        };
+        self.memtable.clear();
+        if self.truncate_wal_on_flush {
+            self.wal.reset()?;
+        }
+        crash_point("store.flush.after_wal_reset")?;
+        Ok(FlushOutcome {
+            row_count: rows.len(),
+            segment_path: Some(segment_path),
+        })
+    }
 
+    /// Writes the memtable's rows as a segment and swaps in the manifest
+    /// that names it.
+    fn publish_flushed(&mut self, rows: &[StoredRow]) -> Result<PathBuf, StoreError> {
         // The memtable is a map, so a flush provably holds one row per key.
         // `unique_keys` also promises the segment carries no deletes, because
         // the columnar direct path it unlocks applies no tombstone filter — so
         // a flush that carries even one tombstone stays off the direct path.
         let unique_keys = rows.iter().all(|row| !row.is_deleted());
-        let _published = self.publication.publishing();
         let segment = segment::write(
             &self.directory,
             self.manifest.next_segment_id,
             &self.schema,
-            &rows,
+            rows,
             self.options.block_rows,
             segment::Compression::AdaptiveLz4,
             unique_keys,
@@ -1706,15 +1724,7 @@ impl TableStore {
         crash_point("store.flush.after_manifest")?;
 
         self.manifest = Arc::new(next_manifest);
-        self.memtable.clear();
-        if self.truncate_wal_on_flush {
-            self.wal.reset()?;
-        }
-        crash_point("store.flush.after_wal_reset")?;
-        Ok(FlushOutcome {
-            row_count: rows.len(),
-            segment_path: Some(segment_path),
-        })
+        Ok(segment_path)
     }
 
     /// Calculates the next size-tier compaction candidate and its byte debt.
