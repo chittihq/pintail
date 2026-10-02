@@ -368,6 +368,11 @@ impl TextIntern {
         self.spellings.push(text.to_owned());
         Ok(packed)
     }
+
+    /// What [`Self::intern`] answers for a spelling it has already met.
+    fn known(&self, text: &str) -> Option<u64> {
+        self.exact.get(text).copied()
+    }
 }
 
 /// One text key column of a batch as interned ids.
@@ -382,6 +387,9 @@ enum TextCells {
 struct Prepared {
     batch: RecordBatch,
     text: Vec<TextCells>,
+    /// The ordinal of the batch's first row, for a batch a fused round
+    /// left: its place in the input, not the place it was handed over in.
+    ordinal: Option<u64>,
 }
 
 /// One morsel's rows cut by partition: `starts[p]..starts[p + 1]` are the
@@ -1116,6 +1124,144 @@ impl KeyOutput<'_> {
     }
 }
 
+/// Merges `folded`, a dense table of `len` words in the layout of the
+/// table's present dimensions, into what earlier folds left.
+fn absorb_dense(
+    plan: &PackedGroupPlan,
+    dense: &mut DenseGroups,
+    folded: &[u64],
+    len: usize,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    let stride = 1 + plan.group_stride;
+    // Earlier windows' groups, laid out again if a key met new classes.
+    if dense.words.len() != len {
+        let bytes = len * size_of::<u64>();
+        memory.reserve(bytes)?;
+        let weights = dense_weights(&dense.dims);
+        let mut words = vec![0_u64; len];
+        for group in dense
+            .words
+            .chunks_exact(stride)
+            .filter(|group| group[0] != 0)
+        {
+            let slot: usize = (0..plan.keys())
+                .map(|index| {
+                    if group[1] & (1 << index) == 0 {
+                        (slot_start(group[2 + index], usize::MAX) + 1) * weights[index]
+                    } else {
+                        0
+                    }
+                })
+                .sum();
+            words[slot * stride..(slot + 1) * stride].copy_from_slice(group);
+        }
+        memory.release(dense.reserved);
+        dense.reserved = bytes;
+        dense.words = words;
+    }
+    for (into, from) in dense
+        .words
+        .chunks_exact_mut(stride)
+        .zip(folded.chunks_exact(stride))
+    {
+        merge_dense_slot(plan, into, from)?;
+    }
+    Ok(())
+}
+
+/// Notes what the text key columns of `batch` declare into `labels` and
+/// `members`. What several batches declare is joined whatever order they
+/// are noted in.
+fn note_text_declarations(
+    plan: &PackedGroupPlan,
+    labels: &mut [Labels],
+    members: &mut [Members],
+    batch: &RecordBatch,
+) {
+    for (column, kind) in plan.columns.iter().zip(&plan.kinds) {
+        let KeyKind::Text { slot } = *kind else {
+            continue;
+        };
+        let settled = members[slot].is_some()
+            || labels[slot]
+                .as_ref()
+                .is_some_and(|(_, exhaustive)| *exhaustive);
+        if settled {
+            continue;
+        }
+        let Some((TypedValues::Utf8(strings), _)) =
+            batch.column(*column).and_then(crate::ColumnVector::typed)
+        else {
+            continue;
+        };
+        let exhaustive = strings.enum_labels_exhaustive();
+        labels[slot] = match (labels[slot].take(), strings.declared_enum_labels()) {
+            (Some((held, _)), Some(seen)) if !exhaustive => {
+                Some((merge_partial_labels(held, seen), false))
+            }
+            (_, Some(seen)) => Some((Arc::clone(seen), exhaustive)),
+            (held, None) => held,
+        };
+        members[slot] = strings.declared_set_members().cloned();
+    }
+}
+
+/// The batch's text keys as [`PackedGroupFold::intern_text`] would answer them,
+/// when that would add nothing to the intern tables; `None` otherwise,
+/// and for a column that decoded without dictionary codes.
+fn known_text(
+    plan: &PackedGroupPlan,
+    interns: &[TextIntern],
+    batch: &RecordBatch,
+) -> Result<Option<Vec<TextCells>>, ExecError> {
+    let mut text = Vec::with_capacity(plan.texts());
+    for (column, kind) in plan.columns.iter().zip(&plan.kinds) {
+        let KeyKind::Text { slot } = *kind else {
+            continue;
+        };
+        let Some((TypedValues::Utf8(strings), validity)) =
+            batch.column(*column).and_then(crate::ColumnVector::typed)
+        else {
+            return Err(ExecError::InvalidBatch(
+                "text group key lost its typed projection",
+            ));
+        };
+        let Some((codes, entries)) = strings.dictionary() else {
+            return Ok(None);
+        };
+        let intern = &interns[slot];
+        let mut ids = vec![u64::MAX; entries.len()];
+        if entries.len() <= WHOLE_DICTIONARY {
+            for (id, entry) in ids.iter_mut().zip(entries.iter()) {
+                let Some(known) = intern.known(entry) else {
+                    return Ok(None);
+                };
+                *id = known;
+            }
+        } else {
+            for row in batch.selection().selected_rows() {
+                if !validity.is_valid(row) {
+                    continue;
+                }
+                let code = usize::try_from(codes[row])
+                    .map_err(|_| ExecError::InvalidBatch("dictionary code is out of bounds"))?;
+                let Some(id) = ids.get_mut(code) else {
+                    return Err(ExecError::InvalidBatch("dictionary code is out of bounds"));
+                };
+                if *id == u64::MAX {
+                    let Some(known) = intern.known(&entries[code]) else {
+                        return Ok(None);
+                    };
+                    *id = known;
+                }
+            }
+        }
+        text.push(TextCells::Codes(ids));
+    }
+    Ok(Some(text))
+}
+
 /// Everything the fold holds between windows.
 struct PackedGroupFold<'a> {
     plan: &'a PackedGroupPlan,
@@ -1140,9 +1286,195 @@ struct PackedGroupFold<'a> {
     dense: Option<DenseGroups>,
     /// Rows the dense table folded, for the profile.
     dense_rows: u64,
+    /// The ordinal the first fused round's rows were numbered from: every
+    /// row the windows folded before it has a smaller one.
+    fused_base: Option<u64>,
+}
+
+/// A fused round numbers a batch's rows from its place in the input: the
+/// place, then the row within the batch, whose rows fit these bits.
+const FUSED_ROW_BITS: u32 = 18;
+
+/// What a call to [`PackedGroupFold::fold_in_place`] left.
+enum InPlace {
+    /// The input does not fold in place, or the dense table cannot take
+    /// it: the windows take the input from here on.
+    Off,
+    /// The input is exhausted.
+    Done,
+    /// Batches for the windows, each with the ordinal of its first row,
+    /// and whether the round that left them took at least as many.
+    Left(Vec<(u64, RecordBatch)>, bool),
+    /// Nothing left and more to read: the query is past half its ceiling.
+    Paused,
 }
 
 impl PackedGroupFold<'_> {
+    /// Folds the input into the dense table in fused rounds: each worker
+    /// decodes a slice of the table and folds its rows into a copy of the
+    /// dense table it keeps for the rounds' length, and the copies merge
+    /// into the table when the rounds stop.
+    ///
+    /// Rows are numbered by their batch's place in the input, so a group
+    /// still shows the key spellings of its first row in input order. A
+    /// round adds nothing to the intern tables: a batch that brings a
+    /// spelling, one no cell can carry and one the ceiling had no room for
+    /// are left for the windows, with their ordinals.
+    #[allow(clippy::too_many_lines)]
+    fn fold_in_place(&mut self, input: &mut PullOperator) -> Result<InPlace, ExecError> {
+        let plan = self.plan;
+        let memory = self.memory;
+        let Some(dense) = self.dense.as_ref() else {
+            return Ok(InPlace::Off);
+        };
+        let dims = self
+            .interns
+            .iter()
+            .map(|intern| intern.classes.len() + 1)
+            .collect::<Vec<_>>();
+        let Some(slots) = dense_slots(&dims) else {
+            return Ok(InPlace::Off);
+        };
+        let stride = 1 + plan.group_stride;
+        let len = slots * stride;
+        let workers = rayon::current_num_threads().max(1);
+        // A copy of the table per pool thread and one for a caller outside
+        // the pool.
+        let bytes = (workers + 1) * len * size_of::<u64>();
+        if memory.reserve(bytes).is_err() {
+            return Ok(InPlace::Off);
+        }
+        let base = *self.fused_base.get_or_insert(dense.rows);
+        let mut seats: Vec<std::sync::Mutex<Vec<u64>>> = Vec::new();
+        seats.resize_with(workers + 1, || std::sync::Mutex::new(Vec::new()));
+        let poisoned = || ExecError::InvalidBatch("dense group seat poisoned");
+        let left = std::sync::Mutex::new(Vec::<(u64, RecordBatch)>::new());
+        let declared = std::sync::Mutex::new((
+            std::mem::take(&mut self.labels),
+            std::mem::take(&mut self.members),
+        ));
+        let folded_rows = std::sync::atomic::AtomicU64::new(0);
+        let last_ordinal = std::sync::atomic::AtomicU64::new(0);
+        let relaxed = std::sync::atomic::Ordering::Relaxed;
+        let ordinal_of = |order: u64| {
+            (order.leading_zeros() > FUSED_ROW_BITS)
+                .then(|| base.checked_add(order << FUSED_ROW_BITS))
+                .flatten()
+        };
+        let interns = self.interns.as_slice();
+        let mut outcome = Ok(InPlace::Paused);
+        while memory.used() <= memory.limit() / 2 {
+            let taken = std::sync::atomic::AtomicUsize::new(0);
+            let round = input.fold_round(memory, usize::MAX, &|batch, order| {
+                let leave = |batch: RecordBatch| {
+                    left.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push((order, batch));
+                    Ok(None)
+                };
+                let Some(first_ordinal) = ordinal_of(order) else {
+                    return Ok(Some(batch));
+                };
+                if batch.row_count() >= 1 << FUSED_ROW_BITS || !plan.carries(&batch) {
+                    return leave(batch);
+                }
+                let Some(text) = known_text(plan, interns, &batch)? else {
+                    return leave(batch);
+                };
+                {
+                    let mut declared = declared.lock().map_err(|_| poisoned())?;
+                    let (labels, members) = &mut *declared;
+                    note_text_declarations(plan, labels, members, &batch);
+                }
+                let prepared = Prepared {
+                    batch,
+                    text,
+                    ordinal: Some(first_ordinal),
+                };
+                let seat =
+                    rayon::current_thread_index().map_or(workers, |index| index.min(workers));
+                let mut words = seats[seat].lock().map_err(|_| poisoned())?;
+                if words.is_empty() {
+                    *words = vec![0_u64; len];
+                }
+                let rows = prepared.batch.row_count();
+                fold_dense_rows(plan, &prepared, 0..rows, first_ordinal, &dims, &mut words)?;
+                taken.fetch_add(1, relaxed);
+                folded_rows.fetch_add(prepared.batch.visible_row_count() as u64, relaxed);
+                last_ordinal.fetch_max(first_ordinal.saturating_add(rows as u64), relaxed);
+                Ok(None)
+            });
+            let returned = match round {
+                Err(error) => {
+                    outcome = Err(error);
+                    break;
+                }
+                Ok(super::FoldedRound::Unavailable) => {
+                    outcome = Ok(InPlace::Off);
+                    break;
+                }
+                Ok(super::FoldedRound::Done) => {
+                    outcome = Ok(InPlace::Done);
+                    break;
+                }
+                Ok(super::FoldedRound::Round { returned }) => returned,
+            };
+            let taken = taken.into_inner();
+            crate::counters::count(|counters| {
+                counters.fused_rounds += 1;
+                counters.fused_batches += taken as u64;
+            });
+            let mut left = left
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            left.extend(returned);
+            if !left.is_empty() {
+                let mut left = std::mem::take(&mut *left);
+                left.sort_by_key(|(order, _)| *order);
+                // A place past what an ordinal can number ends the rounds:
+                // the windows number their rows after every row so far.
+                let numbered = left.iter().all(|(order, _)| ordinal_of(*order).is_some());
+                let worthwhile = numbered && left.len() <= taken;
+                outcome = Ok(InPlace::Left(
+                    left.into_iter()
+                        .map(|(order, batch)| {
+                            let ordinal = if numbered { ordinal_of(order) } else { None };
+                            (ordinal.unwrap_or(u64::MAX), batch)
+                        })
+                        .collect(),
+                    worthwhile,
+                ));
+                break;
+            }
+        }
+        let (labels, members) = declared
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.labels = labels;
+        self.members = members;
+        let merged: Result<(), ExecError> = (|| {
+            let Some(dense) = self.dense.as_mut() else {
+                return Ok(());
+            };
+            dense.dims.clone_from(&dims);
+            for seat in seats {
+                let words = seat
+                    .into_inner()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if !words.is_empty() {
+                    absorb_dense(plan, dense, &words, len, memory)?;
+                }
+            }
+            // The windows number their rows after every row folded here.
+            dense.rows = dense.rows.max(last_ordinal.into_inner());
+            Ok(())
+        })();
+        self.dense_rows += folded_rows.into_inner();
+        memory.release(bytes);
+        merged?;
+        outcome
+    }
+
     /// Folds the window into the dense table: every worker into a copy of
     /// its own, the copies merged, and the result merged into what earlier
     /// windows left.
@@ -1161,7 +1493,7 @@ impl PackedGroupFold<'_> {
         let mut first_ordinals = Vec::with_capacity(window.len());
         let mut ordinal = dense.rows;
         for held in window {
-            first_ordinals.push(ordinal);
+            first_ordinals.push(held.ordinal.unwrap_or(ordinal));
             ordinal += held.batch.row_count() as u64;
         }
         let pieces = morsel_plan(
@@ -1186,39 +1518,7 @@ impl PackedGroupFold<'_> {
                 Ok::<_, ExecError>(words)
             })
             .try_reduce(Vec::new, |into, from| merge_dense(plan, into, from))?;
-        // Earlier windows' groups, laid out again if a key met new classes.
-        if dense.words.len() != len {
-            let bytes = len * size_of::<u64>();
-            self.memory.reserve(bytes)?;
-            let weights = dense_weights(&dense.dims);
-            let mut words = vec![0_u64; len];
-            for group in dense
-                .words
-                .chunks_exact(stride)
-                .filter(|group| group[0] != 0)
-            {
-                let slot: usize = (0..plan.keys())
-                    .map(|index| {
-                        if group[1] & (1 << index) == 0 {
-                            (slot_start(group[2 + index], usize::MAX) + 1) * weights[index]
-                        } else {
-                            0
-                        }
-                    })
-                    .sum();
-                words[slot * stride..(slot + 1) * stride].copy_from_slice(group);
-            }
-            self.memory.release(dense.reserved);
-            dense.reserved = bytes;
-            dense.words = words;
-        }
-        for (into, from) in dense
-            .words
-            .chunks_exact_mut(stride)
-            .zip(folded.chunks_exact(stride))
-        {
-            merge_dense_slot(plan, into, from)?;
-        }
+        absorb_dense(plan, dense, &folded, len, self.memory)?;
         self.dense_rows += ordinal - dense.rows;
         dense.rows = ordinal;
         Ok(())
@@ -1274,32 +1574,7 @@ impl PackedGroupFold<'_> {
     /// Notes what the text key columns declare, as each batch arrives: a
     /// later batch may be the first to carry the whole declaration.
     fn note_declarations(&mut self, batch: &RecordBatch) {
-        for (column, kind) in self.plan.columns.iter().zip(&self.plan.kinds) {
-            let KeyKind::Text { slot } = *kind else {
-                continue;
-            };
-            let settled = self.members[slot].is_some()
-                || self.labels[slot]
-                    .as_ref()
-                    .is_some_and(|(_, exhaustive)| *exhaustive);
-            if settled {
-                continue;
-            }
-            let Some((TypedValues::Utf8(strings), _)) =
-                batch.column(*column).and_then(crate::ColumnVector::typed)
-            else {
-                continue;
-            };
-            let exhaustive = strings.enum_labels_exhaustive();
-            self.labels[slot] = match (self.labels[slot].take(), strings.declared_enum_labels()) {
-                (Some((held, _)), Some(seen)) if !exhaustive => {
-                    Some((merge_partial_labels(held, seen), false))
-                }
-                (_, Some(seen)) => Some((Arc::clone(seen), exhaustive)),
-                (held, None) => held,
-            };
-            self.members[slot] = strings.declared_set_members().cloned();
-        }
+        note_text_declarations(self.plan, &mut self.labels, &mut self.members, batch);
     }
 
     /// Interns the batch's text keys: once per dictionary entry, or once
@@ -1540,7 +1815,7 @@ impl PackedGroupFold<'_> {
 
     /// Takes one batch: into the window, or row by row when no cell can
     /// carry it.
-    fn take(&mut self, batch: RecordBatch) -> Result<(), ExecError> {
+    fn take(&mut self, batch: RecordBatch, ordinal: Option<u64>) -> Result<(), ExecError> {
         if !self.plan.carries(&batch) {
             let before = self.memory.used();
             let folded = self.fold_by_row(&batch);
@@ -1563,7 +1838,11 @@ impl PackedGroupFold<'_> {
         }
         self.window_reserved = self.window_reserved.saturating_add(bytes);
         self.window_rows += batch.visible_row_count();
-        self.window.push(Prepared { batch, text });
+        self.window.push(Prepared {
+            batch,
+            text,
+            ordinal,
+        });
         if self.window_rows >= WINDOW_ROWS || self.memory.used() > self.memory.limit() / 2 {
             self.flush()?;
         }
@@ -1718,6 +1997,7 @@ impl PackedGroupFold<'_> {
 }
 
 /// Runs the packed-key fold over `first` and everything `input` yields.
+#[allow(clippy::too_many_lines)] // the pull loop, then the profile's note
 pub(super) fn build_packed_group_aggregate(
     input: &mut PullOperator,
     first: RecordBatch,
@@ -1753,16 +2033,47 @@ pub(super) fn build_packed_group_aggregate(
             reserved: 0,
         }),
         dense_rows: 0,
+        fused_base: None,
     };
     let debug = std::env::var_os("PINTAIL_AGG_DEBUG").is_some();
     let started = std::time::Instant::now();
     let mut pulling = std::time::Duration::ZERO;
-    let mut next = Some(first);
-    while let Some(batch) = next.take() {
+    // While the dense table takes the input, it is folded in place: the
+    // window's batches first, then rounds in which each worker decodes a
+    // slice and folds it itself. What a round leaves comes back through
+    // the window, numbered by its place in the input.
+    let mut fuse = !super::switches::fused_fold_disabled();
+    let mut left = std::collections::VecDeque::<(u64, RecordBatch)>::new();
+    let mut strikes = 0_u8;
+    let mut drained = false;
+    let mut next = Some((None, first));
+    while let Some((ordinal, batch)) = next.take() {
         memory.check_interruption()?;
-        fold.take(batch)?;
+        fold.take(batch, ordinal)?;
         let pull = std::time::Instant::now();
-        next = input.next_batch(memory)?;
+        if fuse && left.is_empty() && fold.dense.is_some() {
+            fold.flush()?;
+            match fold.fold_in_place(input)? {
+                InPlace::Off => fuse = false,
+                InPlace::Done => drained = true,
+                InPlace::Left(batches, worthwhile) => {
+                    // Rounds that keep handing back more than they take
+                    // - a predicate only the query's thread answers, keys
+                    // that keep bringing spellings - are a detour.
+                    strikes = if worthwhile { 0 } else { strikes + 1 };
+                    fuse = strikes < 3;
+                    left.extend(batches);
+                }
+                InPlace::Paused => {}
+            }
+        }
+        next = match left.pop_front() {
+            // An ordinal past what the rounds can number is the window's
+            // own to give.
+            Some((ordinal, batch)) => Some(((ordinal != u64::MAX).then_some(ordinal), batch)),
+            None if drained => None,
+            None => input.next_batch(memory)?.map(|batch| (None, batch)),
+        };
         pulling += pull.elapsed();
     }
     fold.flush()?;
