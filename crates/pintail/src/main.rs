@@ -120,6 +120,7 @@ async fn run() -> Result<()> {
         config.reserved_query_slots(),
     );
     pintail_exec::init_shared_memory_budget(config.total_query_memory_limit_bytes());
+    pintail_exec::init_block_cache(pintail::config::block_cache_limit_bytes());
     // Before any query: rayon builds its pool on first use, and a pool
     // already built keeps the platform's smaller worker stacks, which is
     // what made how deep a query could recurse depend on where rayon ran

@@ -1165,7 +1165,9 @@ impl TableStore {
         for meta in self.staged.drain(..) {
             // Best effort: a file left behind is an orphan the next open
             // sweeps, and its ID is never handed out again.
-            let _ = std::fs::remove_file(self.directory.join(&meta.file_name));
+            let path = self.directory.join(&meta.file_name);
+            let _ = std::fs::remove_file(&path);
+            segment::forget_cached_blocks(&path);
         }
     }
 
@@ -1303,7 +1305,9 @@ impl TableStore {
             let _published = self.publication.publishing();
             if let Err(error) = manifest::publish(&self.directory, &next_manifest) {
                 for segment in next_manifest.segments.iter().rev().take(published) {
-                    let _ = std::fs::remove_file(self.directory.join(&segment.file_name));
+                    let path = self.directory.join(&segment.file_name);
+                    let _ = std::fs::remove_file(&path);
+                    segment::forget_cached_blocks(&path);
                 }
                 return Err(error);
             }
@@ -1311,7 +1315,8 @@ impl TableStore {
             self.commit_version = applied;
         }
         for path in repeated {
-            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(&path);
+            segment::forget_cached_blocks(&path);
         }
         // A flush adds one segment and takes one compaction step; this
         // added several, and with merges running inline one step would
@@ -2152,6 +2157,7 @@ impl TableStore {
                 continue;
             }
             for path in generation.paths {
+                segment::forget_cached_blocks(&path);
                 match std::fs::remove_file(&path) {
                     Ok(()) => reclaimed += 1,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -3098,6 +3104,7 @@ fn remove_orphan_segments(directory: &Path, manifest: &Manifest) -> Result<(), S
         let interrupted_segment_write =
             file_name.starts_with(".segment-") && file_name.ends_with(".ptseg.tmp");
         if orphan_segment || interrupted_segment_write {
+            segment::forget_cached_blocks(&path);
             std::fs::remove_file(&path).map_err(|error| {
                 StoreError::io(format!("remove orphan segment {}", path.display()), error)
             })?;

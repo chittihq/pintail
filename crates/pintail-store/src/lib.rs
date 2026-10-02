@@ -23,8 +23,10 @@ pub use publication::{
     lease_unwritten_table, publish_changes_under, published_generation, retain_writer_locks,
 };
 pub use segment::{
-    BoundDomain, ColumnBounds, ColumnDecode, ColumnSma, NativeUnits, SegmentSmas, SmaExtremes,
-    SmaSum, TextAdmits, TextValueFilter, sync_directory,
+    BLOCK_CACHE_SETTING, BlockCacheAccounting, BlockCacheStats, BoundDomain, ColumnBounds,
+    ColumnDecode, ColumnSma, NativeUnits, SegmentSmas, SmaExtremes, SmaSum, TextAdmits,
+    TextValueFilter, block_cache_environment_limit, block_cache_stats, configure_block_cache,
+    shrink_block_cache, sync_directory,
 };
 pub use sketch::DistinctSketch;
 pub use store::GroupedFoldSpan;

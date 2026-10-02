@@ -9,6 +9,7 @@
 mod storage_adversarial_probe;
 
 mod suite {
+    mod block_cache;
     mod compaction;
     mod database;
     mod direct_scan;

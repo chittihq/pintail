@@ -1,4 +1,11 @@
+mod block_cache;
 mod encoding;
+
+pub(crate) use block_cache::forget_file as forget_cached_blocks;
+pub use block_cache::{
+    BLOCK_CACHE_SETTING, BlockCacheAccounting, BlockCacheStats, block_cache_stats,
+    configure_block_cache, environment_limit as block_cache_environment_limit, shrink_block_cache,
+};
 
 #[cfg(test)]
 use encoding::decompress_block;
@@ -1925,23 +1932,6 @@ pub(crate) struct PointBlocks {
     pub(crate) bytes_decompressed: Vec<u64>,
 }
 
-/// Decoded blocks held for key lookups, by the segment as it exists on
-/// disk, the column, and the block's first row.
-#[derive(Default)]
-struct PointBlockCache {
-    entries: HashMap<(VerifiedKey, u32, usize), std::sync::Arc<DecodedColumn>>,
-    bytes: usize,
-}
-
-/// The most the blocks held for key lookups may retain, process-wide.
-const POINT_BLOCK_CACHE_BYTES: usize = 32 * 1024 * 1024;
-
-fn point_block_cache() -> &'static std::sync::Mutex<PointBlockCache> {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<PointBlockCache>> =
-        std::sync::OnceLock::new();
-    CACHE.get_or_init(|| std::sync::Mutex::new(PointBlockCache::default()))
-}
-
 /// One block (`rows`, block-aligned) of each of `columns`, decoded, for a
 /// lookup of a key that block can hold.
 ///
@@ -1956,9 +1946,9 @@ fn point_block_cache() -> &'static std::sync::Mutex<PointBlockCache> {
 /// it again would give; a segment a later flush or compaction replaces is
 /// another file, and its blocks age out with the rest.
 ///
-/// What is held is bounded process-wide and belongs to no query: the
-/// reservation a decode makes against `memory` is released before
-/// returning.
+/// What is held lives in the block cache, under its process-wide budget,
+/// and belongs to no query: the reservation a decode makes against
+/// `memory` is released before returning.
 pub(crate) fn point_blocks(
     directory: &Path,
     meta: &SegmentMeta,
@@ -1968,21 +1958,17 @@ pub(crate) fn point_blocks(
     memory: &ScanMemoryBudget<'_>,
 ) -> Result<PointBlocks, StoreError> {
     let path = directory.join(&meta.file_name);
-    let key = verified_key(&path, meta, schema);
+    let slot = verified_key(&path, meta, schema)
+        .as_ref()
+        .and_then(block_cache::segment_slot);
     let column_id = |column: usize| schema.columns().get(column).map(pintail_types::Column::id);
-    let mut held: Vec<Option<std::sync::Arc<DecodedColumn>>> = vec![None; columns.len()];
-    if let Some(key) = &key {
-        let cache = point_block_cache()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut probe = (key.clone(), 0_u32, rows.start);
-        for (slot, column) in held.iter_mut().zip(columns) {
-            if let Some(id) = column_id(*column) {
-                probe.1 = id;
-                *slot = cache.entries.get(&probe).cloned();
-            }
-        }
-    }
+    let mut held: Vec<Option<std::sync::Arc<DecodedColumn>>> = columns
+        .iter()
+        .map(|column| {
+            let slot = slot?;
+            block_cache::decoded(slot, column_id(*column)?, rows.start)
+        })
+        .collect();
     let missing = columns
         .iter()
         .zip(&held)
@@ -1997,8 +1983,15 @@ pub(crate) fn point_blocks(
             bytes_decompressed,
         });
     }
-    let fetch = read_projected_columns(
-        directory, meta, schema, &missing, rows.start, rows.end, memory,
+    // The decoded block is what is kept; its payload is not kept as well.
+    let fetch = read_projected_pick(
+        directory,
+        meta,
+        schema,
+        &missing,
+        RowPick::Ranges(std::slice::from_ref(&rows)),
+        memory,
+        false,
     )?;
     memory.release(fetch.reserved_bytes);
     let blocks_decoded = fetch.blocks_decoded;
@@ -2007,41 +2000,16 @@ pub(crate) fn point_blocks(
         .into_iter()
         .zip(fetch.column_decode)
         .map(|(column, decode)| (std::sync::Arc::new(column), decode.bytes_decompressed));
-    let mut fresh = Vec::with_capacity(missing.len());
-    for ((slot, column), bytes) in held.iter_mut().zip(columns).zip(&mut bytes_decompressed) {
-        if slot.is_none() {
+    for ((slot_held, column), bytes) in held.iter_mut().zip(columns).zip(&mut bytes_decompressed) {
+        if slot_held.is_none() {
             let Some((block, decompressed)) = decoded.next() else {
                 return Err(corrupt(&path, 0, "a projected column was not decoded"));
             };
             *bytes = decompressed;
-            fresh.push((*column, block.clone()));
-            *slot = Some(block);
-        }
-    }
-    if let Some(key) = key {
-        let mut cache = point_block_cache()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (column, block) in fresh {
-            let Some(id) = column_id(column) else {
-                continue;
-            };
-            let bytes = block
-                .retained_bytes()
-                .saturating_add(size_of::<(VerifiedKey, u32, usize)>() + key.0.as_os_str().len());
-            if bytes > POINT_BLOCK_CACHE_BYTES / 8 {
-                continue;
+            if let (Some(slot), Some(id)) = (slot, column_id(*column)) {
+                block_cache::hold_decoded(slot, id, rows.start, block.clone());
             }
-            let entry = (key.clone(), id, rows.start);
-            if cache.entries.contains_key(&entry) {
-                continue;
-            }
-            if cache.bytes.saturating_add(bytes) > POINT_BLOCK_CACHE_BYTES {
-                cache.entries.clear();
-                cache.bytes = 0;
-            }
-            cache.bytes += bytes;
-            cache.entries.insert(entry, block);
+            *slot_held = Some(block);
         }
     }
     Ok(PointBlocks {
@@ -2826,6 +2794,9 @@ fn read_segment_columns_header(
 /// remain on disk and are checksum-verified whenever they are decoded.
 struct ProjectedBlock {
     offset: usize,
+    /// Stored bytes from `offset`: the length prefix, the payload and its
+    /// checksum.
+    length: usize,
     start: usize,
     end: usize,
 }
@@ -2838,8 +2809,27 @@ struct ProjectedColumnLayout {
 
 #[derive(Default)]
 struct ProjectedLayoutCache {
-    entries: HashMap<VerifiedKey, std::sync::Arc<Vec<ProjectedColumnLayout>>>,
+    entries: HashMap<VerifiedKey, HeldLayout>,
     bytes: usize,
+}
+
+/// A segment's block directory with what its header said, so a read that
+/// finds it held opens the file and goes straight to the blocks.
+#[derive(Clone)]
+struct HeldLayout {
+    columns: std::sync::Arc<Vec<ProjectedColumnLayout>>,
+    row_count: usize,
+    format_version: u8,
+}
+
+/// The directory held for the segment `key` names, when one is.
+fn held_layout(key: &VerifiedKey) -> Option<HeldLayout> {
+    projected_layout_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entries
+        .get(key)
+        .cloned()
 }
 
 fn projected_layout_cache() -> &'static std::sync::Mutex<ProjectedLayoutCache> {
@@ -2858,13 +2848,9 @@ fn projected_layout(
     const CACHE_BYTES: usize = 16 * 1024 * 1024;
     let key = verified_key(path, meta, schema);
     if let Some(key) = &key
-        && let Some(layout) = projected_layout_cache()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .entries
-            .get(key)
+        && let Some(held) = held_layout(key)
     {
-        return Ok(layout.clone());
+        return Ok(held.columns);
     }
     // No I/O while holding the cache lock. Concurrent first readers may
     // construct the same directory; publishing either copy is harmless.
@@ -2888,7 +2874,12 @@ fn projected_layout(
                     "column exceeds segment row count",
                 ));
             }
-            blocks.push(ProjectedBlock { offset, start, end });
+            blocks.push(ProjectedBlock {
+                offset,
+                length: decoder.position - offset,
+                start,
+                end,
+            });
             start = end;
         }
         if start != header.row_count {
@@ -2919,7 +2910,16 @@ fn projected_layout(
                     cache.bytes = 0;
                 }
                 cache.bytes += bytes;
-                cache.entries.insert(key, layout.clone());
+                cache.entries.insert(
+                    key,
+                    HeldLayout {
+                        columns: layout.clone(),
+                        row_count: header.row_count,
+                        format_version: decoder
+                            .format_version()
+                            .map_err(|reason| corrupt_here(path, decoder, reason))?,
+                    },
+                );
             }
         }
     }
@@ -4017,6 +4017,7 @@ pub(crate) fn read_projected_column_ranges(
         projection,
         RowPick::Ranges(ranges),
         memory,
+        true,
     )
 }
 
@@ -4040,6 +4041,7 @@ pub(crate) fn read_projected_column_mask(
         projection,
         RowPick::Mask(words),
         memory,
+        true,
     )
 }
 
@@ -4060,20 +4062,61 @@ fn read_projected_pick(
     projection: &[usize],
     pick: RowPick<'_>,
     memory: &ScanMemoryBudget<'_>,
+    hold_payloads: bool,
 ) -> Result<ProjectedColumnFetch, StoreError> {
     let path = directory.join(&meta.file_name);
     verify(directory, meta, schema)?;
-    let mut decoder = FileDecoder::open(&path)?;
-    let header = read_segment_columns_header(&path, &mut decoder, meta, schema)?;
-    let layout = projected_layout(&path, meta, schema, &mut decoder, &header)?;
+    // A segment read before has its header's answers and its block
+    // directory held under its identity on disk: nothing but blocks is
+    // read from it again. The header's checks depend only on what that
+    // identity and the manifest entry name, except the row count, which is
+    // compared again here.
+    let identity = verified_key(&path, meta, schema);
+    let (layout, row_count, format_version, file) = if let Some(held) =
+        identity.as_ref().and_then(held_layout)
+    {
+        if u64::try_from(held.row_count).ok() != Some(meta.row_count) {
+            return Err(corrupt(
+                &path,
+                0,
+                format!(
+                    "segment header declares {} rows, the manifest {}",
+                    held.row_count, meta.row_count
+                ),
+            ));
+        }
+        let file = File::open(&path)
+            .map_err(|error| StoreError::io(format!("open segment {}", path.display()), error))?;
+        (held.columns, held.row_count, held.format_version, file)
+    } else {
+        let mut decoder = FileDecoder::open(&path)?;
+        let header = read_segment_columns_header(&path, &mut decoder, meta, schema)?;
+        let layout = projected_layout(&path, meta, schema, &mut decoder, &header)?;
+        let format_version = decoder
+            .format_version()
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        (
+            layout,
+            header.row_count,
+            format_version,
+            decoder.reader.into_inner(),
+        )
+    };
+    // Blocks arrive through positioned reads of this handle.
+    let mut runs = StoredRuns::new(&file, memory);
+    // Opened only for a block read frame by frame.
+    let mut framed_decoder: Option<FileDecoder> = None;
+    // Where this segment's block payloads are held, when they are.
+    let slot = if hold_payloads {
+        identity.as_ref().and_then(block_cache::segment_slot)
+    } else {
+        None
+    };
     let (ranges, selected_rows): (&[std::ops::Range<usize>], usize) = match pick {
         RowPick::Ranges(ranges) => {
             let mut previous_end = 0_usize;
             for range in ranges {
-                if range.start > range.end
-                    || range.end > header.row_count
-                    || range.start < previous_end
-                {
+                if range.start > range.end || range.end > row_count || range.start < previous_end {
                     return Err(StoreError::FormatLimit(
                         "projected row ranges must be ascending, disjoint, and in bounds".into(),
                     ));
@@ -4083,9 +4126,7 @@ fn read_projected_pick(
             (ranges, ranges.iter().map(std::ops::Range::len).sum())
         }
         RowPick::Mask(words) => {
-            if words.len() != header.row_count.div_ceil(64)
-                || window_words(words, 0, header.row_count) != words
-            {
+            if words.len() != row_count.div_ceil(64) || window_words(words, 0, row_count) != words {
                 return Err(StoreError::FormatLimit(
                     "projected row mask must cover exactly the segment's rows".into(),
                 ));
@@ -4131,7 +4172,7 @@ fn read_projected_pick(
             .and_then(|schema_index| projection.iter().position(|value| *value == schema_index));
         if let Some(position) = projected_position {
             if std::mem::replace(&mut found[position], true) {
-                return Err(corrupt_here(&path, &decoder, "duplicate user column"));
+                return Err(corrupt(&path, 0, "duplicate user column"));
             }
             let native = (logical_type == LogicalType::Int64)
                 .then(|| {
@@ -4149,32 +4190,61 @@ fn read_projected_pick(
         let Some(_) = projected_position else {
             continue;
         };
+        // Which blocks hold a selected row, settled before any is read so
+        // that neighbours are fetched together.
+        let blocks = column_layout.blocks.as_slice();
+        let mut selected_blocks = Vec::with_capacity(blocks.len());
+        let mut selection_cursor = 0;
+        for block in blocks {
+            while selection_cursor < ranges.len() && ranges[selection_cursor].end <= block.start {
+                selection_cursor += 1;
+            }
+            selected_blocks.push(match pick {
+                RowPick::Mask(words) => mask_selects_any(words, block.start, block.end),
+                RowPick::Ranges(_) => ranges
+                    .get(selection_cursor)
+                    .is_some_and(|range| range.start < block.end && range.end > block.start),
+            });
+        }
+        // Payloads already held are decoded from memory and left out of
+        // the reads.
+        let held = blocks
+            .iter()
+            .zip(&selected_blocks)
+            .map(|(block, selected)| {
+                slot.filter(|_| *selected)
+                    .and_then(|slot| block_cache::payload(slot, id, block.start))
+            })
+            .collect::<Vec<_>>();
+        let fetched = selected_blocks
+            .iter()
+            .zip(&held)
+            .map(|(selected, held)| *selected && held.is_none())
+            .collect::<Vec<_>>();
+        // A wide text block may be stored as frames, which a sparse read
+        // fetches one at a time: it is never pulled in with its neighbours.
+        let may_be_framed = |block: &ProjectedBlock| {
+            logical_type == LogicalType::Utf8
+                && format_version >= FRAMED_BLOCK_VERSION
+                && block.length > FRAMED_PEEK_BYTES
+        };
         let mut range_cursor = 0;
-        for indexed_block in &column_layout.blocks {
+        for (block_index, indexed_block) in blocks.iter().enumerate() {
             let block_start = indexed_block.start;
             let block_limit = indexed_block.end;
             while range_cursor < ranges.len() && ranges[range_cursor].end <= block_start {
                 range_cursor += 1;
+            }
+            if !selected_blocks[block_index] {
+                blocks_pruned += 1;
+                continue;
             }
             // A mask pick: this block's share of the mask.
             let block_words = match pick {
                 RowPick::Mask(words) => Some(window_words(words, block_start, block_limit)),
                 RowPick::Ranges(_) => None,
             };
-            let selected = match &block_words {
-                Some(words) => words.iter().any(|word| *word != 0),
-                None => ranges
-                    .get(range_cursor)
-                    .is_some_and(|range| range.start < block_limit && range.end > block_start),
-            };
-            if !selected {
-                blocks_pruned += 1;
-                continue;
-            }
             blocks_read += 1;
-            decoder
-                .seek_to(indexed_block.offset)
-                .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
             // Block-relative intersections of the requested ranges, clamped
             // to the target block span (the last block may be shorter; row
             // loops clamp naturally).
@@ -4215,9 +4285,8 @@ fn read_projected_pick(
                         )
                     )
                 });
-            let block = if let (Some(position), true, true) =
-                (projected_position, selected, int_eligible)
-            {
+            let position = projected_position.expect("only projected columns are read");
+            let block = if int_eligible {
                 // Integer-wire blocks decode straight into the typed
                 // builder; non-bit-packed encodings fall back to cells
                 // below (issue #6 WS2 — the ranged read built a Vec<Cell>
@@ -4226,12 +4295,22 @@ fn read_projected_pick(
                     .as_mut()
                     .expect("builder exists for a projected column");
                 let before = builder.heap_len_bytes();
-                let block = read_file_block_int_into(
+                let block = read_held_or_stored_block(
                     &path,
-                    &mut decoder,
+                    &mut runs,
+                    &BlockPlace {
+                        blocks,
+                        fetched: &fetched,
+                        index: block_index,
+                        alone: &may_be_framed,
+                        held: held[block_index].as_deref(),
+                        slot: slot.map(|slot| (slot, id)),
+                    },
                     logical_type,
+                    format_version,
                     memory,
-                    IntSink {
+                    None,
+                    Some(IntSink {
                         builder,
                         ranges: match &block_words {
                             Some(words) => {
@@ -4239,7 +4318,7 @@ fn read_projected_pick(
                             }
                             None => RangeCursor::new(block_ranges()),
                         },
-                    },
+                    }),
                 )?;
                 if block.cells.is_none() {
                     blocks_decoded += 1;
@@ -4251,25 +4330,62 @@ fn read_projected_pick(
                 memory.reserve(appended)?;
                 reserved_bytes = reserved_bytes.saturating_add(appended);
                 block
-            } else if let (Some(position), true, LogicalType::Utf8) =
-                (projected_position, selected, logical_type)
-            {
+            } else if logical_type == LogicalType::Utf8 {
                 // String blocks decode straight into the column arena — no
                 // per-cell String allocation on the columnar scan path.
+                let block_rows = block_limit - block_start;
+                let cursor = RangeCursor::new(block_ranges());
+                // A sparse selection of a framed block reads only the
+                // frames it needs, from the file.
+                let by_frames = format_version >= FRAMED_BLOCK_VERSION
+                    && !cursor.covers_all(block_rows)
+                    && held[block_index].is_none()
+                    && (may_be_framed(indexed_block)
+                        || stored_block_is_framed(runs.block(
+                            &path,
+                            blocks,
+                            &fetched,
+                            block_index,
+                            &may_be_framed,
+                        )?));
                 let builder = builders[position]
                     .as_mut()
                     .expect("builder exists for a projected column");
                 let before = builder.heap_len_bytes();
-                let block = read_file_block_utf8_into(
-                    &path,
-                    &mut decoder,
-                    memory,
-                    Utf8Sink {
-                        builder,
-                        ranges: RangeCursor::new(block_ranges()),
-                    },
-                    block_limit - block_start,
-                )?;
+                let sink = Utf8Sink {
+                    builder,
+                    ranges: cursor,
+                };
+                let block = if by_frames {
+                    if framed_decoder.is_none() {
+                        let mut opened = FileDecoder::open(&path)?;
+                        opened.format_version = Some(format_version);
+                        framed_decoder = Some(opened);
+                    }
+                    let decoder = framed_decoder.as_mut().expect("opened above");
+                    decoder
+                        .seek_to(indexed_block.offset)
+                        .map_err(|reason| corrupt_here(&path, decoder, reason))?;
+                    read_file_block_utf8_into(&path, decoder, memory, sink, block_rows)?
+                } else {
+                    read_held_or_stored_block(
+                        &path,
+                        &mut runs,
+                        &BlockPlace {
+                            blocks,
+                            fetched: &fetched,
+                            index: block_index,
+                            alone: &may_be_framed,
+                            held: held[block_index].as_deref(),
+                            slot: slot.map(|slot| (slot, id)),
+                        },
+                        LogicalType::Utf8,
+                        format_version,
+                        memory,
+                        Some(sink),
+                        None,
+                    )?
+                };
                 blocks_decoded += 1;
                 let builder = builders[position]
                     .as_ref()
@@ -4278,12 +4394,24 @@ fn read_projected_pick(
                 memory.reserve(appended)?;
                 reserved_bytes = reserved_bytes.saturating_add(appended);
                 block
-            } else if selected {
-                read_file_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
-                    Ok(true)
-                })?
             } else {
-                skip_file_block(&path, &mut decoder)?
+                read_held_or_stored_block(
+                    &path,
+                    &mut runs,
+                    &BlockPlace {
+                        blocks,
+                        fetched: &fetched,
+                        index: block_index,
+                        alone: &may_be_framed,
+                        held: held[block_index].as_deref(),
+                        slot: slot.map(|slot| (slot, id)),
+                    },
+                    logical_type,
+                    format_version,
+                    memory,
+                    None,
+                    None,
+                )?
             };
             reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
             if let Some(position) = projected_position {
@@ -4294,7 +4422,7 @@ fn read_projected_pick(
             }
             let block_end = block_start
                 .checked_add(block.row_count)
-                .ok_or_else(|| corrupt_here(&path, &decoder, "column row count overflow"))?;
+                .ok_or_else(|| corrupt(&path, indexed_block.offset, "column row count overflow"))?;
             if let (Some(position), Some(cells)) = (projected_position, block.cells) {
                 blocks_decoded += 1;
                 let builder = builders[position]
@@ -4316,7 +4444,7 @@ fn read_projected_pick(
                     for cell in cells.by_ref().take(hi - lo) {
                         builder
                             .push(cell)
-                            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+                            .map_err(|reason| corrupt(&path, indexed_block.offset, reason))?;
                     }
                     consumed = hi;
                 }
@@ -4325,9 +4453,9 @@ fn read_projected_pick(
                 reserved_bytes = reserved_bytes.saturating_add(appended);
             }
             if block_end != indexed_block.end {
-                return Err(corrupt_here(
+                return Err(corrupt(
                     &path,
-                    &decoder,
+                    indexed_block.offset,
                     "block row count differs from directory",
                 ));
             }
@@ -4342,9 +4470,9 @@ fn read_projected_pick(
                 .expect("found column has a builder")
                 .finish();
             if column.len() != selected_rows {
-                return Err(corrupt_here(
+                return Err(corrupt(
                     &path,
-                    &decoder,
+                    0,
                     "projected column row count differs from the requested range",
                 ));
             }
@@ -4372,6 +4500,238 @@ fn read_projected_pick(
         blocks_pruned,
         reserved_bytes,
         column_decode,
+    })
+}
+
+/// The most stored bytes one positioned read fetches when it gathers
+/// neighbouring blocks. A block larger than this is read alone.
+const READ_RUN_BYTES: usize = 1 << 20;
+
+/// A block's payload is held decompressed only when that is at most this
+/// many times its stored size.
+const HELD_PAYLOAD_EXPANSION: usize = 3;
+
+/// A text block stored in more bytes than this is assumed to be framed
+/// until its head says otherwise, and is not read whole on the chance.
+const FRAMED_PEEK_BYTES: usize = 64 * 1024;
+
+thread_local! {
+    /// The stored bytes of the run of blocks a scan thread is reading. Its
+    /// length is kept between runs, so only growth is ever zeroed.
+    static RUN_SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Fills `bytes` from `file` at `offset` without moving the handle's cursor.
+#[cfg(unix)]
+fn read_exact_at(file: &File, bytes: &mut [u8], offset: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::read_exact_at(file, bytes, offset)
+}
+
+#[cfg(not(unix))]
+fn read_exact_at(mut file: &File, bytes: &mut [u8], offset: u64) -> std::io::Result<()> {
+    file.seek(SeekFrom::Start(offset))?;
+    file.read_exact(bytes)
+}
+
+/// The stored blocks of one segment file, fetched a run at a time.
+///
+/// A scan decodes the selected blocks of a column in file order, and
+/// blocks of one column lie end to end. Asking for a block therefore reads
+/// it together with the selected blocks that follow it, up to
+/// [`READ_RUN_BYTES`], in one positioned read into this thread's buffer:
+/// one system call for many blocks, where reading through a buffered
+/// cursor cost a seek and three or four reads for each, most of them
+/// refilling a buffer the next seek threw away.
+struct StoredRuns<'a, 'm> {
+    file: &'a File,
+    memory: &'a ScanMemoryBudget<'m>,
+    bytes: Vec<u8>,
+    /// File span `bytes` holds.
+    start: usize,
+    end: usize,
+    reservation: Option<ScanMemoryReservation<'m>>,
+}
+
+impl<'a, 'm> StoredRuns<'a, 'm> {
+    fn new(file: &'a File, memory: &'a ScanMemoryBudget<'m>) -> Self {
+        Self {
+            file,
+            memory,
+            bytes: RUN_SCRATCH.with(std::cell::RefCell::take),
+            start: 0,
+            end: 0,
+            reservation: None,
+        }
+    }
+
+    /// The stored bytes of `blocks[index]`. A read gathers the selected
+    /// blocks after it too, stopping at the first unselected one and at one
+    /// `alone` names.
+    fn block(
+        &mut self,
+        path: &Path,
+        blocks: &[ProjectedBlock],
+        selected: &[bool],
+        index: usize,
+        alone: &dyn Fn(&ProjectedBlock) -> bool,
+    ) -> Result<&[u8], StoreError> {
+        let block = &blocks[index];
+        let block_end = block
+            .offset
+            .checked_add(block.length)
+            .ok_or_else(|| corrupt(path, block.offset, "block extent overflow"))?;
+        if block.offset < self.start || block_end > self.end {
+            let mut run_end = block_end;
+            if !alone(block) {
+                for (next, picked) in blocks.iter().zip(selected).skip(index + 1) {
+                    if !*picked
+                        || next.offset != run_end
+                        || alone(next)
+                        || run_end + next.length - block.offset > READ_RUN_BYTES
+                    {
+                        break;
+                    }
+                    run_end += next.length;
+                }
+            }
+            let length = run_end - block.offset;
+            // The previous run's reservation goes before the next is made.
+            self.reservation = None;
+            self.reservation = Some(self.memory.reserve_temporary(length)?);
+            self.start = 0;
+            self.end = 0;
+            if self.bytes.len() < length {
+                self.bytes.resize(length, 0);
+            }
+            read_exact_at(self.file, &mut self.bytes[..length], block.offset as u64).map_err(
+                |error| corrupt(path, block.offset, format!("read stored blocks: {error}")),
+            )?;
+            self.start = block.offset;
+            self.end = run_end;
+        }
+        let from = block.offset - self.start;
+        Ok(&self.bytes[from..from + block.length])
+    }
+}
+
+impl Drop for StoredRuns<'_, '_> {
+    fn drop(&mut self) {
+        if self.bytes.capacity() <= SCRATCH_RETAIN_BYTES {
+            let bytes = std::mem::take(&mut self.bytes);
+            RUN_SCRATCH.with(|slot| *slot.borrow_mut() = bytes);
+        }
+    }
+}
+
+/// Where a projected read finds one block: among its column's blocks, in
+/// the block cache, and which reads may be gathered with it.
+struct BlockPlace<'a> {
+    blocks: &'a [ProjectedBlock],
+    /// Per block, whether this read fetches it from the file.
+    fetched: &'a [bool],
+    index: usize,
+    alone: &'a dyn Fn(&ProjectedBlock) -> bool,
+    /// The block's payload, when the cache holds it.
+    held: Option<&'a block_cache::CachedPayload>,
+    /// The segment's slot in the cache and the column, when payloads read
+    /// here may be kept.
+    slot: Option<(block_cache::SegmentSlot, u32)>,
+}
+
+/// Decodes one block: from its held payload when there is one, otherwise
+/// from its stored bytes (length prefix, payload, checksum), read with its
+/// neighbours and kept for the next reader when the cache admits it.
+#[allow(clippy::too_many_arguments)]
+fn read_held_or_stored_block(
+    path: &Path,
+    runs: &mut StoredRuns<'_, '_>,
+    place: &BlockPlace<'_>,
+    logical_type: LogicalType,
+    format_version: u8,
+    memory: &ScanMemoryBudget<'_>,
+    utf8_sink: Option<Utf8Sink<'_>>,
+    int_sink: Option<IntSink<'_>>,
+) -> Result<BlockRead, StoreError> {
+    let block = &place.blocks[place.index];
+    if let Some(held) = place.held {
+        return decode_block_payload(
+            path,
+            block.offset,
+            &PayloadView {
+                row_count: held.row_count,
+                null_bitmap: &held.null_bitmap,
+                null_count: held.null_count,
+                encoding: held.encoding,
+                bytes: &held.bytes,
+            },
+            logical_type,
+            Some(memory),
+            utf8_sink,
+            int_sink,
+        );
+    }
+    let stored = runs.block(path, place.blocks, place.fetched, place.index, place.alone)?;
+    let mut decoder = Decoder::with_base_offset(stored, block.offset);
+    let parsed = parse_block(path, &mut decoder, format_version)?;
+    // A payload that decompresses to several times its stored size is
+    // cheaper to decompress again than to keep: the stored bytes are few,
+    // long repeats expand at the speed of a copy into a buffer already in
+    // the processor's cache, and the held copy would be read from memory
+    // that is not. Measured on a column of repeating text indexes, holding
+    // them made its scans slower.
+    let worth_holding = parsed
+        .compressed
+        .len()
+        .saturating_mul(HELD_PAYLOAD_EXPANSION)
+        >= parsed.uncompressed_length;
+    let slot = place.slot.filter(|(slot, column)| {
+        worth_holding && block_cache::admits_payload(*slot, *column, block.start)
+    });
+    let mut kept = None;
+    let read = decode_parsed_block(
+        path,
+        &parsed,
+        logical_type,
+        Some(memory),
+        utf8_sink,
+        int_sink,
+        slot.map(|_| &mut kept),
+    )?;
+    if let (Some(payload), Some((slot, column))) = (kept, slot) {
+        block_cache::hold_payload(slot, column, block.start, payload);
+    }
+    Ok(read)
+}
+
+/// Whether a stored block's head declares the framed layout. A head that
+/// does not parse answers no: decoding the block reports what is wrong.
+fn stored_block_is_framed(stored: &[u8]) -> bool {
+    let mut decoder = Decoder::new(stored);
+    let head = (|| {
+        decoder.u32()?;
+        decoder.u32()?;
+        decoder.bytes()?;
+        decoder.u8()?;
+        decoder.u8()
+    })();
+    head == Ok(Compression::Framed as u8)
+}
+
+/// Whether the row mask `words` selects any row in `start..end`.
+fn mask_selects_any(words: &[u64], start: usize, end: usize) -> bool {
+    if start >= end {
+        return false;
+    }
+    let (first, last) = (start / 64, (end - 1) / 64);
+    (first..=last).any(|index| {
+        let mut word = words.get(index).copied().unwrap_or(0);
+        if index == first {
+            word &= u64::MAX << (start % 64);
+        }
+        if index == last && !end.is_multiple_of(64) {
+            word &= (1_u64 << (end % 64)) - 1;
+        }
+        word != 0
     })
 }
 
@@ -5439,53 +5799,6 @@ fn read_file_block_utf8_into(
     )
 }
 
-/// Reads one integer-wire block straight into a typed column builder when
-/// the encoding allows (bit-packed); other encodings return cells for the
-/// caller's generic loop.
-fn read_file_block_int_into(
-    path: &Path,
-    decoder: &mut FileDecoder,
-    logical_type: LogicalType,
-    memory: &ScanMemoryBudget<'_>,
-    sink: IntSink<'_>,
-) -> Result<BlockRead, StoreError> {
-    let format_version = decoder
-        .format_version()
-        .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    let block_offset = decoder.decode_position();
-    let payload_length = decoder
-        .u32()
-        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
-    let encoded_length = payload_length.saturating_add(12);
-    let _encoded_memory = memory.reserve_temporary(encoded_length)?;
-    let mut encoded = ScratchBuffer::take(&READ_SCRATCH, encoded_length);
-    encoded.extend_from_slice(
-        &u32::try_from(payload_length)
-            .map_err(|_| StoreError::FormatLimit("block payload exceeds u32::MAX".into()))?
-            .to_le_bytes(),
-    );
-    decoder
-        .read_appending(payload_length, &mut encoded)
-        .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    encoded.extend_from_slice(
-        &decoder
-            .u64()
-            .map_err(|reason| corrupt_here(path, decoder, reason))?
-            .to_le_bytes(),
-    );
-    let mut block_decoder = Decoder::with_base_offset(&encoded, block_offset);
-    read_block_if_with_budget(
-        path,
-        &mut block_decoder,
-        logical_type,
-        format_version,
-        Some(memory),
-        |_, _| Ok(true),
-        None,
-        Some(sink),
-    )
-}
-
 /// Set bits of a block's null bitmap among its first `row_count` rows.
 ///
 /// Eight bytes at a time: the build targets baseline x86-64, which has no
@@ -5524,20 +5837,27 @@ fn covered_null_count(null_bitmap: &[u8], row_count: usize) -> usize {
     count
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-fn read_block_if_with_budget<F>(
+/// One stored block, parsed and checked against its checksum; its values
+/// are still compressed.
+struct ParsedBlock<'a> {
+    row_count: usize,
+    null_bitmap: &'a [u8],
+    null_count: usize,
+    encoding: Encoding,
+    compression: Compression,
+    uncompressed_length: usize,
+    compressed: &'a [u8],
+    /// File offset of `compressed`, for reporting damage.
+    compressed_offset: usize,
+    minimum: &'a [u8],
+    maximum: &'a [u8],
+}
+
+fn parse_block<'a>(
     path: &Path,
-    decoder: &mut Decoder<'_>,
-    logical_type: LogicalType,
+    decoder: &mut Decoder<'a>,
     format_version: u8,
-    memory: Option<&ScanMemoryBudget<'_>>,
-    should_decode: F,
-    utf8_sink: Option<Utf8Sink<'_>>,
-    int_sink: Option<IntSink<'_>>,
-) -> Result<BlockRead, StoreError>
-where
-    F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
-{
+) -> Result<ParsedBlock<'a>, StoreError> {
     let block_offset = decoder.position();
     let payload = decoder
         .bytes()
@@ -5629,15 +5949,81 @@ where
     if actual_nulls != declared_nulls {
         return Err(corrupt(path, block_offset, "null count mismatch"));
     }
-    if !should_decode(minimum, maximum)? {
+    Ok(ParsedBlock {
+        row_count,
+        null_bitmap,
+        null_count: actual_nulls,
+        encoding,
+        compression,
+        uncompressed_length,
+        compressed,
+        compressed_offset,
+        minimum,
+        maximum,
+    })
+}
+
+/// A block's values as they are decoded from: decompressed, still encoded.
+struct PayloadView<'a> {
+    row_count: usize,
+    null_bitmap: &'a [u8],
+    null_count: usize,
+    encoding: Encoding,
+    bytes: &'a [u8],
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_block_if_with_budget<F>(
+    path: &Path,
+    decoder: &mut Decoder<'_>,
+    logical_type: LogicalType,
+    format_version: u8,
+    memory: Option<&ScanMemoryBudget<'_>>,
+    should_decode: F,
+    utf8_sink: Option<Utf8Sink<'_>>,
+    int_sink: Option<IntSink<'_>>,
+) -> Result<BlockRead, StoreError>
+where
+    F: FnOnce(&[u8], &[u8]) -> Result<bool, StoreError>,
+{
+    let parsed = parse_block(path, decoder, format_version)?;
+    if !should_decode(parsed.minimum, parsed.maximum)? {
         return Ok(BlockRead {
-            row_count,
+            row_count: parsed.row_count,
             cells: None,
             reserved_bytes: 0,
             decompressed_bytes: 0,
         });
     }
-    let non_null_count = row_count - actual_nulls;
+    decode_parsed_block(
+        path,
+        &parsed,
+        logical_type,
+        memory,
+        utf8_sink,
+        int_sink,
+        None,
+    )
+}
+
+/// Decompresses a parsed block and decodes it. `keep`, when given, receives
+/// the decompressed payload for the block cache.
+fn decode_parsed_block(
+    path: &Path,
+    parsed: &ParsedBlock<'_>,
+    logical_type: LogicalType,
+    memory: Option<&ScanMemoryBudget<'_>>,
+    utf8_sink: Option<Utf8Sink<'_>>,
+    int_sink: Option<IntSink<'_>>,
+    keep: Option<&mut Option<block_cache::CachedPayload>>,
+) -> Result<BlockRead, StoreError> {
+    let ParsedBlock {
+        compression,
+        compressed,
+        compressed_offset,
+        uncompressed_length,
+        ..
+    } = *parsed;
     let _uncompressed_memory = memory
         .map(|memory| memory.reserve_temporary(uncompressed_length))
         .transpose()?;
@@ -5657,6 +6043,53 @@ where
             .map_err(|reason| corrupt(path, compressed_offset, reason))?;
         buffer
     };
+    if let Some(keep) = keep {
+        *keep = Some(block_cache::CachedPayload {
+            row_count: parsed.row_count,
+            null_bitmap: parsed.null_bitmap.to_vec(),
+            null_count: parsed.null_count,
+            encoding: parsed.encoding,
+            bytes: uncompressed.to_vec(),
+        });
+    }
+    decode_block_payload(
+        path,
+        compressed_offset,
+        &PayloadView {
+            row_count: parsed.row_count,
+            null_bitmap: parsed.null_bitmap,
+            null_count: parsed.null_count,
+            encoding: parsed.encoding,
+            bytes: uncompressed,
+        },
+        logical_type,
+        memory,
+        utf8_sink,
+        int_sink,
+    )
+}
+
+/// Decodes a block's decompressed payload into the sink given, or into
+/// cells. `compressed_offset` places a report of damage in the file.
+#[allow(clippy::too_many_lines)]
+fn decode_block_payload(
+    path: &Path,
+    compressed_offset: usize,
+    payload: &PayloadView<'_>,
+    logical_type: LogicalType,
+    memory: Option<&ScanMemoryBudget<'_>>,
+    utf8_sink: Option<Utf8Sink<'_>>,
+    int_sink: Option<IntSink<'_>>,
+) -> Result<BlockRead, StoreError> {
+    let PayloadView {
+        row_count,
+        null_bitmap,
+        null_count: actual_nulls,
+        encoding,
+        bytes: uncompressed,
+    } = *payload;
+    let uncompressed_length = uncompressed.len();
+    let non_null_count = row_count - actual_nulls;
     if let Some(sink) = utf8_sink {
         decode_utf8_payload_into(
             uncompressed,
@@ -6923,6 +7356,151 @@ mod range_read_tests {
             .is_err(),
             "unsorted ranges are rejected"
         );
+    }
+
+    fn numbered_segment(
+        directory: &std::path::Path,
+        rows: std::ops::Range<u64>,
+        salt: u64,
+    ) -> (TableSchema, super::SegmentMeta) {
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "label", DataType::Utf8, true),
+                Column::new(3, "amount", DataType::Int64, false),
+            ],
+        )
+        .expect("schema");
+        let rows = rows
+            .map(|id| {
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                    vec![
+                        Value::UInt64(id),
+                        if id % 9 == 0 {
+                            Value::Null
+                        } else {
+                            Value::Utf8(format!("label-{}", (id + salt) % 5))
+                        },
+                        Value::Int64(i64::try_from(id * 17 + salt).expect("fits")),
+                    ],
+                    1,
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        let meta =
+            write(directory, 1, &schema, &rows, 16, Compression::Lz4, true).expect("write segment");
+        (schema, meta)
+    }
+
+    #[test]
+    fn neighbouring_selected_blocks_arrive_in_one_read() {
+        let directory = tempfile::tempdir().expect("directory");
+        let (schema, meta) = numbered_segment(directory.path(), 0..160, 0);
+        let path = directory.path().join(&meta.file_name);
+        let bytes = std::fs::read(&path).expect("file");
+        let mut decoder = super::FileDecoder::open(&path).expect("open");
+        let header = super::read_segment_columns_header(&path, &mut decoder, &meta, &schema)
+            .expect("header");
+        let layout =
+            super::projected_layout(&path, &meta, &schema, &mut decoder, &header).expect("layout");
+        let file = std::fs::File::open(&path).expect("handle");
+        let cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&cell, usize::MAX);
+        for column in layout.iter() {
+            let blocks = column.blocks.as_slice();
+            assert_eq!(blocks.len(), 10);
+            // Blocks 1-3 and 6-7 are wanted; 4, 5, 8 and 9 are not.
+            let selected = [
+                false, true, true, true, false, false, true, true, false, false,
+            ];
+            let mut runs = super::StoredRuns::new(&file, &budget);
+            for index in (0..blocks.len()).filter(|index| selected[*index]) {
+                let stored = runs
+                    .block(&path, blocks, &selected, index, &|_| false)
+                    .expect("stored block")
+                    .to_vec();
+                let block = &blocks[index];
+                assert_eq!(stored, bytes[block.offset..block.offset + block.length]);
+                // One read covers a run of wanted neighbours and stops at
+                // the first block nobody asked for.
+                let (first, last) = if index <= 3 { (1, 3) } else { (6, 7) };
+                assert_eq!(runs.start, blocks[first].offset);
+                assert_eq!(runs.end, blocks[last].offset + blocks[last].length);
+            }
+            drop(runs);
+            // A block that must be read alone takes nothing with it.
+            let mut runs = super::StoredRuns::new(&file, &budget);
+            runs.block(&path, blocks, &selected, 1, &|_| true)
+                .expect("alone");
+            assert_eq!(runs.end - runs.start, blocks[1].length);
+            // The run's bytes are reserved while it is held, and returned.
+            assert_eq!(
+                cell.load(std::sync::atomic::Ordering::Relaxed),
+                blocks[1].length
+            );
+            drop(runs);
+            assert_eq!(cell.load(std::sync::atomic::Ordering::Relaxed), 0);
+        }
+        for (start, end) in [(0, 1), (0, 64), (63, 65), (64, 128), (130, 131), (10, 10)] {
+            let mut words = vec![0_u64; 3];
+            for row in [5_usize, 64, 129] {
+                words[row / 64] |= 1 << (row % 64);
+            }
+            assert_eq!(
+                super::mask_selects_any(&words, start, end),
+                super::window_words(&words, start, end)
+                    .iter()
+                    .any(|word| *word != 0),
+                "rows {start}..{end}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rewritten_file_is_not_answered_from_the_blocks_of_the_one_it_replaced() {
+        let directory = tempfile::tempdir().expect("directory");
+        let cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&cell, usize::MAX);
+        let read = |schema: &TableSchema, meta: &super::SegmentMeta, rows: usize| {
+            read_projected_column_ranges(
+                directory.path(),
+                meta,
+                schema,
+                &[0, 1, 2],
+                std::slice::from_ref(&(0..rows)),
+                &budget,
+            )
+            .expect("read")
+            .columns
+            .into_iter()
+            .map(super::super::store::DecodedColumn::into_values)
+            .collect::<Vec<_>>()
+        };
+        let (schema, first) = numbered_segment(directory.path(), 0..160, 0);
+        let before = read(&schema, &first, 160);
+        // Asked for again, the blocks are held; asked a third time, they
+        // are what answers.
+        let hits = super::block_cache_stats().hits;
+        assert_eq!(read(&schema, &first, 160), before);
+        assert_eq!(read(&schema, &first, 160), before);
+        assert!(super::block_cache_stats().hits > hits, "blocks were held");
+
+        // The same name, other rows: a different file as far as a reader
+        // can tell, and nothing held for the first one may answer for it.
+        let (schema, second) = numbered_segment(directory.path(), 0..176, 3);
+        assert_eq!(first.file_name, second.file_name);
+        let after = read(&schema, &second, 176);
+        assert_ne!(after[1][..160], before[1][..]);
+        assert_eq!(after[2][0], Value::Int64(3));
+        assert_eq!(read(&schema, &second, 176), after);
+        assert_eq!(read(&schema, &second, 176), after);
+
+        // A deleted file's blocks are dropped by name.
+        super::forget_cached_blocks(&directory.path().join(&second.file_name));
+        assert_eq!(read(&schema, &second, 176), after);
     }
 
     #[test]

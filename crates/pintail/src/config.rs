@@ -119,6 +119,22 @@ fn default_total_query_memory_limit() -> usize {
         .unwrap_or(0)
 }
 
+/// The block cache's byte budget: `PINTAIL_BLOCK_CACHE_MB` when it is set
+/// (zero holds nothing), otherwise an eighth of the memory this process
+/// may use, no less than 32 MiB and no more than 4 GiB. The cache gives
+/// memory back when queries need it, so the figure is a ceiling on what it
+/// holds while memory is free, not memory taken from queries.
+#[must_use]
+pub fn block_cache_limit_bytes() -> usize {
+    const FLOOR: usize = 32 * 1024 * 1024;
+    const CEILING: usize = 4 * 1024 * 1024 * 1024;
+    pintail_store::block_cache_environment_limit().unwrap_or_else(|| {
+        available_memory_bytes()
+            .and_then(|bytes| usize::try_from(bytes / 8).ok())
+            .map_or(FLOOR, |bytes| bytes.clamp(FLOOR, CEILING))
+    })
+}
+
 const DEFAULT_CONFIG_FILE: &str = "pintail.toml";
 const DEFAULT_DATA_DIR: &str = "./data";
 /// Spill lives under the data directory by default so it inherits whatever

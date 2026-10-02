@@ -332,6 +332,24 @@ pub fn init_shared_memory_budget(limit: usize) {
     shared_memory_budget().set_limit(limit);
 }
 
+/// Sets the block cache's byte budget (zero holds nothing) and charges
+/// what it holds to the process-wide memory budget. A query that finds
+/// that budget full takes memory back from the cache before it waits or is
+/// refused, so cached blocks never cost a query its memory.
+pub fn init_block_cache(limit_bytes: usize) {
+    fn charge(bytes: usize) -> bool {
+        shared_memory_budget().reserve_as_is(bytes).is_ok()
+    }
+    fn release(bytes: usize) {
+        shared_memory_budget().release(bytes);
+    }
+    pintail_store::configure_block_cache(
+        limit_bytes,
+        Some(pintail_store::BlockCacheAccounting { charge, release }),
+    );
+    shared_memory_budget().set_reclaim(pintail_store::shrink_block_cache);
+}
+
 /// The longest one reservation waits on a full process-wide budget before
 /// it is refused. A query's own deadline, when shorter, ends it sooner.
 const SHARED_MEMORY_PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);

@@ -65,6 +65,10 @@ pub struct MemoryBudget {
     waiters: AtomicUsize,
     waiting: Mutex<()>,
     released: Condvar,
+    /// Asked for bytes when a reservation finds the budget full: memory
+    /// held on sufferance (cached blocks) is given back through it before
+    /// a query is refused or made to wait.
+    reclaim: std::sync::OnceLock<fn(usize) -> usize>,
 }
 
 /// How long one wait for a release lasts before the waiter looks again at
@@ -83,7 +87,16 @@ impl MemoryBudget {
             waiters: AtomicUsize::new(0),
             waiting: Mutex::new(()),
             released: Condvar::new(),
+            reclaim: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Names what gives memory back when the budget is full. It is handed
+    /// the bytes a refused reservation asked for and answers how many it
+    /// released through [`Self::release`]. Set once; later calls are
+    /// ignored.
+    pub fn set_reclaim(&self, reclaim: fn(usize) -> usize) {
+        let _ = self.reclaim.set(reclaim);
     }
 
     /// Sets the ceiling on an existing budget.
@@ -117,6 +130,24 @@ impl MemoryBudget {
     /// Returns [`ExecError::MemoryLimitExceeded`] with server scope when the
     /// process budget cannot cover the request.
     pub fn reserve(&self, bytes: usize) -> Result<(), ExecError> {
+        match self.reserve_as_is(bytes) {
+            Ok(()) => Ok(()),
+            Err(refused) => match self.reclaim.get() {
+                Some(reclaim) if reclaim(bytes) > 0 => self.reserve_as_is(bytes),
+                _ => Err(refused),
+            },
+        }
+    }
+
+    /// [`Self::reserve`] without asking anything to give memory back: what
+    /// the holder of reclaimable memory itself reserves through, so that a
+    /// full budget does not have it evict to make room for itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecError::MemoryLimitExceeded`] with server scope when the
+    /// process budget cannot cover the request.
+    pub fn reserve_as_is(&self, bytes: usize) -> Result<(), ExecError> {
         if self.limit() == 0 {
             return Ok(());
         }
