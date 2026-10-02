@@ -3081,6 +3081,14 @@ pub(super) enum ReadyColumn {
 }
 
 impl ReadyColumn {
+    /// Makes room for `rows` values in all.
+    fn reserve_to(&mut self, rows: usize) {
+        match self {
+            Self::Values(values) => values.reserve_exact(rows.saturating_sub(values.len())),
+            Self::Decimal { units, .. } => units.reserve_exact(rows.saturating_sub(units.len())),
+        }
+    }
+
     fn value(&self, row: usize) -> Value {
         match self {
             Self::Values(values) => values[row].clone(),
@@ -3390,12 +3398,28 @@ fn finish_int_range(
             Ok((groups, columns))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut len = 0;
+    let (len, columns) = joined_pieces(pieces);
+    Ok(ReadyColumns {
+        len,
+        columns,
+        settled: None,
+    })
+}
+
+/// The pieces' columns end to end, and the groups they hold. Every piece's
+/// groups land in the first piece's columns: room for all of them is taken
+/// once, not found by doubling as the pieces arrive.
+fn joined_pieces(pieces: Vec<(usize, Vec<ReadyColumn>)>) -> (usize, Vec<ReadyColumn>) {
+    let total: usize = pieces.iter().map(|(groups, _)| groups).sum();
     let mut columns: Option<Vec<ReadyColumn>> = None;
-    for (groups, piece) in pieces {
-        len += groups;
+    for (_, mut piece) in pieces {
         match &mut columns {
-            None => columns = Some(piece),
+            None => {
+                for column in &mut piece {
+                    column.reserve_to(total);
+                }
+                columns = Some(piece);
+            }
             Some(columns) => {
                 for (into, from) in columns.iter_mut().zip(piece) {
                     match (into, from) {
@@ -3412,11 +3436,7 @@ fn finish_int_range(
             }
         }
     }
-    Ok(ReadyColumns {
-        len,
-        columns: columns.unwrap_or_default(),
-        settled: None,
-    })
+    (total, columns.unwrap_or_default())
 }
 
 /// Folds one window through the integer-range fold. `false`, with the fold
