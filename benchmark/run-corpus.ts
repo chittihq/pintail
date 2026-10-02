@@ -11,13 +11,17 @@
 // Amplification copies every fixture row `scale` times with its primary key
 // (and `user_id`, the one cross-table key) shifted per copy, so joins keep
 // their per-copy fan-out and grouping keeps its cardinality. Ordered cases
-// can tie across copies, so above scale 1 answers are compared as bags.
+// can tie across copies, so above scale 1 answers are compared as bags, and
+// two answers that still differ go to corpus-compare.ts: a case whose
+// statement allows both is recorded as not comparable with the check that
+// proved it, never as equal; anything else is a difference.
 //
 // Usage:
 //   DOCKER_HOST=ssh://... bun run benchmark/run-corpus.ts \
 //     --corpus validate-out/oracle-outcomes.json --scales 1,10000
 //   [--runs 3] [--warmups 1] [--timeout-ms 10000] [--out benchmark/corpus]
 //   [--pintail-image tag] [--families substring] [--limit N] [--keep] [--trace]
+//   [--cases file-of-case-ids] [--no-clickhouse]
 //
 // Only results.csv is tracked. To rebuild it from a run's local JSON:
 //   bun run benchmark/run-corpus.ts --csv-from benchmark/corpus/results.json
@@ -27,6 +31,7 @@ import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { canonicalValue, docker, dockerHost, publishedPort, waitForMysql } from '../tests/e2e/lib.ts'
+import { explain, orderOf, rowKey, type Rows, type Verdict } from './corpus-compare.ts'
 
 const repository = resolve(import.meta.dir, '..')
 const args = process.argv.slice(2)
@@ -53,6 +58,10 @@ const outDir = resolve(repository, option('--out', 'benchmark/corpus')!)
 const familyFilter = option('--families')
 const limit = option('--limit') ? Number(option('--limit')) : undefined
 const keep = args.includes('--keep')
+// Only the cases whose ids (or id prefixes) the file lists, one per line.
+const caseFile = option('--cases')
+// Parity work needs MySQL and Pintail only; this leaves ClickHouse out.
+const withClickhouse = !args.includes('--no-clickhouse')
 // Records Pintail's per-statement phase trace and writes trace-s<scale>.json:
 // where each case's time went between the statement's arrival and its
 // encoded response. Tracing adds per-statement bookkeeping, so a traced run
@@ -106,10 +115,13 @@ type Outcome = {
   mysql: Timing
   pintail: Timing
   clickhouse: Timing
-  parity: { pintail: 'equal' | 'differs' | 'n/a'; clickhouse: 'equal' | 'differs' | 'n/a' }
+  parity: { pintail: 'equal' | 'differs' | 'not-comparable' | 'n/a'; clickhouse: 'equal' | 'differs' | 'n/a' }
+  /// Why Pintail's answer differs or cannot be compared, when it is not equal.
+  verdict?: Verdict
+  /// Above scale 1, whether an equal bag was also proved to be in order.
+  order?: 'checked' | 'unchecked'
 }
 type Engine = 'mysql' | 'pintail' | 'clickhouse'
-type Rows = unknown[][]
 
 function log(message: string) {
   console.log(`[corpus] ${message}`)
@@ -137,52 +149,10 @@ function geomean(values: number[]): number {
   return Math.exp(values.reduce((sum, value) => sum + Math.log(value), 0) / values.length)
 }
 
-/// One row as a comparable string. Numbers that both engines spell
-/// differently (1.50 against 1.5) meet on their numeric value.
-function rowKey(row: unknown[]): string {
-  return row
-    .map((value) => {
-      const text = canonicalValue(value)
-      const number = Number(text)
-      return text !== '' && Number.isFinite(number) && /^-?[\d.]+(e[-+]?\d+)?$/i.test(text)
-        ? `n:${number}`
-        : text
-    })
-    .join('')
-}
-
 function digest(rows: Rows, ordered: boolean): string {
   const keys = rows.map(rowKey)
   if (!ordered) keys.sort()
   return createHash('sha256').update(keys.join('')).digest('hex').slice(0, 24)
-}
-
-/// A trailing LIMIT, which a difference's classification removes to see
-/// the whole answer the LIMIT chose from.
-const LIMIT_TAIL = /\s+LIMIT\s+\d+(\s*(,|OFFSET)\s*\d+)?\s*$/i
-
-/// Why Pintail's answer differs from MySQL's: `order` when the rows are
-/// the same in another order, `group_concat` when they are equal once
-/// each cell's comma-separated members are sorted, `limit` when every row
-/// Pintail returned is in MySQL's answer without the LIMIT, `other`
-/// otherwise.
-function classify(mysql: Rows, pintail: Rows, full: Rows | undefined): string {
-  const bag = (rows: Rows) => JSON.stringify(rows.map(rowKey).sort())
-  if (bag(mysql) === bag(pintail)) return 'order'
-  const members = (rows: Rows) =>
-    rows.map((row) => row.map((value) => canonicalValue(value).split(',').sort().join(',')))
-  if (bag(members(mysql)) === bag(members(pintail))) return 'group_concat'
-  if (full && mysql.length === pintail.length) {
-    const available = new Map<string, number>()
-    for (const row of full) available.set(rowKey(row), (available.get(rowKey(row)) ?? 0) + 1)
-    const drawn = pintail.every((row) => {
-      const left = available.get(rowKey(row)) ?? 0
-      available.set(rowKey(row), left - 1)
-      return left > 0
-    })
-    if (drawn) return 'limit'
-  }
-  return 'other'
 }
 
 function isTooLarge(message: string): boolean {
@@ -387,12 +357,24 @@ async function main() {
   const corpus = JSON.parse(readFileSync(corpusPath, 'utf8')) as {
     cases: Case[]
     fixtureSQL: string
+    caseFixtures?: Array<{ table: string; sql: string }>
     provenance?: { session?: { sqlMode?: string } }
   }
   let cases = corpus.cases
   if (familyFilter) cases = cases.filter((entry) => entry.family.includes(familyFilter))
+  if (caseFile) {
+    const wanted = readFileSync(resolve(caseFile), 'utf8').split('\n').map((line) => line.trim()).filter(Boolean)
+    cases = cases.filter((entry) => wanted.some((id) => entry.id.startsWith(id)))
+  }
   if (limit !== undefined) cases = cases.slice(0, limit)
-  const tables = [...corpus.fixtureSQL.matchAll(/CREATE TABLE (\w+)/g)].map((match) => match[1])
+  // The shared fixture first, then the tables only some families read.
+  // Each loads, and is amplified, in the session state its own statements
+  // leave: one of them stores dates a strict session refuses to copy.
+  const fixtures = [corpus.fixtureSQL, ...(corpus.caseFixtures ?? []).map((fixture) => fixture.sql)].map((sql) => ({
+    sql,
+    tables: [...sql.matchAll(/CREATE TABLE (\w+)/g)].map((match) => match[1]),
+  }))
+  const tables = fixtures.flatMap((fixture) => fixture.tables)
   log(`${cases.length} cases over ${tables.join(', ')}; scales ${scales.join(', ')}`)
 
   const host = await dockerHost()
@@ -411,11 +393,13 @@ async function main() {
       '--binlog-row-metadata=FULL', '--gtid-mode=ON', '--enforce-gtid-consistency=ON',
       '--default-time-zone=+00:00', '--innodb-buffer-pool-size=1G',
     )
-    await docker(
-      'run', '--detach', '--name', clickhouseName, '--network', networkName, '--publish', '0:8123',
-      '--ulimit', 'nofile=262144:262144', ...engineLimits,
-      '--env', `CLICKHOUSE_PASSWORD=${clickhousePassword}`, clickhouseImage,
-    )
+    if (withClickhouse) {
+      await docker(
+        'run', '--detach', '--name', clickhouseName, '--network', networkName, '--publish', '0:8123',
+        '--ulimit', 'nofile=262144:262144', ...engineLimits,
+        '--env', `CLICKHOUSE_PASSWORD=${clickhousePassword}`, clickhouseImage,
+      )
+    }
     if (buildImage) {
       log('building the pintail image on the docker host')
       await docker('build', '--tag', pintailImage, repository)
@@ -431,11 +415,16 @@ async function main() {
       pintailImage,
     )
     const mysqlPort = await publishedPort(mysqlName, 3306)
-    const clickhouseUrl = `http://${host}:${await publishedPort(clickhouseName, 8123)}`
+    const clickhouseUrl = withClickhouse ? `http://${host}:${await publishedPort(clickhouseName, 8123)}` : ''
     const pintailUrl = `http://${host}:${await publishedPort(pintailName, 8080)}`
     const pintailWirePort = await publishedPort(pintailName, 3306)
     const admin = await waitForMysql(host, mysqlPort, 1200)
-    await waitFor('ClickHouse', async () => (await fetch(`${clickhouseUrl}/ping`)).ok)
+    if (withClickhouse) await waitFor('ClickHouse', async () => (await fetch(`${clickhouseUrl}/ping`)).ok)
+    // Cases that run in a named session zone need MySQL's zone tables.
+    await docker(
+      'exec', mysqlName, 'sh', '-c',
+      'mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null | MYSQL_PWD=pintail-root mysql -uroot mysql',
+    )
     await waitFor('Pintail', async () => (await fetch(`${pintailUrl}/health`)).ok)
     await admin.query(`CREATE USER '${sourceUser}'@'%' IDENTIFIED BY '${sourcePassword}'`)
     await admin.query(
@@ -447,7 +436,9 @@ async function main() {
     })
     const mysqlVersion = await scalar(admin, 'SELECT VERSION()')
     const pintailImageId = (await docker('image', 'inspect', '--format', '{{.Id}}', pintailImage)).stdout
-    const clickhouseVersion = (await clickhouseStatement(clickhouseUrl, 'SELECT version()')).trim()
+    const clickhouseVersion = withClickhouse
+      ? (await clickhouseStatement(clickhouseUrl, 'SELECT version()')).trim()
+      : 'not run'
 
     const report: Record<string, unknown>[] = []
     for (const scale of scales) {
@@ -456,15 +447,17 @@ async function main() {
       await admin.query(`CREATE DATABASE ${database}`)
       await admin.changeUser({ database })
       await admin.query('SET SESSION sql_log_bin = 0')
-      await admin.query(`SET SESSION sql_mode = '${corpus.provenance?.session?.sqlMode ?? ''}'`)
-      await admin.query(corpus.fixtureSQL)
       if (scale > 1) {
         await admin.query(`SET SESSION cte_max_recursion_depth = ${scale + 10}`)
         await admin.query('CREATE TABLE corpus_copies (k INT PRIMARY KEY)')
         await admin.query(
           `INSERT INTO corpus_copies WITH RECURSIVE seq(k) AS (SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ${scale - 1}) SELECT k FROM seq`,
         )
-        for (const table of tables) {
+      }
+      for (const fixture of fixtures) {
+        await admin.query(`SET SESSION sql_mode = '${corpus.provenance?.session?.sqlMode ?? ''}'`)
+        await admin.query(fixture.sql)
+        for (const table of scale > 1 ? fixture.tables : []) {
           const [columns] = await admin.query<mysql.RowDataPacket[]>(
             'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION',
             [database, table],
@@ -477,8 +470,8 @@ async function main() {
             `INSERT INTO \`${table}\` (${names.map((name) => `\`${name}\``).join(', ')}) SELECT ${projection} FROM \`${table}\` t CROSS JOIN corpus_copies c`,
           )
         }
-        await admin.query('DROP TABLE corpus_copies')
       }
+      if (scale > 1) await admin.query('DROP TABLE corpus_copies')
       const rowCounts: Record<string, number> = {}
       for (const table of tables) {
         rowCounts[table] = Number(await scalar(admin, `SELECT COUNT(*) FROM \`${table}\``))
@@ -488,8 +481,8 @@ async function main() {
 
       // ClickHouse copies each table through its MySQL table function.
       const clickhouseTables: Record<string, string> = {}
-      await clickhouseStatement(clickhouseUrl, `CREATE DATABASE ${database}`)
-      for (const table of tables) {
+      if (withClickhouse) await clickhouseStatement(clickhouseUrl, `CREATE DATABASE ${database}`)
+      for (const table of withClickhouse ? tables : []) {
         try {
           await clickhouseStatement(
             clickhouseUrl,
@@ -549,11 +542,15 @@ async function main() {
 
       mkdirSync(outDir, { recursive: true })
       const partial = join(outDir, `partial-s${scale}.jsonl`)
-      // Differing cases with both engines' rows, for telling a tie under a
-      // LIMIT or a GROUP_CONCAT order from a wrong answer. Not tracked.
+      // Cases whose answers differ, with both engines' rows: the unexplained
+      // ones, and the ones a check proved to be two answers to a statement
+      // that allows more than one. Not tracked.
       const differences = join(outDir, `differences-s${scale}.jsonl`)
+      const notComparable = join(outDir, `not-comparable-s${scale}.jsonl`)
       writeFileSync(differences, '')
+      writeFileSync(notComparable, '')
       const differenceKinds: Record<string, number> = {}
+      const notComparableReasons: Record<string, number> = {}
       writeFileSync(partial, '')
       const random = mulberry32(SEED + scale)
       const outcomes: Outcome[] = []
@@ -584,7 +581,10 @@ async function main() {
             await sessions.pintail.ensure(settings('pintail'))
             return measure(() => sessions.pintail.query(entry.sql, TIMEOUT_MS + 5_000), ordered)
           },
-          clickhouse: () => measure(() => clickhouseQuery(clickhouseUrl, database, entry.sql, TIMEOUT_MS), ordered),
+          clickhouse: async () =>
+            withClickhouse
+              ? measure(() => clickhouseQuery(clickhouseUrl, database, entry.sql, TIMEOUT_MS), ordered)
+              : { status: 'error', samples: [], error: 'not run' },
         }
         const order: Engine[] = ['mysql', 'pintail', 'clickhouse']
         for (let position = order.length - 1; position > 0; position -= 1) {
@@ -599,25 +599,45 @@ async function main() {
             : timings.mysql.digest === timings[engine].digest
               ? 'equal'
               : 'differs'
-        if (agree('pintail') === 'differs') {
-          const withoutLimit = entry.sql.replace(LIMIT_TAIL, '')
-          let full: Rows | undefined
-          if (withoutLimit !== entry.sql) {
-            try {
-              full = await sessions.mysql.query(withoutLimit, TIMEOUT_MS + 5_000)
-            } catch {
-              full = undefined
-            }
-          }
+        let pintailParity: Outcome['parity']['pintail'] = agree('pintail')
+        let verdict: Verdict | undefined
+        let inOrder: Outcome['order']
+        const ask = (engine: 'mysql' | 'pintail', sql: string) => sessions[engine].query(sql, TIMEOUT_MS + 5_000)
+        if (pintailParity === 'equal' && scale > 1) {
+          // Equal bags say nothing of the order the rows came in.
+          const found = await orderOf(entry.sql, timings.mysql.kept ?? [], timings.pintail.kept ?? [], ask)
+          if (found === 'differs') pintailParity = 'differs'
+          else inOrder = found
+        }
+        if (pintailParity === 'differs') {
           const mysqlRows = timings.mysql.kept ?? []
           const pintailRows = timings.pintail.kept ?? []
-          const kind = classify(mysqlRows, pintailRows, full)
-          differenceKinds[kind] = (differenceKinds[kind] ?? 0) + 1
-          const sample = (rows: Rows) => rows.slice(0, 50).map((row) => row.map(canonicalValue))
-          appendFileSync(
-            differences,
-            `${JSON.stringify({ id: entry.id, family: entry.family, sql: entry.sql, kind, mysql: sample(mysqlRows), pintail: sample(pintailRows) })}\n`,
-          )
+          // At the fixture's own size a statement has one answer, and a
+          // different one is a difference whatever its shape.
+          verdict =
+            scale === 1
+              ? { parity: 'differs', kind: 'exact' }
+              : agree('pintail') === 'equal'
+                ? { parity: 'differs', kind: 'order' }
+                : await explain(entry.sql, mysqlRows, pintailRows, ask)
+          pintailParity = verdict.parity
+          const sample = (rows: Rows) =>
+            rows.slice(0, 50).map((row) => row.map((value) => canonicalValue(value).slice(0, 2_000)))
+          const record = {
+            id: entry.id,
+            family: entry.family,
+            sql: entry.sql,
+            ...verdict,
+            mysql: sample(mysqlRows),
+            pintail: sample(pintailRows),
+          }
+          if (verdict.parity === 'differs') {
+            differenceKinds[verdict.kind] = (differenceKinds[verdict.kind] ?? 0) + 1
+            appendFileSync(differences, `${JSON.stringify(record)}\n`)
+          } else {
+            notComparableReasons[verdict.reason] = (notComparableReasons[verdict.reason] ?? 0) + 1
+            appendFileSync(notComparable, `${JSON.stringify(record)}\n`)
+          }
         }
         for (const engine of order) delete timings[engine].kept
         outcomes.push({
@@ -626,7 +646,9 @@ async function main() {
           sql: entry.sql,
           ordered: entry.ordered,
           ...timings,
-          parity: { pintail: agree('pintail'), clickhouse: agree('clickhouse') },
+          parity: { pintail: pintailParity, clickhouse: agree('clickhouse') },
+          ...(verdict ? { verdict } : {}),
+          ...(inOrder ? { order: inOrder } : {}),
         })
         appendFileSync(partial, `${JSON.stringify(outcomes[outcomes.length - 1])}\n`)
         if ((index + 1) % 100 === 0) {
@@ -644,7 +666,7 @@ async function main() {
         writeFileSync(join(outDir, `trace-s${scale}.json`), `${JSON.stringify(summary, null, 2)}\n`)
         log(`scale ${scale}: traced ${summary.traced} of ${outcomes.length} cases`)
       }
-      report.push({ scale, database, rowCounts, clickhouseTables, outcomes, differences: differenceKinds })
+      report.push({ scale, database, rowCounts, clickhouseTables, outcomes, differences: differenceKinds, notComparable: notComparableReasons })
     }
 
     const commit = (await Bun.$`git -C ${repository} rev-parse HEAD`.text()).trim()
@@ -761,7 +783,12 @@ function summarize(artifact: {
         `Pintail / ClickHouse: ${fmt(geomean(both('clickhouse').map((o) => ratio(o, 'clickhouse'))))} over ${both('clickhouse').length} cases.`,
       '',
       `Answers: Pintail differs from MySQL on ${outcomes.filter((o) => o.parity.pintail === 'differs').length} cases, ` +
-        `ClickHouse on ${outcomes.filter((o) => o.parity.clickhouse === 'differs').length}.`,
+        `ClickHouse on ${outcomes.filter((o) => o.parity.clickhouse === 'differs').length}. ` +
+        `${outcomes.filter((o) => o.parity.pintail === 'not-comparable').length} more Pintail answers are not comparable at this scale: ` +
+        "the statement allows more than one answer, and a check proved Pintail's is one of them." +
+        (scale > 1
+          ? ` Of the ${outcomes.filter((o) => o.order).length} equal answers, ${outcomes.filter((o) => o.order === 'checked').length} were also proved to be in the order their statement asks for; the rest state no order or one the check does not read.`
+          : ''),
       '',
       '### By family', '',
       '| Family | cases | Pintail / MySQL | Pintail / ClickHouse | Pintail errors+timeouts |',
@@ -803,6 +830,16 @@ function summarize(artifact: {
     }
     if (differs.length === 0) lines.push('None.')
     for (const o of differs.slice(0, 40)) lines.push(`- (${o.family}) \`${o.sql.slice(0, 160)}\``)
+    const reasons = (scaleEntry as { notComparable?: Record<string, number> }).notComparable
+    lines.push('', '### Pintail answers not comparable at this scale', '')
+    if (!reasons || Object.keys(reasons).length === 0) lines.push('None.')
+    else {
+      lines.push("| Cases | Why the statement has more than one answer | What was proved of Pintail's |", '|---:|---|---|')
+      for (const [reason, count] of Object.entries(reasons)) {
+        const proved = outcomes.find((o) => o.verdict?.parity === 'not-comparable' && o.verdict.reason === reason)?.verdict
+        lines.push(`| ${count} | ${reason} | ${proved?.parity === 'not-comparable' ? proved.check : ''} |`)
+      }
+    }
     lines.push('')
   }
   return `${lines.join('\n')}\n`
