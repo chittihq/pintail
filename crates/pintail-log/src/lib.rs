@@ -105,6 +105,9 @@ pub fn emit(message: &str) {
 /// what stops the work it describes.
 pub fn emit_at(level: u8, message: &str) {
     use std::io::Write as _;
+    // Lines queued before this one are written before it: a line written
+    // at once never overtakes a deferred line that was logged first.
+    flush_deferred();
     let mut line = String::with_capacity(message.len() + 9);
     line.push_str("pintail ");
     line.push_str(message);
@@ -112,6 +115,143 @@ pub fn emit_at(level: u8, message: &str) {
     let _ = std::io::stderr().lock().write_all(line.as_bytes());
     if let Some(sink) = SINK.get() {
         sink(level, message);
+    }
+}
+
+/// Lines waiting for the background writer, and whether it has been woken
+/// for them.
+struct Deferred {
+    lines: Vec<(u8, String)>,
+    /// The writer is awake and will take whatever is queued; nobody needs
+    /// to wake it again.
+    writing: bool,
+}
+
+struct DeferredQueue {
+    queue: std::sync::Mutex<Deferred>,
+    queued: std::sync::Condvar,
+    /// Held by whoever is writing queued lines.
+    flushing: std::sync::Mutex<()>,
+}
+
+static DEFERRED: OnceLock<Option<&'static DeferredQueue>> = OnceLock::new();
+
+/// How long the background writer lets lines gather before it writes them:
+/// the longest a deferred line trails the event it records.
+const DEFERRED_GATHER: std::time::Duration = std::time::Duration::from_millis(2);
+
+/// The most lines queued at once; past it a line is written by the thread
+/// that logged it, so a stalled stderr slows logging rather than growing
+/// the queue without bound.
+const DEFERRED_LIMIT: usize = 8192;
+
+fn deferred_queue() -> Option<&'static DeferredQueue> {
+    *DEFERRED.get_or_init(|| {
+        let queue: &'static DeferredQueue = Box::leak(Box::new(DeferredQueue {
+            queue: std::sync::Mutex::new(Deferred {
+                lines: Vec::new(),
+                writing: false,
+            }),
+            queued: std::sync::Condvar::new(),
+            flushing: std::sync::Mutex::new(()),
+        }));
+        std::thread::Builder::new()
+            .name("pintail-log".to_owned())
+            .spawn(move || {
+                loop {
+                    {
+                        let mut deferred = queue
+                            .queue
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        deferred.writing = false;
+                        while deferred.lines.is_empty() {
+                            deferred = queue
+                                .queued
+                                .wait(deferred)
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        }
+                        deferred.writing = true;
+                    }
+                    std::thread::sleep(DEFERRED_GATHER);
+                    flush_deferred();
+                }
+            })
+            .ok()
+            .map(|_| queue)
+    })
+}
+
+/// Logs one line without writing it on the calling thread.
+///
+/// For the one line a server writes per statement it answers: written at
+/// once it is a system call on the thread answering the statement, for
+/// every statement, and that call was a sixth of what a trivial statement
+/// cost the server. The line is queued, and a background thread writes
+/// what has gathered every couple of milliseconds, in the order it was
+/// logged. A line logged at once ([`emit_at`]) first writes everything
+/// queued before it, so the two kinds never appear out of order, and a
+/// process that logs its own shutdown leaves nothing queued behind.
+///
+/// Not for a line that reports a failure: a process that dies in the next
+/// two milliseconds takes its queued lines with it.
+pub fn emit_deferred(level: u8, message: String) {
+    let Some(queue) = deferred_queue() else {
+        emit_at(level, &message);
+        return;
+    };
+    let mut deferred = queue
+        .queue
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if deferred.lines.len() >= DEFERRED_LIMIT {
+        drop(deferred);
+        emit_at(level, &message);
+        return;
+    }
+    deferred.lines.push((level, message));
+    if !deferred.writing {
+        deferred.writing = true;
+        drop(deferred);
+        queue.queued.notify_one();
+    }
+}
+
+/// Writes every deferred line queued so far, in order, in one write.
+pub fn flush_deferred() {
+    use std::io::Write as _;
+    let Some(Some(queue)) = DEFERRED.get() else {
+        return;
+    };
+    // One flush at a time takes lines and writes them, so two flushes
+    // cannot write their lines out of order. The sink is called after both
+    // locks are let go: it is someone else's code, and may log.
+    let flushing = queue
+        .flushing
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let lines = std::mem::take(
+        &mut queue
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lines,
+    );
+    if lines.is_empty() {
+        return;
+    }
+    let mut text = String::with_capacity(lines.iter().map(|(_, line)| line.len() + 9).sum());
+    for (_, line) in &lines {
+        text.push_str("pintail ");
+        text.push_str(line);
+        text.push('\n');
+    }
+    let _ = std::io::stderr().lock().write_all(text.as_bytes());
+    drop(flushing);
+    if let Some(sink) = SINK.get() {
+        for (level, line) in &lines {
+            sink(*level, line);
+        }
     }
 }
 
@@ -131,6 +271,17 @@ macro_rules! log_info {
     ($($arg:tt)*) => {
         if $crate::enabled($crate::INFO) {
             $crate::emit_at($crate::INFO, &format!($($arg)*));
+        }
+    };
+}
+
+/// Logs a routine per-statement record through the background writer
+/// ([`emit_deferred`]). Emitted at `info` and below.
+#[macro_export]
+macro_rules! log_info_deferred {
+    ($($arg:tt)*) => {
+        if $crate::enabled($crate::INFO) {
+            $crate::emit_deferred($crate::INFO, format!($($arg)*));
         }
     };
 }
@@ -157,6 +308,41 @@ mod tests {
         // Whatever the environment says, a failure is reportable. The default
         // is info, so this holds without configuring anything.
         assert!(enabled(ERROR));
+    }
+
+    #[test]
+    fn deferred_lines_reach_the_sink_in_order_and_before_a_line_written_at_once() {
+        use std::sync::Mutex;
+        static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        fn sink(_level: u8, message: &str) {
+            if message.starts_with("ordered ") {
+                SEEN.lock().unwrap().push(message.to_owned());
+            }
+        }
+        assert!(super::set_sink(sink), "this test owns the process's sink");
+        for index in 0..50 {
+            super::emit_deferred(INFO, format!("ordered {index}"));
+        }
+        // Written at once: everything queued before it goes first.
+        super::emit_at(INFO, "ordered at-once");
+        let seen = SEEN.lock().unwrap().clone();
+        let mut expected = (0..50)
+            .map(|index| format!("ordered {index}"))
+            .collect::<Vec<_>>();
+        expected.push("ordered at-once".to_owned());
+        assert_eq!(seen, expected);
+        // And a deferred line with nothing after it is written by the
+        // background writer on its own.
+        super::emit_deferred(INFO, "ordered last".to_owned());
+        let waited = std::time::Instant::now();
+        while SEEN.lock().unwrap().len() < 52 {
+            assert!(
+                waited.elapsed() < std::time::Duration::from_secs(10),
+                "the background writer never wrote the line"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(SEEN.lock().unwrap().last().unwrap(), "ordered last");
     }
 
     #[test]

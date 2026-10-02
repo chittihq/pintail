@@ -1685,7 +1685,10 @@ impl Backend {
             })
             .unwrap_or_else(|| ("-".to_owned(), "-".to_owned()));
         match outcome {
-            Ok(rows) => pintail_log::log_info!(
+            // Through the background writer: this line is written for every
+            // statement, and written here it is a system call on the
+            // statement's own path.
+            Ok(rows) => pintail_log::log_info_deferred!(
                 "wire query db={database} key={key} {rows} rows {millis}ms {}",
                 recorded.shape,
             ),
