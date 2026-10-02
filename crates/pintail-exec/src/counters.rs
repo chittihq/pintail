@@ -53,6 +53,11 @@ pub struct ExecCounters {
     /// Windows an integer-range fold read key bounds for ahead of folding:
     /// the first one, and any whose keys left the range.
     pub range_windows_bounded: u64,
+    /// Rounds of a scan an aggregate folded in place: each worker decoded a
+    /// slice of the table and folded it itself.
+    pub fused_rounds: u64,
+    /// Batches those rounds folded whole.
+    pub fused_batches: u64,
 }
 
 thread_local! {
@@ -74,6 +79,8 @@ thread_local! {
             membership_point_queries: 0,
             range_windows_in_range: 0,
             range_windows_bounded: 0,
+            fused_rounds: 0,
+            fused_batches: 0,
         })
     };
 }

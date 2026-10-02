@@ -378,7 +378,7 @@ mod tests {
     /// report and nothing else.
     const CHILD: &str = "PINTAIL_OPTIMIZATIONS_TEST_CHILD";
 
-    const KEYS: [&str; 24] = [
+    const KEYS: [&str; 25] = [
         "cpu_model=",
         "cpu_cores=",
         "cpu_features=",
@@ -401,6 +401,7 @@ mod tests {
         "packed_group=",
         "grouped_fold=",
         "argument_projection=",
+        "fused_fold=",
         "segment_format=",
         "non_default=",
     ];

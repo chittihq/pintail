@@ -1662,6 +1662,42 @@ fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<Relat
 /// holds the set and the scan it narrows.
 pub type IntegerMembership = std::sync::Arc<dyn Fn(i128) -> bool + Send + Sync>;
 
+/// What a fused round does with one scan batch, on the thread that decoded
+/// it: the batch, and whether its every row already satisfies the scan's
+/// predicates. It returns the batch, or the rows of it left, when it could
+/// not take them.
+pub type ScanBatchFold<'a> =
+    &'a (dyn Fn(RecordBatch, ScanBatchPlace) -> Result<Option<RecordBatch>, ExecError> + Sync);
+
+/// Where a batch of a fused round stands.
+#[derive(Clone, Copy, Debug)]
+pub struct ScanBatchPlace {
+    /// Whether every row of the batch already satisfies the scan's
+    /// predicates.
+    pub prefiltered: bool,
+    /// The batch's place in the order [`BatchStream::next_batch`] would
+    /// have returned the stream's batches in: larger for a later batch. A
+    /// round's batches are folded in whatever order its workers reach
+    /// them, so a consumer whose answer depends on which row came first
+    /// reads the order from here.
+    pub order: u64,
+}
+
+/// How a fused round of a scan ended.
+#[derive(Debug)]
+pub enum FoldedRound {
+    /// The stream does not fold in place, or not in its present state.
+    Unavailable,
+    /// A round ran. `returned` holds the batches the consumer gave back.
+    Round {
+        /// Batches the fold did not take, each with its place in the
+        /// stream's order, in no particular order themselves.
+        returned: Vec<(u64, RecordBatch)>,
+    },
+    /// The stream is exhausted.
+    Done,
+}
+
 /// Pull-based batch source opened for one physical scan.
 pub trait BatchStream: Send {
     /// Produces the next batch, or `None` at end of stream.
@@ -1751,6 +1787,32 @@ pub trait BatchStream: Send {
     /// has handed out that many. Without this call such a scan reads on to
     /// its end. Ignored once a batch was pulled.
     fn stop_after_filtered_rows(&mut self) {}
+
+    /// Runs one round of the scan in which each worker hands the batches
+    /// it decoded to `fold` itself, on its own thread, instead of queueing
+    /// them for [`Self::next_batch`]. `fold` is told where the batch
+    /// stands, and gives back what it could not take.
+    ///
+    /// The round reads about `max_batches` batches at most - a consumer
+    /// whose state grows with every row bounds what one round can add to
+    /// it this way - and at least one.
+    ///
+    /// A stream that cannot run such a round - or cannot right now, with
+    /// rows already buffered - answers [`FoldedRound::Unavailable`] and is
+    /// read with [`Self::next_batch`] as before.
+    ///
+    /// # Errors
+    ///
+    /// Returns a source-specific execution error, or the first `fold`
+    /// returned.
+    fn fold_round(
+        &mut self,
+        _available_memory: usize,
+        _max_batches: usize,
+        _fold: ScanBatchFold<'_>,
+    ) -> Result<FoldedRound, ExecError> {
+        Ok(FoldedRound::Unavailable)
+    }
 
     /// What the stream's reads cost so far, for a profiled execution:
     /// bytes decompressed and values decoded, in total and per column id.
@@ -2607,6 +2669,231 @@ impl MemoryTracker {
             Ok(())
         }
     }
+}
+
+/// Keeps a batch the operator above gave back during a fused round.
+fn keep_returned(kept: &std::sync::Mutex<Vec<(u64, RecordBatch)>>, order: u64, batch: RecordBatch) {
+    kept.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push((order, batch));
+}
+
+/// Closes an operator's fused round: the batches it declined on a worker
+/// go through `own` on the calling thread, and join the ones the operator
+/// above gave back.
+fn finish_round(
+    round: FoldedRound,
+    kept: std::sync::Mutex<Vec<(u64, RecordBatch)>>,
+    mut own: impl FnMut(RecordBatch) -> Result<Option<RecordBatch>, ExecError>,
+) -> Result<FoldedRound, ExecError> {
+    let FoldedRound::Round { returned } = round else {
+        return Ok(round);
+    };
+    let mut kept = kept
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for (order, batch) in returned {
+        if let Some(batch) = own(batch)? {
+            kept.push((order, batch));
+        }
+    }
+    Ok(FoldedRound::Round { returned: kept })
+}
+
+/// For each projected expression, the input column it passes through:
+/// a bare column of the declared type shares its buffers with the output
+/// and is never evaluated row by row.
+fn passthrough_columns(
+    expressions: &[(CompiledExpr, Option<DataType>)],
+    batch: &RecordBatch,
+) -> Vec<Option<usize>> {
+    expressions
+        .iter()
+        .map(|(expression, data_type)| {
+            let position = expression.column_index()?;
+            let column = batch.column(position)?;
+            data_type
+                .is_none_or(|data_type| data_type == column.data_type())
+                .then_some(position)
+        })
+        .collect()
+}
+
+/// One input batch projected through `expressions`.
+#[allow(clippy::too_many_lines)]
+fn project_batch(
+    expressions: &[(CompiledExpr, Option<DataType>)],
+    batch: RecordBatch,
+    memory: &MemoryTracker,
+) -> Result<RecordBatch, ExecError> {
+    // A bare column of the declared type passes through: the
+    // output shares its buffers, and it is never evaluated row by
+    // row. Only computed expressions evaluate.
+    let passthrough = passthrough_columns(expressions, &batch);
+    if passthrough.iter().all(Option::is_some) {
+        let positions = passthrough.into_iter().flatten().collect::<Vec<_>>();
+        memory.ensure_transient(
+            batch.estimated_bytes().saturating_add(
+                positions
+                    .len()
+                    .saturating_mul(size_of::<ColumnVector>() * 2),
+            ),
+        )?;
+        return batch
+            .project_columns(&positions)
+            .ok_or(ExecError::InvalidBatch(
+                "projection column is outside its input",
+            ));
+    }
+    let computed = expressions
+        .iter()
+        .zip(&passthrough)
+        .filter(|(_, position)| position.is_none())
+        .map(|(expression, _)| expression)
+        .collect::<Vec<_>>();
+    let batch_bytes = batch.estimated_bytes();
+    // An expression is evaluated a row at a time, and what one
+    // row's evaluation allocates is gone before the next row's
+    // begins: its working memory is the largest row's, once.
+    // What outlives the row is its result, a value per row
+    // counted below, plus that value's own text where the
+    // result is not a number. Adding every row's working
+    // memory together instead charged a checksum over twenty
+    // columns several kilobytes a row for a column of integers,
+    // and a batch of a hundred thousand rows asked for more
+    // than the whole ceiling.
+    let expression_memory = computed
+        .iter()
+        .map(|(expression, data_type)| {
+            let keeps_text = !data_type.is_some_and(holds_no_heap);
+            // Where every row's bound is the same - packed
+            // numbers with no NULL - one row is read and the
+            // sum is that row's, times the rows: the same
+            // figure, without visiting each of them.
+            let by_row = || {
+                batch.selection().selected_rows().fold(
+                    (0_usize, 0_usize),
+                    |(working, kept), row| {
+                        let bound = expression.allocation_upper_bound(&batch, row);
+                        let text = if keeps_text {
+                            expression.result_text_upper_bound(&batch, row).min(bound)
+                        } else {
+                            0
+                        };
+                        (working.max(bound), kept.saturating_add(text))
+                    },
+                )
+            };
+            if let Some((bound, text)) = expression.uniform_row_bounds(&batch) {
+                let rows = batch.visible_row_count();
+                let uniform = if rows == 0 {
+                    (0, 0)
+                } else if keeps_text {
+                    (bound, rows.saturating_mul(text.min(bound)))
+                } else {
+                    (bound, 0)
+                };
+                // Every debug run checks the one row against
+                // all of them.
+                debug_assert_eq!(uniform, by_row());
+                return uniform.0.saturating_add(uniform.1);
+            }
+            let (working, kept) = by_row();
+            working.saturating_add(kept)
+        })
+        .fold(0_usize, usize::saturating_add);
+    let projected_memory = size_of::<RecordBatch>()
+        .saturating_add(
+            expressions
+                .len()
+                .saturating_mul(size_of::<ColumnVector>().saturating_mul(2)),
+        )
+        .saturating_add(
+            computed
+                .len()
+                .saturating_mul(batch.row_count())
+                .saturating_mul(size_of::<Value>()),
+        )
+        .saturating_add(
+            batch
+                .row_count()
+                .div_ceil(64)
+                .saturating_mul(size_of::<u64>()),
+        )
+        .saturating_add(expression_memory);
+    memory.ensure_transient(batch_bytes.saturating_add(projected_memory))?;
+    let mut columns = Vec::with_capacity(expressions.len());
+    for ((expression, data_type), position) in expressions.iter().zip(&passthrough) {
+        if let Some(position) = position {
+            columns.push(batch.columns()[*position].clone());
+            continue;
+        }
+        // A whole batch at a time over packed units where the
+        // expression has kernels; row by row where it has not.
+        if let Some(column) = expression.evaluate_column(&batch, *data_type) {
+            columns.push(column);
+            continue;
+        }
+        let mut values = Vec::with_capacity(batch.row_count());
+        for row in 0..batch.row_count() {
+            if batch.selection().is_selected(row) {
+                values.push(expression.evaluate(&batch, row)?);
+            } else {
+                values.push(Value::Null);
+            }
+        }
+        let data_type = data_type.unwrap_or(DataType::Utf8);
+        columns.push(ColumnVector::new(data_type, values)?);
+        crate::counters::count(|counters| {
+            counters.rows_projected_scalar = counters
+                .rows_projected_scalar
+                .saturating_add(u64::try_from(batch.row_count()).unwrap_or(u64::MAX));
+        });
+    }
+    let mut output = RecordBatch::new(batch.row_count(), columns)?;
+    output.set_selection(batch.selection().clone())?;
+    memory.ensure_transient(batch_bytes.saturating_add(output.estimated_bytes()))?;
+    Ok(output)
+}
+
+/// Narrows `batch`'s selection to the rows `predicate` accepts.
+///
+/// Typed batch kernel first: comparison predicates over packed columns
+/// resolve in one pass. Anything else the kernel tree answers - a function
+/// of a column, arithmetic, a decimal comparison - resolves as a Boolean
+/// column, which is the same answer a batch at a time. Only an expression
+/// no kernel answers is evaluated a row at a time.
+fn filter_batch(
+    predicate: &CompiledExpr,
+    batch: &mut RecordBatch,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    let mask = match predicate.evaluate_filter_mask(batch)? {
+        Some(mask) => Some(mask),
+        None => predicate.evaluate_mask(batch),
+    };
+    if let Some(mask) = mask {
+        batch.selection_mut().intersect(&mask)?;
+        return Ok(());
+    }
+    let batch_bytes = batch.estimated_bytes();
+    for row in 0..batch.row_count() {
+        if !batch.selection().is_selected(row) {
+            continue;
+        }
+        let keep = if let Some(keep) = predicate.evaluate_predicate_direct(batch, row)? {
+            keep
+        } else {
+            memory.ensure_transient(
+                batch_bytes.saturating_add(predicate.allocation_upper_bound(batch, row)),
+            )?;
+            predicate_truth(&predicate.evaluate(batch, row)?)?
+        };
+        if !keep {
+            batch.selection_mut().set(row, false)?;
+        }
+    }
+    Ok(())
 }
 
 /// Running pull-based query execution.
@@ -4971,6 +5258,170 @@ impl PullOperator {
         }
     }
 
+    /// Runs one fused round of the scan beneath this operator: each worker
+    /// decodes a slice of the table, applies the Filters between the scan
+    /// and here, and hands the batch to `fold` on its own thread. The batch
+    /// is charged to the query while `fold` holds it, and one the ceiling
+    /// refuses comes back in `returned` with whatever `fold` itself gave
+    /// back, for the caller to take as it takes a pulled batch. The round
+    /// reads about `max_batches` batches at most, and at least one.
+    ///
+    /// [`FoldedRound::Unavailable`] when this is not a scan under Filters
+    /// alone, or the scan cannot fold in place right now; the caller then
+    /// pulls with [`Self::next_batch`].
+    fn fold_round(
+        &mut self,
+        memory: &MemoryTracker,
+        max_batches: usize,
+        fold: &(dyn Fn(RecordBatch, u64) -> Result<Option<RecordBatch>, ExecError> + Sync),
+    ) -> Result<FoldedRound, ExecError> {
+        memory.check_interruption()?;
+        self.fold_round_through(memory, max_batches, &|batch, place| {
+            let bytes = batch.estimated_bytes();
+            if memory.reserve(bytes).is_err() {
+                return Ok(Some(batch));
+            }
+            let outcome = fold(batch, place.order);
+            memory.release(bytes);
+            outcome
+        })
+    }
+
+    /// One fused round through this operator. `fold` is the operator
+    /// above: it returns a batch only to decline it, as it was handed over.
+    /// An operator here that declines a batch on a worker - a predicate no
+    /// quiet kernel answers - returns it the same way, and takes it again
+    /// on the calling thread once the round is over; what the operators
+    /// above gave back to it is kept aside in its own output's form. The
+    /// round's `returned` batches are therefore this operator's output,
+    /// each as [`Self::next_batch`] would have produced it.
+    #[allow(clippy::too_many_lines)] // one arm per operator a round passes through
+    fn fold_round_through(
+        &mut self,
+        memory: &MemoryTracker,
+        max_batches: usize,
+        fold: ScanBatchFold<'_>,
+    ) -> Result<FoldedRound, ExecError> {
+        match self {
+            Self::Scan {
+                stream,
+                expected_types,
+            } => {
+                memory
+                    .ensure_transient(stream.next_batch_memory_upper_bound(memory.remaining()))?;
+                let retained_before = stream.retained_bytes();
+                let expected_types = &*expected_types;
+                let round = stream.fold_round(memory.remaining(), max_batches, &|batch, place| {
+                    validate_scan_batch(&batch, expected_types)?;
+                    fold(batch, place)
+                });
+                let retained_after = stream.retained_bytes();
+                if retained_after > retained_before {
+                    memory.reserve(retained_after - retained_before)?;
+                } else {
+                    memory.release(retained_before - retained_after);
+                }
+                round
+            }
+            Self::Filter {
+                input,
+                predicate,
+                storage,
+            } => {
+                let (predicate, storage) = (&*predicate, *storage);
+                let kept = std::sync::Mutex::new(Vec::new());
+                let round =
+                    input.fold_round_through(memory, max_batches, &|mut batch, place| {
+                        // A prefiltered scan batch already passed this
+                        // predicate, as in the pulled path. Otherwise a worker
+                        // answers it only through the batch kernels that raise
+                        // nothing: a predicate that has to be read row by row
+                        // is the query's own thread's, which holds the
+                        // session's settings and collects its warnings.
+                        if !(storage && place.prefiltered) {
+                            let mask = match predicate.evaluate_filter_mask(&batch)? {
+                                Some(mask) => Some(mask),
+                                None => predicate.evaluate_quiet_mask(&batch),
+                            };
+                            let Some(mask) = mask else {
+                                return Ok(Some(batch));
+                            };
+                            batch.selection_mut().intersect(&mask)?;
+                        }
+                        if batch.visible_row_count() > 0
+                            && let Some(back) = fold(batch, place)?
+                        {
+                            keep_returned(&kept, place.order, back);
+                        }
+                        Ok(None)
+                    })?;
+                finish_round(round, kept, |mut batch| {
+                    filter_batch(predicate, &mut batch, memory)?;
+                    Ok((batch.visible_row_count() > 0).then_some(batch))
+                })
+            }
+            Self::Project { input, expressions } => {
+                // Bare columns only: anything computed is evaluated on the
+                // query's own thread.
+                if expressions
+                    .iter()
+                    .any(|(expression, _)| expression.column_index().is_none())
+                {
+                    return Ok(FoldedRound::Unavailable);
+                }
+                let expressions = &*expressions;
+                let kept = std::sync::Mutex::new(Vec::new());
+                let round = input.fold_round_through(memory, max_batches, &|batch, place| {
+                    let passthrough = passthrough_columns(expressions, &batch);
+                    if passthrough.iter().any(Option::is_none) {
+                        return Ok(Some(batch));
+                    }
+                    let positions = passthrough.into_iter().flatten().collect::<Vec<_>>();
+                    let projected =
+                        batch
+                            .project_columns(&positions)
+                            .ok_or(ExecError::InvalidBatch(
+                                "projection column is outside its input",
+                            ))?;
+                    if let Some(back) = fold(projected, place)? {
+                        keep_returned(&kept, place.order, back);
+                    }
+                    Ok(None)
+                })?;
+                finish_round(round, kept, |batch| {
+                    project_batch(expressions, batch, memory).map(Some)
+                })
+            }
+            Self::Profiled { input, slot, sink } => {
+                let started = Instant::now();
+                let (slot, sink) = (*slot, &*sink);
+                let round = input.fold_round_through(memory, max_batches, &|batch, place| {
+                    sink.record(
+                        slot,
+                        Duration::ZERO,
+                        Some(batch.visible_row_count()),
+                        memory.used(),
+                    );
+                    fold(batch, place)
+                });
+                sink.record(slot, started.elapsed(), None, memory.used());
+                if matches!(round, Ok(FoldedRound::Done))
+                    && let Self::Scan { stream, .. } = input.as_ref()
+                {
+                    sink.annotate(
+                        slot,
+                        "folded in place: each worker decoded a slice and folded it",
+                    );
+                    if let Some(note) = stream.decode_note() {
+                        sink.annotate(slot, &note);
+                    }
+                }
+                round
+            }
+            _ => Ok(FoldedRound::Unavailable),
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn next_batch(&mut self, memory: &MemoryTracker) -> Result<Option<RecordBatch>, ExecError> {
         memory.check_interruption()?;
@@ -5304,42 +5755,7 @@ impl PullOperator {
                     }
                     continue;
                 }
-                // Typed batch kernel: comparison predicates over packed
-                // columns resolve in one pass. Anything else the kernel tree
-                // answers - a function of a column, arithmetic, a decimal
-                // comparison - resolves as a Boolean column, which is the
-                // same answer a batch at a time. Only an expression no
-                // kernel answers falls to the row-at-a-time path below.
-                let mask = match predicate.evaluate_filter_mask(&batch)? {
-                    Some(mask) => Some(mask),
-                    None => predicate.evaluate_mask(&batch),
-                };
-                if let Some(mask) = mask {
-                    batch.selection_mut().intersect(&mask)?;
-                    if batch.visible_row_count() > 0 {
-                        return Ok(Some(batch));
-                    }
-                    continue;
-                }
-                let batch_bytes = batch.estimated_bytes();
-                for row in 0..batch.row_count() {
-                    if !batch.selection().is_selected(row) {
-                        continue;
-                    }
-                    let keep =
-                        if let Some(keep) = predicate.evaluate_predicate_direct(&batch, row)? {
-                            keep
-                        } else {
-                            memory
-                                .ensure_transient(batch_bytes.saturating_add(
-                                    predicate.allocation_upper_bound(&batch, row),
-                                ))?;
-                            predicate_truth(&predicate.evaluate(&batch, row)?)?
-                        };
-                    if !keep {
-                        batch.selection_mut().set(row, false)?;
-                    }
-                }
+                filter_batch(predicate, &mut batch, memory)?;
                 if batch.visible_row_count() > 0 {
                     return Ok(Some(batch));
                 }
@@ -5384,141 +5800,7 @@ impl PullOperator {
                 let Some(batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
-                // A bare column of the declared type passes through: the
-                // output shares its buffers, and it is never evaluated row by
-                // row. Only computed expressions evaluate.
-                let passthrough: Vec<Option<usize>> = expressions
-                    .iter()
-                    .map(|(expression, data_type)| {
-                        let position = expression.column_index()?;
-                        let column = batch.column(position)?;
-                        data_type
-                            .is_none_or(|data_type| data_type == column.data_type())
-                            .then_some(position)
-                    })
-                    .collect();
-                if passthrough.iter().all(Option::is_some) {
-                    let positions = passthrough.into_iter().flatten().collect::<Vec<_>>();
-                    memory.ensure_transient(
-                        batch.estimated_bytes().saturating_add(
-                            positions
-                                .len()
-                                .saturating_mul(size_of::<ColumnVector>() * 2),
-                        ),
-                    )?;
-                    return batch.project_columns(&positions).map(Some).ok_or(
-                        ExecError::InvalidBatch("projection column is outside its input"),
-                    );
-                }
-                let computed = expressions
-                    .iter()
-                    .zip(&passthrough)
-                    .filter(|(_, position)| position.is_none())
-                    .map(|(expression, _)| expression)
-                    .collect::<Vec<_>>();
-                let batch_bytes = batch.estimated_bytes();
-                // An expression is evaluated a row at a time, and what one
-                // row's evaluation allocates is gone before the next row's
-                // begins: its working memory is the largest row's, once.
-                // What outlives the row is its result, a value per row
-                // counted below, plus that value's own text where the
-                // result is not a number. Adding every row's working
-                // memory together instead charged a checksum over twenty
-                // columns several kilobytes a row for a column of integers,
-                // and a batch of a hundred thousand rows asked for more
-                // than the whole ceiling.
-                let expression_memory = computed
-                    .iter()
-                    .map(|(expression, data_type)| {
-                        let keeps_text = !data_type.is_some_and(holds_no_heap);
-                        // Where every row's bound is the same - packed
-                        // numbers with no NULL - one row is read and the
-                        // sum is that row's, times the rows: the same
-                        // figure, without visiting each of them.
-                        let by_row = || {
-                            batch.selection().selected_rows().fold(
-                                (0_usize, 0_usize),
-                                |(working, kept), row| {
-                                    let bound = expression.allocation_upper_bound(&batch, row);
-                                    let text = if keeps_text {
-                                        expression.result_text_upper_bound(&batch, row).min(bound)
-                                    } else {
-                                        0
-                                    };
-                                    (working.max(bound), kept.saturating_add(text))
-                                },
-                            )
-                        };
-                        if let Some((bound, text)) = expression.uniform_row_bounds(&batch) {
-                            let rows = batch.visible_row_count();
-                            let uniform = if rows == 0 {
-                                (0, 0)
-                            } else if keeps_text {
-                                (bound, rows.saturating_mul(text.min(bound)))
-                            } else {
-                                (bound, 0)
-                            };
-                            // Every debug run checks the one row against
-                            // all of them.
-                            debug_assert_eq!(uniform, by_row());
-                            return uniform.0.saturating_add(uniform.1);
-                        }
-                        let (working, kept) = by_row();
-                        working.saturating_add(kept)
-                    })
-                    .fold(0_usize, usize::saturating_add);
-                let projected_memory = size_of::<RecordBatch>()
-                    .saturating_add(
-                        expressions
-                            .len()
-                            .saturating_mul(size_of::<ColumnVector>().saturating_mul(2)),
-                    )
-                    .saturating_add(
-                        computed
-                            .len()
-                            .saturating_mul(batch.row_count())
-                            .saturating_mul(size_of::<Value>()),
-                    )
-                    .saturating_add(
-                        batch
-                            .row_count()
-                            .div_ceil(64)
-                            .saturating_mul(size_of::<u64>()),
-                    )
-                    .saturating_add(expression_memory);
-                memory.ensure_transient(batch_bytes.saturating_add(projected_memory))?;
-                let mut columns = Vec::with_capacity(expressions.len());
-                for ((expression, data_type), position) in expressions.iter().zip(&passthrough) {
-                    if let Some(position) = position {
-                        columns.push(batch.columns()[*position].clone());
-                        continue;
-                    }
-                    // A whole batch at a time over packed units where the
-                    // expression has kernels; row by row where it has not.
-                    if let Some(column) = expression.evaluate_column(&batch, *data_type) {
-                        columns.push(column);
-                        continue;
-                    }
-                    let mut values = Vec::with_capacity(batch.row_count());
-                    for row in 0..batch.row_count() {
-                        if batch.selection().is_selected(row) {
-                            values.push(expression.evaluate(&batch, row)?);
-                        } else {
-                            values.push(Value::Null);
-                        }
-                    }
-                    let data_type = data_type.unwrap_or(DataType::Utf8);
-                    columns.push(ColumnVector::new(data_type, values)?);
-                    crate::counters::count(|counters| {
-                        counters.rows_projected_scalar = counters
-                            .rows_projected_scalar
-                            .saturating_add(u64::try_from(batch.row_count()).unwrap_or(u64::MAX));
-                    });
-                }
-                let mut output = RecordBatch::new(batch.row_count(), columns)?;
-                output.set_selection(batch.selection().clone())?;
-                memory.ensure_transient(batch_bytes.saturating_add(output.estimated_bytes()))?;
-                Ok(Some(output))
+                project_batch(expressions, batch, memory).map(Some)
             }
             Self::Rows {
                 rows,

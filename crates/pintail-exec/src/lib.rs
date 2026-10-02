@@ -35,6 +35,7 @@ pub use execution::{
     ExecError, Execution, ExecutionCancellation, IntegerMembership, MemoryTracker, OutputField,
     PhysicalPlan, PhysicalPlanner, ScanProvider, SpatialError, with_execution_cancellation,
 };
+pub use execution::{FoldedRound, ScanBatchFold, ScanBatchPlace};
 pub use execution::{
     MemoryBudget, MemoryScope, init_block_cache, init_parallel_pool, init_shared_memory_budget,
     session_cte_max_recursion_depth, session_group_concat_max_len, session_warning_counts,

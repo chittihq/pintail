@@ -1426,6 +1426,13 @@ impl SelectedRows<'_> {
 impl Iterator for SelectedRows<'_> {
     type Item = usize;
 
+    // Always inlined: the folds walk a batch's selected rows in loops of a
+    // few instructions a row, and a loop that reaches this step through a
+    // call pays more for the call than for the step. Left to the inliner,
+    // whether a fold's loop got the step inline depended on how many
+    // callers the fold itself had.
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         while self.word == 0 {
             let index = self.loaded + 1;

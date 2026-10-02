@@ -436,6 +436,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 sma: None,
                 grouped: None,
                 delta: None,
+                fold_order: 0,
             }));
         };
         let unique_keys = self.unique_visibility.get(&key);
@@ -678,6 +679,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 delta,
                 sma,
                 grouped,
+                fold_order: 0,
             }));
         }
         let Some(projected) = projected else {
@@ -744,6 +746,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             delta,
             sma,
             grouped,
+            fold_order: 0,
         }))
     }
 }
@@ -1203,6 +1206,9 @@ struct SnapshotStream {
     /// fold is provably exact (WS3-B); `None` otherwise.
     sma: Option<crate::execution::SmaFoldInput>,
     grouped: Option<crate::execution::GroupedFoldInput>,
+    /// Slices the fused rounds have been through, which is where the next
+    /// round's batches stand in the scan's order.
+    fold_order: u64,
 }
 
 /// A limit over a scan that filters its rows, or reads them end first:
@@ -1230,6 +1236,12 @@ enum Unrestricted {
     /// Nothing answered the predicates over the packed columns.
     Unanswered,
 }
+
+/// A fused round's batch order packs the slice's place in the scan above
+/// the chunk's place in its slice and the batch's in its chunk.
+const ORDER_SLICE_SHIFT: u32 = 24;
+const ORDER_PIECE_SHIFT: u32 = 12;
+const ORDER_PART_MAX: usize = (1 << ORDER_PIECE_SHIFT) - 1;
 
 /// Direct-segment slices a prefetch round asks for per scan thread.
 const SLICES_PER_SCAN_THREAD: usize = 4;
@@ -1451,9 +1463,12 @@ impl SnapshotStream {
     /// Folds one chunk's counters into the provider's per-table totals,
     /// and its per-column decode cost into this scan's own tally.
     fn accumulate(&mut self, chunk: &ProjectedColumnChunk) {
-        let stats = chunk.stats();
+        self.accumulate_stats(chunk.stats(), chunk.column_decode());
+    }
+
+    fn accumulate_stats(&mut self, stats: ScanStats, decode: &[pintail_store::ColumnDecode]) {
         self.value_skipped_blocks += stats.blocks_value_skipped();
-        for column in chunk.column_decode() {
+        for column in decode {
             let tally = self.column_decode.entry(column.column_id).or_default();
             tally.0 = tally.0.saturating_add(column.bytes_decompressed);
             tally.1 = tally.1.saturating_add(column.values_decoded);
@@ -1942,6 +1957,194 @@ impl BatchStream for SnapshotStream {
             self.columns.shrink_to_fit();
         }
         Ok(Some(RecordBatch::new(row_count, columns)?))
+    }
+
+    #[allow(clippy::too_many_lines)] // one round, as `next_batch` reads one
+    fn fold_round(
+        &mut self,
+        available_memory: usize,
+        max_batches: usize,
+        fold: crate::ScanBatchFold<'_>,
+    ) -> Result<crate::FoldedRound, ExecError> {
+        // A LIMIT hands its rows out one batch at a time, and rows already
+        // buffered for `next_batch` are that path's to deliver.
+        if self.remaining.is_some()
+            || !self.rows.is_empty()
+            || self.column_rows != 0
+            || !self.prefetched.is_empty()
+        {
+            return Ok(crate::FoldedRound::Unavailable);
+        }
+        self.started = true;
+        if !self.ready.is_empty() {
+            // Batches a pulled round adopted and nobody has taken yet: they
+            // are this round, folded where the pool finds room for them.
+            let take = self.ready.len().min(max_batches.max(1));
+            let ready: Vec<(RecordBatch, bool)> = self.ready.drain(..take).collect();
+            let bytes: usize = ready.iter().map(|(batch, _)| batch.estimated_bytes()).sum();
+            self.retained_bytes = self.retained_bytes.saturating_sub(bytes);
+            let base = self.fold_order;
+            self.fold_order = base.saturating_add(ready.len() as u64);
+            let returned = ready
+                .into_par_iter()
+                .enumerate()
+                .map(|(position, (batch, prefiltered))| {
+                    let order = (base + position as u64) << ORDER_SLICE_SHIFT;
+                    let place = crate::ScanBatchPlace { prefiltered, order };
+                    fold(batch, place).map(|left| left.map(|batch| (order, batch)))
+                })
+                .collect::<Result<Vec<_>, ExecError>>()?;
+            return Ok(crate::FoldedRound::Round {
+                returned: returned.into_iter().flatten().collect(),
+            });
+        }
+        let Some(stream) = &mut self.stream else {
+            return Ok(crate::FoldedRound::Done);
+        };
+        let planned_rows = planned_scan_rows(&self.types, available_memory);
+        let batch_overhead = batch_memory_upper_bound(&self.types, planned_rows);
+        // The round's width comes from the pool that runs it, which is the
+        // caller's: its workers decode and fold, and the scan's own pool
+        // has no part in the statement.
+        let width = if available_memory < TIGHT_CEILING_BYTES {
+            1
+        } else {
+            rayon::current_num_threads()
+                .max(1)
+                .saturating_mul(SLICES_PER_SCAN_THREAD)
+        };
+        // A slice is one batch, or close to it.
+        let width = width.min(max_batches.max(1));
+        let chunk_budget = (available_memory / 2).saturating_sub(batch_overhead);
+        let failed: Mutex<Option<ExecError>> = Mutex::new(None);
+        let stopped = std::sync::atomic::AtomicBool::new(false);
+        let types = &self.types;
+        let enum_labels = &self.enum_labels;
+        let set_members = &self.set_members;
+        let adopt_filter = self.adopt_filter.as_ref();
+        let fail = |error: ExecError| {
+            stopped.store(true, Ordering::Relaxed);
+            let mut slot = failed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            slot.get_or_insert(error);
+        };
+        // One slice's chunk, on the thread that decoded it: adopted into a
+        // batch, tested against the scan's predicates and folded while its
+        // columns are still in this core's cache.
+        let base = self.fold_order;
+        self.fold_order = base.saturating_add(width as u64);
+        let fold_chunk = |chunk: ProjectedColumnChunk, slice: usize, piece: usize| {
+            let stats = chunk.stats();
+            let decode = chunk.column_decode().to_vec();
+            let prefiltered = chunk.prefiltered();
+            let mut returned = Vec::new();
+            match adopt_chunk(chunk, types, enum_labels, set_members) {
+                Ok((batches, _)) => {
+                    for (cut, mut batch) in batches.into_iter().enumerate() {
+                        if stopped.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let passed = prefiltered
+                            || adopt_filter.is_some_and(|filter| filter.apply(&mut batch));
+                        // The slice's place in the scan, then the chunk's
+                        // in the slice, then the batch's in the chunk.
+                        let order = ((base + slice as u64) << ORDER_SLICE_SHIFT)
+                            | ((piece.min(ORDER_PART_MAX) as u64) << ORDER_PIECE_SHIFT)
+                            | cut.min(ORDER_PART_MAX) as u64;
+                        let place = crate::ScanBatchPlace {
+                            prefiltered: passed,
+                            order,
+                        };
+                        match fold(batch, place) {
+                            Ok(None) => {}
+                            Ok(Some(batch)) => returned.push((order, batch)),
+                            Err(error) => fail(error),
+                        }
+                    }
+                }
+                Err(error) => fail(error),
+            }
+            (stats, decode, returned)
+        };
+        let proceed = || !stopped.load(Ordering::Relaxed);
+        let (folded, abandon_prewhere) = if let Some(spec) = &self.prewhere {
+            let judged = AtomicUsize::new(0);
+            let dense = AtomicUsize::new(0);
+            let unanswered = AtomicUsize::new(0);
+            let exact_ranges =
+                spec.predicate_ids.len() > 1 && spec.predicate_ids == stream.column_ids();
+            let select = |columns: &[DecodedColumn], row_count: usize| {
+                judged.fetch_add(1, Ordering::Relaxed);
+                Ok(
+                    match prewhere_ranges(spec, columns, row_count, exact_ranges)? {
+                        Ok(ranges) => Some(ranges),
+                        Err(Unrestricted::Dense) => {
+                            dense.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
+                        Err(Unrestricted::Unanswered) => {
+                            unanswered.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
+                    },
+                )
+            };
+            let folded = stream
+                .fold_column_chunks(
+                    width,
+                    chunk_budget,
+                    Some((&spec.predicate_ids, &select)),
+                    &proceed,
+                    &fold_chunk,
+                )
+                .map_err(|error| ExecError::Source(error.to_string()))?;
+            let judged = judged.load(Ordering::Relaxed);
+            let dense = dense.load(Ordering::Relaxed);
+            let unanswered = unanswered.load(Ordering::Relaxed);
+            if judged > 0 {
+                // The same reading of a round as `next_batch` makes: a
+                // stretch that decodes whole is sampled from here on.
+                let skipped = folded.as_ref().is_some_and(|folded| {
+                    folded
+                        .iter()
+                        .any(|(stats, _, _)| stats.blocks_value_skipped() > 0)
+                });
+                stream.sample_prewhere(
+                    dense + unanswered == judged && !skipped && stream.index_lookup().is_none(),
+                );
+            }
+            (
+                folded,
+                judged > 0 && unanswered == judged && !stream.has_value_index_lookup(),
+            )
+        } else {
+            (
+                stream
+                    .fold_column_chunks(width, chunk_budget, None, &proceed, &fold_chunk)
+                    .map_err(|error| ExecError::Source(error.to_string()))?,
+                false,
+            )
+        };
+        if abandon_prewhere {
+            self.prewhere = None;
+        }
+        let Some(folded) = folded else {
+            self.stream = None;
+            return Ok(crate::FoldedRound::Done);
+        };
+        let mut returned = Vec::new();
+        for (stats, decode, batches) in folded {
+            self.accumulate_stats(stats, &decode);
+            returned.extend(batches);
+        }
+        if let Some(error) = failed
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            return Err(error);
+        }
+        Ok(crate::FoldedRound::Round { returned })
     }
 
     fn retained_bytes(&self) -> usize {

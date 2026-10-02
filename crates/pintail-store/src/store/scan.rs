@@ -2923,6 +2923,127 @@ impl ProjectedScanStream {
         Ok(None)
     }
 
+    /// One round of the scan in which the thread that decodes a slice also
+    /// consumes it: `fold` receives each chunk on the thread that decoded
+    /// it, while the chunk's bytes are still in that core's cache, and what
+    /// it returns is collected. `None` at the end of the stream.
+    ///
+    /// `fold` is also told where the chunk stands in the round: the
+    /// position of its slice among at most `max_chunks`, and its own among
+    /// the chunks that slice decoded to. Chunks reach `fold` in whatever
+    /// order the pool decodes them; the two positions give the order
+    /// [`Self::next_column_chunks`] would have returned them in.
+    ///
+    /// The round runs on the caller's pool, not the scan's own: a worker
+    /// here does the decode and whatever `fold` does with the rows, so one
+    /// pool carries the statement. `proceed` is asked before each slice is
+    /// decoded; slices it turns away stay queued for the next call. Parts of
+    /// the scan that are read one chunk at a time - memtable rows, a merge
+    /// of overlapping segments, a bounded direct range - are decoded as
+    /// they always are and folded on the calling thread.
+    ///
+    /// At most as many chunks as the pool has threads are alive at once, so
+    /// each slice may take that share of `memory_limit`. A slice that does
+    /// not fit its share is read again alone, with the whole of it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a precise storage, corruption, schema, or memory-limit error.
+    pub fn fold_column_chunks<T: Send>(
+        &mut self,
+        max_chunks: usize,
+        memory_limit: usize,
+        prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+        proceed: &(dyn Fn() -> bool + Sync),
+        fold: &(dyn Fn(ProjectedColumnChunk, usize, usize) -> T + Sync),
+    ) -> Result<Option<Vec<T>>, StoreError> {
+        enum Outcome<T> {
+            Folded(Vec<T>),
+            Skipped,
+            Refused,
+        }
+        loop {
+            let one_at_a_time = !self.pending.is_empty()
+                || self.memtable_cursor.is_some()
+                || self.merge.is_some()
+                || self.direct_range.is_some()
+                // A reader that wants only so many rows, or reads from the
+                // end, takes its slices the way that path cuts them.
+                || self.row_budget.is_some()
+                || self.ends_first();
+            if one_at_a_time {
+                let chunks = self.next_column_chunks_inner(max_chunks, memory_limit, prewhere)?;
+                if chunks.is_empty() {
+                    return Ok(None);
+                }
+                return Ok(Some(
+                    chunks
+                        .into_iter()
+                        .enumerate()
+                        .map(|(position, chunk)| fold(chunk, position, 0))
+                        .collect(),
+                ));
+            }
+            self.fill_direct_slices(max_chunks.max(1))?;
+            if !self.slices.is_empty() {
+                break;
+            }
+            if !self.advance_part()? {
+                return Ok(None);
+            }
+        }
+        let chunk_count = max_chunks.max(1).min(self.slices.len());
+        let taken: Vec<DirectSlice> = self.slices.drain(..chunk_count).collect();
+        let alive = chunk_count.min(rayon::current_num_threads().max(1));
+        let per_chunk_limit = memory_limit / alive;
+        let outcomes = taken
+            .par_iter()
+            .enumerate()
+            .map(|(position, slice)| {
+                if !proceed() {
+                    return Ok(Outcome::Skipped);
+                }
+                match self.decode_slice(slice, per_chunk_limit, prewhere) {
+                    Ok(chunks) => Ok(Outcome::Folded(
+                        chunks
+                            .into_iter()
+                            .enumerate()
+                            .map(|(piece, chunk)| fold(chunk, position, piece))
+                            .collect(),
+                    )),
+                    Err(StoreError::MemoryLimitExceeded { .. }) => Ok(Outcome::Refused),
+                    Err(error) => Err(error),
+                }
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let mut folded = Vec::with_capacity(chunk_count);
+        let mut skipped = Vec::new();
+        let mut refused = Vec::new();
+        for (position, (slice, outcome)) in taken.into_iter().zip(outcomes).enumerate() {
+            match outcome {
+                Outcome::Folded(results) => folded.extend(results),
+                Outcome::Skipped => skipped.push(slice),
+                Outcome::Refused => refused.push((position, slice)),
+            }
+        }
+        for slice in skipped.into_iter().rev() {
+            self.slices.push_front(slice);
+        }
+        for (position, slice) in refused {
+            // Alone, with the whole budget, and cut smaller when even that
+            // is too little: the path a round of one slice takes.
+            self.slices.push_front(slice);
+            let chunks = self.next_column_chunks_inner(1, memory_limit, prewhere)?;
+            folded.extend(
+                chunks
+                    .into_iter()
+                    .enumerate()
+                    .map(|(piece, chunk)| fold(chunk, position, piece)),
+            );
+        }
+        Ok(Some(folded))
+    }
+
     /// Decodes one overlay slice within `memory_limit`, halving it at block
     /// boundaries while it does not fit. The overlay must mask every slice
     /// it decodes, so a slice is never decoded unmasked in pieces; a single

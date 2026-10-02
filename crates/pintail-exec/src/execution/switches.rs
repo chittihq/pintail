@@ -20,6 +20,14 @@ pub(super) fn packed_group_disabled() -> bool {
     std::env::var_os("PINTAIL_DISABLE_PACKED_GROUP").is_some()
 }
 
+/// `PINTAIL_DISABLE_FUSED_FOLD` keeps an aggregate over a scan pulling
+/// batches a round at a time instead of folding each slice on the thread
+/// that decoded it. Read once.
+pub(super) fn fused_fold_disabled() -> bool {
+    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISABLED.get_or_init(|| std::env::var_os("PINTAIL_DISABLE_FUSED_FOLD").is_some())
+}
+
 /// One execution path and the switch that decides it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PathSwitch {
@@ -33,7 +41,7 @@ pub struct PathSwitch {
 
 /// The executor's switchable paths as this process runs them.
 #[must_use]
-pub fn path_switches() -> [PathSwitch; 4] {
+pub fn path_switches() -> [PathSwitch; 5] {
     [
         PathSwitch {
             name: "settled_memo",
@@ -54,6 +62,11 @@ pub fn path_switches() -> [PathSwitch; 4] {
             name: "argument_projection",
             variable: "PINTAIL_DISABLE_ARGUMENT_PROJECTION",
             enabled: !argument_projection_disabled(),
+        },
+        PathSwitch {
+            name: "fused_fold",
+            variable: "PINTAIL_DISABLE_FUSED_FOLD",
+            enabled: !fused_fold_disabled(),
         },
     ]
 }

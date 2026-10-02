@@ -160,6 +160,7 @@ of the rule.
 | `packed_group` | Composite `GROUP BY` keys fold packed. | `PINTAIL_DISABLE_PACKED_GROUP` |
 | `grouped_fold` | Grouped aggregates fold a segment at a time. | `PINTAIL_DISABLE_GROUPED_FOLD` |
 | `argument_projection` | Computed aggregate arguments are projected once. | `PINTAIL_DISABLE_ARGUMENT_PROJECTION` |
+| `fused_fold` | An aggregate over a scan folds each slice of the table on the worker that decoded it, on the execute pool; the scan pool takes no part in such a statement. | `PINTAIL_DISABLE_FUSED_FOLD` |
 | `segment_format` | The segment format version this build writes. | |
 | `size_overrides` | Memtable and compaction sizes set by `PINTAIL_MEMTABLE_KB`, `PINTAIL_COMPACTION_INPUT_ROWS`, `PINTAIL_COMPACTION_OUTPUT_ROWS`. | |
 | `non_default` | Every setting that moves the process off its defaults: a path turned off, a pool resized, a size override, a tuning or diagnostic variable that is set (named without its value). | |

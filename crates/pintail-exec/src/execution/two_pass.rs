@@ -18,7 +18,7 @@ use super::packed_fold::{
     FoldRows, PackedFold, commit_merged, fold_rows, merged_cell, occupied_in,
 };
 use super::{
-    ExecError, HASH_ENTRY_OVERHEAD, MaterializedRows, MemoryTracker, PullOperator,
+    ExecError, FoldedRound, HASH_ENTRY_OVERHEAD, MaterializedRows, MemoryTracker, PullOperator,
     estimated_row_payload_bytes,
 };
 use crate::spill;
@@ -974,6 +974,68 @@ impl LanedAhead {
     }
 }
 
+/// Captures the declared ENUM labels and SET members of the text key
+/// columns from a batch that carries them.
+fn note_key_declarations(
+    current: &RecordBatch,
+    key_columns: &[Option<usize>; 2],
+    labels: &mut KeyDeclarations,
+    members: &mut KeyMembers,
+) {
+    for (slot, key_column) in key_columns.iter().enumerate() {
+        // A complete declaration settles the slot. A table rebuilt from
+        // the ordinals one batch held does not: the next batch may hold
+        // labels this one lacked, or be the first to carry the catalog's
+        // own declaration, and a key resolved against the partial table
+        // alone would come out as plain text and sort alphabetically
+        // beside its ordinal-sorted neighbours.
+        let settled = members[slot].is_some()
+            || labels[slot]
+                .as_ref()
+                .is_some_and(|(_, exhaustive)| *exhaustive);
+        if let Some(column) = key_column
+            && !settled
+            && let Some(vector) = current.column(*column)
+            && let Some((crate::batch::TypedValues::Utf8(strings), _)) = vector.typed()
+        {
+            let exhaustive = strings.enum_labels_exhaustive();
+            match (labels[slot].take(), strings.declared_enum_labels()) {
+                (Some((held, _)), Some(seen)) if !exhaustive => {
+                    labels[slot] = Some((merge_partial_labels(held, seen), false));
+                }
+                (_, Some(seen)) => {
+                    labels[slot] = Some((std::sync::Arc::clone(seen), exhaustive));
+                }
+                (held, None) => labels[slot] = held,
+            }
+            members[slot] = strings.declared_set_members().cloned();
+        }
+    }
+}
+
+/// The driver's next batch. With nothing held for a flush and a fold that
+/// keeps a partial per worker - an integer range with its bounds, the
+/// dense slots of a text or date-part key - the input is first folded in
+/// place, round after round, and only what a round could not take comes
+/// back here. `(window_empty, settled)`: whether the window holds no
+/// batch, and whether nothing else is scattered or cut and waiting.
+fn next_laned(
+    ahead: &mut LanedAhead,
+    fused: &mut FusedRounds,
+    input: &mut PullOperator,
+    (window_empty, settled): (bool, bool),
+    shape: &FusedShape<'_>,
+    state: &mut FusedState<'_>,
+    memory: &MemoryTracker,
+) -> Result<Option<Result<RecordBatch, RecordBatch>>, ExecError> {
+    let idle = settled
+        && (window_empty || fused.folds_beside_window(shape, state.dense.is_some(), state.pool));
+    if idle && ahead.ready.is_empty() && !ahead.drained {
+        fused.run(input, ahead, shape, state, memory)?;
+    }
+    ahead.next(input, shape.keys, shape.key_exprs, shape.lanes, memory)
+}
+
 /// The bits of a unit key's value, as the lanes would have read them from
 /// its column; `None` for a value with no units - a zero date, text that is
 /// not the canonical spelling - whose group is then kept by value.
@@ -1312,6 +1374,21 @@ fn streaming_two_pass(
     let mut odd_reserved = 0_usize;
     let mut odd_batches = 0_usize;
     let mut ahead = LanedAhead::default();
+    let mut fused = FusedRounds::new();
+    let fused_packed = lanes
+        .iter()
+        .zip(aggregates)
+        .map(|(lane, aggregate)| packed_lane(lane, aggregate))
+        .collect::<Vec<_>>();
+    let shape = FusedShape {
+        keys,
+        key_exprs,
+        key_columns,
+        lanes,
+        aggregates,
+        packed: &fused_packed,
+        row_growth: per_row_growth,
+    };
     let mut batch = Some(laned_batch(first, keys, key_exprs, lanes));
     // A batch larger than one flush of the window, cut into pieces the
     // window takes one at a time, each with its share of the batch's bytes.
@@ -1331,35 +1408,12 @@ fn streaming_two_pass(
         let current = match &carried {
             Ok(batch) | Err(batch) => batch,
         };
-        for (slot, key_column) in key_columns.iter().enumerate() {
-            // A complete declaration settles the slot. A table rebuilt from
-            // the ordinals one batch held does not: the next batch may hold
-            // labels this one lacked, or be the first to carry the catalog's
-            // own declaration, and a key resolved against the partial table
-            // alone would come out as plain text and sort alphabetically
-            // beside its ordinal-sorted neighbours.
-            let settled = key_set_members[slot].is_some()
-                || key_enum_labels[slot]
-                    .as_ref()
-                    .is_some_and(|(_, exhaustive)| *exhaustive);
-            if let Some(column) = key_column
-                && !settled
-                && let Some(vector) = current.column(*column)
-                && let Some((crate::batch::TypedValues::Utf8(strings), _)) = vector.typed()
-            {
-                let exhaustive = strings.enum_labels_exhaustive();
-                match (key_enum_labels[slot].take(), strings.declared_enum_labels()) {
-                    (Some((held, _)), Some(seen)) if !exhaustive => {
-                        key_enum_labels[slot] = Some((merge_partial_labels(held, seen), false));
-                    }
-                    (_, Some(seen)) => {
-                        key_enum_labels[slot] = Some((std::sync::Arc::clone(seen), exhaustive));
-                    }
-                    (held, None) => key_enum_labels[slot] = held,
-                }
-                key_set_members[slot] = strings.declared_set_members().cloned();
-            }
-        }
+        note_key_declarations(
+            current,
+            &key_columns,
+            &mut key_enum_labels,
+            &mut key_set_members,
+        );
         let current = match carried {
             Ok(current) => current,
             Err(current) => {
@@ -1406,7 +1460,23 @@ fn streaming_two_pass(
                 group_reserved = group_reserved.saturating_add(grown.saturating_sub(kept_bytes));
                 kept?;
                 odd_batches += 1;
-                batch = ahead.next(input, keys, key_exprs, lanes, memory)?;
+                batch = next_laned(
+                    &mut ahead,
+                    &mut fused,
+                    input,
+                    (window.is_empty(), bucket_reserved == 0 && sliced.is_empty()),
+                    &shape,
+                    &mut FusedState {
+                        range: &mut range,
+                        dense: &mut dense,
+                        pool: &mut dense_pool,
+                        intern: &mut intern,
+                        labels: &mut key_enum_labels,
+                        members: &mut key_set_members,
+                        group_reserved: &mut group_reserved,
+                    },
+                    memory,
+                )?;
                 continue;
             }
         };
@@ -1513,7 +1583,13 @@ fn streaming_two_pass(
             window_reserved = window_reserved.saturating_add(need);
             window_rows += rows;
             window.push((current, translations));
-            if window_rows.saturating_mul(scatter_row_bytes) >= flush_bytes
+            // A fold that takes the input in place takes its window now:
+            // the rounds wait for it.
+            let fuse_due = ahead.ready.is_empty()
+                && sliced.is_empty()
+                && fused.window_due(&shape, dense.as_ref(), &dense_pool, &range, window_rows);
+            if fuse_due
+                || window_rows.saturating_mul(scatter_row_bytes) >= flush_bytes
                 || (floor > 0 && memory.remaining() < floor)
                 || pending_under_pressure(memory, window_rows, per_row_growth)
             {
@@ -1589,7 +1665,23 @@ fn streaming_two_pass(
                 }
             }
             if sliced.is_empty() {
-                batch = ahead.next(input, keys, key_exprs, lanes, memory)?;
+                batch = next_laned(
+                    &mut ahead,
+                    &mut fused,
+                    input,
+                    (window.is_empty(), bucket_reserved == 0 && sliced.is_empty()),
+                    &shape,
+                    &mut FusedState {
+                        range: &mut range,
+                        dense: &mut dense,
+                        pool: &mut dense_pool,
+                        intern: &mut intern,
+                        labels: &mut key_enum_labels,
+                        members: &mut key_set_members,
+                        group_reserved: &mut group_reserved,
+                    },
+                    memory,
+                )?;
             }
             continue;
         }
@@ -1747,7 +1839,23 @@ fn streaming_two_pass(
             }
         }
         if sliced.is_empty() {
-            batch = ahead.next(input, keys, key_exprs, lanes, memory)?;
+            batch = next_laned(
+                &mut ahead,
+                &mut fused,
+                input,
+                (window.is_empty(), bucket_reserved == 0 && sliced.is_empty()),
+                &shape,
+                &mut FusedState {
+                    range: &mut range,
+                    dense: &mut dense,
+                    pool: &mut dense_pool,
+                    intern: &mut intern,
+                    labels: &mut key_enum_labels,
+                    members: &mut key_set_members,
+                    group_reserved: &mut group_reserved,
+                },
+                memory,
+            )?;
         }
     }
     two_pass_relieve(
@@ -2195,6 +2303,54 @@ const NO_INTERN_ID: u64 = u64::MAX - 1;
 /// row the filter dropped - name the group: `GROUP BY name` over rows
 /// holding only `Å` answered `A`, a spelling absent from the result's
 /// input. A code no selected row carries keeps [`NO_INTERN_ID`].
+/// [`prepare_text_translations`] for a batch that adds nothing to the
+/// intern table: each column's dictionary codes as intern ids, or `None`
+/// when a column has no codes or a selected row carries a spelling the
+/// table does not hold yet.
+fn known_text_translations(
+    batch: &RecordBatch,
+    columns: &[usize],
+    intern: &StringIntern,
+) -> Result<Option<Vec<Vec<u64>>>, ExecError> {
+    let mut prepared = Vec::with_capacity(columns.len());
+    for column in columns {
+        let vector = batch.column(*column).ok_or(ExecError::InvalidBatch(
+            "grouping column is outside the input batch",
+        ))?;
+        let Some((crate::batch::TypedValues::Utf8(strings), validity)) = vector.typed() else {
+            return Err(ExecError::InvalidBatch(
+                "string two-pass key column lost its typed projection",
+            ));
+        };
+        let Some((codes, dict_values)) = strings.dictionary() else {
+            return Ok(None);
+        };
+        let mut translation = vec![NO_INTERN_ID; dict_values.len()];
+        let mut missing = dict_values.len();
+        for row in batch.selection().selected_rows() {
+            if missing == 0 {
+                break;
+            }
+            if !validity.is_valid(row) {
+                continue;
+            }
+            let code = usize::try_from(codes[row]).expect("dict code fits usize");
+            let slot = translation
+                .get_mut(code)
+                .ok_or(ExecError::InvalidBatch("dictionary code is out of bounds"))?;
+            if *slot == NO_INTERN_ID {
+                let Some(id) = intern.known(dict_values[code].as_bytes())? else {
+                    return Ok(None);
+                };
+                *slot = id;
+                missing -= 1;
+            }
+        }
+        prepared.push(translation);
+    }
+    Ok(Some(prepared))
+}
+
 fn intern_carried_entries(
     batch: &RecordBatch,
     codes: &[u32],
@@ -2600,6 +2756,21 @@ impl StringIntern {
         self.values.push(value.to_owned());
         self.remember(bytes, id, memory);
         Ok(id)
+    }
+
+    /// The id `bytes` already has, without adding it when it has none.
+    fn known(&self, bytes: &[u8]) -> Result<Option<u64>, ExecError> {
+        if let Some((_, id)) = self
+            .recent
+            .iter()
+            .find(|(spelling, _)| **spelling == *bytes)
+        {
+            return Ok(Some(*id));
+        }
+        let value = std::str::from_utf8(bytes)
+            .map_err(|_| ExecError::InvalidBatch("string group key is not UTF-8"))?;
+        let folded = normalized_group_text(value, self.collation).into_bytes();
+        Ok(self.index.get(&folded).copied())
     }
 
     /// Keeps a short spelling's id by its exact bytes, while there are few
@@ -3493,32 +3664,14 @@ fn fold_range_morsels(
     lanes: &[TwoPassLane],
     packed: &[Option<PackedLane>],
 ) -> Result<MorselRanges, ExecError> {
-    let poisoned = || ExecError::InvalidBatch("range fold seat poisoned");
-    let workers = rayon::current_num_threads().max(1);
     let range = (active.base, active.span, active.signed);
     let slot_count = active.slot_count;
-    // One seat per pool thread and one for a caller outside the pool. A
-    // thread folds one morsel at a time, so its seat is never contended.
-    let mut seats: Vec<std::sync::Mutex<Option<PackedFold>>> = Vec::new();
-    seats.resize_with(workers + 1, || std::sync::Mutex::new(None));
-    let mut spare = Vec::new();
-    for (seat, fold) in std::mem::take(&mut active.seats)
-        .into_iter()
-        .zip(std::mem::take(&mut active.folds))
-    {
-        let seat = seats[seat.min(workers)].get_mut().map_err(|_| poisoned())?;
-        if seat.is_none() {
-            *seat = Some(fold);
-        } else {
-            spare.push(fold);
-        }
-    }
+    let seats = RangeSeats::take(active)?;
     let fresh = || PackedFold::sharing(slot_count, packed, lanes);
     let rest = pending
         .par_iter()
         .map(|(index, rows)| {
-            let seat = rayon::current_thread_index().map_or(workers, |index| index.min(workers));
-            let mut seat = seats[seat].lock().map_err(|_| poisoned())?;
+            let mut seat = seats.own()?;
             let fold = seat.get_or_insert_with(fresh);
             let morsel = Morsel {
                 batch: &window[*index].0,
@@ -3528,17 +3681,685 @@ fn fold_range_morsels(
                 .map(|stopped| (*index, stopped..rows.end)))
         })
         .collect::<Result<Vec<_>, ExecError>>();
-    for (index, seat) in seats.into_iter().enumerate() {
-        if let Some(fold) = seat.into_inner().map_err(|_| poisoned())? {
-            active.seats.push(index);
+    seats.give_back(active)?;
+    Ok(rest?.into_iter().flatten().collect())
+}
+
+/// The range fold's partials while a round folds into them: one seat per
+/// pool thread and one for a caller outside the pool. A thread folds one
+/// morsel at a time, so its seat is never contended.
+struct RangeSeats {
+    seats: Vec<std::sync::Mutex<Option<PackedFold>>>,
+    /// Folds that found their thread's seat taken.
+    spare: Vec<PackedFold>,
+    workers: usize,
+}
+
+impl RangeSeats {
+    fn poisoned() -> ExecError {
+        ExecError::InvalidBatch("range fold seat poisoned")
+    }
+
+    /// Seats the active range's folds, each at the thread it belongs to.
+    fn take(active: &mut IntRangeFold) -> Result<Self, ExecError> {
+        let workers = rayon::current_num_threads().max(1);
+        let mut seats: Vec<std::sync::Mutex<Option<PackedFold>>> = Vec::new();
+        seats.resize_with(workers + 1, || std::sync::Mutex::new(None));
+        let mut spare = Vec::new();
+        for (seat, fold) in std::mem::take(&mut active.seats)
+            .into_iter()
+            .zip(std::mem::take(&mut active.folds))
+        {
+            let seat = seats[seat.min(workers)]
+                .get_mut()
+                .map_err(|_| Self::poisoned())?;
+            if seat.is_none() {
+                *seat = Some(fold);
+            } else {
+                spare.push(fold);
+            }
+        }
+        Ok(Self {
+            seats,
+            spare,
+            workers,
+        })
+    }
+
+    /// The calling thread's seat.
+    fn own(&self) -> Result<std::sync::MutexGuard<'_, Option<PackedFold>>, ExecError> {
+        let seat =
+            rayon::current_thread_index().map_or(self.workers, |index| index.min(self.workers));
+        self.seats[seat].lock().map_err(|_| Self::poisoned())
+    }
+
+    /// Hands every fold back to the active range with the seat it sat in.
+    fn give_back(self, active: &mut IntRangeFold) -> Result<(), ExecError> {
+        for (index, seat) in self.seats.into_iter().enumerate() {
+            if let Some(fold) = seat.into_inner().map_err(|_| Self::poisoned())? {
+                active.seats.push(index);
+                active.folds.push(fold);
+            }
+        }
+        for fold in self.spare {
+            active.seats.push(self.workers);
             active.folds.push(fold);
         }
+        Ok(())
     }
-    for fold in spare {
-        active.seats.push(workers);
-        active.folds.push(fold);
+}
+
+/// How a fused round of the driver's input ended.
+enum FusedRound {
+    /// The input does not fold in place; the driver pulls batches.
+    Unavailable,
+    /// The input is exhausted.
+    Done,
+    /// No round ran: the groups have no room for what one could add.
+    NoRoom,
+    /// A round ran: the batches it folded whole, and the laned batches - or
+    /// the rows of them - left for the driver's own path.
+    Ran {
+        taken: usize,
+        left: Vec<Result<RecordBatch, RecordBatch>>,
+    },
+}
+
+/// One round of the input folded straight into the active integer range:
+/// each worker decodes a slice of the table and folds its rows into its own
+/// seat's totals while they are in its cache, so no window of batches is
+/// gathered for another core to read back.
+///
+/// A batch folds as far as its keys lie in the range. The rows from the
+/// first key outside it come back for the driver's window, which widens the
+/// range as it does for any window; so does a batch no lane can carry and
+/// one the ceiling had no room for.
+fn fused_range_round(
+    input: &mut PullOperator,
+    active: &mut IntRangeFold,
+    shape: &FusedShape<'_>,
+    memory: &MemoryTracker,
+) -> Result<FusedRound, ExecError> {
+    let TwoPassKeySource::Int { column, .. } = shape.keys else {
+        return Ok(FusedRound::Unavailable);
+    };
+    let range = (active.base, active.span, active.signed);
+    let slot_count = active.slot_count;
+    let seats = RangeSeats::take(active)?;
+    let fresh = || PackedFold::sharing(slot_count, shape.packed, shape.lanes);
+    let tally = RoundTally::default();
+    let folded_rows = std::sync::atomic::AtomicUsize::new(0);
+    let relaxed = std::sync::atomic::Ordering::Relaxed;
+    let round = input.fold_round(memory, usize::MAX, &|batch, order| {
+        let batch = match laned_batch(batch, shape.keys, shape.key_exprs, shape.lanes) {
+            Ok(batch) => batch,
+            Err(batch) => {
+                tally.leave(order, Err(batch));
+                return Ok(None);
+            }
+        };
+        let rows = batch.row_count();
+        let stopped = {
+            let mut seat = seats.own()?;
+            let fold = seat.get_or_insert_with(fresh);
+            fold_range_morsel(&Morsel::whole(&batch), column, shape.lanes, range, fold)
+        };
+        match stopped {
+            None => {
+                tally.took();
+                folded_rows.fetch_add(batch.visible_row_count(), relaxed);
+            }
+            Some(stopped) => {
+                folded_rows.fetch_add(batch.selection().count_in(0..stopped), relaxed);
+                let mut rest = batch;
+                rest.selection_mut().keep_only(stopped..rows);
+                tally.leave(order, Ok(rest));
+            }
+        }
+        Ok(None)
+    });
+    seats.give_back(active)?;
+    active.rows = active.rows.saturating_add(folded_rows.into_inner());
+    Ok(tally.finish(round?, shape))
+}
+
+/// What the driver folds, as a fused round reads it.
+struct FusedShape<'a> {
+    keys: TwoPassKeySource,
+    key_exprs: &'a [CompiledExpr],
+    /// The text key columns whose declarations a batch may carry.
+    key_columns: [Option<usize>; 2],
+    lanes: &'a [TwoPassLane],
+    aggregates: &'a [CompiledAggregate],
+    /// Each lane's packed form, where it has one.
+    packed: &'a [Option<PackedLane>],
+    /// What one row can add to the groups at most, in bytes.
+    row_growth: usize,
+}
+
+/// The driver's group state a fused round folds into.
+struct FusedState<'a> {
+    range: &'a mut IntRange,
+    dense: &'a mut Option<DenseGroupSlots>,
+    pool: &'a mut DensePool,
+    intern: &'a mut Option<StringIntern>,
+    labels: &'a mut KeyDeclarations,
+    members: &'a mut KeyMembers,
+    group_reserved: &'a mut usize,
+}
+
+/// What a round's workers share for a text key: the intern table, which
+/// they only read, and the key declarations, which any batch may add to
+/// and whose union does not depend on the order they are added in.
+struct SharedText<'a> {
+    intern: &'a StringIntern,
+    declared: std::sync::Mutex<(&'a mut KeyDeclarations, &'a mut KeyMembers)>,
+}
+
+/// Whether and how the driver folds its input in fused rounds.
+struct FusedRounds {
+    /// Off when the switch says so, when the input cannot fold in place,
+    /// or once rounds keep handing most of their batches back.
+    enabled: bool,
+    /// Rounds in a row that left more batches than they took.
+    strikes: u8,
+}
+
+/// Rounds in a row that may leave more batches than they take before the
+/// driver stops folding in place: a key that keeps leaving the range - one
+/// that grows with the table's order - makes every round a detour.
+const FUSED_STRIKES: u8 = 3;
+
+impl FusedRounds {
+    fn new() -> Self {
+        Self {
+            enabled: !super::switches::fused_fold_disabled(),
+            strikes: 0,
+        }
     }
-    Ok(rest?.into_iter().flatten().collect())
+
+    /// Whether the integer-range fold may take the input in fused rounds:
+    /// the key and every lane fit it, and nothing has ruled it out. True
+    /// before the range has its first bounds.
+    fn range_wanted(&self, shape: &FusedShape<'_>, dense: bool, range: &IntRange) -> bool {
+        self.enabled
+            && !dense
+            && !matches!(range, IntRange::Off)
+            && range_fold_key(shape.keys).is_some()
+            && shape.packed.iter().all(Option::is_some)
+    }
+
+    /// Whether the dense slots may take the input in fused rounds. Only
+    /// lanes whose merge is order-free: which rows a worker's partial sees
+    /// depends on scheduling. A date-part key folds through packed lanes
+    /// alone, so that a value outside its table is found before any row of
+    /// its batch is folded; an integer key waits for the window that shows
+    /// its keys fit the slots.
+    fn dense_wanted(&self, shape: &FusedShape<'_>, dense: bool, pool: &DensePool) -> bool {
+        self.enabled
+            && dense
+            && poolable(shape.lanes)
+            && match shape.keys {
+                TwoPassKeySource::Text { .. } => true,
+                TwoPassKeySource::Int { .. } => pool.reserved > 0,
+                TwoPassKeySource::DateParts { .. } => shape.packed.iter().all(Option::is_some),
+            }
+    }
+
+    /// Whether the rounds may run while the driver's window holds batches:
+    /// true of a date-part key, whose rounds fold into totals of their own
+    /// and commit them to the slots, where the window's fold - whenever it
+    /// comes - adds its own. The other folds take the window first.
+    fn folds_beside_window(&self, shape: &FusedShape<'_>, dense: bool, pool: &DensePool) -> bool {
+        matches!(shape.keys, TwoPassKeySource::DateParts { .. })
+            && self.dense_wanted(shape, dense, pool)
+    }
+
+    /// Whether the driver's window should be folded now rather than when it
+    /// is full: the rounds wait for it. Before an integer range has bounds
+    /// the window is as many rows as the widest range has slots, which is
+    /// all its density test can ask for.
+    fn window_due(
+        &self,
+        shape: &FusedShape<'_>,
+        dense: Option<&DenseGroupSlots>,
+        pool: &DensePool,
+        range: &IntRange,
+        window_rows: usize,
+    ) -> bool {
+        if self.dense_wanted(shape, dense.is_some(), pool) {
+            return !self.folds_beside_window(shape, dense.is_some(), pool);
+        }
+        self.range_wanted(shape, dense.is_some(), range)
+            && match range {
+                IntRange::Active(_) => true,
+                IntRange::Untried => window_rows >= RANGE_SLOT_CAP,
+                IntRange::Off => false,
+            }
+    }
+
+    /// Folds the input in rounds for as long as a fold takes every batch.
+    /// Batches a round left are queued on `ahead` for the driver's own
+    /// path; the end of the input is marked there too.
+    fn run(
+        &mut self,
+        input: &mut PullOperator,
+        ahead: &mut LanedAhead,
+        shape: &FusedShape<'_>,
+        state: &mut FusedState<'_>,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if self.dense_wanted(shape, state.dense.is_some(), state.pool) {
+            let Some(slots) = state.dense.as_mut() else {
+                return Ok(());
+            };
+            if let TwoPassKeySource::DateParts { parts } = shape.keys {
+                let before = memory.used();
+                let outcome = self.run_dates(input, ahead, shape, parts, slots, memory);
+                *state.group_reserved = state
+                    .group_reserved
+                    .saturating_add(memory.used().saturating_sub(before));
+                return outcome;
+            }
+            // The first window charges the pool's partials; until then
+            // there is nothing for a round to fold into.
+            if state.pool.reserved == 0 {
+                return Ok(());
+            }
+            let before = memory.used();
+            let text = match (shape.keys, state.intern.as_ref()) {
+                (TwoPassKeySource::Text { .. }, Some(intern)) => {
+                    // The driver's window checks the table against the
+                    // slots before it folds; the rounds add nothing to it.
+                    if !dense_in_bounds(shape.keys, intern.values.len()) {
+                        return Ok(());
+                    }
+                    Some(SharedText {
+                        intern,
+                        declared: std::sync::Mutex::new((&mut *state.labels, &mut *state.members)),
+                    })
+                }
+                (TwoPassKeySource::Text { .. }, None) => return Ok(()),
+                _ => None,
+            };
+            let outcome = self.run_dense(
+                input,
+                ahead,
+                shape,
+                slots.len(),
+                state.pool,
+                text.as_ref(),
+                memory,
+            );
+            *state.group_reserved = state
+                .group_reserved
+                .saturating_add(memory.used().saturating_sub(before));
+            return outcome;
+        }
+        if self.range_wanted(shape, state.dense.is_some(), state.range)
+            && let IntRange::Active(active) = &mut *state.range
+            && active.span > 0
+        {
+            return self.rounds(ahead, memory, |memory| {
+                fused_range_round(input, active, shape, memory)
+            });
+        }
+        Ok(())
+    }
+
+    /// Runs `round` until one leaves batches, the input ends or cannot
+    /// fold in place, or the query is past half its ceiling - where the
+    /// driver's own path decides what goes to disk before more is folded.
+    fn rounds(
+        &mut self,
+        ahead: &mut LanedAhead,
+        memory: &MemoryTracker,
+        mut round: impl FnMut(&MemoryTracker) -> Result<FusedRound, ExecError>,
+    ) -> Result<(), ExecError> {
+        while memory.used() <= memory.limit() / 2 {
+            match round(memory)? {
+                FusedRound::Unavailable => {
+                    self.enabled = false;
+                    return Ok(());
+                }
+                FusedRound::Done => {
+                    ahead.drained = true;
+                    return Ok(());
+                }
+                FusedRound::NoRoom => return Ok(()),
+                FusedRound::Ran { taken, left } => {
+                    crate::counters::count(|counters| {
+                        counters.fused_rounds += 1;
+                        counters.fused_batches += taken as u64;
+                    });
+                    if left.is_empty() {
+                        self.strikes = 0;
+                        continue;
+                    }
+                    if left.len() > taken {
+                        self.strikes += 1;
+                        if self.strikes >= FUSED_STRIKES {
+                            self.enabled = false;
+                        }
+                    } else {
+                        self.strikes = 0;
+                    }
+                    ahead.ready.extend(left);
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Rounds into the pool's partials of a text or small-integer key, one
+    /// partial per pool thread, handed back to the pool when the rounds
+    /// stop so every reader of the slots still finds them there.
+    #[allow(clippy::too_many_arguments)]
+    fn run_dense(
+        &mut self,
+        input: &mut PullOperator,
+        ahead: &mut LanedAhead,
+        shape: &FusedShape<'_>,
+        slot_count: usize,
+        pool: &mut DensePool,
+        text: Option<&SharedText<'_>>,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        // The pool is charged for one partial per pool thread, so a caller
+        // outside the pool shares the first thread's seat: it folds only
+        // while the pool is not folding.
+        let workers = rayon::current_num_threads().max(1);
+        let mut seats: Vec<std::sync::Mutex<Option<DenseGroupSlots>>> = Vec::new();
+        seats.resize_with(workers, || std::sync::Mutex::new(None));
+        let mut spare = Vec::new();
+        for (index, partial) in std::mem::take(&mut pool.partials).into_iter().enumerate() {
+            match seats.get_mut(index).map(std::sync::Mutex::get_mut) {
+                Some(Ok(seat)) => *seat = Some(partial),
+                _ => spare.push(partial),
+            }
+        }
+        // Lanes that are not packed - a distinct set - grow with the rows
+        // folded, in every worker's partial. A round reads no more rows
+        // than, each adding all a row can, fit what is left of the half
+        // of the ceiling the groups are kept to; with no room for one
+        // batch the driver's own path takes the input, and spills.
+        let growing = shape.packed.iter().any(Option::is_none);
+        let outcome = self.rounds(ahead, memory, |memory| {
+            let max_batches = if growing {
+                let room = (memory.limit() / 2).saturating_sub(memory.used());
+                let rows = room / shape.row_growth.max(1);
+                rows / crate::batch::MAX_SCAN_BATCH_ROWS
+            } else {
+                usize::MAX
+            };
+            if max_batches == 0 {
+                return Ok(FusedRound::NoRoom);
+            }
+            fused_dense_round(input, &seats, slot_count, shape, text, max_batches, memory)
+        });
+        pool.partials = spare;
+        for seat in seats {
+            if let Some(partial) = seat
+                .into_inner()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            {
+                pool.partials.push(partial);
+            }
+        }
+        outcome
+    }
+
+    /// Rounds into the dense slots of a date-part key. Each pool thread
+    /// keeps packed totals for the rounds' length; they are committed into
+    /// the slots when the rounds stop, so the driver's own path - and a
+    /// value outside the table, which ends the dense fold - finds every
+    /// row folded so far in the slots.
+    fn run_dates(
+        &mut self,
+        input: &mut PullOperator,
+        ahead: &mut LanedAhead,
+        shape: &FusedShape<'_>,
+        parts: [Option<(DatePart, usize)>; 2],
+        slots: &mut DenseGroupSlots,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        let slot_count = slots.len();
+        let workers = rayon::current_num_threads().max(1);
+        let mut seats: Vec<std::sync::Mutex<Option<PackedFold>>> = Vec::new();
+        seats.resize_with(workers + 1, || std::sync::Mutex::new(None));
+        let outcome = self.rounds(ahead, memory, |memory| {
+            fused_dates_round(input, &seats, slot_count, shape, parts, memory)
+        });
+        // Every thread's totals for a slot, added together, reach the
+        // slot's states once.
+        let folds = seats
+            .into_iter()
+            .filter_map(|seat| {
+                seat.into_inner()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            })
+            .collect::<Vec<_>>();
+        if !folds.is_empty() {
+            for (slot, entry) in slots.iter_mut().enumerate() {
+                if !occupied_in(&folds, slot) {
+                    continue;
+                }
+                let states = entry.get_or_insert_with(|| {
+                    shape.aggregates.iter().map(AggregateState::new).collect()
+                });
+                commit_merged(&folds, slot, states, shape.aggregates, memory)?;
+            }
+        }
+        outcome
+    }
+}
+
+/// What a fused round's workers leave for the driver's own path, and what
+/// they took.
+#[derive(Default)]
+struct RoundTally {
+    /// Each with its place in the input's order.
+    left: std::sync::Mutex<Vec<(u64, Result<RecordBatch, RecordBatch>)>>,
+    taken: std::sync::atomic::AtomicUsize,
+}
+
+impl RoundTally {
+    fn leave(&self, order: u64, batch: Result<RecordBatch, RecordBatch>) {
+        self.left
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((order, batch));
+    }
+
+    fn took(&self) {
+        self.taken
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The round as the driver reads it. Batches the ceiling refused come
+    /// back as the scan made them and are laned here. What is left goes to
+    /// the driver in the input's order, whatever order the workers left it
+    /// in: a text key's group shows the spelling of the first row that
+    /// reached it, and the driver's own path decides that in the order it
+    /// is handed batches.
+    fn finish(self, round: FoldedRound, shape: &FusedShape<'_>) -> FusedRound {
+        let mut left = self
+            .left
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match round {
+            FoldedRound::Unavailable => FusedRound::Unavailable,
+            FoldedRound::Done => FusedRound::Done,
+            FoldedRound::Round { returned } => {
+                left.extend(returned.into_iter().map(|(order, batch)| {
+                    (
+                        order,
+                        laned_batch(batch, shape.keys, shape.key_exprs, shape.lanes),
+                    )
+                }));
+                left.sort_by_key(|(order, _)| *order);
+                FusedRound::Ran {
+                    taken: self.taken.into_inner(),
+                    left: left.into_iter().map(|(_, batch)| batch).collect(),
+                }
+            }
+        }
+    }
+}
+
+/// One round of the input folded into the dense slots' worker partials:
+/// each worker decodes a slice of the table and folds its rows into its
+/// own partial. A batch the dense fold cannot take - no lane carries it, a
+/// text key without dictionary codes, a key outside the slots - is left
+/// for the driver, whole and unfolded.
+fn fused_dense_round(
+    input: &mut PullOperator,
+    seats: &[std::sync::Mutex<Option<DenseGroupSlots>>],
+    slot_count: usize,
+    shape: &FusedShape<'_>,
+    text: Option<&SharedText<'_>>,
+    max_batches: usize,
+    memory: &MemoryTracker,
+) -> Result<FusedRound, ExecError> {
+    let poisoned = || ExecError::InvalidBatch("dense partial seat poisoned");
+    let columns: &[usize] = match &shape.keys {
+        TwoPassKeySource::Text { column } => std::slice::from_ref(column),
+        _ => &[],
+    };
+    let any_packed = shape.packed.iter().any(Option::is_some);
+    let tally = RoundTally::default();
+    let round = input.fold_round(memory, max_batches, &|batch, order| {
+        let batch = match laned_batch(batch, shape.keys, shape.key_exprs, shape.lanes) {
+            Ok(batch) => batch,
+            Err(batch) => {
+                tally.leave(order, Err(batch));
+                return Ok(None);
+            }
+        };
+        let translations = if let Some(text) = text {
+            // Only a batch whose every spelling the intern table already
+            // holds: a group shows the spelling of the first row that
+            // reached it, in the input's order, and the workers reach
+            // their batches in no order. A batch that brings a spelling
+            // is the driver's, which takes what a round left in order.
+            let Some(translations) = known_text_translations(&batch, columns, text.intern)? else {
+                tally.leave(order, Ok(batch));
+                return Ok(None);
+            };
+            let mut declared = text.declared.lock().map_err(|_| poisoned())?;
+            let (labels, members) = &mut *declared;
+            note_key_declarations(&batch, &shape.key_columns, labels, members);
+            translations
+        } else {
+            Vec::new()
+        };
+        let unit = [(batch, translations)];
+        if !dense_integer_window_in_bounds(&unit, shape.keys) {
+            let [(batch, _)] = unit;
+            tally.leave(order, Ok(batch));
+            return Ok(None);
+        }
+        let seat = rayon::current_thread_index().map_or(0, |index| index.min(seats.len() - 1));
+        let mut seat = seats[seat].lock().map_err(|_| poisoned())?;
+        let acc = seat.get_or_insert_with(|| vec![None; slot_count]);
+        if any_packed {
+            dense_packed_chunk(
+                &unit,
+                shape.keys,
+                columns,
+                shape.lanes,
+                shape.packed,
+                shape.aggregates,
+                acc,
+                memory,
+            )?;
+        } else {
+            let [(batch, translations)] = &unit;
+            two_pass_dense_batch(
+                batch,
+                shape.keys,
+                columns,
+                translations,
+                shape.lanes,
+                shape.aggregates,
+                acc,
+                memory,
+            )?;
+        }
+        tally.took();
+        Ok(None)
+    })?;
+    Ok(tally.finish(round, shape))
+}
+
+/// One round of the input folded into packed totals per pool thread, for a
+/// date-part key. A batch's slots are computed before any of its rows is
+/// folded, so one holding a value outside the table is left whole.
+fn fused_dates_round(
+    input: &mut PullOperator,
+    seats: &[std::sync::Mutex<Option<PackedFold>>],
+    slot_count: usize,
+    shape: &FusedShape<'_>,
+    parts: [Option<(DatePart, usize)>; 2],
+    memory: &MemoryTracker,
+) -> Result<FusedRound, ExecError> {
+    let poisoned = || ExecError::InvalidBatch("date-part fold seat poisoned");
+    let tally = RoundTally::default();
+    let round = input.fold_round(memory, usize::MAX, &|batch, order| {
+        let batch = match laned_batch(batch, shape.keys, shape.key_exprs, shape.lanes) {
+            Ok(batch) => batch,
+            Err(batch) => {
+                tally.leave(order, Err(batch));
+                return Ok(None);
+            }
+        };
+        let last = seats.len() - 1;
+        let seat = rayon::current_thread_index().map_or(last, |index| index.min(last));
+        let mut seat = seats[seat].lock().map_err(|_| poisoned())?;
+        let fold =
+            seat.get_or_insert_with(|| PackedFold::sharing(slot_count, shape.packed, shape.lanes));
+        // The window's own fold of a batch. Every lane is packed, so it
+        // reaches no group states; and it computes the batch's slots
+        // before it folds a row, so a date outside the table leaves the
+        // totals untouched.
+        match dense_date_parts_packed_batch(
+            &batch,
+            parts,
+            shape.lanes,
+            shape.packed,
+            shape.aggregates,
+            &mut Vec::new(),
+            fold,
+            memory,
+        ) {
+            Ok(()) => {}
+            Err(DenseFold::OutOfDomain) => {
+                drop(seat);
+                tally.leave(order, Ok(batch));
+                return Ok(None);
+            }
+            Err(DenseFold::Exec(error)) => return Err(error),
+        }
+        tally.took();
+        Ok(None)
+    })?;
+    Ok(tally.finish(round, shape))
+}
+
+/// The key column of a source the integer-range fold takes.
+fn range_fold_key(keys: TwoPassKeySource) -> Option<usize> {
+    match keys {
+        TwoPassKeySource::Int { column, group_type }
+            if matches!(
+                group_type.storage_type(),
+                DataType::Int64 | DataType::UInt64
+            ) || matches!(group_type, DataType::Date32 | DataType::DateTime64 { .. }) =>
+        {
+            Some(column)
+        }
+        _ => None,
+    }
 }
 
 /// Folds one window through the integer-range fold. `None` when every row
