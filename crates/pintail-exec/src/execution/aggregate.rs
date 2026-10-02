@@ -4164,13 +4164,38 @@ fn build_hash_aggregate_scan(
         })
     {
         let mut count = 0_u64;
-        while let Some(batch) = input.next_batch(memory)? {
+        let mut add = |rows: usize| {
             count = count
-                .checked_add(
-                    u64::try_from(batch.visible_row_count())
-                        .map_err(|_| ExecError::NumericOverflow)?,
-                )
+                .checked_add(u64::try_from(rows).map_err(|_| ExecError::NumericOverflow)?)
                 .ok_or(ExecError::NumericOverflow)?;
+            Ok::<(), ExecError>(())
+        };
+        // Counted where each slice is decoded: no batch is queued for this
+        // thread to look at.
+        let mut drained = false;
+        while !drained && !super::switches::fused_fold_disabled() {
+            let counted = std::sync::atomic::AtomicUsize::new(0);
+            let round = input.fold_round(memory, usize::MAX, &|batch, _| {
+                counted.fetch_add(
+                    batch.visible_row_count(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                Ok(None)
+            })?;
+            add(counted.into_inner())?;
+            match round {
+                FoldedRound::Unavailable => break,
+                FoldedRound::Done => drained = true,
+                FoldedRound::Round { returned } => {
+                    crate::counters::count(|counters| counters.fused_rounds += 1);
+                    for (_, batch) in returned {
+                        add(batch.visible_row_count())?;
+                    }
+                }
+            }
+        }
+        while !drained && let Some(batch) = input.next_batch(memory)? {
+            add(batch.visible_row_count())?;
         }
         let row = vec![Value::UInt64(count); aggregates.len()];
         memory.reserve(estimated_row_payload_bytes(&row))?;
