@@ -48,6 +48,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memory bounds - runs on the workers or once per batch. A statement's
   audit row is written after its response is sent, so a crash can lose
   that row; it never delayed or failed the statement's data.
+- A repeated statement runs from a kept plan (`PINTAIL_PLAN_CACHE=0`
+  turns it off); a kept key lookup or short scan runs on its connection's
+  thread when nothing else is being answered (`PINTAIL_SMALL_READS`); the
+  query log line is written by a background writer; and the server proves
+  a replica current from in-process counters instead of asking the file
+  system. On one connection a repeated key lookup fell from about 58 to
+  about 21 microseconds.
 - A statement that reads no table runs on its connection's task, a
   command is read in one read, and a key lookup decodes a block once and
   keeps it. `PINTAIL_INLINE_STATEMENTS=0` restores the worker hand-off.
