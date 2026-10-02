@@ -34,10 +34,10 @@ use super::two_pass::{
     TwoPassKeySource, TwoPassLane, build_streaming_two_pass_aggregate, two_pass_lanes,
 };
 use super::{
-    ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MaterializedRows, MemoryTracker, OneShotStream,
-    PullOperator, SESSION_GROUP_CONCAT_MAX_LEN, SESSION_GROUP_CONCAT_WARNINGS, compare_sort_values,
-    estimated_row_payload_bytes, reserve_hash_map_entries, reserve_hash_set_entries,
-    reserve_vec_elements, scalar_string_memory_upper_bound,
+    ExecError, FoldedRound, HASH_ENTRY_OVERHEAD, JoinKeyMode, MaterializedRows, MemoryTracker,
+    OneShotStream, PullOperator, SESSION_GROUP_CONCAT_MAX_LEN, SESSION_GROUP_CONCAT_WARNINGS,
+    compare_sort_values, estimated_row_payload_bytes, reserve_hash_map_entries,
+    reserve_hash_set_entries, reserve_vec_elements, scalar_string_memory_upper_bound,
 };
 use crate::{
     ColumnVector, RecordBatch,
@@ -4466,7 +4466,8 @@ fn build_ungrouped_fold(
     let mut states: Vec<AggregateState> = aggregates.iter().map(AggregateState::new).collect();
     let mut rows_buffer = Vec::new();
     let mut tally = FoldTally::default();
-    while let Some(batch) = input.next_batch(memory)? {
+    let drained = fold_ungrouped_in_place(input, aggregates, &mut states, &mut tally, memory)?;
+    while !drained && let Some(batch) = input.next_batch(memory)? {
         memory.check_interruption()?;
         fold_batch(
             &batch,
@@ -4492,6 +4493,110 @@ fn build_ungrouped_fold(
         spilled: None,
         ready: None,
     })
+}
+
+/// Folds an ungrouped aggregate's input in fused rounds: each worker
+/// decodes a slice of the table and folds it by column into states of its
+/// own, and the workers' states merge into `states` when the rounds stop.
+/// Answers whether the input is exhausted.
+///
+/// Only aggregates whose answer cannot depend on the order their rows are
+/// folded in. A batch is folded into states of its own first and those
+/// merged into the worker's, so a batch one of whose aggregates has no
+/// column fold is left whole: it is folded here, on the calling thread,
+/// which evaluates an argument row by row with the session's settings.
+fn fold_ungrouped_in_place(
+    input: &mut PullOperator,
+    aggregates: &[CompiledAggregate],
+    states: &mut [AggregateState],
+    tally: &mut super::ungrouped_fold::FoldTally,
+    memory: &MemoryTracker,
+) -> Result<bool, ExecError> {
+    use super::ungrouped_fold::{fold_batch, fold_batch_by_column};
+    // Nor a distinct aggregate: every worker would keep a set of its own,
+    // and a query whose one set fits the ceiling must not fail on several.
+    if super::switches::fused_fold_disabled()
+        || aggregates.iter().any(|aggregate| {
+            aggregate.distinct || super::fused_join_fold::order_sensitive(aggregate).is_some()
+        })
+    {
+        return Ok(false);
+    }
+    let workers = rayon::current_num_threads().max(1);
+    let seat_bytes = aggregates.len().saturating_mul(size_of::<AggregateState>());
+    if memory
+        .reserve(seat_bytes.saturating_mul(workers + 1))
+        .is_err()
+    {
+        return Ok(false);
+    }
+    let seats: Vec<std::sync::Mutex<Option<Vec<AggregateState>>>> =
+        (0..=workers).map(|_| std::sync::Mutex::new(None)).collect();
+    let poisoned = || ExecError::InvalidBatch("ungrouped fold seat poisoned");
+    let folded = std::sync::atomic::AtomicUsize::new(0);
+    let mut rows_buffer = Vec::new();
+    let mut drained = false;
+    let mut outcome = Ok(());
+    while memory.used() <= memory.limit() / 2 {
+        let round = input.fold_round(memory, usize::MAX, &|batch, _| {
+            // What a batch's own states hold is gone with them; what the
+            // worker's states grow by in the merge is charged to the query.
+            let scratch = memory.unbounded_worker();
+            let mut own: Vec<AggregateState> = aggregates.iter().map(AggregateState::new).collect();
+            let mut rows = Vec::new();
+            if !fold_batch_by_column(&batch, aggregates, &mut own, &mut rows, &scratch)? {
+                return Ok(Some(batch));
+            }
+            let seat = rayon::current_thread_index().map_or(workers, |index| index.min(workers));
+            let mut seat = seats[seat].lock().map_err(|_| poisoned())?;
+            let kept =
+                seat.get_or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
+            for ((state, other), aggregate) in kept.iter_mut().zip(own).zip(aggregates) {
+                state.merge(aggregate, other, memory)?;
+            }
+            folded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(None)
+        });
+        match round {
+            Err(error) => {
+                outcome = Err(error);
+                break;
+            }
+            Ok(FoldedRound::Unavailable) => break,
+            Ok(FoldedRound::Done) => {
+                drained = true;
+                break;
+            }
+            Ok(FoldedRound::Round { returned }) => {
+                crate::counters::count(|counters| counters.fused_rounds += 1);
+                let declined = returned.len();
+                for (_, batch) in returned {
+                    fold_batch(&batch, aggregates, states, &mut rows_buffer, tally, memory)?;
+                }
+                // Batches that keep coming back have no column fold: the
+                // pulled path folds them without the detour.
+                if declined > folded.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+            }
+        }
+    }
+    let folded = folded.into_inner();
+    crate::counters::count(|counters| counters.fused_batches += folded as u64);
+    tally.folded += folded.saturating_mul(aggregates.len());
+    for seat in seats {
+        let Some(kept) = seat
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        else {
+            continue;
+        };
+        for ((state, other), aggregate) in states.iter_mut().zip(kept).zip(aggregates) {
+            state.merge(aggregate, other, memory)?;
+        }
+    }
+    memory.release(seat_bytes.saturating_mul(workers + 1));
+    outcome.map(|()| drained)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -6062,13 +6167,66 @@ fn build_fused_inner_join_aggregate(
         *state = Some(Box::new(join));
         return Ok(None);
     }
+    // With totals kept per worker for the whole probe and nothing charged
+    // per row, the probe side folds in place: each worker decodes a slice
+    // of it and adds the rows to its own totals, and no round of batches
+    // is gathered here for another core to read back. A batch the column
+    // fold declines, or the ceiling has no room for, comes back and takes
+    // the rounds below.
+    let mut fuse = !super::switches::fused_fold_disabled()
+        && every_morsel_pooled
+        && per_row_upper == 0
+        && lane_pool.is_some();
+    let mut carried = std::collections::VecDeque::<RecordBatch>::new();
+    let mut probe_done = false;
     loop {
+        while fuse && carried.is_empty() && !probe_done && memory.used() <= memory.limit() / 2 {
+            let Some(pool) = lane_pool.as_ref() else {
+                break;
+            };
+            let folded = std::sync::atomic::AtomicUsize::new(0);
+            let round = left.fold_round(memory, usize::MAX, &|batch, _| {
+                if pool
+                    .fold(&Morsel::whole(&batch), left_key, memory)?
+                    .is_some()
+                {
+                    return Ok(Some(batch));
+                }
+                folded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok(None)
+            })?;
+            match round {
+                FoldedRound::Unavailable => fuse = false,
+                FoldedRound::Done => probe_done = true,
+                FoldedRound::Round { returned } => {
+                    let folded = folded.into_inner();
+                    lane_morsels.fetch_add(folded, std::sync::atomic::Ordering::Relaxed);
+                    all_morsels.fetch_add(folded, std::sync::atomic::Ordering::Relaxed);
+                    crate::counters::count(|counters| {
+                        counters.fused_rounds += 1;
+                        counters.fused_batches += folded as u64;
+                    });
+                    // A probe whose batches the column fold keeps declining
+                    // is the rounds' to take from here on.
+                    fuse = returned.len() <= folded;
+                    carried.extend(returned.into_iter().map(|(_, batch)| batch));
+                }
+            }
+        }
+        if probe_done && carried.is_empty() {
+            break;
+        }
         let gather_clock = std::time::Instant::now();
         let round = aggregate_round_batches();
         let mut batches = Vec::with_capacity(round);
         let mut batch_reserved = 0_usize;
         while batches.len() < round {
-            let Some(batch) = left.next_batch(memory)? else {
+            let batch = match carried.pop_front() {
+                Some(batch) => Some(batch),
+                None if probe_done => None,
+                None => left.next_batch(memory)?,
+            };
+            let Some(batch) = batch else {
                 break;
             };
             let bytes = batch.estimated_bytes();

@@ -72,6 +72,28 @@ pub(super) fn fold_batch(
     fold_rows_into(batch, &rows, aggregates, states, tally, memory)
 }
 
+/// Folds `batch`'s selected rows into `states` by column alone. `false`
+/// when an aggregate has no column fold for this batch: `states` then
+/// holds part of the batch and is the caller's to discard.
+pub(super) fn fold_batch_by_column(
+    batch: &RecordBatch,
+    aggregates: &[CompiledAggregate],
+    states: &mut [AggregateState],
+    rows_buffer: &mut Vec<u32>,
+    memory: &MemoryTracker,
+) -> Result<bool, ExecError> {
+    let rows = fold_rows(batch, 0..batch.row_count(), rows_buffer);
+    if rows.len() == 0 {
+        return Ok(true);
+    }
+    for (aggregate, state) in aggregates.iter().zip(states.iter_mut()) {
+        if !fold_column(batch, &rows, aggregate, state, memory)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Folds the rows `rows` lists, in row order, into `states`: by column
 /// where a fold exists, per row otherwise.
 pub(super) fn fold_rows_into(

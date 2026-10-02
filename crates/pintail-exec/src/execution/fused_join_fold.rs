@@ -956,7 +956,7 @@ impl GroupStates {
 /// integer and decimal sums and averages, and the smallest or largest value of a type
 /// whose equal values are identical. The others keep today's fixed order -
 /// each morsel's states merged in morsel order.
-fn order_sensitive(aggregate: &CompiledAggregate) -> Option<&'static str> {
+pub(super) fn order_sensitive(aggregate: &CompiledAggregate) -> Option<&'static str> {
     use pintail_types::DataType;
     match aggregate.function {
         AggregateFunction::Sum | AggregateFunction::Average if aggregate_uses_float(aggregate) => {
