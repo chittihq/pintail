@@ -8,6 +8,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Segment files are written as format version 7: dictionary indexes are
+  stored one or two bytes wide, and a block with no NULL stores no null
+  bitmap (segment files about a tenth smaller on the 20M-row benchmark).
+  Versions 1-6 remain readable; existing segments are rewritten only as
+  compaction or a recopy replaces them. **Downgrade:** a binary older than
+  this release refuses any version 7 segment, so a data directory this
+  release has flushed to, compacted or recopied cannot be opened by an
+  older release; restore a backup taken before the upgrade, or
+  re-snapshot.
+- Blocks are read in positioned runs rather than one read each, and one
+  block cache serves key lookups and scans. `PINTAIL_BLOCK_CACHE_MB` sets
+  its budget (0 turns it off; the default is 1/128 of available memory,
+  between 32 MiB and 1 GiB). It is charged to the shared memory budget and
+  gives its memory back when a query needs it.
 - More correlated subqueries are answered for a batch of outer rows at once
   instead of once per row: `EXISTS` and `NOT EXISTS` over a join, `IN` and
   `NOT IN` (with their NULL answers computed from the same members), a
