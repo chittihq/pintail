@@ -5391,18 +5391,39 @@ impl PullOperator {
                     .iter()
                     .map(|(expression, data_type)| {
                         let keeps_text = !data_type.is_some_and(holds_no_heap);
-                        let (working, kept) = batch.selection().selected_rows().fold(
-                            (0_usize, 0_usize),
-                            |(working, kept), row| {
-                                let bound = expression.allocation_upper_bound(&batch, row);
-                                let text = if keeps_text {
-                                    expression.result_text_upper_bound(&batch, row).min(bound)
-                                } else {
-                                    0
-                                };
-                                (working.max(bound), kept.saturating_add(text))
-                            },
-                        );
+                        // Where every row's bound is the same - packed
+                        // numbers with no NULL - one row is read and the
+                        // sum is that row's, times the rows: the same
+                        // figure, without visiting each of them.
+                        let by_row = || {
+                            batch.selection().selected_rows().fold(
+                                (0_usize, 0_usize),
+                                |(working, kept), row| {
+                                    let bound = expression.allocation_upper_bound(&batch, row);
+                                    let text = if keeps_text {
+                                        expression.result_text_upper_bound(&batch, row).min(bound)
+                                    } else {
+                                        0
+                                    };
+                                    (working.max(bound), kept.saturating_add(text))
+                                },
+                            )
+                        };
+                        if let Some((bound, text)) = expression.uniform_row_bounds(&batch) {
+                            let rows = batch.visible_row_count();
+                            let uniform = if rows == 0 {
+                                (0, 0)
+                            } else if keeps_text {
+                                (bound, rows.saturating_mul(text.min(bound)))
+                            } else {
+                                (bound, 0)
+                            };
+                            // Every debug run checks the one row against
+                            // all of them.
+                            debug_assert_eq!(uniform, by_row());
+                            return uniform.0.saturating_add(uniform.1);
+                        }
+                        let (working, kept) = by_row();
                         working.saturating_add(kept)
                     })
                     .fold(0_usize, usize::saturating_add);

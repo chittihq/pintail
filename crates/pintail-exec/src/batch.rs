@@ -992,6 +992,27 @@ impl ColumnVector {
         }
     }
 
+    /// Whether [`Self::scalar_heap_bytes`] and
+    /// [`Self::packed_text_upper_bound`] answer the same for every row: a
+    /// packed column of numbers, or of decimals or temporals whose text is
+    /// not built, holding no NULL and no values of its own. Decided from
+    /// the column's shape, without reading a row.
+    pub(crate) fn row_bounds_are_uniform(&self) -> bool {
+        if self.values.get().is_some() {
+            return false;
+        }
+        match self.typed() {
+            Some((typed, validity)) if validity.no_nulls() => match typed {
+                TypedValues::Int64(_) | TypedValues::UInt64(_) | TypedValues::Float64(_) => true,
+                TypedValues::Decimal128 { text, .. } | TypedValues::Temporal { text, .. } => {
+                    text.built().is_none()
+                }
+                TypedValues::Utf8(_) => false,
+            },
+            _ => false,
+        }
+    }
+
     /// Heap allowance for copying one scalar, without formatting other rows.
     pub(crate) fn scalar_heap_bytes(&self, row: usize) -> Option<usize> {
         if row >= self.len {

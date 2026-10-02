@@ -1777,6 +1777,42 @@ impl CompiledExpr {
         }
     }
 
+    /// One row's [`Self::allocation_upper_bound`] and
+    /// [`Self::result_text_upper_bound`] when they are the same for every
+    /// row of `batch`, read once instead of once per row.
+    ///
+    /// Both bounds depend on the row only through the columns the
+    /// expression reads. Where each of those answers the same for every
+    /// row ([`ColumnVector::row_bounds_are_uniform`]), so does the
+    /// expression, and the first row speaks for the batch. `None` for a
+    /// batch with no rows, a column whose bound varies, or an expression
+    /// that reads a user variable.
+    pub(crate) fn uniform_row_bounds(&self, batch: &RecordBatch) -> Option<(usize, usize)> {
+        if batch.row_count() == 0 || self.has_variable_effects() || !self.reads_uniform(batch) {
+            return None;
+        }
+        Some((
+            self.allocation_upper_bound(batch, 0),
+            self.string_value_upper_bound(batch, 0),
+        ))
+    }
+
+    fn reads_uniform(&self, batch: &RecordBatch) -> bool {
+        match self {
+            Self::Column(index) => batch
+                .column(*index)
+                .is_some_and(crate::ColumnVector::row_bounds_are_uniform),
+            Self::Literal(_) => true,
+            Self::Unary { expr, .. }
+            | Self::IsNull { expr, .. }
+            | Self::PreparedIn { expr, .. } => expr.reads_uniform(batch),
+            Self::Binary { left, right, .. } => {
+                left.reads_uniform(batch) && right.reads_uniform(batch)
+            }
+            Self::Scalar { args, .. } => args.iter().all(|argument| argument.reads_uniform(batch)),
+        }
+    }
+
     /// Upper bound on the text one row's result keeps once it is a value.
     pub(crate) fn result_text_upper_bound(&self, batch: &RecordBatch, row: usize) -> usize {
         self.string_value_upper_bound(batch, row)
