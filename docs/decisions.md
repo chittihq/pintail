@@ -2075,3 +2075,38 @@ level, or one image holding both binaries behind a launcher that reads the
 CPU's features before it execs one), each gated on its own, and the
 generic one staying the default. Until a deployment asks for it the release
 stays one generic binary.
+
+**The release profile, profile-guided builds and a second binary
+(2026-10-02).** Each build setting was measured alone on the current
+engine, and a profile-guided build was given a training run that needs no
+source database; the tables, the method and the release proposal are in
+`docs/release-builds.md`. What was decided:
+
+- **The profile in `Cargo.toml` stays.** Fat LTO, no LTO, sixteen codegen
+  units and size-optimized control-plane crates each lose or stay inside
+  the spread between two processes of one binary. `panic = "abort"` is
+  ruled out by design, not by measurement: the wire server contains a
+  panicking statement with `catch_unwind`.
+- **The same-commit spread is not the build.** Builds of one commit from
+  different checkouts and target directories carry identical code; the
+  few percent between them is between processes. Comparisons now start
+  fresh processes every round and read the figure across rounds;
+  `scripts/ab-build.sh` makes two builds of a revision the same file, so
+  a checksum settles whether two binaries are one build.
+- **Profile-guided builds stay opt-in, with a training run that runs
+  anywhere** (`scripts/pgo-build.sh`, `benchmark/pgo-train.ts`): about 5%
+  across Q2-Q8, 15% on the widest aggregate and 7-14% on small statements,
+  four fifths or more of what training on the 20M-row replica gives, for
+  eight minutes of build. Compiled for x86-64-v3 as well, about 11%.
+- **The post-link layout pass is available and not proposed.** It
+  installs from the distribution's packages and its binary answers
+  identically, but over the profile-guided build it adds half a percent
+  across the seven queries (inside the spread), 4 points on the filtered
+  count and 6 on a key lookup, for nine and a half more minutes: its
+  instrumented binary runs the training three times slower. Its output
+  also drops the line tables, so a backtrace from it has no file and
+  line.
+- **A second binary beside the generic one is the way to ship the gain**,
+  chosen at start by the processor's flags. Built behind
+  `PINTAIL_X86_64_V3=1` in the `Dockerfile`, default off; the release
+  workflow is unchanged until the owner applies the proposal.
