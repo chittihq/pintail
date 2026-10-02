@@ -245,3 +245,86 @@ fn modifiers_the_union_cannot_express_are_refused() {
         assert!(bind(sql, &catalog).is_err(), "{sql} must be refused");
     }
 }
+
+/// A select item that names no grouping key keeps its value in every row:
+/// `GROUP BY 1` names the first select item, never a literal `1` written
+/// elsewhere in the select list.
+#[test]
+fn a_constant_item_survives_the_super_aggregate_rows() {
+    assert_eq!(
+        run("SELECT region, 1+1, COUNT(*) FROM sales GROUP BY 1 WITH ROLLUP"),
+        table(&[
+            &["NULL", "2", "1"],
+            &["east", "2", "2"],
+            &["west", "2", "2"],
+            &["NULL", "2", "5"]
+        ])
+    );
+}
+
+/// An item that is itself a key the subtotal still groups by keeps its
+/// value even when a column inside it is rolled up.
+#[test]
+fn an_expression_key_keeps_its_value_while_its_column_is_rolled_up() {
+    for sql in [
+        "SELECT LEFT(region, 2), region, COUNT(*) FROM sales GROUP BY 1, 2 WITH ROLLUP",
+        "SELECT LEFT(region, 2) AS r, region, COUNT(*) FROM sales GROUP BY r, region WITH ROLLUP",
+    ] {
+        assert_eq!(
+            run(sql),
+            table(&[
+                &["NULL", "NULL", "1"],
+                &["NULL", "NULL", "1"],
+                &["ea", "east", "2"],
+                &["ea", "NULL", "2"],
+                &["we", "west", "2"],
+                &["we", "NULL", "2"],
+                &["NULL", "NULL", "5"]
+            ]),
+            "{sql}"
+        );
+    }
+}
+
+/// Rolling up a key named by an alias turns that one item into NULL, not
+/// every item over the same column.
+#[test]
+fn an_aliased_key_rolls_up_only_its_own_item() {
+    let rows = run("SELECT region, product, region AS r, COUNT(*) FROM sales \
+                    GROUP BY region, product, r WITH ROLLUP");
+    assert!(
+        rows.contains(&table(&[&["east", "apple", "NULL", "1"]])[0]),
+        "{rows:?}"
+    );
+    assert!(
+        rows.contains(&table(&[&["east", "NULL", "NULL", "2"]])[0]),
+        "{rows:?}"
+    );
+    assert_eq!(rows.len(), 12, "{rows:?}");
+    assert_eq!(
+        rows.last(),
+        Some(&table(&[&["NULL", "NULL", "NULL", "5"]])[0])
+    );
+}
+
+/// A folded `GROUPING()` is still named as written.
+#[test]
+fn grouping_columns_keep_their_written_names() {
+    let catalog = catalog(DatabaseId::new(21), TableId::new(22));
+    let sql = "SELECT region, GROUPING(region), GROUPING(region,product) AS g, \
+               COUNT(*) FROM sales GROUP BY region, product WITH ROLLUP";
+    let statement = parse_statement(sql).expect("parse");
+    let bound = Binder::new(&catalog, Some("app"))
+        .with_source(sql)
+        .bind(&statement)
+        .expect("bind");
+    assert_eq!(
+        bound
+            .projection
+            .iter()
+            .take(4)
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>(),
+        ["region", "GROUPING(region)", "g", "COUNT(*)"]
+    );
+}

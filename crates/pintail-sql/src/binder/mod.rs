@@ -179,7 +179,7 @@ impl<'catalog> Binder<'catalog> {
         {
             return Err(BindError::UnsupportedQueryClause(query.to_string()));
         }
-        if let Some(rollup) = rollup::rewrite(query)? {
+        if let Some(rollup) = rollup::rewrite(query, self.source)? {
             let mut bound = self.bind_query(&rollup.query, outer_ctes)?;
             // The hidden key columns have to be the last ones, with nothing
             // after them: an ORDER BY that needed a hidden column of its own

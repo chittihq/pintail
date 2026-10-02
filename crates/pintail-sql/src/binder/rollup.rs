@@ -69,9 +69,15 @@ pub(super) struct Rewritten {
 
 /// One grouping key: as written, and as the expression it stands for.
 struct Key {
-    written: Expr,
+    /// The key as written, `None` for an ordinal: `GROUP BY 1` names the
+    /// first select item, and a literal `1` elsewhere in the query is not it.
+    written: Option<Expr>,
     /// The select item an ordinal or alias names, else the key itself.
     effective: Expr,
+    /// The select item an ordinal or alias names. Rolling the key up turns
+    /// that item into NULL as a whole, and only that one: in
+    /// `SELECT a, a AS c ... GROUP BY a, c` rolling up `c` leaves `a`.
+    item: Option<usize>,
 }
 
 /// Rewrites `query` when its body is one `SELECT ... WITH ROLLUP`; `None`
@@ -82,7 +88,7 @@ struct Key {
 /// Refuses the modifiers and shapes the union cannot express: `WITH CUBE`
 /// and `WITH TOTALS`, `DISTINCT`, window functions, and a `GROUPING()`
 /// argument that is not a grouping key.
-pub(super) fn rewrite(query: &Query) -> Result<Option<Rewritten>, BindError> {
+pub(super) fn rewrite(query: &Query, source: Option<&str>) -> Result<Option<Rewritten>, BindError> {
     let SetExpr::Select(select) = query.body.as_ref() else {
         return Ok(None);
     };
@@ -103,17 +109,12 @@ pub(super) fn rewrite(query: &Query) -> Result<Option<Rewritten>, BindError> {
     }
     let keys = groups
         .iter()
-        .map(|written| {
-            effective_key(written, &select.projection).map(|effective| Key {
-                written: written.clone(),
-                effective,
-            })
-        })
+        .map(|written| effective_key(written, &select.projection))
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut body: Option<SetExpr> = None;
     for level in (0..=keys.len()).rev() {
-        let branch = SetExpr::Select(Box::new(branch(select, groups, &keys, level)?));
+        let branch = SetExpr::Select(Box::new(branch(select, groups, &keys, level, source)?));
         body = Some(match body {
             None => branch,
             Some(left) => SetExpr::SetOperation {
@@ -191,12 +192,34 @@ fn branch(
     groups: &[Expr],
     keys: &[Key],
     level: usize,
+    source: Option<&str>,
 ) -> Result<Select, BindError> {
     let mut branch = select.clone();
     branch.group_by = GroupByExpr::Expressions(groups[..level].to_vec(), Vec::new());
-    for item in &mut branch.projection {
-        if let SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } = item {
+    for (index, item) in branch.projection.iter_mut().enumerate() {
+        let (expr, unnamed) = match item {
+            SelectItem::UnnamedExpr(expr) => (expr, true),
+            SelectItem::ExprWithAlias { expr, .. } => (expr, false),
+            _ => continue,
+        };
+        let original = expr.clone();
+        if keys[level..].iter().any(|key| key.item == Some(index)) {
+            *expr = Expr::value(SqlValue::Null);
+        } else {
             roll_up(expr, keys, level)?;
+        }
+        // The column keeps the name the written item gives it: a folded
+        // `GROUPING(a)` is still the column `GROUPING(a)`, not `0`.
+        if unnamed && *expr != original {
+            let alias = Ident::new(super::projection_name(
+                &original,
+                source,
+                super::SourceClause::Projection,
+            ));
+            *item = SelectItem::ExprWithAlias {
+                expr: expr.clone(),
+                alias,
+            };
         }
     }
     if let Some(having) = &mut branch.having {
@@ -259,56 +282,74 @@ fn number(value: u64) -> Expr {
 
 /// What a written key stands for: `GROUP BY 2` is the second select item,
 /// and `GROUP BY name` is the item aliased `name` when one is.
-fn effective_key(written: &Expr, projection: &[SelectItem]) -> Result<Expr, BindError> {
+fn effective_key(written: &Expr, projection: &[SelectItem]) -> Result<Key, BindError> {
     if let Expr::Value(value) = written
         && let SqlValue::Number(digits, _) = &value.value
         && !digits.contains(['.', 'e', 'E'])
     {
-        let item = digits
+        let index = digits
             .parse::<usize>()
             .ok()
-            .and_then(|ordinal| ordinal.checked_sub(1))
-            .and_then(|index| projection.get(index));
-        return match item {
-            Some(SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. }) => {
-                Ok(expr.clone())
-            }
+            .and_then(|ordinal| ordinal.checked_sub(1));
+        return match index.and_then(|index| Some((index, projection.get(index)?))) {
+            Some((
+                index,
+                SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. },
+            )) => Ok(Key {
+                written: None,
+                effective: expr.clone(),
+                item: Some(index),
+            }),
             _ => Err(BindError::UnsupportedQueryClause(written.to_string())),
         };
     }
     if let Expr::Identifier(name) = written
-        && let Some(expr) = projection.iter().find_map(|item| match item {
-            SelectItem::ExprWithAlias { expr, alias }
-                if alias.value.eq_ignore_ascii_case(&name.value) =>
-            {
-                Some(expr)
-            }
-            _ => None,
-        })
+        && let Some((index, expr)) =
+            projection
+                .iter()
+                .enumerate()
+                .find_map(|(index, item)| match item {
+                    SelectItem::ExprWithAlias { expr, alias }
+                        if alias.value.eq_ignore_ascii_case(&name.value) =>
+                    {
+                        Some((index, expr))
+                    }
+                    _ => None,
+                })
     {
-        return Ok(expr.clone());
+        return Ok(Key {
+            written: Some(written.clone()),
+            effective: expr.clone(),
+            item: Some(index),
+        });
     }
-    Ok(written.clone())
+    Ok(Key {
+        written: Some(written.clone()),
+        effective: written.clone(),
+        item: None,
+    })
 }
 
 /// Whether `expr` is the same thing as `key`: the same expression, or the
 /// same column however qualified.
 fn matches_key(expr: &Expr, key: &Key) -> bool {
-    if *expr == key.effective || *expr == key.written {
+    if *expr == key.effective || key.written.as_ref() == Some(expr) {
         return true;
     }
     let Some((qualifier, name)) = column_reference(expr) else {
         return false;
     };
-    [&key.effective, &key.written].into_iter().any(|candidate| {
-        column_reference(candidate).is_some_and(|(key_qualifier, key_name)| {
-            key_name.eq_ignore_ascii_case(name)
-                && match (qualifier, key_qualifier) {
-                    (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
-                    _ => true,
-                }
+    std::iter::once(&key.effective)
+        .chain(&key.written)
+        .any(|candidate| {
+            column_reference(candidate).is_some_and(|(key_qualifier, key_name)| {
+                key_name.eq_ignore_ascii_case(name)
+                    && match (qualifier, key_qualifier) {
+                        (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
+                        _ => true,
+                    }
+            })
         })
-    })
 }
 
 /// `(qualifier, column)` for a column reference.
@@ -368,6 +409,8 @@ fn roll_up(expr: &mut Expr, keys: &[Key], level: usize) -> Result<(), BindError>
         level,
         aggregate_depth: 0,
         query_depth: 0,
+        depth: 0,
+        kept_at: None,
     };
     match expr.visit(&mut visitor) {
         ControlFlow::Continue(()) => Ok(()),
@@ -380,6 +423,12 @@ struct RollUp<'a> {
     level: usize,
     aggregate_depth: usize,
     query_depth: usize,
+    /// How deep the walk is in the expression tree.
+    depth: usize,
+    /// The depth of an expression that is itself a key this branch still
+    /// groups by. It keeps its grouped value whole: in `GROUP BY LEFT(a, 10),
+    /// a` the subtotal that rolls `a` up still shows `LEFT(a, 10)`.
+    kept_at: Option<usize>,
 }
 
 impl VisitorMut for RollUp<'_> {
@@ -397,6 +446,18 @@ impl VisitorMut for RollUp<'_> {
 
     fn pre_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
         if self.query_depth > 0 {
+            return ControlFlow::Continue(());
+        }
+        self.depth += 1;
+        if self.kept_at.is_some() {
+            return ControlFlow::Continue(());
+        }
+        if self.aggregate_depth == 0
+            && self.keys[..self.level]
+                .iter()
+                .any(|key| matches_key(expr, key))
+        {
+            self.kept_at = Some(self.depth);
             return ControlFlow::Continue(());
         }
         if let Some(arguments) = is_grouping(expr) {
@@ -432,9 +493,15 @@ impl VisitorMut for RollUp<'_> {
     }
 
     fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
-        if self.query_depth == 0 && is_aggregate(expr) {
-            self.aggregate_depth -= 1;
+        if self.query_depth > 0 {
+            return ControlFlow::Continue(());
         }
+        match self.kept_at {
+            Some(depth) if depth == self.depth => self.kept_at = None,
+            None if is_aggregate(expr) => self.aggregate_depth -= 1,
+            Some(_) | None => {}
+        }
+        self.depth -= 1;
         ControlFlow::Continue(())
     }
 }

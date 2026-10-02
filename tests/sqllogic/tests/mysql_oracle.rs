@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2579;
+const EXPECTED_CASES: usize = 2583;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -2208,6 +2208,29 @@ fn hand_written_cases() -> Vec<OracleCase> {
         unordered(
             "group by with rollup",
             "SELECT active, COUNT(*) FROM events WHERE score < 0 GROUP BY active WITH ROLLUP",
+        ),
+        // A constant item keeps its value in the super-aggregate rows, an
+        // item that is itself a still-grouped key keeps its value while a
+        // column inside it rolls up, and an aliased key rolls up its own
+        // item only.
+        unordered(
+            "group by with rollup",
+            "SELECT active, 1+1, 'k', COUNT(*) FROM events GROUP BY 1 WITH ROLLUP",
+        ),
+        unordered(
+            "group by with rollup",
+            "SELECT LEFT(name, 7), name, SUM(score) FROM events WHERE id < 4 \
+             GROUP BY 1, 2 WITH ROLLUP",
+        ),
+        unordered(
+            "group by with rollup",
+            "SELECT LEFT(name, 7) AS p, name, SUM(score) FROM events WHERE id < 4 \
+             GROUP BY p, name WITH ROLLUP",
+        ),
+        unordered(
+            "group by with rollup",
+            "SELECT active, note, active AS a2, COUNT(*) FROM events \
+             GROUP BY active, note, a2 WITH ROLLUP",
         ),
         // Hex literals read as the unsigned integer their bytes spell where
         // a number is wanted, and stay bytes where a string is.
