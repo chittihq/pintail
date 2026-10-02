@@ -22,6 +22,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its budget (0 turns it off; the default is 1/128 of available memory,
   between 32 MiB and 1 GiB). It is charged to the shared memory budget and
   gives its memory back when a query needs it.
+- Bit-packed integer columns decode through an AVX2 kernel where the CPU
+  has one (four values a step instead of one), and the dictionary codes of
+  a GROUP BY over text keys with at most eight values translate with a
+  register permutation. One binary still runs on every x86-64 CPU;
+  `PINTAIL_SIMD=off` runs every kernel's portable fallback for diagnosis.
+- A session in a named time zone (`America/New_York`) reads a `TIMESTAMP`
+  column a batch at a time, as a session at a fixed offset already did:
+  grouping by `DATE()`, `HOUR()` or `DATE_FORMAT()` of it no longer
+  converts every row through its text, and a range filter on it looks the
+  zone up only for rows within a day of the range's ends.
+- Work that ran on a statement's own thread between rounds of a scan - a
+  computed grouping key such as `DATE(col)`, text interning, per-batch
+  memory bounds - runs on the workers or once per batch. A statement's
+  audit row is written after its response is sent, so a crash can lose
+  that row; it never delayed or failed the statement's data.
+- A statement that reads no table runs on its connection's task, a
+  command is read in one read, and a key lookup decodes a block once and
+  keeps it. `PINTAIL_INLINE_STATEMENTS=0` restores the worker hand-off.
+- A LIMIT stops a key-lookup join, an `IN (subquery)` membership test and
+  a key-order scan once its rows are found.
 - More correlated subqueries are answered for a batch of outer rows at once
   instead of once per row: `EXISTS` and `NOT EXISTS` over a join, `IN` and
   `NOT IN` (with their NULL answers computed from the same members), a
