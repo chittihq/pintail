@@ -2264,6 +2264,15 @@ fn assert_replica(targets: &[CdcTarget]) {
     );
 
     assert_type_fidelity(targets["type_rows"]);
+    // The rows above were read by their tables' compiled plans. The
+    // counters are the process's, so other tests may have added to them.
+    let (planned, general, compiled) = pintail_cdc::row_decode_counters();
+    assert!(planned >= 6, "{planned} rows events were read by a plan");
+    assert!(compiled <= planned, "{compiled} plans for {planned} events");
+    assert!(
+        general <= planned,
+        "{general} rows events were left to the general decoder"
+    );
 }
 
 fn assert_type_fidelity(types: &CdcTarget) {

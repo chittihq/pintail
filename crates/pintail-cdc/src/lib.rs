@@ -15,6 +15,7 @@ pub use event::{TRANSACTION_PAYLOAD_EVENT, check_transaction_payload_header};
 const ROTATE_EVENT: u8 = 0x04;
 const FORMAT_DESCRIPTION_EVENT: u8 = 0x0f;
 mod gtid;
+mod rowimage;
 #[cfg(test)]
 mod simulation;
 
@@ -56,6 +57,7 @@ use crate::{
     ddl::{AlterKind, DdlAction, parse_ddl},
     decoder::{RowAlignment, UnknownColumn, decode_row, image_ordinals, insert_key, physical_key},
     gtid::MysqlGtidSet,
+    rowimage::RowPlan,
 };
 
 /// One probed table and its existing snapshot store.
@@ -541,6 +543,10 @@ async fn run_cdc_inner(
     };
     let mut pending = PendingTransaction::default();
     let mut batch = ApplyBatch::default();
+    // What each table's row images mean, resolved once per table map and
+    // schema instead of once per row.
+    let mut row_plans: HashMap<usize, RowPlan> = HashMap::new();
+    let mut key_image = Vec::new();
     let mut durable;
     let mut phases = PhaseTimes::default();
     let mut commits = 0_usize;
@@ -877,20 +883,33 @@ async fn run_cdc_inner(
                     match alignment {
                         Some(Ok(alignment)) => {
                             let decoding = Instant::now();
-                            let failed = decode_rows_event(
-                                &rows_event,
+                            let source = &targets[target_index].source;
+                            let event = RowsEventContext {
+                                rows_event: &rows_event,
                                 table_map,
-                                &targets[target_index].source,
-                                &alignment,
+                                source,
+                                alignment: &alignment,
                                 target_index,
-                                &position,
+                                position: &position,
                                 event_position,
                                 event_type,
                                 database_id,
-                                &metadata,
-                                &mut pending,
-                                options.max_transaction_bytes,
-                            )?;
+                                metadata: &metadata,
+                                maximum_bytes: options.max_transaction_bytes,
+                            };
+                            let failed = match planned_rows(
+                                &mut row_plans,
+                                &rows_event,
+                                table_map,
+                                source,
+                                &alignment,
+                                target_index,
+                            ) {
+                                Some(plan) => {
+                                    read_rows_event(&event, plan, &mut pending, &mut key_image)?
+                                }
+                                None => decode_rows_event(&event, &mut pending)?,
+                            };
                             phases.decode += decoding.elapsed();
                             if failed {
                                 blocked_targets.insert(target_index);
@@ -2801,7 +2820,10 @@ impl PendingTransaction {
         !self.mutations.is_empty() || self.spilled_mutations > 0
     }
 
-    fn spill(&mut self, mutations: Vec<PendingMutation>) -> Result<(), CdcError> {
+    fn spill(
+        &mut self,
+        mutations: impl IntoIterator<Item = PendingMutation>,
+    ) -> Result<(), CdcError> {
         if self.spill.is_none() {
             self.spill = Some(BufWriter::with_capacity(
                 1 << 20,
@@ -2815,7 +2837,10 @@ impl PendingTransaction {
         self.write_spilled(mutations)
     }
 
-    fn write_spilled(&mut self, mutations: Vec<PendingMutation>) -> Result<(), CdcError> {
+    fn write_spilled(
+        &mut self,
+        mutations: impl IntoIterator<Item = PendingMutation>,
+    ) -> Result<(), CdcError> {
         let file = self.spill.as_mut().ok_or_else(|| {
             CdcError::TransactionSpill("spill file was not initialized".to_owned())
         })?;
@@ -3040,83 +3065,358 @@ async fn adopt_drifted_schema(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn decode_rows_event(
+/// One rows event and everything its rows are staged with.
+struct RowsEventContext<'a> {
+    rows_event: &'a RowsEventData<'a>,
+    table_map: &'a mysql_async::binlog::events::TableMapEvent<'a>,
+    source: &'a SourceTable,
+    alignment: &'a RowAlignment,
+    target_index: usize,
+    position: &'a StreamPosition,
+    event_position: u64,
+    event_type: u8,
+    database_id: &'a str,
+    metadata: &'a MetaStore,
+    maximum_bytes: usize,
+}
+
+impl RowsEventContext<'_> {
+    /// The table-map ordinals the before and after images carry.
+    fn present(&self) -> (Vec<usize>, Vec<usize>) {
+        let columns = usize::try_from(self.rows_event.num_columns()).unwrap_or(usize::MAX);
+        (
+            self.rows_event
+                .columns_before_image()
+                .map_or_else(Vec::new, |bits| {
+                    image_ordinals(bits.iter().map(|bit| *bit), columns)
+                }),
+            self.rows_event
+                .columns_after_image()
+                .map_or_else(Vec::new, |bits| {
+                    image_ordinals(bits.iter().map(|bit| *bit), columns)
+                }),
+        )
+    }
+
+    /// Records a row the table cannot take and marks the table for resync.
+    fn refuse(&self, row_index: usize, error: &str) -> Result<(), CdcError> {
+        record_dlq(
+            self.metadata,
+            self.database_id,
+            &self.source.name,
+            self.position,
+            EventLocation {
+                position: self.event_position,
+                event_type: self.event_type,
+                row_index,
+            },
+            error,
+        )?;
+        self.metadata
+            .mark_table_needs_resync(self.database_id, &self.source.name, error)?;
+        Ok(())
+    }
+}
+
+/// Rows events read by their table's plan, and those left to the general
+/// decoder, since the process started.
+static PLANNED_EVENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static GENERAL_EVENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Plans compiled since the process started: one per table map and schema,
+/// however many events and rows it then reads.
+static PLANS_COMPILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many rows events were read by a compiled plan, how many by the
+/// general decoder, and how many plans were compiled, in that order.
+#[must_use]
+pub fn row_decode_counters() -> (u64, u64, u64) {
+    (
+        PLANNED_EVENTS.load(Ordering::Relaxed),
+        GENERAL_EVENTS.load(Ordering::Relaxed),
+        PLANS_COMPILED.load(Ordering::Relaxed),
+    )
+}
+
+/// The plan this event's rows are read with, compiled when the table map or
+/// the schema is not the one the kept plan was compiled for.
+///
+/// `None` leaves the event to the general decoder: a partial-JSON update,
+/// whose after image is a list of edits rather than values; a change to a
+/// table without a stable key, which is refused row by row; and a table map
+/// the plan cannot follow.
+fn planned_rows<'a>(
+    plans: &'a mut HashMap<usize, RowPlan>,
     rows_event: &RowsEventData<'_>,
     table_map: &mysql_async::binlog::events::TableMapEvent<'_>,
     source: &SourceTable,
     alignment: &RowAlignment,
     target_index: usize,
-    position: &StreamPosition,
-    event_position: u64,
-    event_type: u8,
-    database_id: &str,
-    metadata: &MetaStore,
+) -> Option<&'a RowPlan> {
+    let general = matches!(rows_event, RowsEventData::PartialUpdateRowsEvent(_))
+        || (source.key.mode == KeyMode::AppendRowId && rows_event.columns_before_image().is_some());
+    if !general
+        && !plans
+            .get(&target_index)
+            .is_some_and(|plan| plan.matches(source, table_map))
+    {
+        match RowPlan::build(source, table_map, alignment) {
+            Some(plan) => {
+                PLANS_COMPILED.fetch_add(1, Ordering::Relaxed);
+                plans.insert(target_index, plan);
+            }
+            None => {
+                plans.remove(&target_index);
+            }
+        }
+    }
+    let plan = if general {
+        None
+    } else {
+        plans.get(&target_index)
+    };
+    let counter = if plan.is_some() {
+        &PLANNED_EVENTS
+    } else {
+        &GENERAL_EVENTS
+    };
+    counter.fetch_add(1, Ordering::Relaxed);
+    plan
+}
+
+/// Stages every row of an event its table's plan reads.
+///
+/// An update's before image is read for its key alone: the row it describes
+/// is replaced by the after image, and its other values matter only when
+/// the key moved and the old row needs a tombstone, which is then read
+/// again in full.
+fn read_rows_event(
+    event: &RowsEventContext<'_>,
+    plan: &RowPlan,
     pending: &mut PendingTransaction,
-    maximum_bytes: usize,
+    key_image: &mut Vec<Value>,
+) -> Result<bool, CdcError> {
+    let (before_present, after_present) = event.present();
+    let has_before = event.rows_event.columns_before_image().is_some();
+    let has_after = event.rows_event.columns_after_image().is_some();
+    let mut data = event.rows_event.rows_data();
+    // Debug builds read every row the general way as well and require the
+    // same answer from both.
+    let mut reference = cfg!(debug_assertions).then(|| event.rows_event.rows(event.table_map));
+    let mut failed = false;
+    let mut row_index = 0_usize;
+    while !data.is_empty() {
+        let before_start = data;
+        let mut refused = None;
+        let mut before = None;
+        if has_before {
+            // A delete keeps the whole row; an update needs the key.
+            let mut values = Vec::new();
+            let image = if has_after {
+                &mut *key_image
+            } else {
+                &mut values
+            };
+            match plan.read_image(&before_present, &mut data, has_after, image) {
+                Ok(Ok(())) => match plan.key(image) {
+                    Ok(key) => before = Some((key, values)),
+                    Err(error) => refused = Some(error),
+                },
+                Ok(Err(error)) => refused = Some(error),
+                Err(error) => {
+                    // The image cannot be followed, so neither can the rows
+                    // behind it.
+                    event.refuse(row_index, &error.to_string())?;
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        let mut after = None;
+        if has_after {
+            let mut values = Vec::new();
+            match plan.read_image(&after_present, &mut data, false, &mut values) {
+                Ok(Ok(())) => after = Some(values),
+                Ok(Err(error)) => {
+                    refused.get_or_insert(error);
+                }
+                Err(error) => {
+                    event.refuse(row_index, &error.to_string())?;
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        let reference_row = reference.as_mut().and_then(Iterator::next);
+        let staged = if let Some(error) = refused {
+            Err(error)
+        } else {
+            if let Some(Ok(row)) = reference_row {
+                assert_same_row(
+                    event,
+                    row,
+                    (&before_present, &after_present),
+                    before.as_ref(),
+                    after.as_ref(),
+                );
+            }
+            stage_read_row(
+                event,
+                plan,
+                before,
+                after,
+                (before_start, &before_present),
+                pending,
+            )
+        };
+        if let Err(error) = staged {
+            event.refuse(row_index, &error.to_string())?;
+            failed = true;
+        }
+        row_index += 1;
+    }
+    if failed {
+        discard_target_mutations(pending, event.target_index);
+    }
+    Ok(failed)
+}
+
+/// Debug builds only: the general decoder's reading of a row the plan read.
+fn assert_same_row(
+    event: &RowsEventContext<'_>,
+    (before_row, after_row): (Option<BinlogRow>, Option<BinlogRow>),
+    (before_present, after_present): (&[usize], &[usize]),
+    before: Option<&(pintail_types::PrimaryKey, Vec<Value>)>,
+    after: Option<&Vec<Value>>,
+) {
+    let table = &event.source.name;
+    let general = |row: Option<BinlogRow>, present: &[usize]| {
+        row.map(|row| decode_row(event.source, row, event.alignment, present))
+            .transpose()
+            .unwrap_or_else(|error| {
+                panic!("{table}: the plan read a row image refused with {error}")
+            })
+    };
+    let general_after = general(after_row, after_present);
+    assert_eq!(
+        format!("{after:?}"),
+        format!("{general_after:?}"),
+        "{table}: the plan and the general decoder read different after images"
+    );
+    let general_before = general(before_row, before_present);
+    let general_key = general_before
+        .as_ref()
+        .map(|values| physical_key(event.source, values).expect("the plan found a key"));
+    assert_eq!(
+        before.map(|(key, _)| key),
+        general_key.as_ref(),
+        "{table}: the plan and the general decoder read different keys"
+    );
+    if after.is_none() {
+        assert_eq!(
+            format!("{:?}", before.map(|(_, values)| values)),
+            format!("{general_before:?}"),
+            "{table}: the plan and the general decoder read different before images"
+        );
+    }
+}
+
+/// Turns one row the plan read into versioned mutations, as
+/// [`stage_row_change`] does for one the general decoder read.
+fn stage_read_row(
+    event: &RowsEventContext<'_>,
+    plan: &RowPlan,
+    before: Option<(pintail_types::PrimaryKey, Vec<Value>)>,
+    after: Option<Vec<Value>>,
+    (mut before_image, before_present): (&[u8], &[usize]),
+    pending: &mut PendingTransaction,
+) -> Result<(), CdcError> {
+    let target_index = event.target_index;
+    let position = event.position;
+    let version = position.version(event.event_position, pending.ordinal)?;
+    let (first, second) = match (before, after) {
+        (None, Some(values)) => {
+            let key = if event.source.key.mode == KeyMode::AppendRowId {
+                insert_key(event.source, &values, version)?
+            } else {
+                plan.key(&values)?
+            };
+            (StoredRow::new(key, values, version, false), None)
+        }
+        (Some((key, values)), None) => (StoredRow::new(key, values, version, true), None),
+        (Some((before_key, _)), Some(values)) => {
+            let after_key = plan.key(&values)?;
+            if before_key == after_key {
+                (StoredRow::new(after_key, values, version, false), None)
+            } else {
+                // The key moved: the old row leaves a tombstone holding the
+                // values it had, and the new one takes the next ordinal.
+                let mut before_values = Vec::new();
+                plan.read_image(before_present, &mut before_image, false, &mut before_values)??;
+                let ordinal = pending
+                    .ordinal
+                    .checked_add(1)
+                    .ok_or_else(|| CdcError::Decode("mutation ordinal overflowed".to_owned()))?;
+                (
+                    StoredRow::new(before_key, before_values, version, true),
+                    Some(StoredRow::new(
+                        after_key,
+                        values,
+                        position.version(event.event_position, ordinal)?,
+                        false,
+                    )),
+                )
+            }
+        }
+        (None, None) => {
+            return Err(CdcError::Decode(
+                "row event contains neither before nor after image".to_owned(),
+            ));
+        }
+    };
+    push_mutations(
+        pending,
+        PendingMutation {
+            target_index,
+            row: first,
+        },
+        second.map(|row| PendingMutation { target_index, row }),
+        event.maximum_bytes,
+        position.ordinal_budget(),
+    )
+}
+
+fn decode_rows_event(
+    event: &RowsEventContext<'_>,
+    pending: &mut PendingTransaction,
 ) -> Result<bool, CdcError> {
     let mut failed = false;
-    let columns = usize::try_from(rows_event.num_columns()).unwrap_or(usize::MAX);
-    let before_present = rows_event
-        .columns_before_image()
-        .map_or_else(Vec::new, |bits| {
-            image_ordinals(bits.iter().map(|bit| *bit), columns)
-        });
-    let after_present = rows_event
-        .columns_after_image()
-        .map_or_else(Vec::new, |bits| {
-            image_ordinals(bits.iter().map(|bit| *bit), columns)
-        });
-    for (row_index, row) in rows_event.rows(table_map).enumerate() {
+    let (before_present, after_present) = event.present();
+    for (row_index, row) in event.rows_event.rows(event.table_map).enumerate() {
         let row = match row {
             Ok(row) => row,
             Err(error) => {
-                record_dlq(
-                    metadata,
-                    database_id,
-                    &source.name,
-                    position,
-                    EventLocation {
-                        position: event_position,
-                        event_type,
-                        row_index,
-                    },
-                    &error.to_string(),
-                )?;
-                metadata.mark_table_needs_resync(database_id, &source.name, &error.to_string())?;
+                event.refuse(row_index, &error.to_string())?;
                 failed = true;
                 continue;
             }
         };
         if let Err(error) = decode_row_pair(
-            source,
-            alignment,
-            target_index,
+            event.source,
+            event.alignment,
+            event.target_index,
             row,
             (&before_present, &after_present),
-            position,
-            event_position,
+            event.position,
+            event.event_position,
             pending,
-            maximum_bytes,
+            event.maximum_bytes,
         ) {
-            record_dlq(
-                metadata,
-                database_id,
-                &source.name,
-                position,
-                EventLocation {
-                    position: event_position,
-                    event_type,
-                    row_index,
-                },
-                &error.to_string(),
-            )?;
-            metadata.mark_table_needs_resync(database_id, &source.name, &error.to_string())?;
+            event.refuse(row_index, &error.to_string())?;
             failed = true;
         }
     }
     if failed {
-        discard_target_mutations(pending, target_index);
+        discard_target_mutations(pending, event.target_index);
     }
     Ok(failed)
 }
@@ -3191,10 +3491,11 @@ fn stage_row_change(
             let key = insert_key(source, &values, version)?;
             push_mutations(
                 pending,
-                vec![PendingMutation {
+                PendingMutation {
                     target_index,
                     row: StoredRow::new(key, values, version, false),
-                }],
+                },
+                None,
                 maximum_bytes,
                 position.ordinal_budget(),
             )
@@ -3206,7 +3507,7 @@ fn stage_row_change(
             let key = physical_key(source, &values)?;
             push_mutations(
                 pending,
-                vec![PendingMutation {
+                PendingMutation {
                     target_index,
                     row: StoredRow::new(
                         key,
@@ -3214,7 +3515,8 @@ fn stage_row_change(
                         position.version(event_position, pending.ordinal)?,
                         true,
                     ),
-                }],
+                },
+                None,
                 maximum_bytes,
                 position.ordinal_budget(),
             )
@@ -3225,9 +3527,10 @@ fn stage_row_change(
             }
             let before_key = physical_key(source, &before_values)?;
             let after_key = physical_key(source, &after_values)?;
-            let mut mutations = Vec::with_capacity(2);
-            if before_key != after_key {
-                mutations.push(PendingMutation {
+            let tombstone = if before_key == after_key {
+                None
+            } else {
+                Some(PendingMutation {
                     target_index,
                     row: StoredRow::new(
                         before_key,
@@ -3235,13 +3538,13 @@ fn stage_row_change(
                         position.version(event_position, pending.ordinal)?,
                         true,
                     ),
-                });
-            }
+                })
+            };
             let ordinal = pending
                 .ordinal
-                .checked_add(mutations.len() as u64)
+                .checked_add(u64::from(tombstone.is_some()))
                 .ok_or_else(|| CdcError::Decode("mutation ordinal overflowed".to_owned()))?;
-            mutations.push(PendingMutation {
+            let after = PendingMutation {
                 target_index,
                 row: StoredRow::new(
                     after_key,
@@ -3249,8 +3552,18 @@ fn stage_row_change(
                     position.version(event_position, ordinal)?,
                     false,
                 ),
-            });
-            push_mutations(pending, mutations, maximum_bytes, position.ordinal_budget())
+            };
+            let (first, second) = match tombstone {
+                Some(tombstone) => (tombstone, Some(after)),
+                None => (after, None),
+            };
+            push_mutations(
+                pending,
+                first,
+                second,
+                maximum_bytes,
+                position.ordinal_budget(),
+            )
         }
         (None, None) => Err(CdcError::Decode(
             "row event contains neither before nor after image".to_owned(),
@@ -3266,15 +3579,17 @@ fn keyless_change_error(source: &SourceTable, update: bool) -> CdcError {
     ))
 }
 
+/// Adds the one or two mutations of a row change to the open transaction.
 fn push_mutations(
     pending: &mut PendingTransaction,
-    mutations: Vec<PendingMutation>,
+    first: PendingMutation,
+    second: Option<PendingMutation>,
     maximum_bytes: usize,
     ordinal_budget: u64,
 ) -> Result<(), CdcError> {
     let next_ordinal = pending
         .ordinal
-        .checked_add(mutations.len() as u64)
+        .checked_add(1 + u64::from(second.is_some()))
         .ok_or_else(|| CdcError::Decode("mutation ordinal overflowed".to_owned()))?;
     // This gate fired at u16::MAX regardless of mode even after the GTID
     // version layout grew its 24-bit ordinal - the browser soak's 65,536-row
@@ -3284,17 +3599,20 @@ fn push_mutations(
             "one source transaction exceeds {ordinal_budget} row mutations"
         )));
     }
-    let added_bytes = mutations.iter().fold(0_usize, |bytes, mutation| {
-        bytes
-            .saturating_add(mutation.row.estimated_bytes())
-            .saturating_add(std::mem::size_of::<PendingMutation>())
-    });
+    let added_bytes = std::iter::once(&first)
+        .chain(&second)
+        .fold(0_usize, |bytes, mutation| {
+            bytes
+                .saturating_add(mutation.row.estimated_bytes())
+                .saturating_add(std::mem::size_of::<PendingMutation>())
+        });
     if pending.spill.is_some() || pending.retained_bytes.saturating_add(added_bytes) > maximum_bytes
     {
-        pending.spill(mutations)?;
+        pending.spill(std::iter::once(first).chain(second))?;
     } else {
         pending.retained_bytes = pending.retained_bytes.saturating_add(added_bytes);
-        pending.mutations.extend(mutations);
+        pending.mutations.push(first);
+        pending.mutations.extend(second);
     }
     pending.ordinal = next_ordinal;
     Ok(())
@@ -4899,10 +5217,11 @@ mod tests {
         );
         push_mutations(
             &mut pending,
-            vec![PendingMutation {
+            PendingMutation {
                 target_index: 2,
                 row: row.clone(),
-            }],
+            },
+            None,
             1,
             0xFFFF,
         )
