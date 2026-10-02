@@ -29,6 +29,65 @@ pub use control::{
 
 const CURRENT_SCHEMA_VERSION: u32 = 23;
 
+/// Counts the commits this process's stores have made: see
+/// [`write_generation`].
+static WRITE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Frames a write-ahead log reaches before it is checkpointed, `SQLite`'s
+/// own default.
+const WAL_CHECKPOINT_FRAMES: std::ffi::c_int = 1000;
+
+/// A number that moves whenever a [`MetaStore`] in this process commits a
+/// write, to any metadata file.
+///
+/// It moves twice per commit: once as the commit begins, and once more
+/// after it has been published to other connections (in write-ahead-log
+/// mode, which every store this crate creates is in). So a reader that
+/// takes this number, then reads the store, holds what it read against the
+/// number it took: if a commit had been published before the number was
+/// taken the read saw it, and one published later moves the number. For a
+/// process that is the only writer of its metadata store, an unmoved number
+/// therefore means unchanged rows, with no file to inspect. It says nothing
+/// about what another process wrote.
+#[must_use]
+pub fn write_generation() -> u64 {
+    WRITE_GENERATION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+fn count_write() {
+    WRITE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+}
+
+/// After a commit has reached the write-ahead log and been published.
+///
+/// Registering a log hook replaces `SQLite`'s own, which is what
+/// checkpoints the log once it passes a thousand frames; this one does the
+/// same, the same way, after counting the commit. A checkpoint that cannot
+/// run now - a reader is in the way - is left for a later commit, as
+/// `SQLite`'s does.
+// The signature a log hook is registered with.
+#[allow(clippy::unnecessary_wraps)]
+fn after_logged_commit(
+    wal: &rusqlite::hooks::Wal,
+    frames: std::ffi::c_int,
+) -> rusqlite::Result<()> {
+    count_write();
+    if frames >= WAL_CHECKPOINT_FRAMES {
+        let _ = wal.checkpoint();
+    }
+    Ok(())
+}
+
+/// Makes every commit on `connection` move [`write_generation`].
+fn count_commits(connection: &Connection) {
+    connection.commit_hook(Some(|| {
+        count_write();
+        // Never turns a commit into a rollback.
+        false
+    }));
+    connection.wal_hook(Some(after_logged_commit));
+}
+
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
     connection: HeldConnection,
@@ -332,6 +391,7 @@ impl MetaStore {
             connection
                 .pragma_update(None, "foreign_keys", true)
                 .context("failed to enable SQLite foreign keys")?;
+            count_commits(&connection);
             // Only a file behind the current schema needs WAL set and
             // migrations run: re-running them on every open took write
             // locks on the live file for nothing. Reading the version each

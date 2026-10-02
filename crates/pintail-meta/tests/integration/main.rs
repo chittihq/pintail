@@ -18,3 +18,4 @@ mod replica_signature;
 mod schema_history;
 mod settings;
 mod snapshot;
+mod write_generation;

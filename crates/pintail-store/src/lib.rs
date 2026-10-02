@@ -20,7 +20,8 @@ mod wal;
 pub use database::DatabaseStore;
 pub use error::StoreError;
 pub use publication::{
-    lease_unwritten_table, publish_changes_under, published_generation, retain_writer_locks,
+    directory_epoch, lease_unwritten_table, publication_epoch, publish_changes_under,
+    published_generation, retain_writer_locks, writer_locks_retained,
 };
 pub use segment::{
     BLOCK_CACHE_SETTING, BlockCacheAccounting, BlockCacheStats, BoundDomain, ColumnBounds,

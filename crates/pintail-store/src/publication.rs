@@ -54,8 +54,24 @@ struct Entry {
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Entry>>> = LazyLock::new(Mutex::default);
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 static RETAIN_LOCKS: AtomicBool = AtomicBool::new(false);
+/// Moves whenever the set of table directories this process knows of may
+/// have changed: see [`directory_epoch`].
+static DIRECTORY_EPOCH: AtomicU64 = AtomicU64::new(1);
+/// Moves whenever anything a table's published generation says may have
+/// changed: see [`publication_epoch`].
+static PUBLICATION_EPOCH: AtomicU64 = AtomicU64::new(1);
 
+/// The registry, to change it. Moves [`publication_epoch`] while the lock is
+/// held, so whoever reads the epoch and then the registry either sees this
+/// change or holds an epoch from before it.
 fn registry() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Entry>> {
+    let registry = registry_read();
+    PUBLICATION_EPOCH.fetch_add(1, Ordering::AcqRel);
+    registry
+}
+
+/// The registry, to read it.
+fn registry_read() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Entry>> {
     REGISTRY.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -72,6 +88,48 @@ pub fn retain_writer_locks() {
     RETAIN_LOCKS.store(true, Ordering::Relaxed);
 }
 
+/// Whether this process has declared itself the only writer of its data
+/// directory ([`retain_writer_locks`]).
+#[must_use]
+pub fn writer_locks_retained() -> bool {
+    RETAIN_LOCKS.load(Ordering::Relaxed)
+}
+
+/// A number that moves whenever a table directory this process had not
+/// seen is claimed by a writer or leased for a reader, a table moves to
+/// another directory, or directories are removed or replaced without their
+/// writers ([`publish_changes_under`]).
+///
+/// In a process that is its data directory's only writer, a table directory
+/// comes to hold rows only through a writer opened here, and goes away only
+/// through a caller that publishes the removal. So a listing of a tables
+/// directory taken after reading this number is still the whole set of
+/// tables for as long as the number has not moved - without asking the file
+/// system on every query whether the directory changed. A listing may also
+/// be retaken when nothing changed; it is never kept past a change.
+#[must_use]
+pub fn directory_epoch() -> u64 {
+    DIRECTORY_EPOCH.load(Ordering::Acquire)
+}
+
+/// A number that moves whenever the registry of published generations is
+/// changed in any way: a writer claims or lets go of a table, a change is
+/// published, a lease is taken, adopted or dropped.
+///
+/// A reader that takes this number and then reads every table's generation
+/// has, for as long as the number has not moved, what reading them all
+/// again would give it - which is one load instead of a lookup per table
+/// for every query. The number also moves for changes that leave every
+/// generation as it was; it never stays for one that does not.
+#[must_use]
+pub fn publication_epoch() -> u64 {
+    PUBLICATION_EPOCH.load(Ordering::Acquire)
+}
+
+fn directories_changed() {
+    DIRECTORY_EPOCH.fetch_add(1, Ordering::AcqRel);
+}
+
 /// The generation this process has published for the table at `directory`,
 /// or `None` when this process does not hold that table's lock.
 ///
@@ -85,7 +143,7 @@ pub fn retain_writer_locks() {
 /// the generation was taken moves it once the change is complete.
 #[must_use]
 pub fn published_generation(directory: &Path) -> Option<u64> {
-    registry()
+    registry_read()
         .get(directory)
         .filter(|entry| entry.writers > 0 || entry.lease.is_some())
         .map(|entry| entry.generation)
@@ -117,7 +175,7 @@ pub fn lease_unwritten_table(directory: &Path) -> Option<u64> {
 fn lease_unwritten(directory: &Path) -> Option<u64> {
     // Held across the lock attempt, so a writer's claim either sees the
     // lease or takes the lock first and makes this attempt fail.
-    let mut registry = registry();
+    let mut registry = registry_read();
     if let Some(entry) = registry.get(directory) {
         return (entry.writers > 0 || entry.lease.is_some()).then_some(entry.generation);
     }
@@ -136,6 +194,8 @@ fn lease_unwritten(directory: &Path) -> Option<u64> {
             lease: Some((lock, generation)),
         },
     );
+    PUBLICATION_EPOCH.fetch_add(1, Ordering::AcqRel);
+    directories_changed();
     evict_leases(&mut registry);
     registry
         .get(directory)
@@ -161,6 +221,7 @@ pub fn publish_changes_under(path: &Path) {
         entry.generation = next_generation();
         entry.writers > 0
     });
+    directories_changed();
 }
 
 /// A writer's claim on one table: it holds the table's writer lock for as
@@ -229,6 +290,9 @@ impl Publisher {
             }
         };
         let mut registry = registry();
+        if !registry.contains_key(directory.as_ref()) {
+            directories_changed();
+        }
         let entry = registry.entry(directory.to_path_buf()).or_default();
         entry.writers += 1;
         entry.generation = next_generation();
@@ -262,6 +326,7 @@ impl Publisher {
         let entry = registry.entry(directory.to_path_buf()).or_default();
         entry.writers += 1;
         entry.generation = next_generation();
+        directories_changed();
         self.directory = Arc::from(directory);
     }
 }
@@ -385,6 +450,68 @@ mod tests {
         assert_eq!(published_generation(directory), Some(changed));
         drop(writer);
         assert_eq!(published_generation(directory), None);
+    }
+
+    /// The epoch may also move for another test's tables - it is the
+    /// process's - so only that it does move is asserted.
+    #[test]
+    fn the_directory_epoch_moves_whenever_the_set_of_table_directories_may_have() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let first = scratch.path().join("first");
+        std::fs::create_dir(&first).expect("first");
+
+        let before = directory_epoch();
+        let mut writer = claim(&first);
+        let claimed = directory_epoch();
+        assert!(claimed > before, "a writer on a directory not seen before");
+
+        let second = scratch.path().join("second");
+        std::fs::rename(&first, &second).expect("move");
+        writer.relocate(&second);
+        let moved = directory_epoch();
+        assert!(moved > claimed, "a table moved to another directory");
+        drop(writer);
+
+        let leased = scratch.path().join("leased");
+        std::fs::create_dir(&leased).expect("leased");
+        File::create(leased.join(WRITER_LOCK_FILE)).expect("lock file");
+        lease_unwritten(&leased).expect("leased");
+        let seen = directory_epoch();
+        assert!(seen > moved, "a directory first seen by a reader");
+
+        publish_changes_under(scratch.path());
+        assert!(directory_epoch() > seen, "directories removed or replaced");
+    }
+
+    /// As with the directory epoch, only that it moves is asserted: the
+    /// number is the process's.
+    #[test]
+    fn the_publication_epoch_moves_with_every_change_to_what_is_published() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let directory = scratch.path();
+        let mut epoch = publication_epoch();
+        let mut moved = |what: &str| {
+            let now = publication_epoch();
+            assert!(now > epoch, "{what}");
+            epoch = now;
+        };
+        let writer = claim(directory);
+        moved("a writer claims the table");
+        drop(writer.publishing());
+        moved("a change is published");
+        drop(writer);
+        moved("the writer lets go");
+        let writer = claim(directory);
+        moved("another writer claims it");
+        drop(writer);
+        publish_changes_under(directory);
+        moved("the directory is replaced");
+
+        let leased = scratch.path().join("leased");
+        std::fs::create_dir(&leased).expect("leased");
+        File::create(leased.join(WRITER_LOCK_FILE)).expect("lock file");
+        lease_unwritten(&leased).expect("leased");
+        moved("a reader leases a table");
     }
 
     #[test]

@@ -245,9 +245,20 @@ pub enum SqlRejection {
 /// once its files have stood unchanged for [`SIGNATURE_SETTLES_AFTER`] it
 /// is read once more, and that reading - which no write preceded so
 /// closely - is the one kept.
+///
+/// A process that is the only writer of its data directory needs no file
+/// to tell it the store was written: every commit it makes moves
+/// [`pintail_meta::write_generation`], which stands in for the files. That
+/// number moves as a commit begins and again once it is published, so a
+/// signature read against it is never kept past a commit; the second look
+/// is taken all the same.
 #[derive(Clone, Debug)]
 struct SignatureMemo {
     files: Vec<FileStamp>,
+    /// The store's write generation the signature was read against, in a
+    /// process that is its store's only writer; the files are then not
+    /// looked at.
+    generation: Option<u64>,
     signature: u64,
     /// When the signature was read.
     read_at: Instant,
@@ -260,11 +271,43 @@ struct SignatureMemo {
 /// takes to publish after writing its log.
 const SIGNATURE_SETTLES_AFTER: Duration = Duration::from_secs(1);
 
+/// What proved a loaded replica current, in a process that is the only
+/// writer of its data directory: the three numbers that between them move
+/// with every change a query could see - a metadata commit, a table
+/// directory appearing or going, a table's published generation.
+///
+/// The numbers are read before the replica is checked against its stamp,
+/// so a change made after the check moved at least one of them. While all
+/// three stand, the check would come to what it came to: the replica is
+/// current, without reading each table's generation again - a lookup per
+/// table for every statement, on a database of hundreds of tables more
+/// than a small statement otherwise costs. A proof is still let lapse
+/// after [`PROOF_STANDS`], so the stamp's own second look at a metadata
+/// signature read close behind a commit, and its retry of a table that
+/// would not open, both happen as they did.
+#[derive(Clone, Copy, Debug)]
+struct CurrentProof {
+    /// The load proved current.
+    load_id: u64,
+    metadata: u64,
+    directories: u64,
+    publications: u64,
+    proved_at: Instant,
+}
+
+/// How long a proof is reused before the replica is checked against its
+/// stamp again.
+const PROOF_STANDS: Duration = Duration::from_millis(500);
+
 /// A tables directory as last listed: its modification time, when it was
 /// listed, and each entry's name, path and whether it is a directory.
 struct TableListing {
-    modified: std::time::SystemTime,
+    modified: Option<std::time::SystemTime>,
     listed_at: std::time::SystemTime,
+    /// The table-directory epoch read before listing, in a process that is
+    /// its data directory's only writer: the listing then stands for as
+    /// long as the epoch does, and the directory is not looked at.
+    epoch: Option<u64>,
     entries: Arc<[(String, PathBuf, bool)]>,
 }
 
@@ -295,6 +338,9 @@ pub struct ReplicaEngine {
     /// Per tables directory, its entries as last listed, so a stamp lists
     /// the directory again only when the directory itself moved.
     listings: Arc<Mutex<HashMap<PathBuf, TableListing>>>,
+    /// Per database, what last proved its loaded replica current, in a
+    /// process that is its data directory's only writer.
+    proofs: Arc<Mutex<HashMap<String, CurrentProof>>>,
     /// The longest a statement waits for a table recopied after a schema
     /// change before it is refused (see [`Self::execute_answer`]).
     recopy_wait: Duration,
@@ -435,6 +481,30 @@ struct LoadedReplica {
 }
 
 impl LoadedReplica {
+    /// Whether everything this load holds is small enough that a statement
+    /// of bounded shape over it is a short query whatever it reads.
+    fn is_tiny(&self) -> bool {
+        self.targets.len() <= 16
+            && self.targets.iter().fold(0_u64, |rows, table| {
+                rows.saturating_add(table.snapshot.physical_row_upper_bound())
+            }) <= 1024
+            && self
+                .targets
+                .iter()
+                .map(|table| table.snapshot.schema().columns().len())
+                .sum::<usize>()
+                <= 128
+            && self
+                .targets
+                .iter()
+                .map(|table| table.snapshot.segment_count())
+                .sum::<usize>()
+                <= 128
+            && self.targets.iter().fold(0_u64, |bytes, table| {
+                bytes.saturating_add(table.stored_bytes())
+            }) <= 4 * 1024 * 1024
+    }
+
     fn catalog(&self) -> Result<&CatalogSnapshot, QueryError> {
         if let Some(catalog) = self.catalog.get() {
             return Ok(catalog);
@@ -531,6 +601,7 @@ impl ReplicaEngine {
             signatures: Arc::new(Mutex::new(HashMap::new())),
             signature_reader: Arc::new(Mutex::new(None)),
             listings: Arc::new(Mutex::new(HashMap::new())),
+            proofs: Arc::new(Mutex::new(HashMap::new())),
             recopy_wait: default_recopy_wait(),
         }
     }
@@ -539,12 +610,17 @@ impl ReplicaEngine {
     /// the ones last read, otherwise from the store. A store that cannot be
     /// read falls back to a hash of the files themselves, which is the old
     /// behaviour: safe, and no worse.
-    fn metadata_signature(&self, database_id: &str, files: &[FileStamp]) -> u64 {
+    fn metadata_signature(
+        &self,
+        database_id: &str,
+        files: &[FileStamp],
+        generation: Option<u64>,
+    ) -> u64 {
         // Read against these same files before: the reading stands, unless
         // it was made close behind a write and is now due its second look.
         let settling = match self.signatures.lock() {
             Ok(memo) => match memo.get(database_id) {
-                Some(known) if known.files == files => {
+                Some(known) if known.files == files && known.generation == generation => {
                     if known.settled || known.read_at.elapsed() < SIGNATURE_SETTLES_AFTER {
                         return known.signature;
                     }
@@ -575,6 +651,7 @@ impl ReplicaEngine {
         let signature = signature.unwrap_or_else(|| {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             std::hash::Hash::hash(files, &mut hasher);
+            std::hash::Hash::hash(&generation, &mut hasher);
             std::hash::Hasher::finish(&hasher)
         });
         if let Ok(mut memo) = self.signatures.lock() {
@@ -582,6 +659,7 @@ impl ReplicaEngine {
                 database_id.to_owned(),
                 SignatureMemo {
                     files: files.to_vec(),
+                    generation,
                     signature,
                     read_at,
                     settled: settling,
@@ -623,15 +701,26 @@ impl ReplicaEngine {
             }
         }
         let mut stamp = ReplicaStamp::default();
-        record(&mut stamp.metadata.files, &self.metadata_path);
-        // Metadata writes land in SQLite's WAL, not the main file — without
-        // it a replica cached between a table's files appearing and its
-        // metadata rows committing stays stale until unrelated data churn.
-        let mut wal = self.metadata_path.as_os_str().to_owned();
-        wal.push("-wal");
-        record(&mut stamp.metadata.files, Path::new(&wal));
-        stamp.metadata.signature = self.metadata_signature(database_id, &stamp.metadata.files);
-        let Some(entries) = self.table_entries(&self.tables_root(database_id)) else {
+        // A process that is the only writer of its data directory is told
+        // of every metadata commit and every new table directory by the
+        // code that makes them, and asks the file system nothing here.
+        // Taken before the signature is read, so a commit after this point
+        // moves it past what the signature is remembered against.
+        let sole_writer = pintail_store::writer_locks_retained();
+        let generation = sole_writer.then(pintail_meta::write_generation);
+        if !sole_writer {
+            record(&mut stamp.metadata.files, &self.metadata_path);
+            // Metadata writes land in SQLite's WAL, not the main file —
+            // without it a replica cached between a table's files appearing
+            // and its metadata rows committing stays stale until unrelated
+            // data churn.
+            let mut wal = self.metadata_path.as_os_str().to_owned();
+            wal.push("-wal");
+            record(&mut stamp.metadata.files, Path::new(&wal));
+        }
+        stamp.metadata.signature =
+            self.metadata_signature(database_id, &stamp.metadata.files, generation);
+        let Some(entries) = self.table_entries(&self.tables_root(database_id), sole_writer) else {
             return stamp;
         };
         for (name, table, is_directory) in entries.iter().cloned() {
@@ -683,15 +772,37 @@ impl ReplicaEngine {
     /// a change in the same tick as the listing could leave it unmoved. A
     /// listing is therefore trusted only when the directory had already been
     /// still for a second when it was taken.
-    fn table_entries(&self, root: &Path) -> Option<Arc<[(String, PathBuf, bool)]>> {
+    fn table_entries(
+        &self,
+        root: &Path,
+        sole_writer: bool,
+    ) -> Option<Arc<[(String, PathBuf, bool)]>> {
         const SETTLED: Duration = Duration::from_secs(1);
-        let modified = std::fs::metadata(root)
-            .and_then(|meta| meta.modified())
-            .ok();
+        // The only writer of this data directory knows when its set of
+        // table directories changed: the listing taken at an epoch stands
+        // until the epoch moves. The epoch is read before the directory is
+        // listed, so a directory that appears after the listing was taken
+        // has moved it.
+        let epoch = sole_writer.then(pintail_store::directory_epoch);
+        if let Some(epoch) = epoch
+            && let Ok(listings) = self.listings.lock()
+            && let Some(listing) = listings.get(root)
+            && listing.epoch == Some(epoch)
+        {
+            return Some(Arc::clone(&listing.entries));
+        }
+        let modified = if sole_writer {
+            None
+        } else {
+            std::fs::metadata(root)
+                .and_then(|meta| meta.modified())
+                .ok()
+        };
         if let Some(modified) = modified
             && let Ok(listings) = self.listings.lock()
             && let Some(listing) = listings.get(root)
-            && listing.modified == modified
+            && listing.epoch.is_none()
+            && listing.modified == Some(modified)
             && modified
                 .checked_add(SETTLED)
                 .is_some_and(|settled| settled < listing.listed_at)
@@ -710,7 +821,7 @@ impl ReplicaEngine {
                 )
             })
             .collect();
-        if let Some(modified) = modified
+        if (modified.is_some() || epoch.is_some())
             && let Ok(mut listings) = self.listings.lock()
         {
             listings.insert(
@@ -718,11 +829,101 @@ impl ReplicaEngine {
                 TableListing {
                     modified,
                     listed_at,
+                    epoch,
                     entries: Arc::clone(&entries),
                 },
             );
         }
         Some(entries)
+    }
+
+    /// The three numbers a change a query could see moves at least one of,
+    /// in the only writer of the data directory; `None` in any other
+    /// process, which proves nothing by them.
+    fn change_counts() -> Option<(u64, u64, u64)> {
+        pintail_store::writer_locks_retained().then(|| {
+            (
+                pintail_meta::write_generation(),
+                pintail_store::directory_epoch(),
+                pintail_store::publication_epoch(),
+            )
+        })
+    }
+
+    /// Whether `candidate` was proved current under `counts` recently
+    /// enough for the proof to stand ([`CurrentProof`]).
+    fn proved_current(
+        &self,
+        database_id: &str,
+        candidate: &LoadedReplica,
+        counts: Option<(u64, u64, u64)>,
+    ) -> bool {
+        let Some((metadata, directories, publications)) = counts else {
+            return false;
+        };
+        self.proofs.lock().is_ok_and(|proofs| {
+            proofs.get(database_id).is_some_and(|proof| {
+                proof.load_id == candidate.load_id
+                    && proof.metadata == metadata
+                    && proof.directories == directories
+                    && proof.publications == publications
+                    && proof.proved_at.elapsed() < PROOF_STANDS
+            })
+        })
+    }
+
+    /// `candidate` if it is the replica cached under `key` and `stamp`
+    /// proves it current. `counts` must have been read before `stamp` was
+    /// taken: the proof then stands until one of them moves.
+    fn proved_by_stamp(
+        &self,
+        database_id: &str,
+        key: &CacheKey,
+        stamp: &ReplicaStamp,
+        candidate: &Arc<LoadedReplica>,
+        counts: Option<(u64, u64, u64)>,
+    ) -> Option<Arc<LoadedReplica>> {
+        let replica = revalidated(&self.cache, key, stamp, candidate)?;
+        // A replica holding a table that would not open is tried again on
+        // the cache's own schedule, which only the stamp's path keeps.
+        if let Some((metadata, directories, publications)) = counts
+            && replica
+                .targets
+                .iter()
+                .all(|target| target.unreadable.is_none())
+            && let Ok(mut proofs) = self.proofs.lock()
+        {
+            proofs.insert(
+                database_id.to_owned(),
+                CurrentProof {
+                    load_id: replica.load_id,
+                    metadata,
+                    directories,
+                    publications,
+                    proved_at: Instant::now(),
+                },
+            );
+        }
+        Some(replica)
+    }
+
+    /// `candidate`, the replica cached under `key`, if it is still what
+    /// this database answers from: proved by the stamp, or - in the only
+    /// writer of the data directory - by nothing having moved since the
+    /// stamp last proved it ([`CurrentProof`]).
+    fn still_current(
+        &self,
+        database_id: &str,
+        key: &CacheKey,
+        candidate: &Arc<LoadedReplica>,
+    ) -> Option<Arc<LoadedReplica>> {
+        // Read before the stamp is taken.
+        let counts = Self::change_counts();
+        if self.proved_current(database_id, candidate, counts) {
+            return Some(Arc::clone(candidate));
+        }
+        let stamp = self.replica_stamp(database_id);
+        self.proved_by_stamp(database_id, key, &stamp, candidate, counts)
     }
 
     fn tables_root(&self, database_id: &str) -> PathBuf {
@@ -754,35 +955,22 @@ impl ReplicaEngine {
         }
         let key = self.cache_key(database_id);
         let replica = self.cache.peek(&key).ok_or(Unclassified::Unready)?;
-        let stamp = self.replica_stamp(database_id);
-        let tiny = pintail_sql::has_bounded_admission_shape(statement)
-            && replica.targets.len() <= 16
-            && replica.targets.iter().fold(0_u64, |rows, table| {
-                rows.saturating_add(table.snapshot.physical_row_upper_bound())
-            }) <= 1024
-            && replica
-                .targets
-                .iter()
-                .map(|table| table.snapshot.schema().columns().len())
-                .sum::<usize>()
-                <= 128
-            && {
-                // Measured on the cached replica, which the stamp taken
-                // above proves current before anything runs: a short query
-                // never reads a snapshot a commit has already superseded,
-                // and the sizes screened are that snapshot's.
-                replica
-                    .targets
-                    .iter()
-                    .map(|table| table.snapshot.segment_count())
-                    .sum::<usize>()
-                    <= 128
-                    && replica.targets.iter().fold(0_u64, |bytes, table| {
-                        bytes.saturating_add(table.stored_bytes())
-                    }) <= 4 * 1024 * 1024
-            };
+        // What proves the replica current as the statement arrives: a
+        // standing proof, or the stamp taken now.
+        let counts = Self::change_counts();
+        let stamp = (!self.proved_current(database_id, &replica, counts))
+            .then(|| self.replica_stamp(database_id));
+        let current_on_arrival = || match &stamp {
+            Some(stamp) => self.proved_by_stamp(database_id, &key, stamp, &replica, counts),
+            None => Some(Arc::clone(&replica)),
+        };
+        // Measured on the cached replica, which is proved current as of
+        // the statement's arrival before anything runs: a short query never
+        // reads a snapshot a commit has already superseded, and the sizes
+        // screened are that snapshot's.
+        let tiny = pintail_sql::has_bounded_admission_shape(statement) && replica.is_tiny();
         if tiny {
-            return revalidated(&self.cache, &key, &stamp, &replica)
+            return current_on_arrival()
                 .map(|replica| Classified {
                     replica,
                     prepared: None,
@@ -814,20 +1002,14 @@ impl ReplicaEngine {
         // here, on general capacity: it is the one execution would make.
         let short = QueryClass::from_cost(cost) == QueryClass::Short;
         // Preparing took time a commit could land in: prove the replica
-        // current against the files as they are now. A statement that
-        // reads no table reads no snapshot a commit could supersede, so the
-        // stamp taken when it arrived is all the proof it needs - and a
-        // second one is three more file-system calls on a statement that
-        // otherwise makes three.
+        // current as things are now. A statement that reads no table reads
+        // no snapshot a commit could supersede, so what proved the replica
+        // current when it arrived is all the proof it needs - and a second
+        // stamp is as many file-system calls again.
         let replica = if inline {
-            revalidated(&self.cache, &key, &stamp, &replica)
+            current_on_arrival()
         } else {
-            revalidated(
-                &self.cache,
-                &key,
-                &self.replica_stamp(database_id),
-                &replica,
-            )
+            self.still_current(database_id, &key, &replica)
         }
         .ok_or(Unclassified::Unready)?;
         Ok(Classified {
@@ -2754,6 +2936,7 @@ mod admission_tests {
             "db".to_owned(),
             SignatureMemo {
                 files,
+                generation: None,
                 signature: copying,
                 read_at: Instant::now(),
                 settled: false,
