@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2537;
+const EXPECTED_CASES: usize = 2564;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -3229,6 +3229,152 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "hand-written limit offset",
             "SELECT id, name FROM events ORDER BY id LIMIT 3 OFFSET 4",
+        ),
+        // A limit in a table's own key order: past the end, at the end,
+        // and of no rows.
+        ordered(
+            "limit in key order",
+            "SELECT id, name FROM users ORDER BY id LIMIT 2 OFFSET 7",
+        ),
+        ordered(
+            "limit in key order",
+            "SELECT name, id * 2 FROM events ORDER BY id LIMIT 3 OFFSET 20",
+        ),
+        ordered(
+            "limit in key order",
+            "SELECT id FROM events ORDER BY id LIMIT 0",
+        ),
+        // Membership in a subquery's keys under a limit: the limit's last
+        // row beside a key the subquery lacks, an offset running off the
+        // end, no member at all, other conjuncts beside it.
+        ordered(
+            "limited membership",
+            "SELECT id, name FROM events WHERE id IN (SELECT id FROM users WHERE id <> 3) \
+             ORDER BY id LIMIT 3",
+        ),
+        ordered(
+            "limited membership",
+            "SELECT id, name FROM events WHERE id IN (SELECT id FROM users) \
+             ORDER BY id LIMIT 3 OFFSET 6",
+        ),
+        ordered(
+            "limited membership",
+            "SELECT id FROM events WHERE id IN (SELECT id FROM users WHERE id > 100) \
+             ORDER BY id LIMIT 2",
+        ),
+        ordered(
+            "limited membership",
+            "SELECT id FROM events WHERE active = 1 AND id IN (SELECT id FROM users) AND id > 2 \
+             ORDER BY id LIMIT 2",
+        ),
+        ordered(
+            "limited membership",
+            "SELECT id FROM events WHERE id IN (SELECT id FROM users WHERE name > 'user-05') \
+             ORDER BY id LIMIT 2 OFFSET 1",
+        ),
+        // The tested column is not a key: values many rows share, NULL,
+        // and values outside the other key's range, which match nothing
+        // whatever their bits read as in its type.
+        ordered(
+            "limited membership",
+            "SELECT id, user_id FROM orders WHERE user_id IN (SELECT id FROM users WHERE id >= 2) \
+             ORDER BY id LIMIT 4",
+        ),
+        ordered(
+            "limited membership",
+            "SELECT id, user_id FROM orders WHERE user_id IN (SELECT id FROM users WHERE id >= 2) \
+             ORDER BY id LIMIT 3 OFFSET 2",
+        ),
+        ordered(
+            "limited membership",
+            "SELECT id, n FROM bounds WHERE n IN (SELECT id FROM events) ORDER BY id LIMIT 3",
+        ),
+        ordered(
+            "limited membership",
+            "SELECT id, u FROM bounds WHERE u IN (SELECT id FROM users) ORDER BY id LIMIT 3",
+        ),
+        ordered(
+            "limited membership",
+            "SELECT id, u FROM bounds WHERE u IN (SELECT id FROM bounds) ORDER BY id LIMIT 5",
+        ),
+        // Every row is returned, so the rows are fixed without an order.
+        unordered(
+            "limited membership",
+            "SELECT id FROM events WHERE id IN (SELECT id FROM users WHERE id >= 7) LIMIT 50",
+        ),
+        // A row is kept for what the set lacks, which no lookup shows.
+        ordered(
+            "limited membership",
+            "SELECT id FROM events WHERE id NOT IN (SELECT id FROM users WHERE id <> 3) \
+             ORDER BY id LIMIT 2",
+        ),
+        ordered(
+            "limited membership",
+            "SELECT id FROM bounds WHERE n NOT IN (SELECT id FROM users) ORDER BY id LIMIT 3",
+        ),
+        // A constant tested for membership: present, absent, outside the
+        // column's range on either side, NULL against rows and against
+        // none, a decimal, and under NOT.
+        ordered(
+            "constant membership",
+            "SELECT 8 IN (SELECT id FROM users), 9 IN (SELECT id FROM users), \
+             3 IN (SELECT id FROM users WHERE name <> 'user-03'), \
+             8 NOT IN (SELECT id FROM users), 9 NOT IN (SELECT id FROM users)",
+        ),
+        ordered(
+            "constant membership",
+            "SELECT -1 IN (SELECT id FROM events), 18446744073709551615 IN (SELECT id FROM users), \
+             18446744073709551615 IN (SELECT u FROM bounds WHERE u IS NOT NULL), \
+             -1 NOT IN (SELECT id FROM events)",
+        ),
+        ordered(
+            "constant membership",
+            "SELECT NULL IN (SELECT id FROM users), NULL IN (SELECT id FROM users WHERE id > 100), \
+             3.0 IN (SELECT id FROM users), '3' IN (SELECT id FROM users), \
+             3 IN (SELECT n FROM bounds), 1 IN (SELECT n FROM bounds)",
+        ),
+        ordered(
+            "constant membership",
+            "SELECT 2 IN (SELECT DISTINCT id FROM users), 2 IN (SELECT MAX(id) FROM users), \
+             2 IN (SELECT u.id FROM users u JOIN orders o ON o.user_id = u.id), \
+             2 IN (SELECT id FROM users UNION ALL SELECT id FROM events)",
+        ),
+        // A row pinned to one key asks about that key.
+        ordered(
+            "constant membership",
+            "SELECT id, id IN (SELECT id FROM users WHERE id <> 5), \
+             id NOT IN (SELECT id FROM users) FROM events WHERE id = 5 ORDER BY id",
+        ),
+        ordered(
+            "constant membership",
+            "SELECT id, id IN (SELECT id FROM users), id NOT IN (SELECT id FROM users) \
+             FROM events WHERE id = 9 ORDER BY id",
+        ),
+        ordered(
+            "constant membership",
+            "SELECT id, id IN (SELECT id FROM users) FROM events WHERE id = 3 OR id = 9 ORDER BY id",
+        ),
+        // A limit through a join read by key: an offset past the matches,
+        // the preserved side's unmatched rows, keys many rows share.
+        ordered(
+            "limit through a key join",
+            "SELECT e.id, u.name FROM events e JOIN users u ON e.id = u.id \
+             ORDER BY e.id LIMIT 3 OFFSET 6",
+        ),
+        ordered(
+            "limit through a key join",
+            "SELECT e.id, u.name FROM events e LEFT JOIN users u ON e.id = u.id \
+             ORDER BY e.id LIMIT 4 OFFSET 6",
+        ),
+        ordered(
+            "limit through a key join",
+            "SELECT o.id, u.name FROM orders o JOIN users u ON o.user_id = u.id \
+             ORDER BY o.id LIMIT 5 OFFSET 2",
+        ),
+        ordered(
+            "limit through a key join",
+            "SELECT b.id, e.name FROM bounds b LEFT JOIN events e ON b.n = e.id \
+             ORDER BY b.id LIMIT 4 OFFSET 4",
         ),
         ordered(
             "hand-written reversed comparison",
