@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2564;
+const EXPECTED_CASES: usize = 2573;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1834,6 +1834,18 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered("where edge cases", "SELECT id FROM orders WHERE meta->>'$.tags[0]' = 'premium' ORDER BY id"),
         ordered("where edge cases", "SELECT id FROM orders WHERE JSON_CONTAINS(meta->'$.tags', '\"premium\"') ORDER BY id"),
         ordered("where edge cases", "SELECT id FROM orders WHERE JSON_LENGTH(meta, '$.items') >= 4 ORDER BY id"),
+        // A JSON branch beside a number, a decimal or a date in a
+        // conditional: the answer is the text of whichever branch the row
+        // took, never the document read as a number.
+        ordered("json beside another type", "SELECT id, IFNULL(meta->'$.items', id) FROM orders ORDER BY id"),
+        ordered("json beside another type", "SELECT id, COALESCE(JSON_EXTRACT(meta, '$.tags'), user_id) FROM orders ORDER BY id"),
+        ordered("json beside another type", "SELECT id, IF(id > 6, JSON_EXTRACT(meta, '$.items'), total) FROM orders ORDER BY id"),
+        ordered("json beside another type", "SELECT id, CASE WHEN user_id = 1 THEN id ELSE JSON_EXTRACT(meta, '$.tags') END FROM orders ORDER BY id"),
+        ordered("json beside another type", "SELECT id, IFNULL(NULLIF(user_id, 1), JSON_EXTRACT(meta, '$.items')) FROM orders ORDER BY id"),
+        ordered("json beside another type", "SELECT id, IFNULL(JSON_EXTRACT(meta, '$.score'), total) FROM orders ORDER BY id"),
+        ordered("json beside another type", "SELECT id, LEAD(user_id, 100, JSON_EXTRACT(meta, '$.tags')) OVER (ORDER BY id) FROM orders ORDER BY id"),
+        ordered("json beside another type", "SELECT id, LEAD(JSON_EXTRACT(meta, '$.tags'), 1, total) OVER (ORDER BY id) FROM orders ORDER BY id"),
+        ordered("json beside another type", "SELECT id, COALESCE(JSON_EXTRACT(meta, '$.tags'), placed_at) FROM orders ORDER BY id"),
         ordered("where edge cases", "SELECT id FROM orders WHERE status IN ('shipped', 'delivered') ORDER BY id"),
         ordered("where edge cases", "SELECT id FROM orders WHERE status <> 'pending' ORDER BY id"),
         ordered("where edge cases", "SELECT id FROM orders WHERE status LIKE 'p%' ORDER BY id"),

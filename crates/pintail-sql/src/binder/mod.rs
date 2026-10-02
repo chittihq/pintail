@@ -10418,6 +10418,28 @@ mod tests {
     }
 
     #[test]
+    fn a_json_branch_beside_another_type_makes_a_conditional_text() {
+        for sql in [
+            "SELECT IFNULL(CAST('[1]' AS JSON), 2) FROM Events",
+            "SELECT COALESCE(2, CAST('[1]' AS JSON)) FROM Events",
+            "SELECT IF(1 = 1, CAST('[1]' AS JSON), 2.50) FROM Events",
+            "SELECT CASE WHEN 1 = 1 THEN 2 ELSE CAST('[1]' AS JSON) END FROM Events",
+            "SELECT COALESCE(CAST('[1]' AS JSON), DATE '2024-01-01') FROM Events",
+        ] {
+            let query = bind(sql).expect("binds");
+            assert_eq!(
+                query.projection[0].expr.data_type,
+                Some(DataType::Utf8),
+                "{sql}"
+            );
+        }
+        // Documents on every branch stay a document.
+        let query = bind("SELECT IFNULL(CAST('[1]' AS JSON), CAST('2' AS JSON)) FROM Events")
+            .expect("binds");
+        assert_eq!(query.projection[0].expr.data_type, Some(DataType::Json));
+    }
+
+    #[test]
     fn convert_using_rejects_charsets_it_cannot_transcode() {
         for charset in [
             "utf8", "utf8mb3", "utf8mb4", "binary", "ucs2", "utf16", "utf16le", "utf32", "latin1",

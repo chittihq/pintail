@@ -2806,7 +2806,19 @@ fn conditional_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindE
             },
         ));
     }
-    let common = common_result_type(args)?;
+    // A JSON branch beside a branch of any other type makes the result text:
+    // each row answers with the text of the branch it took, the document as
+    // written for the JSON one and the number or the date as printed for
+    // the other. Taking the numeric ladder below instead read the document
+    // as a number, so `IFNULL(document, quantity)` answered 0 for every
+    // array and object.
+    let json_beside_another =
+        types.contains(&DataType::Json) && types.iter().any(|kind| *kind != DataType::Json);
+    let common = if json_beside_another {
+        Some(DataType::Utf8)
+    } else {
+        common_result_type(args)?
+    };
     // A possible binary result keeps the conditional in the byte domain,
     // even when the branch selected on this row is text.
     Ok(
