@@ -758,13 +758,21 @@ impl ReplicaEngine {
         // here, on general capacity: it is the one execution would make.
         let short = QueryClass::from_cost(cost) == QueryClass::Short;
         // Preparing took time a commit could land in: prove the replica
-        // current against the files as they are now.
-        let replica = revalidated(
-            &self.cache,
-            &key,
-            &self.replica_stamp(database_id),
-            &replica,
-        )
+        // current against the files as they are now. A statement that
+        // reads no table reads no snapshot a commit could supersede, so the
+        // stamp taken when it arrived is all the proof it needs - and a
+        // second one is three more file-system calls on a statement that
+        // otherwise makes three.
+        let replica = if inline {
+            revalidated(&self.cache, &key, &stamp, &replica)
+        } else {
+            revalidated(
+                &self.cache,
+                &key,
+                &self.replica_stamp(database_id),
+                &replica,
+            )
+        }
         .ok_or(Unclassified::Unready)?;
         Ok(Classified {
             replica,
