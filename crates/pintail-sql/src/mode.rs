@@ -61,26 +61,62 @@ impl ParseMode {
     /// Extracts lexical flags from a comma-separated SQL mode value.
     #[must_use]
     pub fn from_sql_mode(value: &str) -> Self {
-        let has = |name: &str| {
-            value
-                .split(',')
-                .any(|mode| mode.trim().eq_ignore_ascii_case(name))
+        // One pass over the members: this runs several times for every
+        // statement a connection sends, and asking the list once per flag
+        // split it more than a dozen times each time.
+        let mut mode = Self {
+            ansi_quotes: false,
+            real_as_float: false,
+            permissive_grouping: true,
+            pipes_as_concat: false,
+            no_backslash_escapes: false,
+            no_unsigned_subtraction: false,
+            ignore_space: false,
+            high_not_precedence: false,
+            no_zero_date: false,
+            no_zero_in_date: false,
+            allow_invalid_dates: false,
+            strict: false,
+            time_truncate_fractional: false,
         };
-        Self {
-            ansi_quotes: has("ANSI_QUOTES") || has("ANSI"),
-            real_as_float: has("REAL_AS_FLOAT") || has("ANSI"),
-            permissive_grouping: !has("ONLY_FULL_GROUP_BY") && !has("ANSI"),
-            pipes_as_concat: has("PIPES_AS_CONCAT") || has("ANSI"),
-            no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
-            no_unsigned_subtraction: has("NO_UNSIGNED_SUBTRACTION"),
-            ignore_space: has("IGNORE_SPACE") || has("ANSI"),
-            high_not_precedence: has("HIGH_NOT_PRECEDENCE"),
-            no_zero_date: has("NO_ZERO_DATE"),
-            no_zero_in_date: has("NO_ZERO_IN_DATE"),
-            allow_invalid_dates: has("ALLOW_INVALID_DATES"),
-            strict: has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES") || has("TRADITIONAL"),
-            time_truncate_fractional: has("TIME_TRUNCATE_FRACTIONAL"),
+        for member in value.split(',') {
+            let member = member.trim();
+            let is = |name: &str| member.eq_ignore_ascii_case(name);
+            if is("ANSI") {
+                mode.ansi_quotes = true;
+                mode.real_as_float = true;
+                mode.permissive_grouping = false;
+                mode.pipes_as_concat = true;
+                mode.ignore_space = true;
+            } else if is("ANSI_QUOTES") {
+                mode.ansi_quotes = true;
+            } else if is("REAL_AS_FLOAT") {
+                mode.real_as_float = true;
+            } else if is("ONLY_FULL_GROUP_BY") {
+                mode.permissive_grouping = false;
+            } else if is("PIPES_AS_CONCAT") {
+                mode.pipes_as_concat = true;
+            } else if is("NO_BACKSLASH_ESCAPES") {
+                mode.no_backslash_escapes = true;
+            } else if is("NO_UNSIGNED_SUBTRACTION") {
+                mode.no_unsigned_subtraction = true;
+            } else if is("IGNORE_SPACE") {
+                mode.ignore_space = true;
+            } else if is("HIGH_NOT_PRECEDENCE") {
+                mode.high_not_precedence = true;
+            } else if is("NO_ZERO_DATE") {
+                mode.no_zero_date = true;
+            } else if is("NO_ZERO_IN_DATE") {
+                mode.no_zero_in_date = true;
+            } else if is("ALLOW_INVALID_DATES") {
+                mode.allow_invalid_dates = true;
+            } else if is("STRICT_TRANS_TABLES") || is("STRICT_ALL_TABLES") || is("TRADITIONAL") {
+                mode.strict = true;
+            } else if is("TIME_TRUNCATE_FRACTIONAL") {
+                mode.time_truncate_fractional = true;
+            }
         }
+        mode
     }
 }
 
@@ -110,6 +146,63 @@ pub fn with_parse_mode<T>(mode: ParseMode, work: impl FnOnce() -> T) -> T {
 mod tests {
     use super::*;
     use crate::parse_statement;
+
+    #[test]
+    fn every_member_sets_its_flag_however_the_list_is_written() {
+        let none = ParseMode::from_sql_mode("");
+        assert!(none.permissive_grouping && !none.strict && !none.ansi_quotes);
+        for (member, set) in [
+            (
+                "ANSI_QUOTES",
+                (|mode| mode.ansi_quotes) as fn(ParseMode) -> bool,
+            ),
+            ("REAL_AS_FLOAT", |mode| mode.real_as_float),
+            ("ONLY_FULL_GROUP_BY", |mode| !mode.permissive_grouping),
+            ("PIPES_AS_CONCAT", |mode| mode.pipes_as_concat),
+            ("NO_BACKSLASH_ESCAPES", |mode| mode.no_backslash_escapes),
+            ("NO_UNSIGNED_SUBTRACTION", |mode| {
+                mode.no_unsigned_subtraction
+            }),
+            ("IGNORE_SPACE", |mode| mode.ignore_space),
+            ("HIGH_NOT_PRECEDENCE", |mode| mode.high_not_precedence),
+            ("NO_ZERO_DATE", |mode| mode.no_zero_date),
+            ("NO_ZERO_IN_DATE", |mode| mode.no_zero_in_date),
+            ("ALLOW_INVALID_DATES", |mode| mode.allow_invalid_dates),
+            ("STRICT_TRANS_TABLES", |mode| mode.strict),
+            ("STRICT_ALL_TABLES", |mode| mode.strict),
+            ("TRADITIONAL", |mode| mode.strict),
+            ("TIME_TRUNCATE_FRACTIONAL", |mode| {
+                mode.time_truncate_fractional
+            }),
+        ] {
+            assert!(!set(none), "{member} is off in an empty mode");
+            for written in [
+                member.to_owned(),
+                member.to_ascii_lowercase(),
+                format!("NO_ENGINE_SUBSTITUTION, {member} ,ERROR_FOR_DIVISION_BY_ZERO"),
+            ] {
+                let mode = ParseMode::from_sql_mode(&written);
+                assert!(set(mode), "{written}");
+                // And nothing else: every other member stays as it was.
+                let alone = ParseMode::from_sql_mode(member);
+                assert_eq!(mode, alone, "{written}");
+            }
+        }
+        // A member is a whole name, never a part of one.
+        assert_eq!(
+            ParseMode::from_sql_mode("ANSI_QUOTESX,XPIPES_AS_CONCAT"),
+            none
+        );
+        let ansi = ParseMode::from_sql_mode("ANSI");
+        assert!(
+            ansi.ansi_quotes
+                && ansi.real_as_float
+                && !ansi.permissive_grouping
+                && ansi.pipes_as_concat
+                && ansi.ignore_space
+                && !ansi.strict
+        );
+    }
 
     #[test]
     fn lexical_flags_are_scoped_and_preserve_operator_precedence() {
