@@ -398,7 +398,9 @@ for (let cycle = 1; cycle <= cycles; cycle++) {
       // An armed site reached during the catch-up: start again, unarmed.
       record.diedCatchingUp = failpointFired(currentLog) ?? 'died without a failpoint'
       if (!failpointFired(currentLog)) problems.push(`the replica died while catching up: see ${currentLog}`)
-      replica?.destroy(); replica = undefined
+      // A poll in this loop may have reconnected; the checker cannot see
+      // that through the helper and reads the earlier `undefined`.
+      ;(replica as mysql.Connection | undefined)?.destroy(); replica = undefined
       armed = ''
       spawnServer('')
       if (!await healthy()) break
