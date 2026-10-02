@@ -1383,6 +1383,25 @@ pub struct ProjectedScanStream {
     pub(super) text_filters: Vec<segment::TextValueFilter>,
     /// Whether filter-first rounds judge every slice or a sample of them.
     pub(super) prewhere_sample: PrewhereSample,
+    /// Rows the reader still wants, when it wants only so many (see
+    /// [`ProjectedScanStream::set_row_budget`]).
+    pub(super) row_budget: Option<u64>,
+    /// Which end of its key range the scan hands out first (see
+    /// [`ProjectedScanStream::read_from_end`]).
+    pub(super) order: ReadOrder,
+    /// Whether the pending direct range is the rest of one being read
+    /// forward in pieces, so what was handed out of it is its start.
+    pub(super) range_resumes: bool,
+}
+
+/// Which end of the scanned key range a stream hands out first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ReadOrder {
+    /// In key order.
+    #[default]
+    Forward,
+    /// The last part first, a segment's last rows first.
+    EndFirst,
 }
 
 /// While a filter keeps nearly every row of the slices it judges, judging
@@ -2288,9 +2307,15 @@ impl ProjectedScanStream {
     /// Activates the next classified scan part, returning `false` at the end.
     #[allow(clippy::too_many_lines)]
     fn advance_part(&mut self) -> Result<bool, StoreError> {
-        let Some(part) = self.parts.pop_front() else {
+        let part = if self.ends_first() {
+            self.parts.pop_back()
+        } else {
+            self.parts.pop_front()
+        };
+        let Some(part) = part else {
             return Ok(false);
         };
+        self.range_resumes = false;
         self.merge = None;
         self.memtable_cursor = None;
         self.direct_range = None;
@@ -2298,7 +2323,10 @@ impl ProjectedScanStream {
         self.slices.clear();
         self.overlay = None;
         match part {
-            ScanPart::Direct { segments } => {
+            ScanPart::Direct { mut segments } => {
+                if self.ends_first() {
+                    segments.reverse();
+                }
                 self.segments = segments;
                 self.next_segment = 0;
             }
@@ -2310,8 +2338,13 @@ impl ProjectedScanStream {
                 rows,
             } => {
                 let expanded = self.expand_layered(segments, lo, hi, bases, rows)?;
-                for part in expanded.into_iter().rev() {
-                    self.parts.push_front(part);
+                if self.ends_first() {
+                    // In key order at the back, where the next part is taken.
+                    self.parts.extend(expanded);
+                } else {
+                    for part in expanded.into_iter().rev() {
+                        self.parts.push_front(part);
+                    }
                 }
                 return self.advance_part();
             }
@@ -2350,10 +2383,11 @@ impl ProjectedScanStream {
                 let mut segments = vec![segment];
                 // The overlay parts that follow under the same rows join
                 // this one, so their slices decode in the same rounds.
-                while let Some(ScanPart::Overlay {
-                    segment: next,
-                    rows: next_rows,
-                }) = self.parts.front()
+                while !self.ends_first()
+                    && let Some(ScanPart::Overlay {
+                        segment: next,
+                        rows: next_rows,
+                    }) = self.parts.front()
                 {
                     let same_rows = match next_rows {
                         Some(next_rows) => layered && next_rows.same_source(&rows),
@@ -2580,10 +2614,21 @@ impl ProjectedScanStream {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let max_chunks = max_chunks.max(1);
+        // Read from the end, the part is handed out whole before anything
+        // before it: cutting it to the reader's rows would only make more
+        // calls of it.
+        let row_budget = self.row_budget.filter(|_| !self.ends_first());
+        let max_chunks = if row_budget.is_some() {
+            1
+        } else {
+            max_chunks.max(1)
+        };
+        let budget_rows = row_budget.map_or(usize::MAX, |rows| {
+            usize::try_from(rows).unwrap_or(usize::MAX).max(1)
+        });
         let chunk_limit = memory_limit / max_chunks;
         let chunk_rows = if projection.is_empty() {
-            MAX_MEMTABLE_CHUNK_ROWS
+            MAX_MEMTABLE_CHUNK_ROWS.min(budget_rows)
         } else {
             chunk_limit
                 .checked_div(
@@ -2594,6 +2639,7 @@ impl ProjectedScanStream {
                 )
                 .unwrap_or(0)
                 .clamp(1, MAX_MEMTABLE_CHUNK_ROWS)
+                .min(budget_rows)
         };
         // The live rows first, then each projected column built from them in
         // the packed shape a segment of the same type decodes to: a chunk of
@@ -2764,10 +2810,23 @@ impl ProjectedScanStream {
             self.memtable_cursor = None;
             return self.next_column_chunks_inner(max_chunks, memory_limit, prewhere);
         }
+        if let Some(chunks) = self.next_range_rows(memory_limit)? {
+            return Ok(chunks);
+        }
         if self.merge.is_some() || self.direct_range.is_some() {
             return Ok(self.next_column_chunk(memory_limit)?.into_iter().collect());
         }
+        // A reader that wants only so many rows takes one slice, cut to
+        // them, at a time: a round of slices is rows it would throw away.
+        let max_chunks = if self.row_budget.is_some() {
+            1
+        } else {
+            max_chunks
+        };
         self.fill_direct_slices(max_chunks.max(1))?;
+        if let Some(budget) = self.row_budget {
+            self.trim_front_slice(budget, memory_limit)?;
+        }
         if self.slices.is_empty() {
             if !self.advance_part()? {
                 return Ok(Vec::new());
@@ -2822,6 +2881,46 @@ impl ProjectedScanStream {
             return self.next_column_chunks_inner(chunk_count.div_ceil(2), memory_limit, prewhere);
         }
         decoded.map(|chunks| chunks.into_iter().flatten().collect())
+    }
+
+    /// The reader's rows of the pending direct range, when it wants only
+    /// so many or reads from the end; `None` leaves the range to the
+    /// forward read.
+    fn next_range_rows(
+        &mut self,
+        memory_limit: usize,
+    ) -> Result<Option<Vec<ProjectedColumnChunk>>, StoreError> {
+        // Read from the end, a direct range is cut from its end, or taken
+        // whole: read forward in pieces it would hand out its start first.
+        let range_rows = self.row_budget.or(self.ends_first().then_some(u64::MAX));
+        if let Some(budget) = range_rows
+            && self.merge.is_none()
+            && !self.range_resumes
+            && let Some((segment, start_row, end_row)) = self.direct_range.take()
+        {
+            // A direct range decodes any rows of it: the reader's rows, and
+            // the rest of the range stays queued.
+            let (low, high, rest) = if self.ends_first() {
+                let cut = end_row.saturating_sub(budget.max(1)).max(start_row);
+                (cut, end_row, (start_row, cut))
+            } else {
+                let cut = start_row.saturating_add(budget.max(1)).min(end_row);
+                (start_row, cut, (cut, end_row))
+            };
+            match self.decode_column_chunk_rows(&segment, low, high, memory_limit) {
+                Ok(chunk) => {
+                    if rest.0 < rest.1 {
+                        self.direct_range = Some((segment, rest.0, rest.1));
+                    }
+                    return Ok(Some(vec![chunk]));
+                }
+                Err(StoreError::MemoryLimitExceeded { .. }) => {
+                    self.direct_range = Some((segment, start_row, end_row));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(None)
     }
 
     /// Decodes one overlay slice within `memory_limit`, halving it at block
@@ -2891,6 +2990,123 @@ impl ProjectedScanStream {
         ))
     }
 
+    /// Says how many more rows the reader wants, or `None` when it wants
+    /// every row. While a count is set a call decodes one work unit cut to
+    /// about that many rows - the rows themselves in a direct segment, whole
+    /// blocks where the memtable's rows are placed by block - and leaves the
+    /// rest queued, instead of decoding a round of whole slices.
+    ///
+    /// The count is what to read next, not a bound on what the scan holds:
+    /// a filter, the memtable's deletes or a superseded version can leave a
+    /// unit with fewer rows than it was cut to, and the reader calls again
+    /// until it has its rows or the stream ends. Every row is still handed
+    /// out, in the same order, whatever counts are set between calls.
+    pub fn set_row_budget(&mut self, rows: Option<usize>) {
+        self.row_budget = rows.map(|rows| u64::try_from(rows).unwrap_or(u64::MAX));
+    }
+
+    /// Cuts the next direct slice to the first `budget` rows of it, leaving
+    /// the rest as the slice after. An overlay slice is cut at the block
+    /// boundary at or past them, where its key span is known. A segment the
+    /// scanned range covers only in part is cut within its located run, or
+    /// left whole when the run cannot be located.
+    fn trim_front_slice(&mut self, budget: u64, memory_limit: usize) -> Result<(), StoreError> {
+        let Some(front) = self.slices.front() else {
+            return Ok(());
+        };
+        let (segment, start_row, end_row) = match front {
+            DirectSlice::Range {
+                segment,
+                start_row,
+                end_row,
+            } => (segment.clone(), *start_row, *end_row),
+            DirectSlice::Whole(segment) => {
+                if segment.row_count <= budget || self.start == self.end {
+                    return Ok(());
+                }
+                let Some((start_row, end_row)) = self.bounded_rows(segment, memory_limit)? else {
+                    return Ok(());
+                };
+                (segment.clone(), start_row, end_row)
+            }
+        };
+        let boundaries = self
+            .overlay
+            .as_ref()
+            .map(|overlay| overlay.sparse_of(&segment).iter().map(|(row, _)| *row));
+        let cut = if self.ends_first() {
+            // The last rows of the slice: from the block boundary at or
+            // before them.
+            let wanted = end_row.saturating_sub(budget.max(1));
+            if wanted <= start_row {
+                return Ok(());
+            }
+            match boundaries {
+                Some(rows) => rows.take_while(|row| *row <= wanted).last(),
+                None => Some(wanted),
+            }
+        } else {
+            let wanted = start_row.saturating_add(budget.max(1));
+            if wanted >= end_row {
+                return Ok(());
+            }
+            match boundaries {
+                Some(mut rows) => rows.find(|row| *row >= wanted),
+                None => Some(wanted),
+            }
+        };
+        let Some(cut) = cut.filter(|cut| *cut > start_row && *cut < end_row) else {
+            return Ok(());
+        };
+        let head = DirectSlice::Range {
+            segment: segment.clone(),
+            start_row,
+            end_row: cut,
+        };
+        let tail = DirectSlice::Range {
+            segment,
+            start_row: cut,
+            end_row,
+        };
+        let (first, second) = if self.ends_first() {
+            (tail, head)
+        } else {
+            (head, tail)
+        };
+        self.slices[0] = first;
+        self.slices.insert(1, second);
+        Ok(())
+    }
+
+    /// Reads the scanned key range from its end: the last part first, the
+    /// last rows of a segment first, each chunk's own rows still in key
+    /// order. With a row count set ([`Self::set_row_budget`]) a call then
+    /// decodes about that many of the rows nearest the end that are not
+    /// yet read. A reader that wants the last rows in key order reads
+    /// until it has them and [`Self::at_unit_boundary`] holds; what it
+    /// read is then every visible row from some key on. Call before the
+    /// first chunk is pulled.
+    pub fn read_from_end(&mut self) {
+        self.order = ReadOrder::EndFirst;
+    }
+
+    fn ends_first(&self) -> bool {
+        self.order == ReadOrder::EndFirst
+    }
+
+    /// Whether the rows handed out so far, read from the end, are every
+    /// row of the scan from some key on. Parts that only read forward - a
+    /// row-wise merge, the memtable's own rows, a range too large for its
+    /// allowance - are handed out start first, and are whole only when
+    /// their last chunk has been.
+    #[must_use]
+    pub fn at_unit_boundary(&self) -> bool {
+        self.merge.is_none()
+            && self.memtable_cursor.is_none()
+            && self.pending.is_empty()
+            && !(self.range_resumes && self.direct_range.is_some())
+    }
+
     fn fill_direct_slices(&mut self, wanted: usize) -> Result<(), StoreError> {
         while self.slices.len() < wanted {
             let Some(segment) = self.segments.get(self.next_segment).cloned() else {
@@ -2910,6 +3126,7 @@ impl ProjectedScanStream {
             .unwrap_or(u64::MAX)
             .max(1);
             let rows = (DIRECT_SLICE_ROWS / block).max(1).saturating_mul(block);
+            let first = self.slices.len();
             let mut start_row = 0;
             while start_row < segment.row_count {
                 let end_row = start_row.saturating_add(rows).min(segment.row_count);
@@ -2919,6 +3136,10 @@ impl ProjectedScanStream {
                     end_row,
                 });
                 start_row = end_row;
+            }
+            if self.ends_first() {
+                // The segment's last slice first.
+                self.slices.make_contiguous()[first..].reverse();
             }
         }
         Ok(())
@@ -4358,6 +4579,12 @@ impl ProjectedScanStream {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let budget_rows = self
+            .row_budget
+            .filter(|_| !self.ends_first())
+            .map_or(usize::MAX, |rows| {
+                usize::try_from(rows).unwrap_or(usize::MAX).max(1)
+            });
         let merge = self.merge.as_mut().expect("checked merged scan");
         let part_lo = merge.lo.clone();
         let part_hi = merge.hi.clone();
@@ -4374,6 +4601,9 @@ impl ProjectedScanStream {
                 .unwrap_or(0)
                 .clamp(1, MAX_MERGED_CHUNK_ROWS)
         };
+        // A merged row is resolved value by value: a reader that wants a
+        // few rows is not handed a chunk of thousands.
+        let chunk_rows = chunk_rows.min(budget_rows);
         let mut winner_sources = Vec::with_capacity(chunk_rows);
         while winner_sources.len() < chunk_rows {
             let minimum = merge
@@ -4627,6 +4857,7 @@ impl ProjectedScanStream {
                 Ok(chunk) => {
                     if slice_end < end_row {
                         self.direct_range = Some((segment, slice_end, end_row));
+                        self.range_resumes = true;
                         self.direct_slice_rows = Some(rows);
                     } else {
                         self.direct_slice_rows = None;

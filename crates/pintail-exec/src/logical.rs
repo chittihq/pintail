@@ -16,6 +16,10 @@ pub struct Scan {
     pub predicates: Vec<BoundExpr>,
     /// Maximum rows the scan needs to produce, when safely bounded.
     pub limit: Option<u64>,
+    /// Whether `limit` counts from the end of the table's key order: the
+    /// scan need produce only the last `limit` rows that pass its
+    /// predicates, in any order, for a sort above it to put in order.
+    pub from_end: bool,
 }
 
 impl Scan {
@@ -573,6 +577,7 @@ fn relation_plan(mut table: BoundTable) -> LogicalPlan {
         projected_column_ids,
         predicates: Vec::new(),
         limit: None,
+        from_end: false,
     })
 }
 

@@ -98,12 +98,16 @@ pub(super) fn key_columns<'plan>(
 
 /// `plan`, already in the order a limit of `rows` rows wants, with its scan
 /// told to stop after that many when nothing between the two drops a row:
-/// a projection over a scan with no predicates of its own. The scan's
-/// first `rows` rows in key order are then the limit's rows.
+/// a projection over a scan. The scan's predicates are its own filter, so
+/// its first `rows` rows that pass them, in key order, are the limit's
+/// rows. A virtual relation is bounded only without predicates.
 pub(super) fn limited_scan(plan: PhysicalPlan, rows: u64) -> PhysicalPlan {
     match plan {
         PhysicalPlan::Project { input, expressions } => match *input {
-            PhysicalPlan::Scan(mut scan) if scan.predicates.is_empty() => {
+            PhysicalPlan::Scan(mut scan)
+                if scan.predicates.is_empty()
+                    || scan.table.database_id != pintail_catalog::DatabaseId::new(u64::MAX) =>
+            {
                 scan.limit = Some(scan.limit.map_or(rows, |limit| limit.min(rows)));
                 PhysicalPlan::Project {
                     input: Box::new(PhysicalPlan::Scan(scan)),
@@ -116,6 +120,55 @@ pub(super) fn limited_scan(plan: PhysicalPlan, rows: u64) -> PhysicalPlan {
             },
         },
         other => other,
+    }
+}
+
+/// A sort's input with its scan told that only the table's last `rows`
+/// rows are wanted, when the sort is by the whole key, descending, and a
+/// limit above it takes `rows` rows: a projection over a scan, the keys
+/// its bare key columns in key order, each a non-NULL integer.
+///
+/// The key is whole so no two rows tie: the last `rows` rows in key order
+/// are then exactly the rows the sort would put first, and it orders them
+/// as it orders the table. The scan's predicates are its own filter, so
+/// the rows counted are rows that pass them. Any other input comes back
+/// unchanged.
+pub(super) fn end_limited_scan(
+    plan: PhysicalPlan,
+    keys: &[BoundOrderKey],
+    rows: u64,
+) -> PhysicalPlan {
+    let PhysicalPlan::Project { input, expressions } = plan else {
+        return plan;
+    };
+    let columns = keys
+        .iter()
+        .map(|key| match &expressions.get(key.index)?.expr.kind {
+            BoundExprKind::Column(column)
+                if !key.ascending && key.value_kind == pintail_sql::OrderValueKind::Ordinary =>
+            {
+                Some(column)
+            }
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    let input = match (*input, columns) {
+        (PhysicalPlan::Scan(mut scan), Some(columns))
+            if scan.limit.is_none()
+                && scan.table.database_id != pintail_catalog::DatabaseId::new(u64::MAX)
+                && !columns.is_empty()
+                && columns.len() == scan.table.key_column_ids.len()
+                && ordered_by(&scan, &columns) =>
+        {
+            scan.limit = Some(rows);
+            scan.from_end = true;
+            PhysicalPlan::Scan(scan)
+        }
+        (input, _) => input,
+    };
+    PhysicalPlan::Project {
+        input: Box::new(input),
+        expressions,
     }
 }
 

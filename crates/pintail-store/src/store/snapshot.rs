@@ -982,6 +982,9 @@ impl TableSnapshot {
             value_bounds: bounds.to_vec(),
             text_filters: Vec::new(),
             prewhere_sample: super::scan::PrewhereSample::default(),
+            row_budget: None,
+            order: super::scan::ReadOrder::Forward,
+            range_resumes: false,
         }))
     }
 

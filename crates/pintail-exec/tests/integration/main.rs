@@ -8,6 +8,7 @@ mod aggregate_path_survey;
 mod binary_bit_aggregates;
 mod block_skip_bench;
 mod block_value_skipping;
+mod bounded_scan;
 mod build_keys_through_joins;
 mod clustered_build_keys;
 mod column_fold_edges;

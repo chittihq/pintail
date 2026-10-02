@@ -404,9 +404,14 @@ fn a_limit_in_key_order_stops_the_scan() {
         assert!(!reference.plan.contains("limit: Some("), "{template}");
         assert_eq!(fast.rows, reference.rows, "{template}");
     }
-    // A predicate drops rows the scan would have counted.
+    // A predicate drops rows before the scan counts them: the bound is on
+    // the rows that pass it.
     let filtered = fixture.run("SELECT id FROM agents WHERE name <> 'agent-1' ORDER BY id LIMIT 2");
-    assert!(!filtered.plan.contains("limit: Some("), "{}", filtered.plan);
+    assert!(
+        filtered.plan.contains("limit: Some(2)"),
+        "{}",
+        filtered.plan
+    );
     assert_eq!(filtered.rows, ["[Int64(2)]", "[Int64(5)]"]);
 }
 

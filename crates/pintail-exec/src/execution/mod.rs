@@ -1103,8 +1103,14 @@ fn plan_limit(
                     offset.saturating_add(count),
                     collation,
                 ),
+                // A sort by the whole key, descending, takes the table's
+                // last rows: the scan reads those and the sort stays.
                 (input, false) => PhysicalPlan::Sort {
-                    input: Box::new(input),
+                    input: Box::new(order::end_limited_scan(
+                        input,
+                        &keys,
+                        offset.saturating_add(count),
+                    )),
                     keys,
                     top_k: usize::try_from(offset.saturating_add(count)).ok(),
                     trim,
@@ -1738,6 +1744,13 @@ pub trait BatchStream: Send {
     fn last_batch_prefiltered(&self) -> bool {
         false
     }
+
+    /// Says the Filters over this scan pass its prefiltered batches
+    /// untested, so a scan that carries both predicates and a limit may
+    /// count the rows of those batches against the limit and end once it
+    /// has handed out that many. Without this call such a scan reads on to
+    /// its end. Ignored once a batch was pulled.
+    fn stop_after_filtered_rows(&mut self) {}
 
     /// What the stream's reads cost so far, for a profiled execution:
     /// bytes decompressed and values decoded, in total and per column id.
@@ -5924,7 +5937,7 @@ fn build_operator_inner(
                 .iter()
                 .map(|predicate| CompiledExpr::compile(predicate, &columns, collation))
                 .collect::<Result<Vec<_>, _>>()?;
-            let stream = match points::open(&scan, provider, memory.remaining())? {
+            let mut stream = match points::open(&scan, provider, memory.remaining())? {
                 Some(runs) => runs,
                 None => provider.open_scan(&scan, memory.remaining())?,
             };
@@ -5932,6 +5945,9 @@ fn build_operator_inner(
             // The scan's own evaluation stands in for these Filters only
             // where it compared text as they do.
             let storage = stream.prefilter_collation() == Some(collation);
+            if storage {
+                stream.stop_after_filtered_rows();
+            }
             let mut operator = PullOperator::Scan {
                 stream,
                 expected_types,

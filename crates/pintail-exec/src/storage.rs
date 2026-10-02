@@ -430,6 +430,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 set_members,
                 retained_bytes: stream_overhead,
                 remaining: None,
+                filtered: FilteredLimit::default(),
+                budget_round: 0,
                 settled: None,
                 sma: None,
                 grouped: None,
@@ -617,6 +619,15 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             {
                 stream.set_index_lookup(lookup);
             }
+            let limit = scan
+                .limit
+                .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX));
+            // The last rows in key order: the stream hands out the end of
+            // the range first, and the sort above orders what arrives.
+            let from_end = scan.from_end && limit.is_some();
+            if from_end {
+                stream.read_from_end();
+            }
             return Ok(Box::new(SnapshotStream {
                 stats: Arc::clone(&self.stats),
                 stats_key: key,
@@ -637,12 +648,20 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 enum_labels,
                 set_members,
                 retained_bytes: stream_overhead,
-                remaining: scan
-                    .predicates
-                    .is_empty()
-                    .then_some(scan.limit)
-                    .flatten()
-                    .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
+                remaining: (scan.predicates.is_empty() && !from_end)
+                    .then_some(limit)
+                    .flatten(),
+                filtered: FilteredLimit {
+                    remaining: (!scan.predicates.is_empty() || from_end)
+                        .then_some(limit)
+                        .flatten(),
+                    // With no predicates there is no Filter to disagree
+                    // with the count.
+                    armed: from_end && scan.predicates.is_empty(),
+                    counts_unjudged: scan.predicates.is_empty(),
+                    from_end,
+                },
+                budget_round: 0,
                 // A filtered aggregate over a settled snapshot is just as
                 // much a pure function of the data version as a bare one —
                 // the predicates and limit simply join the memo key (issue
@@ -719,6 +738,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             set_members,
             retained_bytes,
             remaining: None,
+            filtered: FilteredLimit::default(),
+            budget_round: 0,
             settled: None,
             delta,
             sma,
@@ -1164,6 +1185,12 @@ struct SnapshotStream {
     set_members: Vec<Option<Arc<Vec<String>>>>,
     retained_bytes: usize,
     remaining: Option<usize>,
+    /// The limit a scan counts against the rows that pass its predicates.
+    filtered: FilteredLimit,
+    /// Bounded fetches made so far: each asks for more rows than the last,
+    /// so a scan whose rows mostly fail its filter is not read a few rows
+    /// at a time.
+    budget_round: u32,
     /// `(table directory, manifest generation, scan signature)` over a
     /// settled snapshot (empty memtable) — the settled aggregate memo key.
     /// The signature covers projection, predicates and limit, so different
@@ -1178,6 +1205,24 @@ struct SnapshotStream {
     grouped: Option<crate::execution::GroupedFoldInput>,
 }
 
+/// A limit over a scan that filters its rows, or reads them end first:
+/// counted against the batches the stream adopts whole, not against the
+/// rows of one decoded chunk.
+#[derive(Clone, Copy, Debug, Default)]
+struct FilteredLimit {
+    /// Rows passing every one of the scan's predicates that the limit
+    /// still wants. Only batches this stream judged itself count, and
+    /// only once the plan says its Filters trust that judgement
+    /// ([`BatchStream::stop_after_filtered_rows`]).
+    remaining: Option<usize>,
+    armed: bool,
+    /// Whether a batch nothing judged counts too: the scan has no
+    /// predicates, so every row passes them.
+    counts_unjudged: bool,
+    /// Whether the rows wanted are the last in key order, read end first.
+    from_end: bool,
+}
+
 /// Why a judged chunk decodes whole.
 enum Unrestricted {
     /// The predicates kept nearly every row.
@@ -1190,6 +1235,27 @@ enum Unrestricted {
 const SLICES_PER_SCAN_THREAD: usize = 4;
 /// Below this much remaining budget a prefetch round takes one slice.
 const TIGHT_CEILING_BYTES: usize = 64 * 1024 * 1024;
+/// The fewest rows a bounded fetch asks of a scan that filters them.
+const FILTERED_FETCH_ROWS: usize = 1024;
+/// A bounded scan that would ask for more rows than this in one fetch
+/// reads on unbounded, a round of slices at a time.
+const BOUNDED_FETCH_CEILING_ROWS: usize = 262_144;
+
+/// Rows a bounded scan asks for in its next fetch: what it still wants on
+/// the first, four times more on each fetch after it, and from the start
+/// several times what it wants when a filter stands between the rows read
+/// and the rows kept. `None` once that passes the ceiling.
+fn bounded_fetch_rows(wanted: usize, filtered: bool, round: u32) -> Option<usize> {
+    let base = if filtered {
+        wanted.saturating_mul(4).max(FILTERED_FETCH_ROWS)
+    } else {
+        wanted.max(1)
+    };
+    let rows = base.checked_shl(round.saturating_mul(2).min(usize::BITS - 1))?;
+    (rows >> round.saturating_mul(2).min(usize::BITS - 1) == base
+        && rows <= BOUNDED_FETCH_CEILING_ROWS)
+        .then_some(rows)
+}
 
 impl SnapshotStream {
     /// Narrows a not-yet-started streamed scan to the rows whose integer
@@ -1455,8 +1521,8 @@ fn planned_scan_rows(types: &[pintail_types::DataType], budget: usize) -> usize 
 /// one table be answered from another's rows.
 fn scan_signature(instance: u64, scan: &Scan) -> String {
     format!(
-        "i{instance}|{:?}|{:?}|{:?}",
-        scan.projected_column_ids, scan.predicates, scan.limit
+        "i{instance}|{:?}|{:?}|{:?}|{}",
+        scan.projected_column_ids, scan.predicates, scan.limit, scan.from_end
     )
 }
 
@@ -1470,6 +1536,11 @@ impl BatchStream for SnapshotStream {
 
     fn last_batch_prefiltered(&self) -> bool {
         self.last_prefiltered
+    }
+
+    fn stop_after_filtered_rows(&mut self) {
+        self.filtered.armed =
+            self.filtered.armed || (!self.started && self.filtered.remaining.is_some());
     }
 
     fn decode_note(&self) -> Option<String> {
@@ -1524,6 +1595,23 @@ impl BatchStream for SnapshotStream {
             let planned_rows = planned_scan_rows(&self.types, available_memory);
             let batch_overhead = batch_memory_upper_bound(&self.types, planned_rows);
             if self.prefetched.is_empty() {
+                // A scan under a limit reads what the limit still wants,
+                // not a round of slices: ten rows of a table used to cost
+                // every block of its first slice in every column.
+                let wanted = self
+                    .remaining
+                    .or(self.filtered.remaining.filter(|_| self.filtered.armed));
+                let fetch_rows = wanted.and_then(|wanted| {
+                    bounded_fetch_rows(
+                        wanted,
+                        self.prewhere.is_some() || self.adopt_filter.is_some(),
+                        self.budget_round,
+                    )
+                });
+                if fetch_rows.is_some() {
+                    self.budget_round = self.budget_round.saturating_add(1);
+                }
+                stream.set_row_budget(fetch_rows);
                 // One segment per scan-pool thread. These chunks decode inside
                 // that pool, so a width below its thread count leaves threads
                 // idle for the whole scan - the fixed eight this replaced used
@@ -1543,11 +1631,12 @@ impl BatchStream for SnapshotStream {
                 // Under a tight ceiling the scan takes one slice at a time,
                 // as it took one segment before slicing: the operators
                 // above need the room more than the scan needs width.
-                let prefetch_width = if available_memory < TIGHT_CEILING_BYTES {
-                    1
-                } else {
-                    pintail_store::projected_scan_width().saturating_mul(SLICES_PER_SCAN_THREAD)
-                };
+                let prefetch_width =
+                    if fetch_rows.is_some() || available_memory < TIGHT_CEILING_BYTES {
+                        1
+                    } else {
+                        pintail_store::projected_scan_width().saturating_mul(SLICES_PER_SCAN_THREAD)
+                    };
                 // Half of what is left, not all of it: the prefetch is one
                 // scan's working set and the operators above it reserve
                 // against the same ceiling. A scan that took the whole
@@ -1680,12 +1769,33 @@ impl BatchStream for SnapshotStream {
                 for (batches, chunk_bytes) in adopted {
                     released = released.saturating_add(chunk_bytes);
                     for (batch, prefiltered) in batches {
+                        if (prefiltered || self.filtered.counts_unjudged)
+                            && let Some(wanted) = &mut self.filtered.remaining
+                        {
+                            *wanted = wanted.saturating_sub(batch.visible_row_count());
+                        }
                         self.retained_bytes =
                             self.retained_bytes.saturating_add(batch.estimated_bytes());
                         self.ready.push_back((batch, prefiltered));
                     }
                 }
                 self.retained_bytes = self.retained_bytes.saturating_sub(released);
+                // Read from the end, only whole parts make the rows in
+                // hand every row from some key on.
+                if self.filtered.armed
+                    && self.filtered.remaining == Some(0)
+                    && (!self.filtered.from_end
+                        || self
+                            .stream
+                            .as_ref()
+                            .is_none_or(ProjectedScanStream::at_unit_boundary))
+                {
+                    // The batches in hand hold every row the limit above
+                    // can take: each counted row passed all of the scan's
+                    // predicates, and the Filters pass those untested.
+                    self.stream = None;
+                    break;
+                }
                 if self.ready.is_empty() {
                     // Every chunk of the round was empty (a slice whose rows
                     // the memtable all superseded, a predicate nothing met):
