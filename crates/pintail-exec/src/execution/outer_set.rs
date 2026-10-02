@@ -105,8 +105,10 @@ pub(super) enum SetState {
 /// Where one slot finds its outer values and its answers.
 pub(super) struct SetAnswers {
     /// Position in the operator's input of each outer column, in the order
-    /// the form's relations list them.
-    positions: Vec<usize>,
+    /// the form's relations list them. `None` for a column the form carries
+    /// and the subquery never reads from the outer row, which is NULL in
+    /// every tuple.
+    positions: Vec<Option<usize>>,
     /// Per relation: its synthetic table, where its columns start within a
     /// tuple, and their types.
     relations: Vec<OuterRelation>,
@@ -282,6 +284,7 @@ fn prepare(
     context: &DependentRow<'_>,
 ) -> Result<SetAnswers, &'static str> {
     let mut positions = Vec::new();
+    let mut every_outer_read_resolves = None;
     let mut relations = Vec::with_capacity(form.relations.len());
     let mut identity = form.text.clone();
     for relation in &form.relations {
@@ -295,20 +298,26 @@ fn prepare(
                 .collect(),
         ));
         for column in &relation.columns {
-            positions.push(
-                context
-                    .columns
-                    .iter()
-                    .position(|candidate| {
-                        candidate.database_id == column.database_id
-                            && candidate.table_id == column.table_id
-                            && candidate.column_id == column.column_id
-                            && candidate
-                                .relation_name
-                                .eq_ignore_ascii_case(&column.relation_name)
-                    })
-                    .ok_or("an outer column it reads is not in the operator's input")?,
-            );
+            let position = context.columns.iter().position(|candidate| {
+                candidate.database_id == column.database_id
+                    && candidate.table_id == column.table_id
+                    && candidate.column_id == column.column_id
+                    && candidate
+                        .relation_name
+                        .eq_ignore_ascii_case(&column.relation_name)
+            });
+            // A name a deeper subquery resolves to a relation of its own is
+            // carried by the form when an outer relation answers to it too,
+            // and the operator's input need not hold it. It is absent
+            // rightly only if every outer column the subquery does read is
+            // in the input.
+            if position.is_none()
+                && !*every_outer_read_resolves
+                    .get_or_insert_with(|| outer_reads_resolve(query, context))
+            {
+                return Err("an outer column it reads is not in the operator's input");
+            }
+            positions.push(position);
             // Writing to a String cannot fail.
             let _ = write!(
                 identity,
@@ -395,17 +404,34 @@ fn value_over_nothing(query: &BoundQuery, context: &DependentRow<'_>) -> Option<
     }
 }
 
+/// Whether every outer column `query` reads is one of the operator's input
+/// columns: substituting the current row leaves no outer reference behind.
+fn outer_reads_resolve(query: &BoundQuery, context: &DependentRow<'_>) -> bool {
+    let mut substituted = query.clone();
+    substituted.outer_set = None;
+    substitute_outer_query(
+        &mut substituted,
+        context.batch,
+        context.row,
+        context.columns,
+        &mut Vec::new(),
+    )
+    .is_ok()
+        && !super::bound_query_has_outer_refs(&substituted)
+}
+
 /// The outer tuple of `row`. `None` when a value's display does not
 /// identify it, which the memo refuses as a key for the same reason.
-fn tuple_at(batch: &RecordBatch, row: usize, positions: &[usize]) -> Option<Vec<Value>> {
+fn tuple_at(batch: &RecordBatch, row: usize, positions: &[Option<usize>]) -> Option<Vec<Value>> {
     positions
         .iter()
-        .map(|&position| {
-            batch
+        .map(|&position| match position {
+            None => Some(Value::Null),
+            Some(position) => batch
                 .column(position)
                 .and_then(|values| values.value(row))
                 .filter(|value| !matches!(value, Value::DecimalAverage(_)))
-                .cloned()
+                .cloned(),
         })
         .collect()
 }

@@ -299,6 +299,24 @@ fn a_subquery_in_a_subquery_select_list_is_resolved_per_qualifying_row() {
         limited.profile
     );
 
+    // The innermost relation may answer to the outermost one's name.
+    let shadowed = ran(
+        &fixture,
+        "SELECT p.id, (SELECT (SELECT p.weight FROM parcels p WHERE p.id = s.parcel_id) \
+                         FROM scans s WHERE s.id = p.id) AS owner_weight \
+         FROM parcels p ORDER BY p.id",
+    );
+    for row in &shadowed.rows {
+        let parcel: u64 = row[0].parse().expect("id");
+        let expected = (parcel <= SCANS).then(|| weight(scan(parcel).0));
+        assert_eq!(row[1], nullable(expected), "parcel {parcel}");
+    }
+    assert!(
+        shadowed.sets >= 1 && shadowed.per_row <= 4,
+        "{}",
+        shadowed.profile
+    );
+
     // A nested subquery that also reads the outermost row is only the
     // per-row path's to substitute.
     let fixture = super::outer_set_subquery::fixture(90);
