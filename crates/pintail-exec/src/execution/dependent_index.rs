@@ -18,6 +18,21 @@
 //! candidates: `EXISTS` stops at the first that is true, a scalar subquery
 //! takes the first under `LIMIT 1` and otherwise needs at most one.
 //!
+//! Three shapes are read as that one:
+//!
+//! - **A derived table that does not read the outer row** is a table: it is
+//!   read once, like one.
+//! - **A derived table that is a selection, some of whose conjuncts read
+//!   the outer row** - what a row constructor's `IN (SELECT ..)` is
+//!   rewritten to - is the same selection without those conjuncts, with
+//!   the conjuncts applied to its rows afterwards.
+//! - **A projection that is itself a subquery of the inner row** is
+//!   resolved against the one qualifying row by the ordinary dependent
+//!   path, whose own memo and index live as long as this index does.
+//!
+//! With no equality to key by, every inner row is a candidate for every
+//! outer row; that is only taken for an inner side of a few rows.
+//!
 //! What it must never change, and how each is kept:
 //!
 //! - **Comparison semantics**: only `inner_column = outer_expression` with
@@ -52,6 +67,7 @@ use pintail_sql::{
 use pintail_types::{DataType, Value};
 
 use super::join::{JoinHashKey, normalized_join_key};
+use super::memo::DependentMemo;
 use super::{
     DependentRow, ExecError, Execution, JoinKeyMode, KeyForm, MemoryTracker,
     dependent_subquery_memory_limit, substitute_outer_expr,
@@ -63,6 +79,10 @@ use crate::{LogicalPlanner, Optimizer, PhysicalPlanner, RecordBatch};
 /// Inner rows one index holds at most. A table larger than this is read by
 /// the per-row path, whose key filter can prune what a full read cannot.
 const MAX_INDEX_ROWS: usize = 4 << 20;
+
+/// Inner rows an index with no key holds at most: every one of them is
+/// evaluated for every outer row.
+const MAX_KEYLESS_ROWS: usize = 256;
 
 /// Inner rows per per-row execution the index waits out before building. A
 /// build reads the whole filtered table once; an outer input of a handful
@@ -109,7 +129,12 @@ enum Answer {
     /// The projection over the one qualifying row, NULL for none. With
     /// `first` (`LIMIT 1`) the first in scan order wins; without it a second
     /// qualifying row is the cardinality error.
-    Scalar { projection: BoundExpr, first: bool },
+    /// `nested` when the projection holds a subquery of the inner row.
+    Scalar {
+        projection: BoundExpr,
+        first: bool,
+        nested: bool,
+    },
 }
 
 /// How one key's two sides are normalized to compare.
@@ -148,6 +173,16 @@ enum BuiltAnswer {
         projection: CompiledExpr,
         first: bool,
     },
+    /// A projection holding subqueries of the inner row, resolved per
+    /// qualifying row by the dependent path under a memo of its own.
+    Nested {
+        projection: BoundExpr,
+        first: bool,
+        memo: Option<Box<DependentMemo>>,
+        /// Whether the projection has been seen to read nothing beyond the
+        /// inner row.
+        checked: bool,
+    },
 }
 
 /// A built index: the filtered inner rows and their keys.
@@ -170,6 +205,11 @@ pub(super) struct SubqueryIndex {
 
 impl SubqueryIndex {
     pub(super) fn release(&mut self, memory: &MemoryTracker) {
+        if let BuiltAnswer::Nested { memo, .. } = &mut self.answer
+            && let Some(memo) = memo.take()
+        {
+            super::record_dependent_memo(memo.finish(memory));
+        }
         memory.release(self.reserved);
         self.reserved = 0;
         self.batches.clear();
@@ -185,16 +225,24 @@ pub(crate) struct IndexStats {
     pub(super) declines: u64,
 }
 
-/// Decides, once per slot, whether `query` has a shape the index answers.
-pub(super) fn plan(query: &BoundQuery, form: SubqueryForm) -> IndexState {
-    analyse(query, form).map_or(IndexState::Declined, |(plan, estimated_rows)| {
-        IndexState::Pending {
-            plan: Box::new(plan),
-            remaining: estimated_rows.map_or(MAX_WAITED_EXECUTIONS, |rows| {
-                (rows / ROWS_PER_WAITED_EXECUTION).min(MAX_WAITED_EXECUTIONS)
-            }),
-        }
+/// Decides, once per slot, whether `query` has a shape the index answers,
+/// and says why not when it has none.
+pub(super) fn plan(query: &BoundQuery, form: SubqueryForm) -> Result<IndexState, &'static str> {
+    analyse(query, form).map(|(plan, estimated_rows)| IndexState::Pending {
+        plan: Box::new(plan),
+        remaining: estimated_rows.map_or(MAX_WAITED_EXECUTIONS, |rows| {
+            (rows / ROWS_PER_WAITED_EXECUTION).min(MAX_WAITED_EXECUTIONS)
+        }),
     })
+}
+
+/// Inner rows a built index holds.
+pub(super) fn indexed_rows(index: &SubqueryIndex) -> u64 {
+    index
+        .rows
+        .values()
+        .map(|rows| u64::try_from(rows.len()).unwrap_or(u64::MAX))
+        .sum()
 }
 
 /// The answer a query's projection and LIMIT ask for, when the index can
@@ -226,7 +274,8 @@ fn answer_of(query: &BoundQuery, form: SubqueryForm) -> Option<Answer> {
             };
             let mut inner = Vec::new();
             let mut has_outer = false;
-            if !plain_expression(&projection.expr) {
+            let nested = !plain_expression(&projection.expr);
+            if nested && !holds_only_subqueries(&projection.expr) {
                 return None;
             }
             columns_of(&projection.expr, &mut inner, &mut has_outer);
@@ -237,37 +286,58 @@ fn answer_of(query: &BoundQuery, form: SubqueryForm) -> Option<Answer> {
                 .then(|| Answer::Scalar {
                     projection: projection.expr.clone(),
                     first,
+                    nested,
                 })
         }
     }
 }
 
-fn analyse(query: &BoundQuery, form: SubqueryForm) -> Option<(IndexPlan, Option<u64>)> {
+#[allow(clippy::too_many_lines)] // one shape check, read top to bottom
+fn analyse(
+    query: &BoundQuery,
+    form: SubqueryForm,
+) -> Result<(IndexPlan, Option<u64>), &'static str> {
     let [source] = query.from.as_slice() else {
-        return None;
+        return Err("it reads more than one FROM item");
     };
-    if !source.joins.is_empty()
-        || source.base.input.is_some()
-        || !query.group_by.is_empty()
+    if !source.joins.is_empty() {
+        return Err("it joins");
+    }
+    if !query.group_by.is_empty()
         || !query.aggregates.is_empty()
         || !query.windows.is_empty()
         || query.having.is_some()
-        || !query.union_all.is_empty()
-        || !query.set_ops.is_empty()
-        || query.recursive.is_some()
     {
-        return None;
+        return Err("it aggregates or has a window function");
     }
-    let answer = answer_of(query, form)?;
+    if !query.union_all.is_empty() || !query.set_ops.is_empty() || query.recursive.is_some() {
+        return Err("it is a set operation");
+    }
+    // A derived table that reads the outer row is not one table read once;
+    // one that only renames a base table's columns is that table.
+    let flattened;
+    let query = match source.base.input.as_deref() {
+        Some(input) if super::bound_query_has_outer_refs(input) => {
+            flattened = lift_correlated(query, input)
+                .ok_or("its derived table reads the outer row and is not a plain selection")?;
+            &flattened
+        }
+        _ => query,
+    };
+    let [source] = query.from.as_slice() else {
+        return Err("it reads more than one FROM item");
+    };
+    let answer =
+        answer_of(query, form).ok_or("its select list, ORDER BY or LIMIT is not one it reads")?;
     let base = &source.base;
-    if base
-        .estimated_rows
-        .or(base.row_count)
-        .is_some_and(|rows| rows > MAX_INDEX_ROWS as u64)
-    {
-        return None;
+    let estimated_rows = base.estimated_rows.or(base.row_count);
+    if estimated_rows.is_some_and(|rows| rows > MAX_INDEX_ROWS as u64) {
+        return Err("its table is larger than an index holds");
     }
-    let filter = query.filter.as_ref()?;
+    let filter = query
+        .filter
+        .as_ref()
+        .ok_or("it has no WHERE reading the outer row")?;
     let mut conjuncts = Vec::new();
     flatten_and(filter, &mut conjuncts);
 
@@ -276,13 +346,13 @@ fn analyse(query: &BoundQuery, form: SubqueryForm) -> Option<(IndexPlan, Option<
     let mut residual = Vec::new();
     for conjunct in conjuncts {
         if !plain_expression(conjunct) {
-            return None;
+            return Err("a WHERE conjunct holds a subquery");
         }
         let mut inner_columns = Vec::new();
         let mut has_outer = false;
         columns_of(conjunct, &mut inner_columns, &mut has_outer);
         if inner_columns.iter().any(|column| !belongs_to(column, base)) {
-            return None;
+            return Err("a WHERE conjunct reads a column of another relation");
         }
         if !has_outer {
             uncorrelated.push(conjunct.clone());
@@ -292,8 +362,12 @@ fn analyse(query: &BoundQuery, form: SubqueryForm) -> Option<(IndexPlan, Option<
             residual.push(conjunct.clone());
         }
     }
-    if keys.is_empty() {
-        return None;
+    // With no key every inner row is a candidate for every outer row.
+    if keys.is_empty()
+        && (residual.is_empty()
+            || estimated_rows.is_some_and(|rows| rows > MAX_KEYLESS_ROWS as u64))
+    {
+        return Err("no equality keys its table by the outer row");
     }
 
     let mut layout: Vec<BoundColumn> = Vec::new();
@@ -301,7 +375,10 @@ fn analyse(query: &BoundQuery, form: SubqueryForm) -> Option<(IndexPlan, Option<
         if let Some(position) = layout.iter().position(|seen| same_column(seen, column)) {
             position
         } else {
-            layout.push(column.clone());
+            layout.push(BoundColumn {
+                outer: false,
+                ..column.clone()
+            });
             layout.len() - 1
         }
     };
@@ -314,8 +391,16 @@ fn analyse(query: &BoundQuery, form: SubqueryForm) -> Option<(IndexPlan, Option<
         })
         .collect::<Vec<_>>();
     let mut read = residual.iter().collect::<Vec<_>>();
-    if let Answer::Scalar { projection, .. } = &answer {
-        read.push(projection);
+    match &answer {
+        // Which of the inner row's columns a nested subquery reads is not
+        // looked for: the row is held whole.
+        Answer::Scalar { nested: true, .. } => {
+            for column in &base.columns {
+                add_column(column);
+            }
+        }
+        Answer::Scalar { projection, .. } => read.push(projection),
+        Answer::Exists => {}
     }
     for expression in read {
         let mut inner_columns = Vec::new();
@@ -323,14 +408,14 @@ fn analyse(query: &BoundQuery, form: SubqueryForm) -> Option<(IndexPlan, Option<
         columns_of(expression, &mut inner_columns, &mut has_outer);
         for column in inner_columns {
             if !belongs_to(column, base) {
-                return None;
+                return Err("its select list reads a column of another relation");
             }
             add_column(column);
         }
     }
 
     let materialize = materialize_query(query, &layout, uncorrelated);
-    Some((
+    Ok((
         IndexPlan {
             materialize,
             layout,
@@ -338,8 +423,125 @@ fn analyse(query: &BoundQuery, form: SubqueryForm) -> Option<(IndexPlan, Option<
             residual: conjoin(residual),
             answer,
         },
-        base.estimated_rows.or(base.row_count),
+        estimated_rows,
     ))
+}
+
+/// `query` with the conjuncts of its derived table - `input` - that read
+/// the outer row lifted out of it: the derived table is left reading no
+/// outer row, each inner column those conjuncts read is carried out as one
+/// more column of it, and the conjuncts join the query's own, reading those
+/// columns. A selection filters the same rows before or after it is
+/// projected, so the rows are the ones the query saw. `None` for a derived
+/// table that is more than a selection, or whose lifted columns would not
+/// compare outside it as they do inside.
+fn lift_correlated(query: &BoundQuery, input: &BoundQuery) -> Option<BoundQuery> {
+    if !input.group_by.is_empty()
+        || !input.aggregates.is_empty()
+        || !input.windows.is_empty()
+        || input.having.is_some()
+        || input.distinct
+        || !input.order_by.is_empty()
+        || input.hidden_sort_columns != 0
+        || !input.union_all.is_empty()
+        || !input.set_ops.is_empty()
+        || input.limit.is_some()
+        || input.recursive.is_some()
+    {
+        return None;
+    }
+    let mut conjuncts = Vec::new();
+    flatten_and(input.filter.as_ref()?, &mut conjuncts);
+    let (lifted, kept): (Vec<&BoundExpr>, Vec<&BoundExpr>) = conjuncts
+        .into_iter()
+        .partition(|conjunct| super::bound_expr_has_outer_refs(conjunct));
+    let mut flat = query.clone();
+    let derived = &mut flat.from.first_mut()?.base;
+    let mut inner = derived.input.take()?;
+    inner.filter = conjoin(kept.into_iter().cloned().collect());
+    // Only the conjuncts read the outer row: nothing else of the derived
+    // table may.
+    if super::bound_query_has_outer_refs(&inner) {
+        return None;
+    }
+    let mut carried: Vec<BoundColumn> = Vec::new();
+    let mut outside = Vec::with_capacity(lifted.len());
+    for conjunct in lifted {
+        if !plain_expression(conjunct) {
+            return None;
+        }
+        let mut conjunct = conjunct.clone();
+        if !carry_out(&mut conjunct, derived, &mut inner, &mut carried) {
+            return None;
+        }
+        outside.push(conjunct);
+    }
+    derived.input = Some(inner);
+    flat.filter = conjoin(flat.filter.take().into_iter().chain(outside).collect());
+    Some(flat)
+}
+
+/// Reads every inner column of a lifted conjunct through a column the
+/// derived table gains for it. `false` when a column's comparisons depend
+/// on something a derived column does not carry.
+fn carry_out(
+    expression: &mut BoundExpr,
+    derived: &mut pintail_sql::BoundTable,
+    inner: &mut BoundQuery,
+    carried: &mut Vec<BoundColumn>,
+) -> bool {
+    match &mut expression.kind {
+        BoundExprKind::Column(column) if column.outer => true,
+        BoundExprKind::Column(column) => {
+            if column.enum_labels.is_some()
+                || column.timestamp
+                || column.geometry
+                || column.bit_width.is_some()
+            {
+                return false;
+            }
+            let position = carried
+                .iter()
+                .position(|seen| same_column(seen, column))
+                .unwrap_or_else(|| {
+                    carried.push(column.clone());
+                    inner.projection.push(BoundProjection {
+                        name: format!("<lifted-{}>", carried.len()),
+                        expr: BoundExpr {
+                            data_type: Some(column.data_type),
+                            nullable: column.nullable,
+                            kind: BoundExprKind::Column(column.clone()),
+                        },
+                    });
+                    derived.columns.push(BoundColumn {
+                        database_id: derived.database_id,
+                        table_id: derived.table_id,
+                        column_id: u32::try_from(inner.projection.len()).unwrap_or(u32::MAX),
+                        relation_name: derived.relation_name.clone(),
+                        name: format!("<lifted-{}>", carried.len()),
+                        ..column.clone()
+                    });
+                    carried.len() - 1
+                });
+            let first = derived.columns.len() - carried.len();
+            let Some(outside) = derived.columns.get(first + position) else {
+                return false;
+            };
+            *column = outside.clone();
+            true
+        }
+        BoundExprKind::Literal(_) => true,
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            carry_out(expr, derived, inner, carried)
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            carry_out(left, derived, inner, carried) && carry_out(right, derived, inner, carried)
+        }
+        BoundExprKind::Scalar { args, .. } => args
+            .iter_mut()
+            .all(|argument| carry_out(argument, derived, inner, carried)),
+        _ => false,
+    }
 }
 
 /// The inner table filtered by `uncorrelated`, projecting `layout`.
@@ -376,6 +578,7 @@ fn materialize_query(
         limit: None,
         recursive: None,
         outer_set: None,
+        outer_set_refusal: None,
         text_collation: query.text_collation,
     }
 }
@@ -422,10 +625,40 @@ fn compile_for(
     }
     let answer = match &plan.answer {
         Answer::Exists => BuiltAnswer::Exists,
-        Answer::Scalar { projection, first } => BuiltAnswer::Scalar {
+        Answer::Scalar {
+            projection,
+            first,
+            nested: false,
+        } => BuiltAnswer::Scalar {
             projection: CompiledExpr::compile(projection, &plan.layout, context.collation).ok()?,
             first: *first,
         },
+        Answer::Scalar {
+            projection,
+            first,
+            nested: true,
+        } => {
+            // A nested subquery names the inner row's columns as outer
+            // ones. Were the operator's own input to carry a column of the
+            // same identity, which of the two a name means could not be
+            // told apart here.
+            if plan.layout.iter().any(|inner| {
+                context
+                    .columns
+                    .iter()
+                    .any(|outer| same_column(outer, inner))
+            }) {
+                return None;
+            }
+            BuiltAnswer::Nested {
+                projection: projection.clone(),
+                first: *first,
+                memo: Some(Box::new(DependentMemo::for_expressions(std::iter::once(
+                    projection,
+                )))),
+                checked: false,
+            }
+        }
     };
     Some((outer_keys, answer))
 }
@@ -482,7 +715,8 @@ pub(super) fn build(plan: &IndexPlan, context: &DependentRow<'_>) -> Option<Subq
                     }
                 }
                 indexed += 1;
-                if indexed > MAX_INDEX_ROWS {
+                if indexed > MAX_INDEX_ROWS || (plan.keys.is_empty() && indexed > MAX_KEYLESS_ROWS)
+                {
                     return None;
                 }
                 let row = u32::try_from(row).ok()?;
@@ -518,13 +752,57 @@ pub(super) fn answer(
     context: &DependentRow<'_>,
 ) -> Result<Option<Value>, ExecError> {
     let wanted = match index.answer {
-        BuiltAnswer::Exists | BuiltAnswer::Scalar { first: true, .. } => 1,
-        BuiltAnswer::Scalar { first: false, .. } => 2,
+        BuiltAnswer::Exists
+        | BuiltAnswer::Scalar { first: true, .. }
+        | BuiltAnswer::Nested { first: true, .. } => 1,
+        BuiltAnswer::Scalar { first: false, .. } | BuiltAnswer::Nested { first: false, .. } => 2,
     };
     let Some(found) = qualifying_rows(index, context, wanted)? else {
         return Ok(None);
     };
-    Ok(Some(match &index.answer {
+    Ok(Some(match &mut index.answer {
+        BuiltAnswer::Nested {
+            projection,
+            memo,
+            checked,
+            ..
+        } => match found.as_slice() {
+            [] => Value::Null,
+            [(batch, row)] => {
+                let rows = &index.batches[*batch as usize];
+                let row = *row as usize;
+                if !*checked {
+                    // Every outer column the projection names must be one
+                    // of the inner row's; one further out is only the
+                    // per-row path's to substitute.
+                    let mut probe = projection.clone();
+                    substitute_outer_expr(&mut probe, rows, row, &index.layout, &mut Vec::new())?;
+                    if super::bound_expr_has_outer_refs(&probe) {
+                        *memo = None;
+                        return Ok(None);
+                    }
+                    *checked = true;
+                }
+                let Some(memo) = memo.as_deref_mut() else {
+                    return Ok(None);
+                };
+                let inner = DependentRow {
+                    batch: rows,
+                    row,
+                    columns: &index.layout,
+                    provider: context.provider,
+                    memory: context.memory,
+                    collation: context.collation,
+                    ahead: &[],
+                };
+                let mut resolved = projection.clone();
+                memo.begin_row();
+                super::resolve_dependent_expr_subqueries(&mut resolved, &inner, memo)?;
+                CompiledExpr::compile(&resolved, &index.layout, context.collation)?
+                    .evaluate(rows, row)?
+            }
+            _ => return Err(ExecError::ScalarSubqueryRows { rows: found.len() }),
+        },
         BuiltAnswer::Exists => Value::Boolean(!found.is_empty()),
         BuiltAnswer::Scalar { projection, .. } => match found.as_slice() {
             [] => Value::Null,
@@ -733,6 +1011,29 @@ fn flatten_and<'a>(expression: &'a BoundExpr, conjuncts: &mut Vec<&'a BoundExpr>
         flatten_and(right, conjuncts);
     } else {
         conjuncts.push(expression);
+    }
+}
+
+/// Whether everything in `expression` that is not a plain node is a
+/// subquery: no aggregate or window slot of the inner query itself.
+fn holds_only_subqueries(expression: &BoundExpr) -> bool {
+    match &expression.kind {
+        BoundExprKind::Column(_)
+        | BoundExprKind::Literal(_)
+        | BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. } => true,
+        BoundExprKind::InSubquery { expr, .. } => holds_only_subqueries(expr),
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            holds_only_subqueries(expr)
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            holds_only_subqueries(left) && holds_only_subqueries(right)
+        }
+        BoundExprKind::Scalar { args, .. } => args.iter().all(holds_only_subqueries),
+        BoundExprKind::PreparedIn { .. }
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_) => false,
     }
 }
 

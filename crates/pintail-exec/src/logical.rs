@@ -326,6 +326,7 @@ impl LogicalPlanner {
             limit,
             recursive,
             outer_set: _,
+            outer_set_refusal: _,
         } = query;
 
         // Sorting a joined result materializes projected decimal values in

@@ -78,6 +78,8 @@ pub(crate) struct DependentMemo {
     /// Per subquery slot, the answers its set-at-a-time form has given
     /// (`outer_set`), or the fact that it declined.
     pub(super) outer_sets: HashMap<SubquerySlot, SetState>,
+    /// Slots whose missing set-at-a-time form has been explained.
+    refusals_noted: Vec<SubquerySlot>,
 }
 
 impl DependentMemo {
@@ -99,6 +101,24 @@ impl DependentMemo {
             indexes: HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: HashMap::new(),
+            refusals_noted: Vec::new(),
+        }
+    }
+
+    /// Says once, in the statement's profile, why `query` at `slot` has no
+    /// set-at-a-time form.
+    pub(super) fn note_refusal(
+        &mut self,
+        slot: SubquerySlot,
+        query: &BoundQuery,
+        memory: &MemoryTracker,
+    ) {
+        if query.outer_set.is_some() || self.refusals_noted.contains(&slot) {
+            return;
+        }
+        self.refusals_noted.push(slot);
+        if let Some(reason) = query.outer_set_refusal {
+            memory.note_decline("no set form", reason, &super::subquery_tables(query));
         }
     }
 
@@ -391,6 +411,7 @@ mod tests {
             indexes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
+            refusals_noted: Vec::new(),
         };
         memo.insert(&memory, 0, vec![Value::UInt64(1)], &[Value::UInt64(1)]);
         memo.insert(&memory, 0, vec![Value::UInt64(2)], &[Value::UInt64(2)]);
@@ -423,6 +444,7 @@ mod tests {
             indexes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
+            refusals_noted: Vec::new(),
         };
         memo.insert(&memory, 0, vec![Value::Null], &[Value::UInt64(0)]);
         memo.insert(
@@ -458,6 +480,7 @@ mod tests {
             indexes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
+            refusals_noted: Vec::new(),
         };
         let average = Value::DecimalAverage(Box::new(pintail_types::DecimalQuotient {
             label: "0.3333".to_owned(),
@@ -496,6 +519,7 @@ mod tests {
             indexes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
+            refusals_noted: Vec::new(),
         };
         memo.insert(&memory, 0, vec![Value::UInt64(1)], &[Value::UInt64(9)]);
         assert!(memo.entries.is_empty());

@@ -400,6 +400,7 @@ fn rewrite(
         limit: None,
         recursive: None,
         outer_set: None,
+        outer_set_refusal: None,
     };
     let mut derived = derive(
         target.table_name.clone(),

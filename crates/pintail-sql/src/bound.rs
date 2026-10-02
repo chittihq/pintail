@@ -1953,13 +1953,30 @@ pub enum BoundJoinKind {
 /// inner row matched.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OuterSetQuery {
-    /// The grouped query: ordinal, then value.
+    /// The query: ordinal, then value.
     pub query: BoundQuery,
+    /// What the rows of one ordinal are.
+    pub kind: OuterSetKind,
     /// The subquery as written. Two subqueries of one statement with the
     /// same text and the same outer columns ask the same question.
     pub text: String,
     /// The virtual relations, in the order their columns make up a tuple.
     pub relations: Vec<OuterSetRelation>,
+}
+
+/// What an [`OuterSetQuery`] answers for one outer tuple.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OuterSetKind {
+    /// At most one row: the subquery's value. An ordinal with no row takes
+    /// the value the subquery has over no rows.
+    Value,
+    /// Every row the subquery yields for the tuple, carrying its one
+    /// column: the members an `IN` tests, or the rows an `EXISTS` asks for.
+    Members,
+    /// Every row the subquery yields for the tuple, carrying a constant:
+    /// the subquery's select list is not one expression, so only whether a
+    /// row exists can be read.
+    Presence,
 }
 
 /// One virtual relation of an [`OuterSetQuery`].
@@ -2015,6 +2032,9 @@ pub struct BoundQuery {
     /// of a whole set of outer rows at once. The dependent path answers it
     /// from this form when it can and row by row otherwise.
     pub outer_set: Option<std::sync::Arc<OuterSetQuery>>,
+    /// Why a subquery correlated to the enclosing query has no
+    /// set-at-a-time form, for the profile to say.
+    pub outer_set_refusal: Option<&'static str>,
     /// The one collation every text comparison in this plan uses.
     ///
     /// Resolved once, at the end of binding, so the row loop dispatches on a

@@ -108,9 +108,10 @@ impl<'catalog> Binder<'catalog> {
         let result = nested.bind_query(query, ctes);
         self.next_derived_id.set(nested.next_derived_id.get());
         let mut bound = result?;
-        bound.outer_set = self
-            .outer_set_form(query, ctes, visible_tables, &bound)
-            .map(std::sync::Arc::new);
+        match self.outer_set_form(query, ctes, visible_tables, &bound) {
+            Ok(form) => bound.outer_set = Some(std::sync::Arc::new(form)),
+            Err(reason) => bound.outer_set_refusal = Some(reason),
+        }
         Ok(bound)
     }
 
@@ -589,6 +590,7 @@ impl<'catalog> Binder<'catalog> {
             limit: None,
             recursive: None,
             outer_set: None,
+            outer_set_refusal: None,
         }
     }
 
@@ -1090,6 +1092,7 @@ impl<'catalog> Binder<'catalog> {
             set_ops: Vec::new(),
             recursive: None,
             outer_set: None,
+            outer_set_refusal: None,
             windows,
             limit: None,
         })
@@ -2474,6 +2477,7 @@ impl<'catalog> Binder<'catalog> {
             limit: None,
             recursive: None,
             outer_set: None,
+            outer_set_refusal: None,
         };
         let table_id = self.next_derived_id.get();
         self.next_derived_id.set(table_id.saturating_sub(1));
@@ -4311,6 +4315,12 @@ fn bind_in_subquery(
             // midnight: both sides are read as DATETIME(6), the subquery's
             // column where it is produced.
             let (expr, value) = unify_temporal_operands(expr, query.projection[0].expr.clone());
+            // The set-at-a-time form projects the member as written.
+            if query.projection[0].expr != value {
+                query.outer_set = None;
+                query.outer_set_refusal =
+                    Some("its member is read as another temporal type than written");
+            }
             query.projection[0].expr = value;
             return Ok(BoundExpr {
                 kind: BoundExprKind::InSubquery {

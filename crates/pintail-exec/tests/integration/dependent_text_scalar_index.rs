@@ -362,7 +362,9 @@ fn a_cast_outer_number_under_an_explicit_collation_with_a_filter() {
 #[test]
 fn text_against_a_number_is_not_a_key() {
     // MySQL compares these as doubles: '3' equals 3 and '12.0' equals 12,
-    // where as text neither would. The index must not take it.
+    // where as text neither would. The index must not key by it: the few
+    // rows of the table are read once and every one is compared, as
+    // doubles, for every outer row.
     let (probes, words) = small_tables();
     let outcome = run(
         probes,
@@ -371,7 +373,7 @@ fn text_against_a_number_is_not_a_key() {
          THEN 1 ELSE 0 END FROM probes p ORDER BY p.id",
     );
     assert_eq!(answers(&outcome), ["0", "0", "1", "0", "0", "0", "0", "1"]);
-    assert_eq!((outcome.builds, outcome.probes), (0, 0));
+    assert_eq!((outcome.builds, outcome.probes), (1, 8));
 }
 
 #[test]

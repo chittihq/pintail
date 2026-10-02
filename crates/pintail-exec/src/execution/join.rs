@@ -4697,7 +4697,10 @@ pub(super) fn execute_nested_loop_join(
                         provider,
                         memory,
                         collation,
-                        ahead: &[],
+                        // A subquery correlated to the left side alone asks
+                        // the same of every pair of one left row, and of
+                        // every left row of the batch in one execution.
+                        ahead: std::slice::from_ref(&left_batch),
                     };
                     if memory.remaining() < memory.limit() / 2 {
                         super::record_dependent_memo(memo.finish(memory));

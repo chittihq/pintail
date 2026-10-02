@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- More correlated subqueries are answered for a batch of outer rows at once
+  instead of once per row: `EXISTS` and `NOT EXISTS` over a join, `IN` and
+  `NOT IN` (with their NULL answers computed from the same members), a
+  scalar subquery over a join that is not an aggregate, a row constructor
+  against a subquery, a subquery in the select list of another, and a
+  subquery in an outer join's ON condition that reads the join's left side.
+  `EXISTS` over an aggregate with no GROUP BY is answered without running
+  it, as its HAVING condition where it has one.
+- A statement's profile (`PINTAIL_PROFILE`, `EXPLAIN ANALYZE`) lists what its
+  correlated subqueries did - set-at-a-time executions, hash indexes built,
+  per-row executions - and the reason each one left to the per-row path was
+  left there.
+
+### Fixed
+
+- A correlated subquery whose aggregate sits under a function, such as
+  `COALESCE(SUM(x), 0)`, was classified as volatile and executed once per
+  outer row with no sharing between rows. It is now memoized and batched
+  like the bare aggregate.
+
 ## [0.1.7-rc2] - 2026-10-02
 
 Replication that survives very large transactions, kills and schema

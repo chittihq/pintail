@@ -68,22 +68,22 @@ fn stored(id: u64, values: Vec<Value>) -> StoredRow {
 }
 
 /// Parcels with scans: every scan `k` belongs to parcel `k % SCANNED + 1`.
-const SCANNED: u64 = 200;
-const SCANS: u64 = 600;
+pub(super) const SCANNED: u64 = 200;
+pub(super) const SCANS: u64 = 600;
 
 /// `parcels` rows of labels that repeat heavily (and are NULL for every
 /// seventeenth), so every page boundary falls inside a tie group; 600 scans
 /// over the first 200 parcels; four zones, the odd ones open.
-struct Fixture {
+pub(super) struct Fixture {
     _directories: [tempfile::TempDir; 3],
-    snapshots: [pintail_store::TableSnapshot; 3],
-    catalog: CatalogSnapshot,
+    pub(super) snapshots: [pintail_store::TableSnapshot; 3],
+    pub(super) catalog: CatalogSnapshot,
 }
 
 const DATABASE: u64 = 11;
 const TABLES: [u64; 3] = [111, 112, 113];
 
-fn fixture(parcels: u64) -> Fixture {
+pub(super) fn fixture(parcels: u64) -> Fixture {
     let directories = [(); 3].map(|()| tempfile::tempdir().expect("table dir"));
     let parcel_rows = (1..=parcels)
         .map(|id| {
@@ -175,7 +175,7 @@ fn render(value: &Value) -> String {
 
 /// The rows of `sql`, the per-row inner executions and the set executions
 /// the dependent path ran for it.
-fn run(fixture: &Fixture, sql: &str) -> (Vec<Vec<String>>, u64, u64) {
+pub(super) fn run(fixture: &Fixture, sql: &str) -> (Vec<Vec<String>>, u64, u64) {
     let database_id = DatabaseId::new(DATABASE);
     let provider = SnapshotScanProvider::new([
         (database_id, TableId::new(TABLES[0]), &fixture.snapshots[0]),
@@ -224,10 +224,10 @@ fn run(fixture: &Fixture, sql: &str) -> (Vec<Vec<String>>, u64, u64) {
     )
 }
 
-const PARCELS: u64 = 300;
+pub(super) const PARCELS: u64 = 300;
 
 /// Scan `k`'s columns: its parcel, `ok` (NULL for every fifth) and zone.
-fn scan(k: u64) -> (u64, Option<u64>, u64) {
+pub(super) fn scan(k: u64) -> (u64, Option<u64>, u64) {
     (
         k % SCANNED + 1,
         (!k.is_multiple_of(5)).then_some(k % 3),
@@ -235,7 +235,7 @@ fn scan(k: u64) -> (u64, Option<u64>, u64) {
     )
 }
 
-fn scans_of(parcel: u64) -> Vec<(Option<u64>, u64)> {
+pub(super) fn scans_of(parcel: u64) -> Vec<(Option<u64>, u64)> {
     (1..=SCANS)
         .map(scan)
         .filter(|(owner, ..)| *owner == parcel)
@@ -243,11 +243,11 @@ fn scans_of(parcel: u64) -> Vec<(Option<u64>, u64)> {
         .collect()
 }
 
-fn weight(parcel: u64) -> u64 {
+pub(super) fn weight(parcel: u64) -> u64 {
     parcel * 31 % 101
 }
 
-fn nullable(value: Option<u64>) -> String {
+pub(super) fn nullable(value: Option<u64>) -> String {
     value.map_or_else(|| "NULL".to_owned(), |value| value.to_string())
 }
 

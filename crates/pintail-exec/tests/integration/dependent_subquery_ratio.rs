@@ -181,7 +181,7 @@ fn measure(fixture: &Fixture, sql: &str) -> (usize, u64, f64) {
 
 /// The three correlated shapes, each written so it cannot decorrelate into
 /// a join: the scalar and EXISTS carry a LIMIT, the IN joins two inner
-/// relations. The EXISTS correlates through `i.k + 0` rather than the bare
+/// relations and is DISTINCT, which keeps it off the set-at-a-time form. The EXISTS correlates through `i.k + 0` rather than the bare
 /// column, which keeps it off the dependent `EXISTS` index (that answers a
 /// bare integer column equality without per-row executions at all) so this
 /// sweep keeps measuring the memo. A shape the optimizer rewrote would report zero inner
@@ -199,7 +199,7 @@ const SHAPES: [(&str, &str); 3] = [
     ),
     (
         "in",
-        "SELECT o.id FROM outer_t o WHERE o.k IN (SELECT i.k FROM inner_t i JOIN inner_t j ON \
+        "SELECT o.id FROM outer_t o WHERE o.k IN (SELECT DISTINCT i.k FROM inner_t i JOIN inner_t j ON \
          j.id = i.id AND i.k = o.k WHERE j.x > 5)",
     ),
 ];

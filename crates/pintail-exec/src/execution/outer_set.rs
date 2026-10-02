@@ -1,5 +1,4 @@
-//! Correlated scalar aggregate subqueries answered a batch of outer rows
-//! at a time.
+//! Correlated subqueries answered a batch of outer rows at a time.
 //!
 //! The dependent path answers `(SELECT SUM(..) FROM t JOIN u .. WHERE t.k =
 //! o.k ..)` by planning and executing it once per outer row. The memo
@@ -17,6 +16,13 @@
 //! tuples, serves them to the form's virtual relations from memory,
 //! executes the form once, and keeps the value of every tuple. Each row is
 //! then a hash lookup.
+//!
+//! A subquery read row by row - the members of an `IN`, the rows an
+//! `EXISTS` asks for - has a form too: the same join, ungrouped. Its rows
+//! are kept per tuple in the order the execution yields them, NULLs
+//! included, and each outer row is handed the rows of its own tuple, from
+//! which `IN`, `NOT IN` and `EXISTS` are answered exactly as they are from
+//! the rows of a per-row execution.
 //!
 //! What it must never change, and how each is kept:
 //!
@@ -52,7 +58,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundJoinKind, BoundQuery, BoundTable,
-    OuterSetQuery, ScalarFunction,
+    OuterSetKind, OuterSetQuery, ScalarFunction,
 };
 use pintail_types::{DataType, Value};
 
@@ -76,6 +82,13 @@ pub(super) type StatementSets = Arc<Mutex<HashMap<String, Arc<Mutex<SharedAnswer
 pub(super) struct SharedAnswers {
     /// The subquery's value for each outer tuple answered so far.
     answers: HashMap<Vec<Value>, Value>,
+    /// For a subquery read row by row, the rows of each outer tuple
+    /// answered so far.
+    rows: HashMap<Vec<Value>, Arc<Vec<Value>>>,
+    /// Set once the form gave up, for every operator of the statement: an
+    /// operator that drops its memo under memory pressure must not try the
+    /// form again on every row.
+    declined: bool,
     /// The subquery's value over no rows.
     empty: Value,
 }
@@ -98,11 +111,37 @@ pub(super) struct SetAnswers {
     /// tuple, and their types.
     relations: Vec<OuterRelation>,
     shared: Arc<Mutex<SharedAnswers>>,
+    /// Executions in a row that answered a single tuple.
+    lone_fills: u32,
+}
+
+/// Executions in a row answering one tuple each after which a form is
+/// given up: its operator hands it one outer row at a time, and a join
+/// against one outer row costs more than the subquery run for that row.
+const MAX_LONE_FILLS: u32 = 8;
+
+/// Outer tuples below which a subquery read row by row is left to the
+/// per-row path: for a handful of rows, each run pinned to its own key
+/// reads less than one run joined to all of them.
+const MIN_ROW_FORM_TUPLES: usize = 8;
+
+/// What one execution of a form did.
+enum Filled {
+    /// Answered this many tuples.
+    Answered(usize),
+    /// Left the tuples it was offered unanswered: there were too few.
+    TooFew,
 }
 
 /// A virtual relation's synthetic table, the offset of its first column
 /// within a tuple, and its column types.
 type OuterRelation = (TableId, usize, Vec<DataType>);
+
+/// What a form answers one outer row with.
+enum Answered {
+    Value(Value),
+    Rows(Arc<Vec<Value>>),
+}
 
 /// The subquery's value for the current row from its set-at-a-time form,
 /// or `None` for the other paths to answer.
@@ -113,28 +152,119 @@ pub(super) fn answer(
     context: &DependentRow<'_>,
     memo: &mut DependentMemo,
 ) -> Result<Option<Value>, ExecError> {
+    if form.kind != OuterSetKind::Value {
+        return Ok(None);
+    }
+    Ok(match answered(slot, query, form, context, memo)? {
+        Some(Answered::Value(value)) => Some(value),
+        _ => None,
+    })
+}
+
+/// The rows a subquery read row by row yields for the current row, from
+/// its set-at-a-time form, or `None` for the other paths to answer.
+pub(super) fn rows(
+    slot: SubquerySlot,
+    query: &BoundQuery,
+    form: &OuterSetQuery,
+    context: &DependentRow<'_>,
+    memo: &mut DependentMemo,
+) -> Result<Option<Arc<Vec<Value>>>, ExecError> {
+    if form.kind == OuterSetKind::Value {
+        return Ok(None);
+    }
+    Ok(match answered(slot, query, form, context, memo)? {
+        Some(Answered::Rows(rows)) => Some(rows),
+        _ => None,
+    })
+}
+
+fn answered(
+    slot: SubquerySlot,
+    query: &BoundQuery,
+    form: &OuterSetQuery,
+    context: &DependentRow<'_>,
+    memo: &mut DependentMemo,
+) -> Result<Option<Answered>, ExecError> {
     if !memo.memoizable(slot) {
         return Ok(None);
     }
-    let mut state = memo.outer_sets.remove(&slot).unwrap_or_else(|| {
-        prepare(query, form, context).map_or(SetState::Declined, |answers| {
-            SetState::Ready(Box::new(answers))
-        })
-    });
+    let mut state =
+        memo.outer_sets
+            .remove(&slot)
+            .unwrap_or_else(|| match prepare(query, form, context) {
+                Ok(answers) => SetState::Ready(Box::new(answers)),
+                Err(reason) => {
+                    context
+                        .memory
+                        .note_decline("set form declined", reason, &form.text);
+                    SetState::Declined
+                }
+            });
     let mut found = None;
     let mut failed = false;
-    if let SetState::Ready(set) = &state
+    let mut alone = false;
+    let mut few = false;
+    if let SetState::Ready(set) = &mut state
         && let Some(tuple) = tuple_at(context.batch, context.row, &set.positions)
     {
-        let mut shared = set.shared.lock().unwrap_or_else(PoisonError::into_inner);
-        if !shared.answers.contains_key(&tuple) {
-            failed = fill(set, &mut shared, form, context).is_err();
+        let shared = Arc::clone(&set.shared);
+        let mut shared = shared.lock().unwrap_or_else(PoisonError::into_inner);
+        let known = match form.kind {
+            OuterSetKind::Value => shared.answers.contains_key(&tuple),
+            OuterSetKind::Members | OuterSetKind::Presence => shared.rows.contains_key(&tuple),
+        };
+        if !known {
+            if set.lone_fills >= MAX_LONE_FILLS {
+                alone = true;
+            } else {
+                match fill(set, &mut shared, form, context) {
+                    Ok(Filled::Answered(answered)) if answered <= 1 => set.lone_fills += 1,
+                    Ok(Filled::Answered(_)) => set.lone_fills = 0,
+                    Ok(Filled::TooFew) => few = true,
+                    Err(_) => failed = true,
+                }
+            }
         }
         if !failed {
-            found = shared.answers.get(&tuple).cloned();
+            found = match form.kind {
+                OuterSetKind::Value => shared.answers.get(&tuple).cloned().map(Answered::Value),
+                OuterSetKind::Members | OuterSetKind::Presence => {
+                    shared.rows.get(&tuple).cloned().map(Answered::Rows)
+                }
+            };
         }
     }
+    if (few || alone || failed)
+        && let SetState::Ready(set) = &state
+    {
+        set.shared
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .declined = true;
+    }
+    if few {
+        context.memory.note_decline(
+            "set form declined",
+            "too few outer rows to answer at once; the per-row path answers",
+            &form.text,
+        );
+        state = SetState::Declined;
+    }
+    if alone {
+        context.memory.note_decline(
+            "set form declined",
+            "its outer rows arrive one at a time; the per-row path answers",
+            &form.text,
+        );
+        state = SetState::Declined;
+    }
     if failed {
+        context.memory.note_decline(
+            "set form declined",
+            "its execution failed; the per-row path answers",
+            &form.text,
+        );
         state = SetState::Declined;
     }
     memo.outer_sets.insert(slot, state);
@@ -150,7 +280,7 @@ fn prepare(
     query: &BoundQuery,
     form: &OuterSetQuery,
     context: &DependentRow<'_>,
-) -> Option<SetAnswers> {
+) -> Result<SetAnswers, &'static str> {
     let mut positions = Vec::new();
     let mut relations = Vec::with_capacity(form.relations.len());
     let mut identity = form.text.clone();
@@ -165,14 +295,20 @@ fn prepare(
                 .collect(),
         ));
         for column in &relation.columns {
-            positions.push(context.columns.iter().position(|candidate| {
-                candidate.database_id == column.database_id
-                    && candidate.table_id == column.table_id
-                    && candidate.column_id == column.column_id
-                    && candidate
-                        .relation_name
-                        .eq_ignore_ascii_case(&column.relation_name)
-            })?);
+            positions.push(
+                context
+                    .columns
+                    .iter()
+                    .position(|candidate| {
+                        candidate.database_id == column.database_id
+                            && candidate.table_id == column.table_id
+                            && candidate.column_id == column.column_id
+                            && candidate
+                                .relation_name
+                                .eq_ignore_ascii_case(&column.relation_name)
+                    })
+                    .ok_or("an outer column it reads is not in the operator's input")?,
+            );
             // Writing to a String cannot fail.
             let _ = write!(
                 identity,
@@ -192,9 +328,16 @@ fn prepare(
     let shared = if let Some(shared) = existing {
         shared
     } else {
+        let empty = match form.kind {
+            OuterSetKind::Value => value_over_nothing(query, context)
+                .ok_or("its value over no rows could not be taken")?,
+            OuterSetKind::Members | OuterSetKind::Presence => Value::Null,
+        };
         let shared = Arc::new(Mutex::new(SharedAnswers {
             answers: HashMap::new(),
-            empty: value_over_nothing(query, context)?,
+            rows: HashMap::new(),
+            declined: false,
+            empty,
         }));
         statement
             .lock()
@@ -202,10 +345,18 @@ fn prepare(
             .insert(identity, Arc::clone(&shared));
         shared
     };
-    Some(SetAnswers {
+    if shared
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .declined
+    {
+        return Err("it gave up earlier in this statement");
+    }
+    Ok(SetAnswers {
         positions,
         relations,
         shared,
+        lone_fills: 0,
     })
 }
 
@@ -272,6 +423,7 @@ fn unanswered(
         for row in batch.selection().selected_rows() {
             if let Some(tuple) = tuple_at(batch, row, &set.positions)
                 && !shared.answers.contains_key(&tuple)
+                && !shared.rows.contains_key(&tuple)
                 && seen.insert(tuple.clone())
             {
                 tuples.push(tuple);
@@ -288,8 +440,12 @@ fn fill(
     shared: &mut SharedAnswers,
     form: &OuterSetQuery,
     context: &DependentRow<'_>,
-) -> Result<(), ExecError> {
+) -> Result<Filled, ExecError> {
     let tuples = unanswered(set, shared, context);
+    let answered = tuples.len();
+    if form.kind != OuterSetKind::Value && answered < MIN_ROW_FORM_TUPLES {
+        return Ok(Filled::TooFew);
+    }
     let bytes = tuples.iter().fold(0_usize, |total, tuple| {
         tuple.iter().fold(
             total
@@ -342,6 +498,19 @@ fn fill(
         context.memory.deadline,
         context.collation,
     )?;
+    context.memory.note_subquery(
+        "set execution",
+        &form.text,
+        u64::try_from(tuples.len()).unwrap_or(u64::MAX),
+    );
+    if form.kind != OuterSetKind::Value {
+        let rows = collect_rows(&mut execution, form.kind, tuples.len(), context)?;
+        drop(execution);
+        for (tuple, rows) in tuples.into_iter().zip(rows) {
+            shared.rows.insert(tuple, Arc::new(rows));
+        }
+        return Ok(Filled::Answered(answered));
+    }
     let mut values: Vec<Option<Value>> = vec![None; tuples.len()];
     let mut grown = 0_usize;
     while let Some(batch) = execution.next_batch()? {
@@ -372,7 +541,50 @@ fn fill(
         let value = value.unwrap_or_else(|| shared.empty.clone());
         shared.answers.insert(tuple, value);
     }
-    Ok(())
+    Ok(Filled::Answered(answered))
+}
+
+/// The rows of a form read row by row, per ordinal, in the order the
+/// execution yields them. Only whether a row exists is read of a
+/// `Presence` form, so one row per ordinal is kept. The rows' bytes stay
+/// charged to the statement.
+fn collect_rows(
+    execution: &mut Execution,
+    kind: OuterSetKind,
+    tuples: usize,
+    context: &DependentRow<'_>,
+) -> Result<Vec<Vec<Value>>, ExecError> {
+    let mut rows: Vec<Vec<Value>> = vec![Vec::new(); tuples];
+    while let Some(batch) = execution.next_batch()? {
+        let mut grown = 0_usize;
+        for row in batch.selection().selected_rows() {
+            let ordinal = match batch.column(0).and_then(|column| column.value(row)) {
+                Some(Value::UInt64(ordinal)) => usize::try_from(*ordinal).ok(),
+                Some(Value::Int64(ordinal)) => usize::try_from(*ordinal).ok(),
+                _ => None,
+            };
+            let value = batch.column(1).and_then(|column| column.value(row));
+            let (Some(ordinal), Some(value)) = (ordinal, value) else {
+                return Err(ExecError::InvalidBatch(
+                    "outer-set subquery result is missing its ordinal or value",
+                ));
+            };
+            let Some(held) = rows.get_mut(ordinal) else {
+                return Err(ExecError::InvalidBatch(
+                    "outer-set subquery answered an ordinal out of range",
+                ));
+            };
+            if kind == OuterSetKind::Presence && !held.is_empty() {
+                continue;
+            }
+            grown = grown
+                .saturating_add(size_of::<Value>())
+                .saturating_add(value.heap_bytes());
+            held.push(value.clone());
+        }
+        context.memory.reserve(grown)?;
+    }
+    Ok(rows)
 }
 
 /// Input rows an operator reads ahead of the row it is answering when one
@@ -390,17 +602,20 @@ pub(super) fn window_rows<'a>(expressions: impl Iterator<Item = &'a BoundExpr>) 
 
 fn holds_outer_set(expression: &BoundExpr) -> bool {
     match &expression.kind {
-        BoundExprKind::ScalarSubquery(query) => query.outer_set.is_some(),
-        BoundExprKind::InSubquery { expr, .. }
-        | BoundExprKind::PreparedIn { expr, .. }
+        BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
+            query.outer_set.is_some()
+        }
+        BoundExprKind::InSubquery { expr, query, .. } => {
+            query.outer_set.is_some() || holds_outer_set(expr)
+        }
+        BoundExprKind::PreparedIn { expr, .. }
         | BoundExprKind::Unary { expr, .. }
         | BoundExprKind::IsNull { expr, .. } => holds_outer_set(expr),
         BoundExprKind::Binary { left, right, .. } => {
             holds_outer_set(left) || holds_outer_set(right)
         }
         BoundExprKind::Scalar { args, .. } => args.iter().any(holds_outer_set),
-        BoundExprKind::ExistsSubquery { .. }
-        | BoundExprKind::Column(_)
+        BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
         | BoundExprKind::Window(_)

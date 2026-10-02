@@ -1950,6 +1950,10 @@ pub struct ExecutionProfile {
     pub total: Duration,
     /// The execution's spill counters at the snapshot.
     pub spill: spill::QuerySpillMetrics,
+    /// What the statement's dependent subqueries did: executions of a
+    /// set-at-a-time form, hash indexes built, per-row executions, and the
+    /// reason each subquery left to the per-row path was left there.
+    pub subqueries: Vec<String>,
 }
 
 impl ExecutionProfile {
@@ -2033,6 +2037,9 @@ impl ExecutionProfile {
                 let _ = write!(output, " ({note})");
             }
             output.push('\n');
+        }
+        for line in &self.subqueries {
+            let _ = writeln!(output, "Subquery {line}");
         }
         output
     }
@@ -2147,6 +2154,58 @@ pub struct MemoryTracker {
     /// Answers of the statement's set-at-a-time subqueries, shared by the
     /// operators that each hold a copy of one (`outer_set`).
     outer_sets: outer_set::StatementSets,
+    /// What the statement's dependent subqueries did, for its profile.
+    subqueries: std::sync::Arc<SubqueryLog>,
+}
+
+/// What a statement's dependent subqueries did: each event with what it
+/// was about, how many times it happened and how many rows it covered.
+#[derive(Debug, Default)]
+struct SubqueryLog(std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>>);
+
+/// Reasons a dependent subquery was left to the per-row path, since the
+/// last take. A measurement hook, bounded so an unread log cannot grow.
+static DEPENDENT_DECLINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+const MAX_DECLINES_HELD: usize = 1_024;
+
+/// Takes the reasons dependent subqueries were left to the per-row path
+/// since the last take, each as `event: reason: subquery`.
+#[must_use]
+pub fn take_dependent_declines() -> Vec<String> {
+    std::mem::take(
+        &mut *DEPENDENT_DECLINES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+}
+
+/// The start of a subquery's text, enough to tell it from its siblings.
+fn subquery_subject(text: &str) -> String {
+    const SHOWN: usize = 96;
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= SHOWN {
+        flat
+    } else {
+        let mut shown = flat.chars().take(SHOWN).collect::<String>();
+        shown.push_str("..");
+        shown
+    }
+}
+
+/// What a bound subquery reads, for a log line about a subquery whose text
+/// is not kept.
+fn subquery_tables(query: &BoundQuery) -> String {
+    let mut names = Vec::new();
+    for source in &query.from {
+        names.push(source.base.table_name.as_str());
+        names.extend(
+            source
+                .joins
+                .iter()
+                .map(|join| join.table.table_name.as_str()),
+        );
+    }
+    format!("subquery over {}", names.join(", "))
 }
 
 impl Clone for MemoryTracker {
@@ -2164,6 +2223,7 @@ impl Clone for MemoryTracker {
             spill: self.spill.clone(),
             profile: self.profile.clone(),
             outer_sets: std::sync::Arc::clone(&self.outer_sets),
+            subqueries: std::sync::Arc::clone(&self.subqueries),
         }
     }
 }
@@ -2228,6 +2288,7 @@ impl MemoryTracker {
             spill: spill::QuerySpill::new(),
             profile: None,
             outer_sets: outer_set::StatementSets::default(),
+            subqueries: std::sync::Arc::default(),
         }
     }
 
@@ -2245,12 +2306,50 @@ impl MemoryTracker {
             spill: self.spill.clone(),
             profile: self.profile.clone(),
             outer_sets: std::sync::Arc::clone(&self.outer_sets),
+            subqueries: std::sync::Arc::clone(&self.subqueries),
         }
     }
 
     /// The statement's set-at-a-time subquery answers.
     fn outer_sets(&self) -> &outer_set::StatementSets {
         &self.outer_sets
+    }
+
+    /// Records that `event` happened to the subquery `subject`, covering
+    /// `rows` rows, for the statement's profile.
+    fn note_subquery(&self, event: &str, subject: &str, rows: u64) {
+        let key = format!("{event}: {}", subquery_subject(subject));
+        let mut log = self
+            .subqueries
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = log.entry(key).or_default();
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = entry.1.saturating_add(rows);
+    }
+
+    /// Records why the subquery `subject` was left to the per-row path.
+    fn note_decline(&self, event: &str, reason: &str, subject: &str) {
+        let line = format!("{event}: {reason}");
+        self.note_subquery(&line, subject, 0);
+        let mut declines = DEPENDENT_DECLINES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if declines.len() < MAX_DECLINES_HELD {
+            declines.push(format!("{line}: {}", subquery_subject(subject)));
+        }
+    }
+
+    /// The statement's subquery events, one line each.
+    fn subquery_lines(&self) -> Vec<String> {
+        self.subqueries
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(event, (count, rows))| format!("{event} count={count} rows={rows}"))
+            .collect()
     }
 
     /// Returns the hard byte limit.
@@ -2766,6 +2865,7 @@ impl Execution {
             operators: sink.operators(),
             total: self.started.elapsed(),
             spill: self.memory.spill_metrics(),
+            subqueries: self.memory.subquery_lines(),
         })
     }
 
@@ -3671,6 +3771,9 @@ fn dependent_subquery_values_at(
     if let Some(values) = memo.get(slot, &key) {
         return Ok(values);
     }
+    context
+        .memory
+        .note_subquery("per-row execution", &subquery_tables(&query), 1);
     let values = materialize_subquery(
         query,
         context.provider,
@@ -3694,6 +3797,7 @@ pub(super) fn resolve_dependent_expr_subqueries(
     match &mut expression.kind {
         BoundExprKind::ScalarSubquery(query) => {
             let slot = memo.next_slot();
+            memo.note_refusal(slot, query, context.memory);
             let value = if let Some(form) = query.outer_set.clone()
                 && let Some(value) = outer_set::answer(slot, query, &form, context, memo)?
             {
@@ -3706,6 +3810,20 @@ pub(super) fn resolve_dependent_expr_subqueries(
                 memo,
             )? {
                 value
+            } else if matches!(
+                memo.indexes.get(&slot),
+                Some(dependent_index::IndexState::Declined)
+            ) && let Some(form) = query.outer_set.clone()
+                && form.kind == pintail_sql::OuterSetKind::Members
+                && let Some(rows) = outer_set::rows(slot, query, &form, context, memo)?
+            {
+                // The rows this outer row's execution would have yielded:
+                // none is NULL, and a second one is the error it raises.
+                match rows.as_slice() {
+                    [] => Value::Null,
+                    [value] => value.clone(),
+                    _ => return Err(ExecError::ScalarSubqueryRows { rows: 2 }),
+                }
             } else {
                 let values = dependent_subquery_values_at(slot, query, context, memo, Some(2))?;
                 match values.as_slice() {
@@ -3719,15 +3837,27 @@ pub(super) fn resolve_dependent_expr_subqueries(
         }
         BoundExprKind::ExistsSubquery { query, negated } => {
             let slot = memo.next_slot();
-            let found = match dependent_answer_from_index(
+            let found = if let Some(found) = dependent_answer_from_index(
                 slot,
                 query,
                 dependent_index::SubqueryForm::Exists,
                 context,
                 memo,
             )? {
-                Some(found) => predicate_truth(&found)?,
-                None => {
+                predicate_truth(&found)?
+            } else {
+                // A shape the index has refused for good may still have a
+                // set-at-a-time form; one it is waiting to build does not
+                // need a second way to be answered.
+                memo.note_refusal(slot, query, context.memory);
+                if matches!(
+                    memo.indexes.get(&slot),
+                    Some(dependent_index::IndexState::Declined)
+                ) && let Some(form) = query.outer_set.clone()
+                    && let Some(rows) = outer_set::rows(slot, query, &form, context, memo)?
+                {
+                    !rows.is_empty()
+                } else {
                     !dependent_subquery_values_at(slot, query, context, memo, Some(1))?.is_empty()
                 }
             };
@@ -3745,58 +3875,72 @@ pub(super) fn resolve_dependent_expr_subqueries(
                 .first()
                 .and_then(|projection| projection.expr.data_type);
             let slot = memo.next_slot();
-            let mut resolved = (**query).clone();
-            let mut key = Vec::new();
-            substitute_outer_query(
-                &mut resolved,
-                context.batch,
-                context.row,
-                context.columns,
-                &mut key,
-            )?;
-            let values = if let Some(values) = memo.get(slot, &key) {
-                values
+            memo.note_refusal(slot, query, context.memory);
+            let members = match query.outer_set.clone() {
+                Some(form) if form.kind == pintail_sql::OuterSetKind::Members => {
+                    outer_set::rows(slot, query, &form, context, memo)?
+                }
+                _ => None,
+            };
+            let values = if let Some(members) = members {
+                members.as_ref().clone()
             } else {
-                match membership::materialize_membership(
-                    resolved,
-                    context.provider,
-                    dependent_subquery_memory_limit(context.memory, context.batch)?,
-                    context.memory.deadline,
-                    query
-                        .projection
-                        .first()
-                        .map_or_else(
-                            || expr.text_collation(),
-                            |projection| {
-                                BoundExpr::shared_text_collation(&[&**expr, &projection.expr])
-                            },
-                        )
-                        .and_then(Collation::from_mysql_name)
-                        .unwrap_or(context.collation),
-                    context.memory.spill(),
-                    expr.data_type,
-                    projection_type,
-                )? {
-                    membership::MaterializedMembership::Memory(values) => {
-                        memo.insert(context.memory, slot, key, &values);
-                        values
-                    }
-                    membership::MaterializedMembership::Prepared(membership, bytes) => {
-                        context.memory.reserve(bytes)?;
-                        let needle =
-                            CompiledExpr::compile(expr, context.columns, context.collation)?
-                                .evaluate(context.batch, context.row)?;
-                        let value = membership
-                            .0
-                            .lookup(&needle)
-                            .map_err(membership::execution_error)?;
-                        drop(membership);
-                        context.memory.release(bytes);
-                        expression.kind = BoundExprKind::Literal(match value {
-                            Value::Boolean(value) => Value::Boolean(value != *negated),
-                            other => other,
-                        });
-                        return Ok(());
+                let mut resolved = (**query).clone();
+                let mut key = Vec::new();
+                substitute_outer_query(
+                    &mut resolved,
+                    context.batch,
+                    context.row,
+                    context.columns,
+                    &mut key,
+                )?;
+                if let Some(values) = memo.get(slot, &key) {
+                    values
+                } else {
+                    context
+                        .memory
+                        .note_subquery("per-row execution", &subquery_tables(query), 1);
+                    match membership::materialize_membership(
+                        resolved,
+                        context.provider,
+                        dependent_subquery_memory_limit(context.memory, context.batch)?,
+                        context.memory.deadline,
+                        query
+                            .projection
+                            .first()
+                            .map_or_else(
+                                || expr.text_collation(),
+                                |projection| {
+                                    BoundExpr::shared_text_collation(&[&**expr, &projection.expr])
+                                },
+                            )
+                            .and_then(Collation::from_mysql_name)
+                            .unwrap_or(context.collation),
+                        context.memory.spill(),
+                        expr.data_type,
+                        projection_type,
+                    )? {
+                        membership::MaterializedMembership::Memory(values) => {
+                            memo.insert(context.memory, slot, key, &values);
+                            values
+                        }
+                        membership::MaterializedMembership::Prepared(membership, bytes) => {
+                            context.memory.reserve(bytes)?;
+                            let needle =
+                                CompiledExpr::compile(expr, context.columns, context.collation)?
+                                    .evaluate(context.batch, context.row)?;
+                            let value = membership
+                                .0
+                                .lookup(&needle)
+                                .map_err(membership::execution_error)?;
+                            drop(membership);
+                            context.memory.release(bytes);
+                            expression.kind = BoundExprKind::Literal(match value {
+                                Value::Boolean(value) => Value::Boolean(value != *negated),
+                                other => other,
+                            });
+                            return Ok(());
+                        }
                     }
                 }
             };
@@ -3850,22 +3994,36 @@ fn dependent_answer_from_index(
     if !memo.memoizable(slot) {
         return Ok(None);
     }
-    let state = memo
-        .indexes
-        .entry(slot)
-        .or_insert_with(|| dependent_index::plan(query, form));
+    let state = memo.indexes.entry(slot).or_insert_with(|| {
+        dependent_index::plan(query, form).unwrap_or_else(|reason| {
+            context
+                .memory
+                .note_decline("no hash index", reason, &subquery_tables(query));
+            IndexState::Declined
+        })
+    });
     if let IndexState::Pending { plan, remaining } = state {
         if *remaining > 0 {
             *remaining -= 1;
             return Ok(None);
         }
         *state = if let Some(index) = dependent_index::build(plan, context) {
+            context.memory.note_subquery(
+                "hash index built",
+                &subquery_tables(query),
+                dependent_index::indexed_rows(&index),
+            );
             memo.index_stats.builds += 1;
             crate::counters::count(|counters| {
                 counters.dependent_index_builds = counters.dependent_index_builds.saturating_add(1);
             });
             IndexState::Built(Box::new(index))
         } else {
+            context.memory.note_decline(
+                "no hash index",
+                "its build gave up; the per-row path answers",
+                &subquery_tables(query),
+            );
             memo.index_stats.declines += 1;
             IndexState::Declined
         };

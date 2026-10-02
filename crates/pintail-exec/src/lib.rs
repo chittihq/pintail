@@ -45,7 +45,7 @@ pub use execution::{
 pub use execution::{
     dependent_index_builds, dependent_index_declines, dependent_index_probes,
     dependent_memo_disabled, dependent_memo_hits, dependent_memo_misses, dependent_set_executions,
-    dependent_subquery_executions,
+    dependent_subquery_executions, take_dependent_declines,
 };
 pub use explain::{
     ExplainError, explain_analyze_statement, explain_analyze_statement_with_deadline,
