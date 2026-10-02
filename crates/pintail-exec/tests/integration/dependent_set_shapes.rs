@@ -463,6 +463,43 @@ fn an_aggregate_under_a_function_is_not_taken_for_volatile() {
 }
 
 #[test]
+fn a_large_member_set_is_indexed_once_per_outer_tuple() {
+    let fixture = fixture(20);
+    // Two distinct outer values over four rows: too few to answer at once,
+    // so each value's three hundred members are collected by one per-row
+    // execution, indexed, and probed by the rows that share the value.
+    let shared = ran(
+        &fixture,
+        "SELECT z.id, \
+           z.open IN (SELECT s.ok FROM scans s WHERE s.zone_id % 2 = z.open), \
+           z.id + 5 NOT IN (SELECT s.ok FROM scans s WHERE s.zone_id % 2 = z.open), \
+           z.id + 5 NOT IN (SELECT s.ok FROM scans s \
+                             WHERE s.zone_id % 2 = z.open AND s.ok IS NOT NULL) \
+         FROM zones z ORDER BY z.id",
+    );
+    let expected = (1..=4_u64)
+        .map(|zone| {
+            let members = (1..=SCANS)
+                .map(scan)
+                .filter(|(_, _, of)| of % 2 == zone % 2)
+                .map(|(_, ok, _)| ok)
+                .collect::<Vec<_>>();
+            let found = members.contains(&Some(zone % 2));
+            let undecided = members.contains(&None);
+            vec![
+                zone.to_string(),
+                membership(found, undecided, false),
+                membership(false, undecided, true),
+                membership(false, false, true),
+            ]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(shared.rows, expected);
+    assert_eq!(expected[0][1..], ["1", "NULL", "1"].map(str::to_owned));
+    assert_eq!((shared.per_row, shared.sets), (6, 0), "{}", shared.profile);
+}
+
+#[test]
 fn an_aggregate_of_the_enclosing_query_has_no_set_form() {
     let fixture = fixture(40);
     // `SUM(p.weight)` is the outer query's aggregate: the subquery only

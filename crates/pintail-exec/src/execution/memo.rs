@@ -36,7 +36,7 @@
 use std::collections::HashMap;
 use std::mem::size_of;
 
-use pintail_sql::{BoundExpr, BoundExprKind, BoundQuery, WindowFunction};
+use pintail_sql::{BoundExpr, BoundExprKind, BoundQuery, PreparedMembership, WindowFunction};
 use pintail_types::Value;
 
 use super::MemoryTracker;
@@ -80,6 +80,10 @@ pub(crate) struct DependentMemo {
     pub(super) outer_sets: HashMap<SubquerySlot, SetState>,
     /// Slots whose missing set-at-a-time form has been explained.
     refusals_noted: Vec<SubquerySlot>,
+    /// Large member sets of dependent `IN` subqueries, indexed once per
+    /// slot and outer tuple, and the bytes reserved for them.
+    memberships: HashMap<(SubquerySlot, Vec<Value>), PreparedMembership>,
+    memberships_reserved: usize,
 }
 
 impl DependentMemo {
@@ -102,7 +106,45 @@ impl DependentMemo {
             index_stats: IndexStats::default(),
             outer_sets: HashMap::new(),
             refusals_noted: Vec::new(),
+            memberships: HashMap::new(),
+            memberships_reserved: 0,
         }
+    }
+
+    /// The indexed member set kept for `slot` under `key`, if there is one.
+    pub(super) fn membership(
+        &self,
+        slot: SubquerySlot,
+        key: &[Value],
+    ) -> Option<PreparedMembership> {
+        if self.memberships.is_empty() {
+            return None;
+        }
+        self.memberships.get(&(slot, key.to_vec())).cloned()
+    }
+
+    /// Keeps an indexed member set for the rows that share `key`, charging
+    /// the tracker. A refused charge or a full memo keeps nothing: the set
+    /// is indexed again for the next row, as it was before this existed.
+    pub(super) fn keep_membership(
+        &mut self,
+        memory: &MemoryTracker,
+        slot: SubquerySlot,
+        key: Vec<Value>,
+        membership: &PreparedMembership,
+        bytes: usize,
+    ) {
+        if self.disabled
+            || self.memberships.len() >= MAX_ENTRIES
+            || key
+                .iter()
+                .any(|value| matches!(value, Value::DecimalAverage(_)))
+            || memory.reserve(bytes).is_err()
+        {
+            return;
+        }
+        self.memberships_reserved = self.memberships_reserved.saturating_add(bytes);
+        self.memberships.insert((slot, key), membership.clone());
     }
 
     /// Says once, in the statement's profile, why `query` at `slot` has no
@@ -211,6 +253,9 @@ impl DependentMemo {
         self.entries.clear();
         memory.release(self.reserved);
         self.reserved = 0;
+        self.memberships.clear();
+        memory.release(self.memberships_reserved);
+        self.memberships_reserved = 0;
         self.disabled = true;
     }
 
@@ -220,6 +265,9 @@ impl DependentMemo {
     pub(crate) fn finish(mut self, memory: &MemoryTracker) -> DependentMemoStats {
         memory.release(self.reserved);
         self.reserved = 0;
+        self.memberships.clear();
+        memory.release(self.memberships_reserved);
+        self.memberships_reserved = 0;
         for state in self.indexes.values_mut() {
             if let IndexState::Built(index) = state {
                 index.release(memory);
@@ -412,6 +460,8 @@ mod tests {
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
             refusals_noted: Vec::new(),
+            memberships: std::collections::HashMap::new(),
+            memberships_reserved: 0,
         };
         memo.insert(&memory, 0, vec![Value::UInt64(1)], &[Value::UInt64(1)]);
         memo.insert(&memory, 0, vec![Value::UInt64(2)], &[Value::UInt64(2)]);
@@ -445,6 +495,8 @@ mod tests {
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
             refusals_noted: Vec::new(),
+            memberships: std::collections::HashMap::new(),
+            memberships_reserved: 0,
         };
         memo.insert(&memory, 0, vec![Value::Null], &[Value::UInt64(0)]);
         memo.insert(
@@ -481,6 +533,8 @@ mod tests {
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
             refusals_noted: Vec::new(),
+            memberships: std::collections::HashMap::new(),
+            memberships_reserved: 0,
         };
         let average = Value::DecimalAverage(Box::new(pintail_types::DecimalQuotient {
             label: "0.3333".to_owned(),
@@ -520,6 +574,8 @@ mod tests {
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
             refusals_noted: Vec::new(),
+            memberships: std::collections::HashMap::new(),
+            memberships_reserved: 0,
         };
         memo.insert(&memory, 0, vec![Value::UInt64(1)], &[Value::UInt64(9)]);
         assert!(memo.entries.is_empty());

@@ -139,10 +139,14 @@ enum Filled {
 /// within a tuple, and its column types.
 type OuterRelation = (TableId, usize, Vec<DataType>);
 
+/// An outer tuple and the rows its subquery yields for it.
+pub(super) type TupleRows = (Vec<Value>, Arc<Vec<Value>>);
+
 /// What a form answers one outer row with.
 enum Answered {
     Value(Value),
-    Rows(Arc<Vec<Value>>),
+    /// The outer tuple and its rows.
+    Rows(Vec<Value>, Arc<Vec<Value>>),
 }
 
 /// The subquery's value for the current row from its set-at-a-time form,
@@ -171,12 +175,12 @@ pub(super) fn rows(
     form: &OuterSetQuery,
     context: &DependentRow<'_>,
     memo: &mut DependentMemo,
-) -> Result<Option<Arc<Vec<Value>>>, ExecError> {
+) -> Result<Option<TupleRows>, ExecError> {
     if form.kind == OuterSetKind::Value {
         return Ok(None);
     }
     Ok(match answered(slot, query, form, context, memo)? {
-        Some(Answered::Rows(rows)) => Some(rows),
+        Some(Answered::Rows(tuple, rows)) => Some((tuple, rows)),
         _ => None,
     })
 }
@@ -231,9 +235,11 @@ fn answered(
         if !failed {
             found = match form.kind {
                 OuterSetKind::Value => shared.answers.get(&tuple).cloned().map(Answered::Value),
-                OuterSetKind::Members | OuterSetKind::Presence => {
-                    shared.rows.get(&tuple).cloned().map(Answered::Rows)
-                }
+                OuterSetKind::Members | OuterSetKind::Presence => shared
+                    .rows
+                    .get(&tuple)
+                    .cloned()
+                    .map(|rows| Answered::Rows(tuple, rows)),
             };
         }
     }

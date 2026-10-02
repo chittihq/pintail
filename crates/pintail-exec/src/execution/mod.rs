@@ -3815,7 +3815,7 @@ pub(super) fn resolve_dependent_expr_subqueries(
                 Some(dependent_index::IndexState::Declined)
             ) && let Some(form) = query.outer_set.clone()
                 && form.kind == pintail_sql::OuterSetKind::Members
-                && let Some(rows) = outer_set::rows(slot, query, &form, context, memo)?
+                && let Some((_, rows)) = outer_set::rows(slot, query, &form, context, memo)?
             {
                 // The rows this outer row's execution would have yielded:
                 // none is NULL, and a second one is the error it raises.
@@ -3854,7 +3854,7 @@ pub(super) fn resolve_dependent_expr_subqueries(
                     memo.indexes.get(&slot),
                     Some(dependent_index::IndexState::Declined)
                 ) && let Some(form) = query.outer_set.clone()
-                    && let Some(rows) = outer_set::rows(slot, query, &form, context, memo)?
+                    && let Some((_, rows)) = outer_set::rows(slot, query, &form, context, memo)?
                 {
                     !rows.is_empty()
                 } else {
@@ -3876,73 +3876,109 @@ pub(super) fn resolve_dependent_expr_subqueries(
                 .and_then(|projection| projection.expr.data_type);
             let slot = memo.next_slot();
             memo.note_refusal(slot, query, context.memory);
+            let member_collation = query
+                .projection
+                .first()
+                .map_or_else(
+                    || expr.text_collation(),
+                    |projection| BoundExpr::shared_text_collation(&[&**expr, &projection.expr]),
+                )
+                .and_then(Collation::from_mysql_name)
+                .unwrap_or(context.collation);
             let members = match query.outer_set.clone() {
                 Some(form) if form.kind == pintail_sql::OuterSetKind::Members => {
                     outer_set::rows(slot, query, &form, context, memo)?
                 }
                 _ => None,
             };
-            let values = if let Some(members) = members {
-                members.as_ref().clone()
+            let mut key = Vec::new();
+            let mut resolved = None;
+            if let Some((tuple, _)) = &members {
+                key.clone_from(tuple);
             } else {
-                let mut resolved = (**query).clone();
-                let mut key = Vec::new();
+                let mut substituted = (**query).clone();
                 substitute_outer_query(
-                    &mut resolved,
+                    &mut substituted,
                     context.batch,
                     context.row,
                     context.columns,
                     &mut key,
                 )?;
-                if let Some(values) = memo.get(slot, &key) {
-                    values
-                } else {
-                    context
-                        .memory
-                        .note_subquery("per-row execution", &subquery_tables(query), 1);
-                    match membership::materialize_membership(
-                        resolved,
-                        context.provider,
-                        dependent_subquery_memory_limit(context.memory, context.batch)?,
-                        context.memory.deadline,
-                        query
-                            .projection
-                            .first()
-                            .map_or_else(
-                                || expr.text_collation(),
-                                |projection| {
-                                    BoundExpr::shared_text_collation(&[&**expr, &projection.expr])
-                                },
-                            )
-                            .and_then(Collation::from_mysql_name)
-                            .unwrap_or(context.collation),
-                        context.memory.spill(),
-                        expr.data_type,
-                        projection_type,
-                    )? {
-                        membership::MaterializedMembership::Memory(values) => {
-                            memo.insert(context.memory, slot, key, &values);
-                            values
-                        }
-                        membership::MaterializedMembership::Prepared(membership, bytes) => {
-                            context.memory.reserve(bytes)?;
-                            let needle =
-                                CompiledExpr::compile(expr, context.columns, context.collation)?
-                                    .evaluate(context.batch, context.row)?;
-                            let value = membership
-                                .0
-                                .lookup(&needle)
-                                .map_err(membership::execution_error)?;
-                            drop(membership);
-                            context.memory.release(bytes);
-                            expression.kind = BoundExprKind::Literal(match value {
-                                Value::Boolean(value) => Value::Boolean(value != *negated),
-                                other => other,
-                            });
-                            return Ok(());
+                resolved = Some(substituted);
+            }
+            // A large member set answered for this outer tuple before is
+            // probed, not copied out and scanned again.
+            if let Some(membership) = memo.membership(slot, &key) {
+                expression.kind = membership_answer(&membership, expr, *negated, context)?;
+                return Ok(());
+            }
+            let values = match (members, resolved) {
+                (Some((_, rows)), _) => rows.as_ref().clone(),
+                (None, Some(resolved)) => {
+                    if let Some(values) = memo.get(slot, &key) {
+                        values
+                    } else {
+                        context.memory.note_subquery(
+                            "per-row execution",
+                            &subquery_tables(query),
+                            1,
+                        );
+                        match membership::materialize_membership(
+                            resolved,
+                            context.provider,
+                            dependent_subquery_memory_limit(context.memory, context.batch)?,
+                            context.memory.deadline,
+                            member_collation,
+                            context.memory.spill(),
+                            expr.data_type,
+                            projection_type,
+                        )? {
+                            membership::MaterializedMembership::Memory(values) => {
+                                memo.insert(context.memory, slot, key.clone(), &values);
+                                values
+                            }
+                            membership::MaterializedMembership::Prepared(membership, bytes) => {
+                                context.memory.reserve(bytes)?;
+                                let needle = CompiledExpr::compile(
+                                    expr,
+                                    context.columns,
+                                    context.collation,
+                                )?
+                                .evaluate(context.batch, context.row)?;
+                                let value = membership
+                                    .0
+                                    .lookup(&needle)
+                                    .map_err(membership::execution_error)?;
+                                drop(membership);
+                                context.memory.release(bytes);
+                                expression.kind = BoundExprKind::Literal(match value {
+                                    Value::Boolean(value) => Value::Boolean(value != *negated),
+                                    other => other,
+                                });
+                                return Ok(());
+                            }
                         }
                     }
                 }
+                // One of the two is always set above.
+                (None, None) => Vec::new(),
+            };
+            let values = if values.len() > INDEXED_DEPENDENT_MEMBERS && memo.memoizable(slot) {
+                match membership::index_members(
+                    values,
+                    member_collation,
+                    expr.data_type,
+                    projection_type,
+                ) {
+                    membership::MaterializedMembership::Memory(values) => values,
+                    membership::MaterializedMembership::Prepared(membership, bytes) => {
+                        memo.keep_membership(context.memory, slot, key, &membership, bytes);
+                        expression.kind = membership_answer(&membership, expr, *negated, context)?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                values
             };
             let mut args = Vec::with_capacity(values.len().saturating_add(1));
             args.push(in_list_operand(expr, query));
@@ -3975,6 +4011,30 @@ pub(super) fn resolve_dependent_expr_subqueries(
         | BoundExprKind::Literal(_) => {}
     }
     Ok(())
+}
+
+/// Members above which a dependent `IN`'s set is indexed and kept for the
+/// outer tuple that produced it, instead of being copied into a literal
+/// list for every outer row that shares the tuple.
+const INDEXED_DEPENDENT_MEMBERS: usize = 64;
+
+/// `expr [NOT] IN (membership)` for the current row, as a literal.
+fn membership_answer(
+    membership: &pintail_sql::PreparedMembership,
+    expr: &BoundExpr,
+    negated: bool,
+    context: &DependentRow<'_>,
+) -> Result<BoundExprKind, ExecError> {
+    let needle = CompiledExpr::compile(expr, context.columns, context.collation)?
+        .evaluate(context.batch, context.row)?;
+    let value = membership
+        .0
+        .lookup(&needle)
+        .map_err(membership::execution_error)?;
+    Ok(BoundExprKind::Literal(match value {
+        Value::Boolean(value) => Value::Boolean(value != negated),
+        other => other,
+    }))
 }
 
 /// Answers a dependent `EXISTS` (as a boolean) or scalar subquery (as its
