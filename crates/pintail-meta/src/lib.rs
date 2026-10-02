@@ -416,11 +416,22 @@ impl MetaStore {
         let (mut connection, version) = if let Some(kept) = kept {
             kept
         } else {
-            let connection = Connection::open(&path)
+            let mut connection = Connection::open(&path)
                 .with_context(|| format!("failed to open metadata database {}", path.display()))?;
             connection
                 .busy_timeout(Duration::from_secs(5))
                 .context("failed to configure SQLite busy timeout")?;
+            // Every transaction takes the write lock when it begins. A
+            // deferred one starts as a reader and asks for the lock at its
+            // first write; if another connection committed in between, its
+            // snapshot is stale and SQLite refuses the upgrade at once with
+            // "database is locked" - the busy timeout never applies to that
+            // case. Most transactions here read a row and then write by it
+            // while the replication cycle, the audit writer and request
+            // handlers write the same file from their own connections, so
+            // any of them could fail that way. Beginning with the lock makes
+            // a contended transaction wait its turn instead.
+            connection.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
             connection
                 .pragma_update(None, "foreign_keys", true)
                 .context("failed to enable SQLite foreign keys")?;
@@ -3005,4 +3016,56 @@ fn migration_v17(transaction: Transaction<'_>) -> Result<()> {
     transaction
         .commit()
         .context("failed to commit metadata migration 17")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MetaStore;
+
+    /// A transaction that reads and then writes must not be failed by a
+    /// write another connection commits between the two. It holds the write
+    /// lock from its first statement, so the other writer waits instead.
+    #[test]
+    fn a_read_then_write_transaction_holds_the_write_lock_from_its_start() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("meta.db");
+        let store = MetaStore::open(&path).expect("open");
+        store.set_setting("k", "0").expect("seed");
+        let other = rusqlite::Connection::open(&path).expect("second connection");
+        other
+            .busy_timeout(std::time::Duration::ZERO)
+            .expect("no waiting");
+
+        let transaction = store.connection.unchecked_transaction().expect("begin");
+        let read: String = transaction
+            .query_row("SELECT value FROM settings WHERE key = 'k'", [], |row| {
+                row.get(0)
+            })
+            .expect("read");
+        // Under a deferred transaction this write would commit, and the
+        // update below would then fail with "database is locked".
+        let error = other
+            .execute("UPDATE settings SET value = 'other' WHERE key = 'k'", [])
+            .expect_err("the other writer waits for the transaction");
+        assert!(error.to_string().contains("locked"), "{error}");
+        transaction
+            .execute(
+                "UPDATE settings SET value = ?1 WHERE key = 'k'",
+                [format!("{read}+1")],
+            )
+            .expect("the transaction's own write");
+        transaction.commit().expect("commit");
+        other
+            .execute(
+                "UPDATE settings SET value = value || '!' WHERE key = 'k'",
+                [],
+            )
+            .expect("the other writer goes next");
+        let value: String = other
+            .query_row("SELECT value FROM settings WHERE key = 'k'", [], |row| {
+                row.get(0)
+            })
+            .expect("value");
+        assert_eq!(value, "0+1!");
+    }
 }
