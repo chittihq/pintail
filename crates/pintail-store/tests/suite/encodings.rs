@@ -4,7 +4,7 @@ use pintail_store::{StoreOptions, TableStore};
 use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
 
 const PLAIN: u8 = 0;
-const DICTIONARY: u8 = 1;
+const NARROW_DICTIONARY: u8 = 5;
 const RLE: u8 = 2;
 const BIT_PACKED: u8 = 3;
 const DELTA_BIT_PACKED: u8 = 4;
@@ -58,7 +58,7 @@ fn segment_selects_and_round_trips_every_block_encoding() {
     let encodings = block_encodings(&std::fs::read(segment_path).expect("segment bytes"));
     assert_eq!(
         encodings,
-        BTreeSet::from([PLAIN, DICTIONARY, RLE, BIT_PACKED, DELTA_BIT_PACKED])
+        BTreeSet::from([PLAIN, NARROW_DICTIONARY, RLE, BIT_PACKED, DELTA_BIT_PACKED])
     );
 }
 
@@ -109,7 +109,7 @@ fn adaptive_compression_mixes_raw_and_lz4_blocks_and_reopens() {
 
     let bytes = std::fs::read(path).expect("segment bytes");
     assert_eq!(
-        bytes[5], 6,
+        bytes[5], 7,
         "adaptive compression is written as the current PTSEG version"
     );
     assert_eq!(

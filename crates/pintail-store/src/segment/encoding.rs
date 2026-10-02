@@ -418,7 +418,10 @@ pub(super) fn encode_payload(
                 encode_cell(&mut encoder, cell)?;
             }
         }
-        Encoding::Dictionary => encode_dictionary(&mut encoder, cells)?,
+        // The narrow form is made from the wide one by the block writer.
+        Encoding::Dictionary | Encoding::NarrowDictionary => {
+            encode_dictionary(&mut encoder, cells)?;
+        }
         Encoding::RunLength => encode_runs(&mut encoder, cells)?,
         Encoding::BitPacked => encode_bit_packed(&mut encoder, logical_type, cells)?,
         Encoding::DeltaBitPacked => encode_delta_bit_packed(&mut encoder, logical_type, cells)?,
@@ -437,7 +440,10 @@ pub(super) fn decode_payload(
         Encoding::Plain => (0..value_count)
             .map(|_| decode_cell(&mut decoder, logical_type))
             .collect::<Result<Vec<_>, _>>()?,
-        Encoding::Dictionary => decode_dictionary(&mut decoder, logical_type, value_count)?,
+        Encoding::Dictionary => decode_dictionary(&mut decoder, logical_type, value_count, false)?,
+        Encoding::NarrowDictionary => {
+            decode_dictionary(&mut decoder, logical_type, value_count, true)?
+        }
         Encoding::RunLength => decode_runs(&mut decoder, logical_type, value_count)?,
         Encoding::BitPacked => decode_bit_packed(&mut decoder, logical_type, value_count)?,
         Encoding::DeltaBitPacked => {
@@ -475,14 +481,19 @@ pub(super) fn decoded_heap_upper_bound(
             }
             heap_bytes
         }
-        Encoding::Dictionary => {
+        Encoding::Dictionary | Encoding::NarrowDictionary => {
             let dictionary_count = decoder.u32()? as usize;
             let mut maximum = 0_usize;
             for _ in 0..dictionary_count {
                 maximum = maximum.max(decoder.bytes()?.len());
             }
+            let width = if encoding == Encoding::NarrowDictionary {
+                dictionary_index_width(&mut decoder)?
+            } else {
+                4
+            };
             for _ in 0..value_count {
-                let index = decoder.u32()? as usize;
+                let index = dictionary_index(&mut decoder, width)?;
                 if index >= dictionary_count {
                     return Err(format!("dictionary index {index} is out of bounds"));
                 }
@@ -630,18 +641,78 @@ fn encode_dictionary(encoder: &mut Encoder, cells: &[Cell]) -> Result<(), StoreE
     Ok(())
 }
 
+/// The dictionary payload `wide` (entry count, entries, a `u32` index per
+/// value) with its indexes in one byte each when there are at most 256
+/// entries, or two when there are at most 65,536: the same count and
+/// entries, then the width, then the indexes. `None` when the entries are
+/// not length-prefixed bytes laid out as expected, or need all four bytes.
+pub(super) fn narrow_dictionary_payload(wide: &[u8], value_count: usize) -> Option<Vec<u8>> {
+    let mut decoder = Decoder::new(wide);
+    let entries = decoder.u32().ok()? as usize;
+    let width = match entries {
+        0..=256 => 1_usize,
+        257..=65_536 => 2,
+        _ => return None,
+    };
+    for _ in 0..entries {
+        decoder.bytes().ok()?;
+    }
+    let head = decoder.position();
+    let indexes = decoder.take(value_count.checked_mul(4)?).ok()?;
+    decoder.finish().ok()?;
+    let mut narrow = Vec::with_capacity(head + 1 + value_count * width);
+    narrow.extend_from_slice(&wide[..head]);
+    narrow.push(u8::try_from(width).ok()?);
+    for index in indexes.chunks_exact(4) {
+        // An index names an entry, so its high bytes are zero.
+        if index[width..].iter().any(|byte| *byte != 0) {
+            return None;
+        }
+        narrow.extend_from_slice(&index[..width]);
+    }
+    Some(narrow)
+}
+
+/// The byte width of a narrow dictionary's indexes, read from its payload
+/// after the entries.
+pub(super) fn dictionary_index_width(decoder: &mut Decoder<'_>) -> Result<usize, String> {
+    match decoder.u8()? {
+        1 => Ok(1),
+        2 => Ok(2),
+        width => Err(format!("dictionary index width {width} is not one or two")),
+    }
+}
+
+/// One dictionary index of `width` bytes.
+pub(super) fn dictionary_index(decoder: &mut Decoder<'_>, width: usize) -> Result<usize, String> {
+    Ok(match width {
+        1 => usize::from(decoder.u8()?),
+        2 => {
+            let bytes = decoder.take(2)?;
+            usize::from(u16::from_le_bytes([bytes[0], bytes[1]]))
+        }
+        _ => decoder.u32()? as usize,
+    })
+}
+
 fn decode_dictionary(
     decoder: &mut Decoder<'_>,
     logical_type: LogicalType,
     value_count: usize,
+    narrow: bool,
 ) -> Result<Vec<Cell>, String> {
     let dictionary_count = decoder.u32()? as usize;
     let dictionary = (0..dictionary_count)
         .map(|_| decode_cell(decoder, logical_type))
         .collect::<Result<Vec<_>, _>>()?;
+    let width = if narrow {
+        dictionary_index_width(decoder)?
+    } else {
+        4
+    };
     (0..value_count)
         .map(|_| {
-            let index = decoder.u32()? as usize;
+            let index = dictionary_index(decoder, width)?;
             dictionary
                 .get(index)
                 .cloned()

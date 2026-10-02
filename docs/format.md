@@ -145,7 +145,7 @@ Publication writes and synchronizes `.manifest.ptm.tmp`, atomically renames
 it to `manifest.ptm`, then synchronizes the table directory. A snapshot holds
 an `Arc` to one immutable decoded generation.
 
-## Segment (`PTSEG`, version 6)
+## Segment (`PTSEG`, version 7)
 
 Readers accept all published segment versions. Version 1 stores the original
 text carriers and always-compressed blocks. Version 2 adds fixed-width native
@@ -156,6 +156,8 @@ header and every column descriptor, the only bytes no block or footer
 checksum covered. Version 5 adds the framed compression layout for wide plain
 UTF-8 blocks. Version 6 adds an optional directory of side-index
 postings sections, written between the last column chunk and the footer.
+Version 7 adds the narrow dictionary encoding; a binary that reads only
+version 6 refuses a version 7 segment by its version byte.
 
 ### Header
 
@@ -210,7 +212,11 @@ Encoding IDs:
 - `2` RLE: run count, then `(u32 run_length, value)` pairs;
 - `3` bit-packed: typed base, bit width, then packed normalized integers;
 - `4` delta+bit-packed: first integer, bit width, then packed nonnegative
-  deltas.
+  deltas;
+- `5` narrow dictionary (version 7 and later): dictionary count and values,
+  a `u8` index width of 1 or 2, then one little-endian index of that width
+  per value. Written in place of `1` when the block's dictionary has at most
+  256 entries (one byte) or 65,536 (two).
 
 Pintail selects RLE for constant blocks, dictionary encoding for repeated
 string/binary blocks, delta encoding for monotonic integers, bit-packing for

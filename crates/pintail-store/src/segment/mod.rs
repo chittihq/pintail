@@ -37,14 +37,15 @@ use crate::{
 
 const MAGIC: &[u8; 5] = b"PTSEG";
 const FOOTER_MAGIC: &[u8; 5] = b"PTFTR";
-const FORMAT_VERSION: u8 = 6;
+const FORMAT_VERSION: u8 = 7;
 
 /// Segment versions this reader understands: v1 stores text carriers for
 /// every Utf8-storage column; v2 additionally stores fixed-width native
 /// units (wire type Int64) for eligible Decimal/Date32/DateTime64 columns;
 /// v3 permits raw block payloads when LZ4 cannot save at least 5%;
 /// v5 stores wide plain text blocks as independently compressed frames;
-/// v6 adds a footer directory of optional side-index postings sections.
+/// v6 adds a footer directory of optional side-index postings sections;
+/// v7 permits dictionary blocks whose indexes are one or two bytes wide.
 /// Header bytes after the magic: format version, schema version, schema
 /// fingerprint, row count, column count and target block rows.
 const HEADER_LENGTH: usize = MAGIC.len() + 1 + 4 + 8 + 8 + 4 + 4;
@@ -61,6 +62,9 @@ const FRAMED_BLOCK_VERSION: u8 = 5;
 /// sections, written between the last column chunk and the footer. An empty
 /// directory is valid, and older segments simply have none.
 const POSTINGS_VERSION: u8 = 6;
+/// The first version whose dictionary blocks may carry indexes narrower
+/// than four bytes.
+const NARROW_DICTIONARY_VERSION: u8 = 7;
 
 /// The digest a version 4 footer records over the fields no block checksum
 /// covers. Those fields decide how many rows a read allocates and which
@@ -91,7 +95,7 @@ fn written_format_version() -> u8 {
 }
 
 const fn format_version_supported(version: u8) -> bool {
-    matches!(version, 1..=6)
+    matches!(version, 1..=7)
 }
 
 fn read_format_version(path: &Path, decoder: &mut FileDecoder) -> Result<u8, StoreError> {
@@ -825,6 +829,9 @@ enum Encoding {
     RunLength = 2,
     BitPacked = 3,
     DeltaBitPacked = 4,
+    /// A dictionary whose value indexes are one or two bytes wide, as few
+    /// as its entry count needs.
+    NarrowDictionary = 5,
 }
 
 impl Encoding {
@@ -835,6 +842,7 @@ impl Encoding {
             2 => Ok(Self::RunLength),
             3 => Ok(Self::BitPacked),
             4 => Ok(Self::DeltaBitPacked),
+            5 => Ok(Self::NarrowDictionary),
             _ => Err(format!("unknown block encoding {tag}")),
         }
     }
@@ -3712,7 +3720,12 @@ impl ColumnBuilder {
     /// block codes translate to chunk codes through `translation` (the
     /// container's snapshot-written segments rarely carry the identity
     /// mapping, so the translated form is the one that matters).
-    fn push_codes_bulk(&mut self, raw: &[u8], translation: &[u32]) -> Result<(), String> {
+    fn push_codes_bulk(
+        &mut self,
+        raw: &[u8],
+        width: usize,
+        translation: &[u32],
+    ) -> Result<(), String> {
         match self {
             Self::DictUtf8 {
                 codes, validity, ..
@@ -3722,41 +3735,36 @@ impl ColumnBuilder {
                 // return and a validity push, left the loop's speed to how
                 // the surrounding code happened to inline: an unrelated
                 // change elsewhere in the crate made it ~40% slower.
-                let rows = raw.len() / 4;
+                let rows = raw.len() / width;
                 let start = codes.len();
                 // Blocks that share their column's dictionary number their
                 // values as the chunk does: the codes are copied, and one
                 // comparison with the greatest of them is the bounds check.
-                if translation
+                let identity = translation
                     .iter()
                     .enumerate()
-                    .all(|(index, code)| *code as usize == index)
-                {
-                    let mut greatest = 0_u32;
-                    codes.extend(raw.chunks_exact(4).map(|chunk| {
-                        let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                        greatest = greatest.max(code);
-                        code
-                    }));
-                    if rows > 0 && greatest as usize >= translation.len() {
-                        codes.truncate(start);
-                        return Err("dictionary index is out of bounds".to_owned());
+                    .all(|(index, code)| *code as usize == index);
+                let mut greatest = 0_u32;
+                let mut place = |block_code: u32| {
+                    greatest = greatest.max(block_code);
+                    if identity {
+                        block_code
+                    } else {
+                        translation.get(block_code as usize).copied().unwrap_or(0)
                     }
-                    validity.extend_valid(rows);
-                    return Ok(());
+                };
+                match width {
+                    1 => codes.extend(raw.iter().map(|byte| place(u32::from(*byte)))),
+                    2 => {
+                        codes.extend(raw.chunks_exact(2).map(|chunk| {
+                            place(u32::from(u16::from_le_bytes([chunk[0], chunk[1]])))
+                        }));
+                    }
+                    _ => codes.extend(raw.chunks_exact(4).map(|chunk| {
+                        place(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    })),
                 }
-                let mut in_bounds = true;
-                codes.extend(raw.chunks_exact(4).map(|chunk| {
-                    let block_code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    translation
-                        .get(block_code as usize)
-                        .copied()
-                        .unwrap_or_else(|| {
-                            in_bounds = false;
-                            0
-                        })
-                }));
-                if !in_bounds {
+                if rows > 0 && greatest as usize >= translation.len() {
                     codes.truncate(start);
                     return Err("dictionary index is out of bounds".to_owned());
                 }
@@ -4847,6 +4855,18 @@ fn write_block(
         coded
     } else {
         encode_payload(logical_type, encoding, &non_null)?
+    };
+    // A dictionary of a few values does not need four bytes to name one:
+    // the indexes are most of the payload, and every byte of them is
+    // decompressed and walked by each scan of the column.
+    let uncompressed = if encoding == Encoding::Dictionary
+        && written_format_version() >= NARROW_DICTIONARY_VERSION
+        && let Some(narrow) = encoding::narrow_dictionary_payload(&uncompressed, non_null.len())
+    {
+        encoding = Encoding::NarrowDictionary;
+        narrow
+    } else {
+        uncompressed
     };
     block.u8(encoding as u8);
     // Wide text (documents, long strings) is where one block's payload runs
@@ -6423,7 +6443,7 @@ fn decode_utf8_payload_into(
                 }
             }
         }
-        Encoding::Dictionary => {
+        Encoding::Dictionary | Encoding::NarrowDictionary => {
             let dictionary_count = decoder.u32()? as usize;
             let mut entries = Vec::with_capacity(dictionary_count);
             for _ in 0..dictionary_count {
@@ -6431,6 +6451,11 @@ fn decode_utf8_payload_into(
                 validate(entry)?;
                 entries.push(entry);
             }
+            let width = if encoding == Encoding::NarrowDictionary {
+                encoding::dictionary_index_width(&mut decoder)?
+            } else {
+                4
+            };
             // Code fast path: rows land as u32 codes into the chunk
             // dictionary; a 5-value column never materializes its strings.
             let translation = builder.begin_dictionary_block(&entries);
@@ -6442,8 +6467,8 @@ fn decode_utf8_payload_into(
                 && ranges.covers_all(row_count)
                 && let Some(translation) = translation.as_deref()
             {
-                let raw = decoder.take(row_count * 4)?;
-                builder.push_codes_bulk(raw, translation)?;
+                let raw = decoder.take(row_count * width)?;
+                builder.push_codes_bulk(raw, width, translation)?;
                 produced = row_count;
             } else {
                 for row in 0..row_count {
@@ -6457,7 +6482,7 @@ fn decode_utf8_payload_into(
                         }
                         continue;
                     }
-                    let index = decoder.u32()? as usize;
+                    let index = encoding::dictionary_index(&mut decoder, width)?;
                     if index >= entries.len() {
                         return Err(format!("dictionary index {index} is out of bounds"));
                     }
@@ -7501,6 +7526,151 @@ mod range_read_tests {
         // A deleted file's blocks are dropped by name.
         super::forget_cached_blocks(&directory.path().join(&second.file_name));
         assert_eq!(read(&schema, &second, 176), after);
+    }
+
+    /// The encoding tag of every block of the user column `column_id`.
+    fn column_encodings(path: &std::path::Path, column_id: u32) -> Vec<u8> {
+        let bytes = std::fs::read(path).expect("segment");
+        let columns = u32::from_le_bytes(bytes[26..30].try_into().expect("count"));
+        let mut decoder = crate::codec::Decoder::new(&bytes[super::HEADER_LENGTH..]);
+        let mut tags = Vec::new();
+        for _ in 0..columns {
+            let id = decoder.u32().expect("id");
+            decoder.u8().expect("type");
+            for _ in 0..decoder.u32().expect("blocks") {
+                let payload = decoder.bytes().expect("payload");
+                decoder.u64().expect("checksum");
+                let mut block = crate::codec::Decoder::new(payload);
+                block.u32().expect("rows");
+                block.bytes().expect("bitmap");
+                if id == column_id {
+                    tags.push(block.u8().expect("encoding"));
+                }
+            }
+        }
+        tags
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn dictionary_indexes_are_as_narrow_as_the_entries_allow_and_old_files_still_read() {
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "label", DataType::Utf8, true),
+            ],
+        )
+        .expect("schema");
+        let cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&cell, usize::MAX);
+        // More entries than two bytes can name keep their four-byte indexes.
+        let mut wide = crate::codec::Encoder::new();
+        wide.u32(65_537);
+        for _ in 0..65_537 {
+            wide.bytes(b"v", "entry").expect("entry");
+        }
+        wide.u32(65_536);
+        assert!(super::encoding::narrow_dictionary_payload(&wide.finish(), 1).is_none());
+        // 5 values need one byte an index, 300 need two.
+        for (distinct, rows, block_rows, tag) in
+            [(5_u64, 4_000_u64, 512_usize, 5_u8), (300, 8_000, 4_000, 5)]
+        {
+            let stored = (0..rows)
+                .map(|id| {
+                    StoredRow::new(
+                        PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                        vec![
+                            Value::UInt64(id),
+                            if id % 13 == 0 {
+                                Value::Null
+                            } else {
+                                Value::Utf8(format!("value-{}", (id * 11) % distinct))
+                            },
+                        ],
+                        1,
+                        false,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let expected = stored
+                .iter()
+                .map(|row| row.values()[1].clone())
+                .collect::<Vec<_>>();
+            let rows = usize::try_from(rows).expect("rows");
+            for version in [super::FORMAT_VERSION, 6] {
+                let directory = tempfile::tempdir().expect("directory");
+                super::WRITTEN_FORMAT_VERSION.with(|written| written.set(version));
+                let meta = write(
+                    directory.path(),
+                    1,
+                    &schema,
+                    &stored,
+                    block_rows,
+                    Compression::AdaptiveLz4,
+                    true,
+                );
+                super::WRITTEN_FORMAT_VERSION.with(|written| written.set(super::FORMAT_VERSION));
+                let meta = meta.expect("write segment");
+                let path = directory.path().join(&meta.file_name);
+                let tags = column_encodings(&path, 2);
+                let wanted = if version == 6 { 1 } else { tag };
+                assert!(
+                    tags.iter().all(|found| *found == wanted),
+                    "{distinct} values at version {version}: {tags:?}"
+                );
+                // Whole, and a sparse pick that takes the per-row path.
+                let whole = read_projected_column_ranges(
+                    directory.path(),
+                    &meta,
+                    &schema,
+                    &[1],
+                    std::slice::from_ref(&(0..rows)),
+                    &budget,
+                )
+                .expect("whole read");
+                assert_eq!(
+                    whole
+                        .columns
+                        .into_iter()
+                        .next()
+                        .expect("column")
+                        .into_values(),
+                    expected
+                );
+                let picks = [3..40_usize, 700..701, rows - 9..rows];
+                let sparse = read_projected_column_ranges(
+                    directory.path(),
+                    &meta,
+                    &schema,
+                    &[1],
+                    &picks,
+                    &budget,
+                )
+                .expect("sparse read");
+                assert_eq!(
+                    sparse
+                        .columns
+                        .into_iter()
+                        .next()
+                        .expect("column")
+                        .into_values(),
+                    picks
+                        .iter()
+                        .flat_map(|pick| expected[pick.clone()].iter().cloned())
+                        .collect::<Vec<_>>()
+                );
+                // The row-at-a-time reader decodes cells.
+                let read_rows = super::read(directory.path(), &meta, &schema).expect("row read");
+                assert_eq!(
+                    read_rows
+                        .iter()
+                        .map(|row| row.values()[1].clone())
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+            }
+        }
     }
 
     #[test]
