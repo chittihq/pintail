@@ -67,6 +67,7 @@ mod legacy_utf8_collations;
 mod lenient_date_parity;
 mod live_replication_queries;
 mod low_cardinality_text;
+mod membership_lookup;
 mod memory_probe;
 mod memtable_dimension_scan;
 mod memtable_overlay;

@@ -12,15 +12,18 @@ use std::collections::{HashMap, VecDeque};
 
 use pintail_sql::{
     BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundJoinKind, BoundOrderKey, BoundProjection,
+    BoundQuery,
 };
 use pintail_types::{DataType, Value};
 
 use super::order::{base_scan, integer_type, key_columns, names_column, ordered_by};
 use super::{
-    Collation, CompiledExpr, ExecError, MemoryTracker, PhysicalPlan, PullOperator, RecordBatch,
-    Scan, ScanProvider, build_operator, build_operator_inner, estimated_record_batch_bytes,
-    estimated_row_payload_bytes, filtered, predicate_truth, rows_to_columns,
+    Collation, CompiledExpr, ExecError, MemoryTracker, PhysicalPlan, PhysicalPlanner, PullOperator,
+    RecordBatch, Scan, ScanProvider, build_operator, build_operator_inner,
+    estimated_record_batch_bytes, estimated_row_payload_bytes, filtered, predicate_truth,
+    rows_to_columns,
 };
+use crate::{LogicalPlanner, Optimizer, SelectionMask};
 
 /// Driving rows joined in the first lookup round. Each round doubles it up
 /// to `LAST_SLICE`, so a small limit reads a few keys and a long run still
@@ -551,6 +554,423 @@ pub(super) fn pinned_lookup(join: PhysicalPlan) -> PhysicalPlan {
     }
 }
 
+/// The plan of an uncorrelated membership subquery and its one output
+/// column, when that plan is a table read found by its whole integer key:
+/// `SELECT key FROM t [WHERE ..]`.
+fn membership_side(query: &BoundQuery, collation: Collation) -> Option<(PhysicalPlan, BoundExpr)> {
+    if super::bound_query_has_outer_refs(query) {
+        return None;
+    }
+    let plan = PhysicalPlanner::plan(
+        Optimizer::optimize(LogicalPlanner::plan(query.clone())),
+        collation,
+    )
+    .ok()?;
+    let key = if let Some((_, [projection])) = narrowed(&plan) {
+        projection.expr.clone()
+    } else {
+        let scan = base_scan(&plan)?;
+        let [id] = scan.projected_column_ids.as_slice() else {
+            return None;
+        };
+        let column = scan
+            .table
+            .columns
+            .iter()
+            .find(|column| column.column_id == *id)?;
+        BoundExpr {
+            data_type: Some(column.data_type),
+            nullable: column.nullable,
+            kind: BoundExprKind::Column(column.clone()),
+        }
+    };
+    (!key.nullable && lookup_by_key(&plan, &key)).then_some((plan, key))
+}
+
+/// A limit's input - a filter over a table scan, beneath a projection or
+/// bare - with a conjunct `column IN (SELECT key FROM t ..)` answered by
+/// looking each row's value up by `t`'s key, in the scan's order. The
+/// membership set is then never built and the scan's rows are tested only
+/// until the limit has its `limit` rows, where the filter tested every row
+/// against every member of the set first. A row the conjunct does not hold
+/// for is dropped either way, whether it answered FALSE or NULL, and `t`'s
+/// key holds no NULL to change which. `NOT IN` keeps a row for which the
+/// set held no match, which no lookup shows early, and stays a filter. Any
+/// other input comes back unchanged.
+pub(super) fn membership_lookup(
+    plan: PhysicalPlan,
+    limit: u64,
+    collation: Collation,
+) -> PhysicalPlan {
+    match plan {
+        PhysicalPlan::Project { input, expressions } => PhysicalPlan::Project {
+            input: Box::new(looked_up_filter(*input, limit, collation)),
+            expressions,
+        },
+        other => looked_up_filter(other, limit, collation),
+    }
+}
+
+fn looked_up_filter(plan: PhysicalPlan, limit: u64, collation: Collation) -> PhysicalPlan {
+    let found = match &plan {
+        PhysicalPlan::Filter { input, predicate } => match input.as_ref() {
+            PhysicalPlan::Scan(scan) => membership_conjunct(scan, predicate, limit, collation),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some((rest, driving_key, lookup, lookup_key)) = found else {
+        return plan;
+    };
+    let PhysicalPlan::Filter { input, .. } = plan else {
+        return plan;
+    };
+    PhysicalPlan::KeyLookupJoin {
+        left: Box::new(filtered(*input, super::and_all(rest))),
+        right: Box::new(lookup),
+        kind: BoundJoinKind::Semi,
+        driving_left: true,
+        driving_key,
+        lookup_key,
+        residual: None,
+    }
+}
+
+/// The first conjunct of `predicate` a key lookup can answer, taken out:
+/// the other conjuncts, the scan's column tested, and the subquery's plan
+/// and key. `None` when there is none, or when the `limit` rows cost more
+/// to look up than both tables cost to read.
+fn membership_conjunct(
+    scan: &Scan,
+    predicate: &BoundExpr,
+    limit: u64,
+    collation: Collation,
+) -> Option<(Vec<BoundExpr>, BoundExpr, PhysicalPlan, BoundExpr)> {
+    let mut conjuncts = Vec::new();
+    super::and_conjuncts(predicate, &mut conjuncts);
+    let (index, driving_key, lookup, lookup_key) =
+        conjuncts.iter().enumerate().find_map(|(index, conjunct)| {
+            let BoundExprKind::InSubquery {
+                expr,
+                query,
+                negated: false,
+            } = &conjunct.kind
+            else {
+                return None;
+            };
+            let BoundExprKind::Column(column) = &expr.kind else {
+                return None;
+            };
+            if !integer_type(expr.data_type) || !names_column(scan, column, column.column_id) {
+                return None;
+            }
+            let (lookup, lookup_key) = membership_side(query, collation)?;
+            Some((index, expr.as_ref().clone(), lookup, lookup_key))
+        })?;
+    if let (Some(driving), Some(looked_up)) = (scan.estimated_rows(), base_scan_rows(&lookup))
+        && limit.saturating_mul(LOOKUP_ROW_COST) > driving.saturating_add(looked_up)
+    {
+        return None;
+    }
+    conjuncts.remove(index);
+    Some((conjuncts, driving_key, lookup, lookup_key))
+}
+
+/// The row estimate of the table a lookup side reads.
+fn base_scan_rows(plan: &PhysicalPlan) -> Option<u64> {
+    let plan = match narrowed(plan) {
+        Some((input, _)) => input,
+        None => plan,
+    };
+    base_scan(plan)?.estimated_rows()
+}
+
+/// The constant a scan beneath `plan` pins `column` to: a conjunct
+/// `column = constant` over two integers, in the scan's predicates or the
+/// filter over it.
+fn pinned_constant(plan: &PhysicalPlan, column: &BoundColumn) -> Option<BoundExpr> {
+    let scan = base_scan(plan)?;
+    let names = |expr: &BoundExpr| {
+        integer_type(expr.data_type)
+            && matches!(&expr.kind, BoundExprKind::Column(candidate)
+                if names_column(scan, candidate, column.column_id) && same_column(candidate, column))
+    };
+    let constant = |expr: &BoundExpr| {
+        matches!(
+            expr.kind,
+            BoundExprKind::Literal(Value::Int64(_) | Value::UInt64(_))
+        )
+    };
+    let mut conjuncts = Vec::new();
+    if let PhysicalPlan::Filter { predicate, .. } = plan {
+        super::and_conjuncts(predicate, &mut conjuncts);
+    }
+    scan.predicates
+        .iter()
+        .chain(&conjuncts)
+        .find_map(|predicate| match &predicate.kind {
+            BoundExprKind::Binary {
+                op: BinaryOp::Equal,
+                left,
+                right,
+            } if names(left) && constant(right) => Some(right.as_ref().clone()),
+            BoundExprKind::Binary {
+                op: BinaryOp::Equal,
+                left,
+                right,
+            } if constant(left) && names(right) => Some(left.as_ref().clone()),
+            _ => None,
+        })
+}
+
+/// Membership tests of a projection over rows pinned to one value of the
+/// column they test, with that value in the column's place: every row the
+/// projection sees holds it, so `column IN (subquery)` asks about one
+/// constant, and a subquery asked about one constant reads the rows that
+/// could equal it rather than every row it selects.
+pub(super) fn pin_membership_operands(input: &PhysicalPlan, expressions: &mut [BoundProjection]) {
+    for projection in expressions {
+        let BoundExprKind::InSubquery { expr, .. } = &mut projection.expr.kind else {
+            continue;
+        };
+        let BoundExprKind::Column(column) = &expr.kind else {
+            continue;
+        };
+        if !column.outer
+            && let Some(constant) = pinned_constant(input, column)
+        {
+            **expr = constant;
+        }
+    }
+}
+
+/// `query` asked only about `operand`: the same query with `column =
+/// operand` added, when the query selects one integer column that holds no
+/// NULL from one table, row by row, and the operand is an integer constant.
+/// `operand IN (query)` is TRUE exactly when a selected row equals the
+/// operand and FALSE otherwise - there is no NULL among the rows to make it
+/// unknown - and the added conjunct keeps exactly the rows that equal it.
+pub(super) fn point_membership(operand: &BoundExpr, query: &BoundQuery) -> Option<BoundQuery> {
+    if !matches!(
+        operand.kind,
+        BoundExprKind::Literal(Value::Int64(_) | Value::UInt64(_))
+    ) {
+        return None;
+    }
+    let [projection] = query.projection.as_slice() else {
+        return None;
+    };
+    let BoundExprKind::Column(column) = &projection.expr.kind else {
+        return None;
+    };
+    let [from] = query.from.as_slice() else {
+        return None;
+    };
+    let row_by_row = from.joins.is_empty()
+        && query.group_by.is_empty()
+        && query.aggregates.is_empty()
+        && query.windows.is_empty()
+        && query.having.is_none()
+        && query.union_all.is_empty()
+        && query.set_ops.is_empty()
+        && query.limit.is_none()
+        && query.recursive.is_none()
+        && query.hidden_sort_columns == 0;
+    if !row_by_row
+        || column.outer
+        || column.nullable
+        || projection.expr.nullable
+        || !integer_type(projection.expr.data_type)
+        || column.table_id != from.base.table_id
+        || column.database_id != from.base.database_id
+    {
+        return None;
+    }
+    let equal = BoundExpr {
+        data_type: Some(DataType::Boolean),
+        nullable: false,
+        kind: BoundExprKind::Binary {
+            op: BinaryOp::Equal,
+            left: Box::new(projection.expr.clone()),
+            right: Box::new(operand.clone()),
+        },
+    };
+    let mut point = query.clone();
+    point.filter = super::and_all(query.filter.iter().cloned().chain([equal]).collect());
+    Some(point)
+}
+
+/// Driving rows a membership lookup tests by ranged reads before it reads
+/// the subquery's keys once and tests every later row against those. A
+/// limit that a few rounds satisfy never reads past them; one they do not
+/// satisfy is waiting on rows the subquery mostly rejects, and a round's
+/// read costs about a block whatever it finds.
+const MEMBERSHIP_ROUNDS: usize = 3;
+
+/// `column IN (SELECT key FROM t ..)` over a scan, as an operator: the
+/// driving batch narrowed to the rows whose value `t` holds a key for.
+pub(super) struct KeyMembership {
+    driving: Box<PullOperator>,
+    /// Where the tested column sits among the driving columns.
+    key_position: usize,
+    /// The driving batch being tested, and its first row not yet tested.
+    current: Option<(RecordBatch, usize)>,
+    lookup: Option<Lookup>,
+    /// Every key the subquery selects, in order, once it has been read.
+    members: Option<Vec<i128>>,
+    lookup_position: usize,
+    /// Driving rows the next round tests.
+    slice: usize,
+    rounds: usize,
+    /// Bytes reserved for `members`.
+    reserved: usize,
+    collation: Collation,
+}
+
+impl KeyMembership {
+    /// Hands back what the subquery's keys reserved.
+    pub(super) fn release(&mut self, memory: &MemoryTracker) {
+        memory.release(std::mem::take(&mut self.reserved));
+    }
+
+    pub(super) fn next_batch(
+        &mut self,
+        memory: &MemoryTracker,
+    ) -> Result<Option<RecordBatch>, ExecError> {
+        loop {
+            if self.current.is_none() {
+                match self.driving.next_batch(memory)? {
+                    Some(batch) => self.current = Some((batch, 0)),
+                    None => return Ok(None),
+                }
+            }
+            let Some((batch, next)) = &self.current else {
+                continue;
+            };
+            let rows = batch.selection().len();
+            let column = batch
+                .column(self.key_position)
+                .ok_or(ExecError::InvalidBatch(
+                    "a membership lookup's column is outside its batch",
+                ))?;
+            let take = if self.members.is_some() {
+                usize::MAX
+            } else {
+                self.slice
+            };
+            let tested = batch
+                .selection()
+                .selected_rows_in(*next..rows)
+                .take(take)
+                .map(|row| (row, column.value_owned(row).as_ref().and_then(integer_key)))
+                .collect::<Vec<_>>();
+            crate::counters::count(|counters| {
+                counters.membership_rows_looked_up = counters
+                    .membership_rows_looked_up
+                    .saturating_add(u64::try_from(tested.len()).unwrap_or(u64::MAX));
+            });
+            let exhausted = tested.len() < take;
+            let resume = tested.last().map_or(rows, |(row, _)| row + 1);
+            let mut kept = SelectionMask::none(rows);
+            let mut any = false;
+            if !tested.is_empty() {
+                let mut keys = tested
+                    .iter()
+                    .filter_map(|(_, key)| *key)
+                    .collect::<Vec<_>>();
+                keys.sort_unstable();
+                keys.dedup();
+                self.read_members(&keys, memory)?;
+                let read;
+                let members = if let Some(members) = &self.members {
+                    members.as_slice()
+                } else {
+                    read = self.read_round(&keys, memory)?;
+                    read.as_slice()
+                };
+                for (row, key) in &tested {
+                    if key.is_some_and(|key| members.binary_search(&key).is_ok()) {
+                        kept.set(*row, true)?;
+                        any = true;
+                    }
+                }
+            }
+            let mut output = any
+                .then(|| self.current.as_ref().map(|(batch, _)| batch.clone()))
+                .flatten();
+            if exhausted {
+                self.current = None;
+            } else if let Some((_, next)) = &mut self.current {
+                *next = resume;
+            }
+            if let Some(batch) = &mut output {
+                batch.set_selection(kept)?;
+                return Ok(output);
+            }
+        }
+    }
+
+    /// Every key the subquery selects, once this round has to read them
+    /// all: after [`MEMBERSHIP_ROUNDS`] ranged rounds, when the keys are
+    /// scattered over the table, or when ranged reads have read as many
+    /// rows as it holds. Left unread while a ranged read answers the round.
+    fn read_members(&mut self, keys: &[i128], memory: &MemoryTracker) -> Result<(), ExecError> {
+        if self.members.is_none() {
+            let ranged = matches!(&self.lookup, Some(lookup @ Lookup::Ranged(_)) if !lookup.reads_all(keys))
+                && self.rounds < MEMBERSHIP_ROUNDS;
+            if ranged {
+                return Ok(());
+            }
+            let mut input = match self.lookup.take() {
+                Some(Lookup::Ranged(ranged)) => ranged.read_all(memory, self.collation)?,
+                Some(Lookup::Built {
+                    input: Some(input), ..
+                }) => *input,
+                _ => {
+                    return Err(ExecError::InvalidPhysicalPlan(
+                        "a membership lookup lost its table",
+                    ));
+                }
+            };
+            let mut members = Vec::new();
+            while let Some(batch) = input.next_batch(memory)? {
+                let before = members.len();
+                members.extend(
+                    batch
+                        .selection()
+                        .selected_rows()
+                        .filter_map(|row| row_key(&batch, row, self.lookup_position)),
+                );
+                let bytes = (members.len() - before).saturating_mul(size_of::<i128>());
+                memory.reserve(bytes)?;
+                self.reserved = self.reserved.saturating_add(bytes);
+            }
+            members.sort_unstable();
+            members.dedup();
+            self.members = Some(members);
+        }
+        Ok(())
+    }
+
+    /// The keys among `keys` the subquery selects, by ranged reads.
+    fn read_round(
+        &mut self,
+        keys: &[i128],
+        memory: &MemoryTracker,
+    ) -> Result<Vec<i128>, ExecError> {
+        self.rounds += 1;
+        self.slice = self.slice.saturating_mul(4);
+        match &mut self.lookup {
+            Some(Lookup::Ranged(ranged)) => {
+                ranged.read_members(keys, self.lookup_position, memory, self.collation)
+            }
+            _ => Err(ExecError::InvalidPhysicalPlan(
+                "a membership lookup lost its table",
+            )),
+        }
+    }
+}
+
 /// A key lookup join's parts, as the physical plan carries them.
 pub(super) struct Inputs {
     pub(super) left: PhysicalPlan,
@@ -600,6 +1020,29 @@ pub(super) fn build(
     };
     let (driving, driving_columns) = build_operator(driving_plan, provider, memory, collation)?;
     let driving_key = CompiledExpr::compile(&driving_key, &driving_columns, collation)?;
+    if kind == BoundJoinKind::Semi {
+        let key_position = driving_key
+            .column_index()
+            .ok_or(ExecError::InvalidPhysicalPlan(
+                "a membership lookup tests a column of its driving input",
+            ))?;
+        let lookup = lookup_source(table, scan_key, provider, memory, collation)?;
+        return Ok((
+            PullOperator::KeyMembership(Box::new(KeyMembership {
+                driving: Box::new(driving),
+                key_position,
+                current: None,
+                lookup: Some(lookup),
+                members: None,
+                lookup_position,
+                slice: FIRST_SLICE,
+                rounds: 0,
+                reserved: 0,
+                collation,
+            })),
+            driving_columns,
+        ));
+    }
     let lookup_width = lookup_columns.len();
     let output_columns = if driving_left {
         driving_columns
@@ -624,6 +1067,7 @@ pub(super) fn build(
         PullOperator::KeyLookupJoin(Box::new(KeyLookupJoin {
             driving: Box::new(driving),
             driving_key,
+            current: None,
             pending: VecDeque::new(),
             driving_done: false,
             lookup,
@@ -643,6 +1087,10 @@ pub(super) fn build(
 pub(super) struct KeyLookupJoin {
     driving: Box<PullOperator>,
     driving_key: CompiledExpr,
+    /// The driving batch being read, and its first row not yet pending. A
+    /// batch can be the whole table; only the rows a round joins are turned
+    /// into values, so a limit above pays for the rows it took.
+    current: Option<(RecordBatch, usize)>,
     /// Driving rows pulled but not yet joined, each with its lookup key.
     pending: VecDeque<(Option<i128>, Vec<Value>)>,
     driving_done: bool,
@@ -721,17 +1169,46 @@ impl KeyLookupJoin {
         filled
     }
 
-    /// Pulls driving batches until the next round's rows are pending or the
+    /// Reads driving rows until the next round's rows are pending or the
     /// input has ended.
     fn fill(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
-        while !self.driving_done && self.pending.len() < self.slice {
-            let Some(batch) = self.driving.next_batch(memory)? else {
-                self.driving_done = true;
+        while self.pending.len() < self.slice {
+            if self.current.is_none() {
+                if self.driving_done {
+                    break;
+                }
+                let Some(batch) = self.driving.next_batch(memory)? else {
+                    self.driving_done = true;
+                    break;
+                };
+                self.current = Some((batch, 0));
+            }
+            let Some((batch, next)) = &mut self.current else {
                 break;
             };
-            for row in batch.selection().selected_rows() {
-                let key = integer_key(&self.driving_key.evaluate(&batch, row)?);
-                self.pending.push_back((key, row_values(&batch, row)?));
+            let want = self.slice - self.pending.len();
+            let rows = batch.selection().len();
+            let mut taken = 0_usize;
+            for row in batch.selection().selected_rows_in(*next..rows).take(want) {
+                let key = match self.driving_key.column_index() {
+                    Some(position) => batch
+                        .column(position)
+                        .and_then(|column| column.value_owned(row))
+                        .as_ref()
+                        .and_then(integer_key),
+                    None => integer_key(&self.driving_key.evaluate(batch, row)?),
+                };
+                self.pending.push_back((key, row_values(batch, row)?));
+                *next = row + 1;
+                taken += 1;
+            }
+            crate::counters::count(|counters| {
+                counters.lookup_rows_joined = counters
+                    .lookup_rows_joined
+                    .saturating_add(u64::try_from(taken).unwrap_or(u64::MAX));
+            });
+            if taken < want {
+                self.current = None;
             }
         }
         memory.ensure_transient(
@@ -758,7 +1235,8 @@ fn row_values(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> 
 fn row_key(batch: &RecordBatch, row: usize, position: usize) -> Option<i128> {
     batch
         .column(position)
-        .and_then(|column| column.value(row))
+        .and_then(|column| column.value_owned(row))
+        .as_ref()
         .and_then(integer_key)
 }
 
@@ -988,6 +1466,41 @@ impl RangedLookup {
         collation: Collation,
     ) -> Result<Matches, ExecError> {
         let mut found = Matches::new();
+        self.read_ranges(keys, position, memory, collation, |key, batch, row| {
+            found.entry(key).or_default().push(row_values(batch, row)?);
+            Ok(())
+        })?;
+        Ok(found)
+    }
+
+    /// The keys among `keys` the table holds a row for, in order.
+    fn read_members(
+        &mut self,
+        keys: &[i128],
+        position: usize,
+        memory: &MemoryTracker,
+        collation: Collation,
+    ) -> Result<Vec<i128>, ExecError> {
+        let mut found = Vec::new();
+        self.read_ranges(keys, position, memory, collation, |key, _, _| {
+            found.push(key);
+            Ok(())
+        })?;
+        found.sort_unstable();
+        found.dedup();
+        Ok(found)
+    }
+
+    /// Reads the table by the ranges `keys` fall in and hands over each
+    /// row whose key is one of them.
+    fn read_ranges(
+        &mut self,
+        keys: &[i128],
+        position: usize,
+        memory: &MemoryTracker,
+        collation: Collation,
+        mut each: impl FnMut(i128, &RecordBatch, usize) -> Result<(), ExecError>,
+    ) -> Result<(), ExecError> {
         for (low, high) in key_ranges(keys, self.unsigned) {
             let mut scan = self.table.scan.clone();
             scan.predicates.extend([
@@ -1005,14 +1518,14 @@ impl RangedLookup {
                     if let Some(key) = row_key(&batch, row, position)
                         && keys.binary_search(&key).is_ok()
                     {
-                        found.entry(key).or_default().push(row_values(&batch, row)?);
+                        each(key, &batch, row)?;
                     }
                 }
             }
             drop(input);
             memory.release(memory.used().saturating_sub(held));
         }
-        Ok(found)
+        Ok(())
     }
 
     fn read_all(

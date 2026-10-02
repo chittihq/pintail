@@ -96,6 +96,29 @@ pub(super) fn key_columns<'plan>(
         .collect()
 }
 
+/// `plan`, already in the order a limit of `rows` rows wants, with its scan
+/// told to stop after that many when nothing between the two drops a row:
+/// a projection over a scan with no predicates of its own. The scan's
+/// first `rows` rows in key order are then the limit's rows.
+pub(super) fn limited_scan(plan: PhysicalPlan, rows: u64) -> PhysicalPlan {
+    match plan {
+        PhysicalPlan::Project { input, expressions } => match *input {
+            PhysicalPlan::Scan(mut scan) if scan.predicates.is_empty() => {
+                scan.limit = Some(scan.limit.map_or(rows, |limit| limit.min(rows)));
+                PhysicalPlan::Project {
+                    input: Box::new(PhysicalPlan::Scan(scan)),
+                    expressions,
+                }
+            }
+            input => PhysicalPlan::Project {
+                input: Box::new(input),
+                expressions,
+            },
+        },
+        other => other,
+    }
+}
+
 /// The sort input with the sort's own columns dropped, and `true`, when it
 /// is a projection over a scan already in the order of `keys`. Any other
 /// input comes back unchanged, with `false`.

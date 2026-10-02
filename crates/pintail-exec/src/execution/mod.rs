@@ -709,10 +709,17 @@ impl PhysicalPlanner {
                 group_by,
                 aggregates,
             }),
-            LogicalPlan::Project { input, expressions } => Ok(PhysicalPlan::Project {
-                input: Box::new(Self::plan(*input, collation)?),
-                expressions,
-            }),
+            LogicalPlan::Project {
+                input,
+                mut expressions,
+            } => {
+                let input = Self::plan(*input, collation)?;
+                key_lookup::pin_membership_operands(&input, &mut expressions);
+                Ok(PhysicalPlan::Project {
+                    input: Box::new(input),
+                    expressions,
+                })
+            }
             LogicalPlan::Limit { input, limit } => {
                 plan_limit(*input, limit.offset, limit.count, collation)
             }
@@ -1046,7 +1053,11 @@ fn plan_limit(
                 key_lookup::ordered_groups(input, &keys, trim)
             };
             match (input, ordered) {
-                (ordered, true) => ordered,
+                (ordered, true) => key_lookup::membership_lookup(
+                    order::limited_scan(ordered, offset.saturating_add(count)),
+                    offset.saturating_add(count),
+                    collation,
+                ),
                 (input, false) => PhysicalPlan::Sort {
                     input: Box::new(input),
                     keys,
@@ -1055,7 +1066,11 @@ fn plan_limit(
                 },
             }
         }
-        input => PhysicalPlanner::plan(input, collation)?,
+        input => key_lookup::membership_lookup(
+            PhysicalPlanner::plan(input, collation)?,
+            offset.saturating_add(count),
+            collation,
+        ),
     };
     Ok(PhysicalPlan::Limit {
         input: Box::new(input),
@@ -3343,11 +3358,23 @@ fn resolve_expr_subqueries(
                 )
                 .and_then(Collation::from_mysql_name)
                 .unwrap_or(collation);
+            // A constant operand asks about the rows that could equal it,
+            // not about every row the subquery selects.
+            let asked = key_lookup::point_membership(expr, query).map_or_else(
+                || (**query).clone(),
+                |point| {
+                    crate::counters::count(|counters| {
+                        counters.membership_point_queries =
+                            counters.membership_point_queries.saturating_add(1);
+                    });
+                    point
+                },
+            );
             // Answered once for the whole query, so a large set is worth
             // indexing: each probe then costs a hash lookup rather than a
             // comparison per member.
             let materialized = match membership::materialize_membership(
-                (**query).clone(),
+                asked,
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
                 deadline,
@@ -4359,6 +4386,7 @@ enum PullOperator {
         current: usize,
     },
     KeyLookupJoin(Box<key_lookup::KeyLookupJoin>),
+    KeyMembership(Box<key_lookup::KeyMembership>),
     /// One row per run of equal values in the input's column `position`.
     KeyRuns {
         input: Box<PullOperator>,
@@ -4516,6 +4544,7 @@ impl PullOperator {
             | Self::Scan { .. }
             | Self::Rows { .. }
             | Self::KeyLookupJoin(_) => {}
+            Self::KeyMembership(membership) => membership.release(memory),
             Self::CrossJoin { inputs, .. } | Self::UnionAll { inputs, .. } => {
                 for input in inputs {
                     input.release_reservations(memory);
@@ -5546,6 +5575,7 @@ impl PullOperator {
                     .next_batch(column_types, memory)
             }
             Self::KeyLookupJoin(join) => join.next_batch(memory),
+            Self::KeyMembership(membership) => membership.next_batch(memory),
             Self::Limit { input, skip, take } => {
                 if *take == 0 {
                     return Ok(None);

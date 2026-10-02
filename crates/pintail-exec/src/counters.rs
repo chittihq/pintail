@@ -39,6 +39,14 @@ pub struct ExecCounters {
     pub dependent_index_builds: u64,
     /// Outer rows a dependent subquery index answered.
     pub dependent_index_probes: u64,
+    /// Driving rows a key lookup join turned into values to join them.
+    pub lookup_rows_joined: u64,
+    /// Rows an `IN (subquery)` conjunct tested by looking their value up by
+    /// the subquery table's key, in place of building the set.
+    pub membership_rows_looked_up: u64,
+    /// `IN (subquery)` tests of a constant answered by asking the subquery
+    /// about that constant alone.
+    pub membership_point_queries: u64,
 }
 
 thread_local! {
@@ -55,6 +63,9 @@ thread_local! {
             sort_keys_unprepared: 0,
             dependent_index_builds: 0,
             dependent_index_probes: 0,
+            lookup_rows_joined: 0,
+            membership_rows_looked_up: 0,
+            membership_point_queries: 0,
         })
     };
 }
