@@ -81,6 +81,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A lookup on a table dropped and created again, or recopied, with the
+  same columns and row count could be answered from the earlier table's
+  rows: an equality, `IN`, `ANY`/`ALL` or correlated lookup then missed
+  rows the table holds. The lookup index's cache identified a segment
+  file by its path and shape; it now also carries the file's length and
+  modification time.
+- `ALTER TABLE ... RENAME` is followed as the rename it is. It was treated
+  as a recopy, and a table renamed away and back stayed "not ready".
+- A conditional (`IFNULL`, `COALESCE`, `IF`, `CASE`, a `LEAD`/`LAG`
+  default) mixing a JSON branch with another type answers as text, as
+  MySQL does; it answered 0 for the document.
+- A subquery's `GROUP BY` or `HAVING` reads the subquery's own alias
+  before an outer column of the same name. Derived tables accept a
+  column list.
+- A statement waiting for a table being recopied could keep seeing "still
+  copying" after the copy had finished, until an unrelated metadata write.
 - A correlated subquery whose aggregate sits under a function, such as
   `COALESCE(SUM(x), 0)`, was classified as volatile and executed once per
   outer row with no sharing between rows. It is now memoized and batched
