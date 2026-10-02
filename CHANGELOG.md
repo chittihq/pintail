@@ -53,6 +53,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memory bounds - runs on the workers or once per batch. A statement's
   audit row is written after its response is sent, so a crash can lose
   that row; it never delayed or failed the statement's data.
+- A scan under `LIMIT` reads the rows the limit can take: with or without
+  predicates, with `OFFSET`, and from the end for `ORDER BY <whole
+  integer key> DESC`. `SELECT * ... LIMIT 10` on a 100,000-row table
+  decoded 600,000 values and now decodes 60.
+- A join whose WHERE is an OR of conditions that each repeat the join
+  equality joins on that equality instead of pairing every row of both
+  tables.
+- Merging for fewer files stops when no merge would leave fewer, where it
+  rewrote the same files every cycle on an idle replica. A cluster no key
+  range of which can be folded is merged whole. Background merges are
+  bounded in width, run at lower priority and report their state in
+  `/api/storage`; `PINTAIL_MERGE_THREADS` and
+  `PINTAIL_MERGE_WRITE_BYTES_PER_SEC` tune them.
 - A grouped COUNT with a SUM keeps each group's row count and 64-bit sum
   in one cell, widening in place before a sum could leave 64 bits. The
   integer-range fold checks keys as it computes slots instead of reading
