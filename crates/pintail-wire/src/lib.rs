@@ -4,6 +4,7 @@ mod admission;
 mod engine;
 mod limits;
 mod observe;
+mod plan_cache;
 mod presentation;
 mod replica_cache;
 mod result_rows;
@@ -32,7 +33,8 @@ pub use server::{
     serve_until_configured, serve_until_with_memory_limit, serve_until_with_options,
 };
 
-pub use engine::replica_cache_stats;
+pub use engine::{plan_cache_stats, replica_cache_stats};
+pub use plan_cache::PlanCacheStats;
 pub use replica_cache::ReplicaCacheStats;
 pub use result_rows::ResultRows;
 pub use server::inline_statements;

@@ -15,6 +15,7 @@ use pintail_exec::{
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 
 use crate::admission::{QueryAdmission, QueryClass, shared_admission};
+use crate::plan_cache::{self, PlanCache, PlanCacheStats};
 use crate::replica_cache::{
     self, CacheKey, FileStamp, Lookup, ReplicaCache, ReplicaCacheStats, ReplicaStamp, TableStamp,
 };
@@ -344,6 +345,9 @@ pub struct ReplicaEngine {
     /// The longest a statement waits for a table recopied after a schema
     /// change before it is refused (see [`Self::execute_answer`]).
     recopy_wait: Duration,
+    /// Statements kept prepared between executions, or `None` when every
+    /// execution prepares its own (see [`crate::plan_cache`]).
+    plans: Option<Arc<PlanCache<KeptSelect>>>,
 }
 
 /// How long a statement waits, by default, for a table being recopied after
@@ -453,6 +457,7 @@ const INLINE_STATEMENT_BYTES: usize = 2048;
 /// One SELECT bound and planned, with the result metadata binding decided.
 /// Built once per statement: by admission classification when it costs
 /// the statement, otherwise just before execution.
+#[derive(Clone)]
 struct PreparedSelect {
     physical: pintail_exec::PhysicalPlan,
     collation: pintail_exec::collation::Collation,
@@ -461,6 +466,23 @@ struct PreparedSelect {
     result_collations: Vec<Option<String>>,
     group_concat: Vec<bool>,
     wire_hints: Vec<Option<WireTypeHint>>,
+}
+
+/// A statement kept prepared: its plan, and what else its text decides
+/// that an execution asks for before it runs.
+struct KeptSelect {
+    prepared: PreparedSelect,
+    /// Whether the statement has the shape classification bounds
+    /// ([`pintail_sql::has_bounded_planning_shape`]); one that has not is
+    /// always a general query.
+    bounded_planning: bool,
+    /// [`pintail_sql::has_bounded_admission_shape`].
+    bounded_admission: bool,
+    /// [`pintail_sql::has_bounded_table_less_shape`]: the statement may
+    /// run on the thread that received it.
+    table_less: bool,
+    /// The statement's own `MAX_EXECUTION_TIME` hint, in milliseconds.
+    execution_time_hint: Option<u64>,
 }
 
 struct LoadedReplica {
@@ -567,6 +589,26 @@ impl ReaderTarget {
 }
 
 static SHARED_REPLICA_CACHE: OnceLock<Arc<ReplicaCache<LoadedReplica>>> = OnceLock::new();
+static SHARED_PLAN_CACHE: OnceLock<Option<Arc<PlanCache<KeptSelect>>>> = OnceLock::new();
+
+/// The plan cache every engine in the process shares, or `None` when it is
+/// turned off: one kept preparation of a statement however many connections
+/// send it.
+fn shared_plan_cache() -> Option<Arc<PlanCache<KeptSelect>>> {
+    SHARED_PLAN_CACHE
+        .get_or_init(|| {
+            plan_cache::configured_bounds()
+                .map(|(entries, bytes)| Arc::new(PlanCache::new(entries, bytes)))
+        })
+        .clone()
+}
+
+/// What the shared plan cache has done since startup; all zero when it is
+/// turned off.
+#[must_use]
+pub fn plan_cache_stats() -> PlanCacheStats {
+    shared_plan_cache().map_or_else(PlanCacheStats::default, |plans| plans.stats())
+}
 
 /// The replica cache every engine in the process shares: one loaded copy
 /// of a database however many connections and requests read it.
@@ -603,7 +645,25 @@ impl ReplicaEngine {
             listings: Arc::new(Mutex::new(HashMap::new())),
             proofs: Arc::new(Mutex::new(HashMap::new())),
             recopy_wait: default_recopy_wait(),
+            plans: shared_plan_cache(),
         }
+    }
+
+    /// Gives this engine a plan cache of its own with the given bounds, in
+    /// place of the one the process shares; zero for either turns the
+    /// cache off for this engine.
+    #[must_use]
+    pub fn with_plan_cache(mut self, entries: usize, bytes: usize) -> Self {
+        self.plans = (entries > 0 && bytes > 0).then(|| Arc::new(PlanCache::new(entries, bytes)));
+        self
+    }
+
+    /// What this engine's plan cache has done; all zero when it has none.
+    #[must_use]
+    pub fn plan_cache_stats(&self) -> PlanCacheStats {
+        self.plans
+            .as_ref()
+            .map_or_else(PlanCacheStats::default, |plans| plans.stats())
     }
 
     /// The metadata signature for `files`, from the memo when the files are
@@ -1091,6 +1151,11 @@ impl ReplicaEngine {
             .targets
             .iter()
             .any(|target| target.unreadable.is_some());
+        // The load this one replaces answers nothing from here on, so the
+        // plans prepared against it are only held memory.
+        if let (Some(plans), Some((replaced, _))) = (&self.plans, &previous) {
+            plans.forget_replica(replaced.load_id);
+        }
         self.cache.insert(
             key,
             stamp,
@@ -1308,6 +1373,28 @@ impl ReplicaEngine {
         lane: Lane,
     ) -> Result<Attempt, QueryError> {
         let started = Instant::now();
+        if sql.len() <= KEPT_STATEMENT_BYTES
+            && let Some(plans) = &self.plans
+            && let Some(attempt) = self.execute_kept(
+                plans,
+                database_id,
+                sql,
+                max_rows,
+                deadline,
+                &mut sink,
+                lane,
+                started,
+            )
+        {
+            return attempt;
+        }
+        // What the statement had raised when it arrived: a preparation
+        // that raises a warning of its own is not kept.
+        let (_, warned_before) = pintail_exec::session_warning_counts();
+        // Whether classification settled this statement's class for good:
+        // only then is the class a kept plan would be given the one this
+        // execution was.
+        let mut settled_class = false;
         // Bound classification work itself. Large statements acquire general
         // capacity before parsing; small ones may qualify for the reserve.
         let (statement, classified, _permit) = if sql.len() <= 8192 {
@@ -1321,6 +1408,7 @@ impl ReplicaEngine {
                 return Ok(Attempt::Declined(InlineAnswer::NotBounded));
             }
             let classified = self.classify(database_id, sql, &statement);
+            settled_class = !matches!(classified, Err(Unclassified::Unready));
             let short = classified.as_ref().is_ok_and(|classified| classified.short);
             crate::trace::mark("classified");
             crate::trace::label("class", if short { "short" } else { "general" });
@@ -1384,18 +1472,8 @@ impl ReplicaEngine {
         let mut provider = build_provider(&replica)?;
         let table_count = replica.targets.len();
         crate::trace::mark("catalog");
-        // `/*+ MAX_EXECUTION_TIME(ms) */` is scoped to the statement and
-        // tightens whatever the session already allows - never loosens it, so
-        // a hint cannot be used to escape an administrator's ceiling. A hint
-        // of 0 means "no ceiling" in MySQL and simply leaves the session's in
-        // force.
-        let deadline = match pintail_sql::max_execution_time_hint(&statement) {
-            Some(milliseconds) if milliseconds > 0 => Instant::now()
-                .checked_add(Duration::from_millis(milliseconds))
-                .map(|hinted| deadline.map_or(hinted, |held| held.min(hinted)))
-                .or(deadline),
-            _ => deadline,
-        };
+        let execution_time_hint = pintail_sql::max_execution_time_hint(&statement);
+        let deadline = hinted_deadline(execution_time_hint, deadline);
         let facts = replica.facts();
         match execute_metadata(&statement, catalog, Some(&replica.database.name), facts) {
             Ok(result) => {
@@ -1433,65 +1511,70 @@ impl ReplicaEngine {
         }
         let answer = match statement {
             Statement::Query(_) => {
-                let mut run = || match prepared.take() {
-                    Some(prepared) => {
-                        crate::trace::mark("prepared");
-                        self.run_prepared(
-                            prepared,
+                // Only a statement whose answer cannot depend on the clock,
+                // the connection or a random source shares an execution,
+                // and only such a statement is kept prepared.
+                let repeatable = (lane != Lane::Inline || self.plans.is_some())
+                    && pintail_sql::is_repeatable_statement(&statement);
+                let keep = self
+                    .plans
+                    .as_ref()
+                    .filter(|_| repeatable && settled_class && sql.len() <= KEPT_STATEMENT_BYTES);
+                let mut run = || {
+                    let prepared = match prepared.take() {
+                        Some(prepared) => prepared,
+                        None => Self::prepare_select(
+                            &statement,
                             sql,
-                            &provider,
+                            catalog,
+                            facts,
                             &replica.database.name,
-                            provider_stats(&provider, table_count),
-                            started,
-                            max_rows,
-                            deadline,
-                            sink.take(),
-                        )
+                            true,
+                        )?,
+                    };
+                    crate::trace::mark("prepared");
+                    // A preparation that raised a warning is made again by
+                    // every execution, which raises it again. Preparing
+                    // counts its divisions by zero from none.
+                    if let Some(plans) = keep
+                        && pintail_exec::session_warning_counts() == (0, warned_before)
+                        && let key =
+                            SharedQueryKey::for_current_session(replica.load_id, sql, max_rows)
+                        && plans.seen_before(&key)
+                    {
+                        plans.insert(
+                            key,
+                            KeptSelect {
+                                prepared: prepared.clone(),
+                                bounded_planning: pintail_sql::has_bounded_planning_shape(
+                                    &statement,
+                                ),
+                                bounded_admission: pintail_sql::has_bounded_admission_shape(
+                                    &statement,
+                                ),
+                                table_less: pintail_sql::has_bounded_table_less_shape(&statement),
+                                execution_time_hint,
+                            },
+                            plan_cache::estimated_bytes(sql),
+                        );
                     }
-                    None => self.execute_select(
-                        &statement,
+                    self.run_prepared(
+                        prepared,
                         sql,
-                        catalog,
                         &provider,
-                        facts,
                         &replica.database.name,
                         provider_stats(&provider, table_count),
                         started,
                         max_rows,
                         deadline,
-                        true,
                         sink.take(),
-                    ),
+                    )
                 };
-                // Several clients asking the same question of the same
-                // snapshot at the same time is one question. Only a
-                // statement whose answer cannot depend on the clock, the
-                // connection or a random source is offered; everything
-                // else executes as it always did.
-                if lane == Lane::Inline || !pintail_sql::is_repeatable_statement(&statement) {
+                if lane == Lane::Inline || !repeatable {
                     return run().map(Attempt::Answered);
                 }
                 let key = SharedQueryKey::for_current_session(replica.load_id, sql, max_rows);
-                match shared_queries().join(&key, deadline) {
-                    Join::Alone => {
-                        crate::trace::label("shared", "alone");
-                        run()
-                    }
-                    Join::Followed(output) => {
-                        crate::trace::label("shared", "followed");
-                        Ok(Answer::Whole(followed_output(&output, started)))
-                    }
-                    Join::Lead(leader) => {
-                        crate::trace::label("shared", "lead");
-                        let result = run();
-                        // A streamed result went to one reader and is not
-                        // held: whoever waits executes on their own.
-                        if let Ok(Answer::Whole(output)) = &result {
-                            leader.succeeded(output);
-                        }
-                        result
-                    }
-                }
+                run_shared(&key, deadline, started, run)
             }
             Statement::Explain { .. } => self
                 .execute_explain(
@@ -1509,6 +1592,109 @@ impl ReplicaEngine {
             )),
         };
         answer.map(Attempt::Answered)
+    }
+
+    /// Executes `sql` from the plan kept for it, when one is kept against
+    /// the replica this database answers from now and under the session
+    /// settings installed on this thread. `None` when nothing is kept, or
+    /// the replica it was kept against is no longer current: the statement
+    /// is then prepared from its text as if there were no cache.
+    ///
+    /// What an execution from a kept plan does is what the execution that
+    /// prepared it did after preparing: the same classification of the same
+    /// plan against the replica as it is now, the same admission, the same
+    /// deadline and the same sharing of one execution between identical
+    /// requests.
+    #[allow(clippy::too_many_arguments)]
+    fn execute_kept(
+        &self,
+        plans: &PlanCache<KeptSelect>,
+        database_id: &str,
+        sql: &str,
+        max_rows: usize,
+        deadline: Option<Instant>,
+        sink: &mut Option<&mut dyn RowSink>,
+        lane: Lane,
+        started: Instant,
+    ) -> Option<Result<Attempt, QueryError>> {
+        let cache_key = self.cache_key(database_id);
+        let candidate = self.cache.peek(&cache_key)?;
+        let key = SharedQueryKey::for_current_session(candidate.load_id, sql, max_rows);
+        let kept = plans.get(&key)?;
+        if lane == Lane::Inline && !(kept.bounded_planning && kept.table_less) {
+            return Some(Ok(Attempt::Declined(InlineAnswer::NotBounded)));
+        }
+        // Kept against this load: the load has still to be the current one.
+        let replica = self.still_current(database_id, &cache_key, &candidate)?;
+        plans.used();
+        crate::trace::mark("kept");
+        Some(self.run_kept(
+            &kept, &replica, &key, sql, max_rows, deadline, sink, lane, started,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_kept(
+        &self,
+        kept: &KeptSelect,
+        replica: &LoadedReplica,
+        key: &SharedQueryKey,
+        sql: &str,
+        max_rows: usize,
+        deadline: Option<Instant>,
+        sink: &mut Option<&mut dyn RowSink>,
+        lane: Lane,
+        started: Instant,
+    ) -> Result<Attempt, QueryError> {
+        let provider = build_provider(replica)?;
+        // The class [`Self::classify`] gives this statement over this
+        // replica: its shape is kept, its cost is the plan's over the
+        // snapshots as they are now.
+        let short = kept.bounded_planning
+            && ((kept.bounded_admission && replica.is_tiny())
+                || QueryClass::from_cost(provider.admission_cost(&kept.prepared.physical))
+                    == QueryClass::Short);
+        crate::trace::mark("classified");
+        crate::trace::label("class", if short { "short" } else { "general" });
+        let class = if short {
+            QueryClass::Short
+        } else {
+            QueryClass::General
+        };
+        let _permit = if lane == Lane::Inline {
+            // Waiting for a slot is a worker's to do.
+            let Some(permit) = self.admission.try_admit_class_now(class) else {
+                return Ok(Attempt::Declined(InlineAnswer::NotNow));
+            };
+            permit
+        } else {
+            self.admission
+                .try_admit_class(class)
+                .ok_or(QueryError::Overloaded)?
+        };
+        crate::trace::mark("admitted");
+        let deadline = hinted_deadline(kept.execution_time_hint, deadline);
+        // Preparation installs the database name its statement resolves
+        // unqualified names in; an execution reads it from the same place.
+        pintail_sql::set_session_database_name(Some(&replica.database.name));
+        let mut run = || {
+            crate::trace::mark("prepared");
+            self.run_prepared(
+                kept.prepared.clone(),
+                sql,
+                &provider,
+                &replica.database.name,
+                provider_stats(&provider, replica.targets.len()),
+                started,
+                max_rows,
+                deadline,
+                sink.take(),
+            )
+        };
+        if lane == Lane::Inline {
+            return run().map(Attempt::Answered);
+        }
+        run_shared(key, deadline, started, run).map(Attempt::Answered)
     }
 
     /// Why transaction control is refused here: a local database has no
@@ -1943,6 +2129,57 @@ impl ReplicaEngine {
             },
             opened,
         ))
+    }
+}
+
+/// The longest statement text kept prepared: the text is part of the key
+/// every execution builds and compares.
+const KEPT_STATEMENT_BYTES: usize = 8192;
+
+/// A statement's deadline under its own `MAX_EXECUTION_TIME` hint.
+///
+/// `/*+ MAX_EXECUTION_TIME(ms) */` is scoped to the statement and tightens
+/// whatever the session already allows - never loosens it, so a hint cannot
+/// be used to escape an administrator's ceiling. A hint of 0 means "no
+/// ceiling" in `MySQL` and simply leaves the session's in force.
+fn hinted_deadline(hint: Option<u64>, deadline: Option<Instant>) -> Option<Instant> {
+    match hint {
+        Some(milliseconds) if milliseconds > 0 => Instant::now()
+            .checked_add(Duration::from_millis(milliseconds))
+            .map(|hinted| deadline.map_or(hinted, |held| held.min(hinted)))
+            .or(deadline),
+        _ => deadline,
+    }
+}
+
+/// Runs a repeatable statement as one of however many identical requests
+/// are asking it of the same snapshot at the same time: several clients
+/// asking the same question at once is one question.
+fn run_shared(
+    key: &SharedQueryKey,
+    deadline: Option<Instant>,
+    started: Instant,
+    run: impl FnOnce() -> Result<Answer, QueryError>,
+) -> Result<Answer, QueryError> {
+    match shared_queries().join(key, deadline) {
+        Join::Alone => {
+            crate::trace::label("shared", "alone");
+            run()
+        }
+        Join::Followed(output) => {
+            crate::trace::label("shared", "followed");
+            Ok(Answer::Whole(followed_output(&output, started)))
+        }
+        Join::Lead(leader) => {
+            crate::trace::label("shared", "lead");
+            let result = run();
+            // A streamed result went to one reader and is not held:
+            // whoever waits executes on their own.
+            if let Ok(Answer::Whole(output)) = &result {
+                leader.succeeded(output);
+            }
+            result
+        }
     }
 }
 
@@ -2641,6 +2878,10 @@ fn followed_output(shared: &QueryOutput, started: Instant) -> QueryOutput {
     output.stats.duration_ms = elapsed_ms(started);
     output
 }
+
+#[cfg(test)]
+#[path = "engine_plan_cache_tests.rs"]
+mod plan_cache_tests;
 
 #[cfg(test)]
 mod admission_tests {

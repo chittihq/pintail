@@ -280,6 +280,20 @@ pub fn take_session_division_warnings() -> u64 {
     SESSION_DIVISION_WARNINGS.replace(0)
 }
 
+/// How many warnings this thread's statement has raised so far: the
+/// divisions by zero, then the conversions and truncated `GROUP_CONCAT`
+/// results together. Nothing is taken, so the statement's diagnostics are
+/// left as they were.
+#[must_use]
+pub fn session_warning_counts() -> (u64, u64) {
+    (
+        SESSION_DIVISION_WARNINGS.get(),
+        SESSION_CONVERSION_WARNINGS
+            .with(|warnings| warnings.borrow().1)
+            .saturating_add(SESSION_GROUP_CONCAT_WARNINGS.get()),
+    )
+}
+
 /// Installs the recursive-CTE iteration cap for queries on this thread.
 /// `None` restores `MySQL`'s default of 1000 iterations.
 pub fn set_session_cte_max_recursion_depth(limit: Option<u64>) {
