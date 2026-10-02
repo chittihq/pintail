@@ -43,11 +43,21 @@ impl Temporal<'_> {
         let unit = self.units[row];
         match self.fsp {
             None => unit,
-            Some(fsp) => {
-                let step = 10_i64.pow(6 - u32::from(fsp.min(6)));
-                unit - unit.rem_euclid(step)
-            }
+            Some(fsp) => unit - unit.rem_euclid(fraction_step(fsp)),
         }
+    }
+
+    /// The least and greatest unit of a column with no NULL row, where
+    /// every row's unit is a value; `None` for an empty column or one with
+    /// a NULL, whose NULL rows hold no instant to bound.
+    fn bounds(&self) -> Option<(i64, i64)> {
+        if !self.validity.no_nulls() {
+            return None;
+        }
+        Some((
+            pintail_simd::min_i64(self.units)?,
+            pintail_simd::max_i64(self.units)?,
+        ))
     }
 
     /// The units whose canonical text has a four-digit year, where text
@@ -65,6 +75,31 @@ impl Temporal<'_> {
             Some(_) => first * MICROS_PER_DAY..=(last + 1) * MICROS_PER_DAY - 1,
         }
     }
+}
+
+/// The microseconds one step of a datetime's `fsp` fraction digits spans.
+const fn fraction_step(fsp: u8) -> i64 {
+    match fsp {
+        0 => 1_000_000,
+        1 => 100_000,
+        2 => 10_000,
+        3 => 1_000,
+        4 => 100,
+        5 => 10,
+        _ => 1,
+    }
+}
+
+/// `units` floored to whole multiples of `STEP`, each plus `offset`: the
+/// loop of a reading at one precision, its divisor a constant so the
+/// remainder is a multiply and the whole-microsecond case no arithmetic
+/// but the add.
+fn spelled_plus<const STEP: i64>(units: &[i64], offset: i64, out: &mut Vec<i64>) {
+    out.extend(
+        units
+            .iter()
+            .map(|unit| (unit - unit.rem_euclid(STEP)).wrapping_add(offset)),
+    );
 }
 
 /// A column's packed temporal units, when it has them.
@@ -201,27 +236,34 @@ pub(super) fn date_format_column(
     ))
 }
 
-/// A source `TIMESTAMP` read in a session zone of fixed offset,
-/// `SessionTimestamp(column, '+05:30')`, over packed units.
+/// A source `TIMESTAMP` read in a session zone, `SessionTimestamp(column,
+/// '+05:30')` or `SessionTimestamp(column, 'Europe/Paris')`, over packed
+/// units.
 ///
 /// The stored units are UTC and the session reads each one shifted by the
-/// same number of seconds, so the reading is the units plus the offset:
-/// what row evaluation reaches by spelling each row, converting the text
-/// and spelling it again. With a column form here, `DATE()`, `HOUR()` or
-/// `DATE_FORMAT()` of the reading keep their own packed kernels instead of
-/// declining a whole key to row evaluation. A named zone has no single
-/// offset (a daylight-saving change gives it two), so it declines; so
-/// does a reading whose year canonical text cannot spell.
+/// zone's offset at that instant, so the reading is the units plus the
+/// offset: what row evaluation reaches by spelling each row, converting the
+/// text and spelling it again. With a column form here, `DATE()`, `HOUR()`
+/// or `DATE_FORMAT()` of the reading keep their own packed kernels instead
+/// of declining a whole key to row evaluation.
+///
+/// A fixed zone has one offset. A named zone's offset changes at its
+/// transitions (daylight saving, a change of standard time), so it is
+/// looked up per instant - but instants arrive in runs that share a UTC
+/// second, and a column in time order asks about the same second many
+/// times, so the lookup is repeated only when the second changes. A
+/// reading whose year canonical text cannot spell declines.
 pub(super) fn session_timestamp_column(
     batch: &RecordBatch,
     args: &[CompiledExpr],
     data_type: Option<DataType>,
     effects: &mut Effects,
 ) -> Option<ColumnVector> {
+    use crate::expression::temporal::ZoneReading;
     let [argument, CompiledExpr::Literal(Value::Utf8(zone))] = args else {
         return None;
     };
-    let offset = i64::from(crate::expression::temporal::fixed_zone_seconds(zone)?) * 1_000_000;
+    let zone = ZoneReading::of(zone)?;
     let input = operand(batch, argument, effects)?;
     let Operand::Column(column) = &input else {
         return None;
@@ -233,16 +275,68 @@ pub(super) fn session_timestamp_column(
     }
     let spellable = units.four_digit_years();
     let mut shifted = Vec::with_capacity(units.units.len());
-    for row in 0..units.units.len() {
-        if !units.validity.is_valid(row) {
-            shifted.push(0);
-            continue;
+    match zone {
+        ZoneReading::Fixed(seconds) => {
+            let offset = i64::from(seconds) * 1_000_000;
+            // Flooring to the precision and adding the offset both keep
+            // order, so a column with no NULL is spellable throughout when
+            // its least and greatest readings are - and then no row needs
+            // a check of its own.
+            if let Some((least, greatest)) = units.bounds() {
+                let step = fraction_step(fsp);
+                for unit in [least, greatest] {
+                    let reading = (unit - unit.rem_euclid(step)).checked_add(offset)?;
+                    if !spellable.contains(&reading) {
+                        return None;
+                    }
+                }
+                match fsp {
+                    0 => spelled_plus::<1_000_000>(units.units, offset, &mut shifted),
+                    1 => spelled_plus::<100_000>(units.units, offset, &mut shifted),
+                    2 => spelled_plus::<10_000>(units.units, offset, &mut shifted),
+                    3 => spelled_plus::<1_000>(units.units, offset, &mut shifted),
+                    4 => spelled_plus::<100>(units.units, offset, &mut shifted),
+                    5 => spelled_plus::<10>(units.units, offset, &mut shifted),
+                    _ => spelled_plus::<1>(units.units, offset, &mut shifted),
+                }
+            }
+            for row in shifted.len()..units.units.len() {
+                if !units.validity.is_valid(row) {
+                    shifted.push(0);
+                    continue;
+                }
+                let reading = units.spelled(row).checked_add(offset)?;
+                if !spellable.contains(&reading) {
+                    return None;
+                }
+                shifted.push(reading);
+            }
         }
-        let reading = units.spelled(row).checked_add(offset)?;
-        if !spellable.contains(&reading) {
-            return None;
+        ZoneReading::Named(_) => {
+            // The second last looked up and its offset in microseconds.
+            let mut last: Option<(i64, i64)> = None;
+            for row in 0..units.units.len() {
+                if !units.validity.is_valid(row) {
+                    shifted.push(0);
+                    continue;
+                }
+                let spelled = units.spelled(row);
+                let second = spelled.div_euclid(1_000_000);
+                let offset = match last {
+                    Some((known, offset)) if known == second => offset,
+                    _ => {
+                        let offset = i64::from(zone.seconds_east(second)?) * 1_000_000;
+                        last = Some((second, offset));
+                        offset
+                    }
+                };
+                let reading = spelled.checked_add(offset)?;
+                if !spellable.contains(&reading) {
+                    return None;
+                }
+                shifted.push(reading);
+            }
         }
-        shifted.push(reading);
     }
     Some(ColumnVector::from_typed(
         DataType::DateTime64 { fsp },
@@ -254,8 +348,129 @@ pub(super) fn session_timestamp_column(
     ))
 }
 
-/// Whether `expr` reads a source `TIMESTAMP` in a named session zone,
-/// which no packed kernel takes: the reason a key over it declines.
+/// No zone reads an instant a day or more from UTC: an offset is held as a
+/// fixed offset, which is strictly inside a day either way.
+const WIDEST_OFFSET_MICROS: i64 = MICROS_PER_DAY;
+
+/// `SessionTimestamp(column, zone) op literal` as a mask, looking the
+/// zone's offset up only for the rows it could decide.
+///
+/// A reading is its instant plus an offset of less than a day, so an
+/// instant more than a day clear of the literal compares with it the way
+/// its reading does, whatever the offset - and a filter for a month of
+/// rows leaves most of a table that far from both its ends. Only the rows
+/// within a day of the literal are read through the zone, each exactly as
+/// [`session_timestamp_column`] reads it.
+///
+/// The answer is the packed comparison's over that column: it takes the
+/// same literals (canonical, with the column's own fraction digits) and
+/// declines where that kernel would - here, wherever some row's reading
+/// could leave the years canonical text spells. `None` also for any other
+/// expression or operator.
+pub(super) fn session_comparison_mask(
+    batch: &RecordBatch,
+    reading: &CompiledExpr,
+    op: pintail_sql::BinaryOp,
+    literal: &Value,
+) -> Option<crate::SelectionMask> {
+    use pintail_sql::BinaryOp;
+
+    use crate::expression::temporal::ZoneReading;
+    let CompiledExpr::Scalar {
+        function: ScalarFunction::SessionTimestamp,
+        args,
+        data_type,
+        ..
+    } = reading
+    else {
+        return None;
+    };
+    let [
+        CompiledExpr::Column(column),
+        CompiledExpr::Literal(Value::Utf8(zone)),
+    ] = args.as_slice()
+    else {
+        return None;
+    };
+    let zone = ZoneReading::of(zone)?;
+    let units = temporal_column(batch.column(*column)?)?;
+    let fsp = units.fsp?;
+    if data_type.is_some_and(|declared| declared != DataType::DateTime64 { fsp }) {
+        return None;
+    }
+    let Value::Utf8(text) = literal else {
+        return None;
+    };
+    let expected_len = if fsp == 0 { 19 } else { 20 + usize::from(fsp) };
+    if text.len() != expected_len {
+        return None;
+    }
+    let literal = crate::batch::parse_datetime_micros(text)?;
+    if !matches!(
+        op,
+        BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::LessOrEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterOrEqual
+    ) {
+        return None;
+    }
+    // Every reading lies strictly between its instant less a precision step
+    // and a day, and its instant plus a day. With those bounds inside the
+    // spellable years for the least and greatest unit - a NULL row's
+    // included, whatever it holds - no row's reading can leave them.
+    let step = fraction_step(fsp);
+    let spellable = units.four_digit_years();
+    let least = pintail_simd::min_i64(units.units)?;
+    let greatest = pintail_simd::max_i64(units.units)?;
+    let below = least.checked_sub(step + WIDEST_OFFSET_MICROS)?;
+    let above = greatest.checked_add(WIDEST_OFFSET_MICROS)?;
+    if !spellable.contains(&below) || !spellable.contains(&above) {
+        return None;
+    }
+    let compare = move |reading: i64| match op {
+        BinaryOp::Equal => reading == literal,
+        BinaryOp::NotEqual => reading != literal,
+        BinaryOp::Less => reading < literal,
+        BinaryOp::LessOrEqual => reading <= literal,
+        BinaryOp::Greater => reading > literal,
+        _ => reading >= literal,
+    };
+    // Set if an instant inside the spellable years had no offset, which the
+    // calendar rules out: the mask is then abandoned rather than trusted.
+    let unread = std::sync::atomic::AtomicBool::new(false);
+    let mask = crate::expression::selection::select_words(units.units, units.validity, |unit| {
+        // `low < reading < high`, both exclusive.
+        let low = unit - step - WIDEST_OFFSET_MICROS;
+        let high = unit + WIDEST_OFFSET_MICROS;
+        if low >= literal {
+            // The reading is above the literal.
+            return matches!(
+                op,
+                BinaryOp::NotEqual | BinaryOp::Greater | BinaryOp::GreaterOrEqual
+            );
+        }
+        if high <= literal {
+            // The reading is below the literal.
+            return matches!(
+                op,
+                BinaryOp::NotEqual | BinaryOp::Less | BinaryOp::LessOrEqual
+            );
+        }
+        let spelled = unit - unit.rem_euclid(step);
+        let Some(seconds) = zone.seconds_east(spelled.div_euclid(1_000_000)) else {
+            unread.store(true, std::sync::atomic::Ordering::Relaxed);
+            return false;
+        };
+        compare(spelled + i64::from(seconds) * 1_000_000)
+    });
+    (!unread.into_inner()).then_some(mask)
+}
+
+/// Whether `expr` reads a source `TIMESTAMP` in a named session zone: the
+/// reason reported when a key over one has no packed column after all.
 pub(super) fn reads_named_session_zone(expr: &CompiledExpr) -> bool {
     match expr {
         CompiledExpr::Scalar {
@@ -450,7 +665,23 @@ fn dates_of(
 fn days_of(column: &Temporal<'_>) -> Option<ColumnVector> {
     let spellable = column.four_digit_years();
     let mut days = Vec::with_capacity(column.units.len());
-    for (row, unit) in column.units.iter().enumerate() {
+    // With no NULL row the least and greatest unit bound every row, and
+    // the loop is one division a row with nothing to branch on.
+    if let Some((least, greatest)) = column.bounds() {
+        if !spellable.contains(&least) || !spellable.contains(&greatest) {
+            return None;
+        }
+        match column.fsp {
+            None => days.extend_from_slice(column.units),
+            Some(_) => days.extend(
+                column
+                    .units
+                    .iter()
+                    .map(|unit| unit.div_euclid(MICROS_PER_DAY)),
+            ),
+        }
+    }
+    for (row, unit) in column.units.iter().enumerate().skip(days.len()) {
         if !column.validity.is_valid(row) {
             days.push(0);
             continue;
@@ -759,7 +990,7 @@ mod tests {
     use pintail_types::{DataType, Value};
 
     use super::super::testing::{agrees_with_rows, batch_of, scalar};
-    use super::CompiledExpr;
+    use super::{CompiledExpr, MICROS_PER_DAY};
     use crate::array::ValidityMask;
     use crate::batch::{ColumnVector, LazyText, RecordBatch, SelectionMask, TypedValues};
 
@@ -1058,9 +1289,8 @@ mod tests {
         }
     }
 
-    /// A session-zone reading of a fixed offset is the units shifted by
-    /// it, as row evaluation converts each row's text; a named zone, whose
-    /// offset can change within the column, has no packed kernel.
+    /// A session-zone reading is the units shifted by the zone's offset at
+    /// each instant, as row evaluation converts each row's text.
     #[test]
     fn session_zone_readings_of_packed_temporals_match_row_evaluation() {
         let reading = |zone: &str, fsp: u8| {
@@ -1092,18 +1322,242 @@ mod tests {
                     let answered = agrees_with_rows(&date, &batch, DataType::Date32);
                     assert!(answered || !every, "DATE at {zone} over {fsp} has a kernel");
                 }
-                for zone in ["America/New_York", "Europe/London"] {
-                    let expression = reading(zone, fsp);
-                    assert!(
-                        expression
-                            .evaluate_vector_column_quietly(
-                                &batch,
-                                Some(DataType::DateTime64 { fsp })
-                            )
-                            .is_none(),
-                        "{zone} declines"
+                // A named zone reads each instant at its own offset.
+                for zone in ["America/New_York", "Europe/London", "Australia/Lord_Howe"] {
+                    let declared = DataType::DateTime64 { fsp };
+                    let answered = agrees_with_rows(&reading(zone, fsp), &batch, declared);
+                    assert!(answered || !every, "{zone} over {fsp} has a kernel");
+                    assert!(reading(zone, fsp).reads_named_session_zone());
+                    let date = scalar(
+                        ScalarFunction::Date,
+                        vec![reading(zone, fsp)],
+                        DataType::Date32,
                     );
-                    assert!(expression.reads_named_session_zone());
+                    let answered = agrees_with_rows(&date, &batch, DataType::Date32);
+                    assert!(answered || !every, "DATE at {zone} over {fsp} has a kernel");
+                }
+                // Text that names no zone has no reading.
+                assert!(
+                    reading("Nowhere/Land", fsp)
+                        .evaluate_vector_column_quietly(&batch, Some(DataType::DateTime64 { fsp }))
+                        .is_none()
+                );
+            }
+        }
+    }
+
+    /// The instants either side of every kind of transition, to the
+    /// microsecond: a spring-forward gap, an autumn fold, a half-hour
+    /// daylight shift, a zone that skipped a whole day, one that changed
+    /// its standard time, and local mean time before any standard time.
+    #[test]
+    fn named_zone_readings_match_row_evaluation_across_transitions() {
+        // (zone, UTC instant of a transition)
+        let transitions = [
+            ("America/New_York", "2024-03-10 07:00:00"),
+            ("America/New_York", "2024-11-03 06:00:00"),
+            ("Europe/London", "2024-03-31 01:00:00"),
+            ("Europe/London", "2024-10-27 01:00:00"),
+            ("Australia/Lord_Howe", "2024-04-06 15:00:00"),
+            ("Australia/Lord_Howe", "2024-10-05 15:30:00"),
+            ("Pacific/Apia", "2011-12-30 10:00:00"),
+            ("Asia/Kathmandu", "1985-12-31 18:30:00"),
+            ("Europe/Amsterdam", "1937-06-30 23:40:28"),
+            ("America/New_York", "1883-11-18 17:00:00"),
+            ("Asia/Kolkata", "2024-06-01 00:00:00"),
+            ("UTC", "2024-06-01 00:00:00"),
+        ];
+        for (zone, instant) in transitions {
+            let base = crate::expression::temporal::parse_mysql_datetime(instant)
+                .expect("instant")
+                .and_utc()
+                .timestamp_micros();
+            for fsp in [0_u8, 3, 6] {
+                // Rows walk across the transition forwards, then back, so a
+                // remembered offset is always met by a row it is wrong for.
+                let steps = [
+                    -3_600_000_000_i64,
+                    -1_000_000,
+                    -1,
+                    0,
+                    1,
+                    999_999,
+                    1_000_000,
+                    1_800_000_000,
+                    3_600_000_000,
+                    0,
+                    -1,
+                    -86_400_000_000,
+                    86_400_000_000,
+                ];
+                // A stored column holds units at its own precision.
+                let precision = super::fraction_step(fsp);
+                let units: Vec<i64> = steps
+                    .iter()
+                    .map(|step| base + step)
+                    .map(|unit| unit - unit.rem_euclid(precision))
+                    .collect();
+                let mut valid = vec![true; units.len()];
+                valid[4] = false;
+                let column = ColumnVector::from_typed(
+                    DataType::DateTime64 { fsp },
+                    TypedValues::Temporal {
+                        units,
+                        text: LazyText::datetime(fsp),
+                    },
+                    ValidityMask::from_bools(&valid),
+                );
+                let batch = batch(column);
+                let reading = scalar(
+                    ScalarFunction::SessionTimestamp,
+                    vec![
+                        CompiledExpr::Column(0),
+                        CompiledExpr::Literal(Value::Utf8(zone.to_owned())),
+                    ],
+                    DataType::DateTime64 { fsp },
+                );
+                assert!(
+                    agrees_with_rows(&reading, &batch, DataType::DateTime64 { fsp }),
+                    "{zone} at {instant} over {fsp} has a kernel"
+                );
+                let hour = scalar(
+                    ScalarFunction::DatePart(DatePart::Hour),
+                    vec![reading],
+                    DataType::Int64,
+                );
+                assert!(
+                    agrees_with_rows(&hour, &batch, DataType::Int64),
+                    "HOUR in {zone} at {instant} over {fsp} has a kernel"
+                );
+            }
+        }
+    }
+
+    /// A filter on a named-zone reading keeps the rows row evaluation
+    /// keeps: bounds spelled from the readings themselves, either side of a
+    /// transition, as a range, as each comparison and with the literal
+    /// first. A bound the packed comparison cannot hold to the column's
+    /// precision has no mask.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn named_zone_filters_keep_the_rows_row_evaluation_keeps() {
+        use pintail_sql::BinaryOp;
+
+        use super::super::testing::binary;
+        let transitions = [
+            ("America/New_York", "2024-03-10 07:00:00"),
+            ("America/New_York", "2024-11-03 06:00:00"),
+            ("Australia/Lord_Howe", "2024-04-06 15:00:00"),
+            ("Europe/London", "2024-10-27 01:00:00"),
+        ];
+        for (zone, instant) in transitions {
+            let base = crate::expression::temporal::parse_mysql_datetime(instant)
+                .expect("instant")
+                .and_utc()
+                .timestamp_micros();
+            for fsp in [0_u8, 3, 6] {
+                let precision = super::fraction_step(fsp);
+                // A row every ten minutes for two hours either side, with
+                // a fraction where the column holds one, and a NULL.
+                // Then rows a day and more away, either side of the day an
+                // offset can move a reading by.
+                let far = [-40_i64, -3, -1, 1, 3, 40].into_iter().flat_map(|days| {
+                    [-3_600_000_000_i64, 0, 3_600_000_000]
+                        .map(move |hour| base + days * MICROS_PER_DAY + hour)
+                });
+                let units: Vec<i64> = (-12..=12_i64)
+                    .map(|step| base + step * 600_000_000 + step.rem_euclid(7) * 123_457)
+                    .chain(far)
+                    .map(|unit| unit - unit.rem_euclid(precision))
+                    .collect();
+                let mut valid = vec![true; units.len()];
+                valid[5] = false;
+                let column = ColumnVector::from_typed(
+                    DataType::DateTime64 { fsp },
+                    TypedValues::Temporal {
+                        units,
+                        text: LazyText::datetime(fsp),
+                    },
+                    ValidityMask::from_bools(&valid),
+                );
+                let batch = batch(column);
+                let reading = || {
+                    scalar(
+                        ScalarFunction::SessionTimestamp,
+                        vec![
+                            CompiledExpr::Column(0),
+                            CompiledExpr::Literal(Value::Utf8(zone.to_owned())),
+                        ],
+                        DataType::DateTime64 { fsp },
+                    )
+                };
+                let spelled = |row: usize| {
+                    CompiledExpr::Literal(reading().evaluate(&batch, row).expect("reading"))
+                };
+                let agrees = |filter: &CompiledExpr, context: &str| {
+                    let mask = filter
+                        .evaluate_filter_mask(&batch)
+                        .expect("no error")
+                        .unwrap_or_else(|| panic!("{context} in {zone} over {fsp} has a mask"));
+                    for row in 0..batch.row_count() {
+                        let kept = filter.evaluate(&batch, row).expect("row evaluation")
+                            == Value::Boolean(true);
+                        assert_eq!(
+                            mask.is_selected(row),
+                            kept,
+                            "{context} in {zone} over {fsp}, row {row}"
+                        );
+                    }
+                };
+                for (low, high) in [
+                    (3, 20),
+                    (10, 14),
+                    (12, 12),
+                    (20, 3),
+                    (0, 24),
+                    (25, 42),
+                    (30, 36),
+                    (27, 12),
+                    (12, 40),
+                ] {
+                    let between = scalar(
+                        ScalarFunction::Between { negated: false },
+                        vec![reading(), spelled(low), spelled(high)],
+                        DataType::Boolean,
+                    );
+                    agrees(&between, "BETWEEN");
+                    for op in [
+                        BinaryOp::Equal,
+                        BinaryOp::NotEqual,
+                        BinaryOp::Less,
+                        BinaryOp::LessOrEqual,
+                        BinaryOp::Greater,
+                        BinaryOp::GreaterOrEqual,
+                    ] {
+                        let after = binary(op, reading(), spelled(low), DataType::Boolean);
+                        agrees(&after, "a comparison");
+                        let before = binary(op, spelled(high), reading(), DataType::Boolean);
+                        agrees(&before, "a comparison with the literal first");
+                        let both = binary(BinaryOp::And, after, before, DataType::Boolean);
+                        agrees(&both, "a conjunction");
+                    }
+                }
+                // A bound written to whole seconds against a column with a
+                // fraction is left to the row path.
+                if fsp > 0 {
+                    let short = CompiledExpr::Literal(Value::Utf8(instant.to_owned()));
+                    let filter = binary(
+                        BinaryOp::GreaterOrEqual,
+                        reading(),
+                        short,
+                        DataType::Boolean,
+                    );
+                    assert!(
+                        filter
+                            .evaluate_filter_mask(&batch)
+                            .expect("no error")
+                            .is_none()
+                    );
                 }
             }
         }

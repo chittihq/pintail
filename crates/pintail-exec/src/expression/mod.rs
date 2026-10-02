@@ -290,16 +290,34 @@ fn between_mask(
     args: &[CompiledExpr],
     collation: Collation,
 ) -> Result<Option<SelectionMask>, ExecError> {
-    let (CompiledExpr::Column(column), CompiledExpr::Literal(lower), CompiledExpr::Literal(upper)) =
-        (&args[0], &args[1], &args[2])
-    else {
+    let (CompiledExpr::Literal(lower), CompiledExpr::Literal(upper)) = (&args[1], &args[2]) else {
         return Ok(None);
     };
-    if let Some(mask) = selection::between_range_mask(batch, *column, lower, upper) {
-        return Ok(Some(mask));
-    }
-    let Some(vector) = batch.column(*column) else {
-        return Ok(None);
+    let reading;
+    let vector = match &args[0] {
+        CompiledExpr::Column(column) => {
+            if let Some(mask) = selection::between_range_mask(batch, *column, lower, upper) {
+                return Ok(Some(mask));
+            }
+            let Some(vector) = batch.column(*column) else {
+                return Ok(None);
+            };
+            vector
+        }
+        other => {
+            if let (Some(mut mask), Some(upper)) = (
+                other.session_comparison_mask(batch, BinaryOp::GreaterOrEqual, lower),
+                other.session_comparison_mask(batch, BinaryOp::LessOrEqual, upper),
+            ) {
+                mask.intersect(&upper)?;
+                return Ok(Some(mask));
+            }
+            let Some(column) = session_reading(batch, other) else {
+                return Ok(None);
+            };
+            reading = column;
+            &reading
+        }
     };
     let Some((typed, validity)) = vector.typed() else {
         return Ok(None);
@@ -315,6 +333,56 @@ fn between_mask(
     };
     mask.intersect(&other)?;
     Ok(Some(mask))
+}
+
+/// A source `TIMESTAMP` column read in the session's zone, as a packed
+/// column a mask can compare: the reading of every row at once, where the
+/// row path spells each row, converts the text and spells it again.
+///
+/// A fixed offset never reaches here - its filter is rewritten onto the
+/// stored column - so this is the named zone's filter, which has no single
+/// shift to be rewritten by. The reading is a `DATETIME` of the column's
+/// own precision with canonical text, so the packed comparison holds it to
+/// the same conditions as a stored column. `None` for any other
+/// expression, and where the reading has no packed form or raised
+/// anything.
+fn session_reading(batch: &RecordBatch, expr: &CompiledExpr) -> Option<crate::ColumnVector> {
+    let CompiledExpr::Scalar {
+        function: ScalarFunction::SessionTimestamp,
+        args,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    if !matches!(args.first(), Some(CompiledExpr::Column(_))) {
+        return None;
+    }
+    expr.evaluate_vector_column_quietly(batch, None)
+}
+
+/// `reading op literal`, in either order, for a [`session_reading`].
+fn session_reading_mask(
+    batch: &RecordBatch,
+    left: &CompiledExpr,
+    right: &CompiledExpr,
+    op: BinaryOp,
+    collation: Collation,
+) -> Option<SelectionMask> {
+    let (reading, literal, op) = match (left, right) {
+        (reading, CompiledExpr::Literal(value)) => (reading, value, op),
+        (CompiledExpr::Literal(value), reading) => (reading, value, mirror_comparison(op)),
+        _ => return None,
+    };
+    // Most rows of a table sit more than an offset away from the literal
+    // and need no offset to be decided; the reading of every row is the
+    // answer for what that leaves out (a NULL-laden or far-flung column).
+    if let Some(mask) = reading.session_comparison_mask(batch, op, literal) {
+        return Some(mask);
+    }
+    let vector = session_reading(batch, reading)?;
+    let (typed, validity) = vector.typed()?;
+    typed_comparison_mask(typed, validity, vector.data_type(), op, literal, collation)
 }
 
 fn literal_list_mask(
@@ -966,7 +1034,7 @@ impl CompiledExpr {
                     (Self::Literal(value), Self::Column(index)) => {
                         (*index, value, mirror_comparison(*op))
                     }
-                    _ => return Ok(None),
+                    _ => return Ok(session_reading_mask(batch, left, right, *op, *collation)),
                 };
                 let Some(vector) = batch.column(column) else {
                     return Ok(None);

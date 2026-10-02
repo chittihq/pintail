@@ -106,8 +106,20 @@ impl CompiledExpr {
         Some(column)
     }
 
-    /// Whether this reads a source `TIMESTAMP` in a named session zone, which
-    /// no packed kernel takes: a key over one declines for that reason.
+    /// `self op literal` as a mask where `self` reads a source `TIMESTAMP`
+    /// column in the session's zone (see
+    /// [`temporal::session_comparison_mask`]); `None` for anything else.
+    pub(crate) fn session_comparison_mask(
+        &self,
+        batch: &RecordBatch,
+        op: pintail_sql::BinaryOp,
+        literal: &Value,
+    ) -> Option<crate::SelectionMask> {
+        temporal::session_comparison_mask(batch, self, op, literal)
+    }
+
+    /// Whether this reads a source `TIMESTAMP` in a named session zone: the
+    /// reason reported when a key over one has no packed column.
     pub(crate) fn reads_named_session_zone(&self) -> bool {
         temporal::reads_named_session_zone(self)
     }

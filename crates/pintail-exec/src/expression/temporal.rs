@@ -397,6 +397,44 @@ pub(super) fn fixed_zone_seconds(text: &str) -> Option<i32> {
     }
 }
 
+/// A session zone as a reading of UTC instants: the seconds east of UTC it
+/// reads each instant at.
+pub(super) enum ZoneReading {
+    /// One offset for every instant.
+    Fixed(i32),
+    /// An offset that depends on the instant (daylight saving, history).
+    Named(chrono_tz::Tz),
+}
+
+impl ZoneReading {
+    /// The zone `text` names, as a session-zone reading parses it.
+    pub(super) fn of(text: &str) -> Option<Self> {
+        Some(match timezone_spec(text)? {
+            ZoneSpec::Fixed(offset) => Self::Fixed(offset.local_minus_utc()),
+            ZoneSpec::Named(zone) => Self::Named(zone),
+        })
+    }
+
+    /// Seconds east of UTC at the instant `utc_seconds` after the epoch:
+    /// the offset `with_timezone` applies to that instant, so a reading
+    /// built from it is the one the text conversion spells. `None` for an
+    /// instant the calendar cannot hold.
+    pub(super) fn seconds_east(&self, utc_seconds: i64) -> Option<i32> {
+        match self {
+            Self::Fixed(seconds) => Some(*seconds),
+            Self::Named(zone) => {
+                use chrono::Offset as _;
+                let instant = chrono::DateTime::from_timestamp(utc_seconds, 0)?.naive_utc();
+                Some(
+                    zone.offset_from_utc_datetime(&instant)
+                        .fix()
+                        .local_minus_utc(),
+                )
+            }
+        }
+    }
+}
+
 /// A datetime offset is a signed two-digit hour and minute suffix.
 pub(crate) fn has_timestamp_offset(text: &str) -> bool {
     let text = text.trim_end();
