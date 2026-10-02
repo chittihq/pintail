@@ -360,10 +360,10 @@ pub(crate) fn insert_key(
     physical_key(table, values)
 }
 
-fn decode_value(
+pub(crate) fn decode_value(
     table: &str,
     column: &SourceColumn,
-    value: BinlogValue<'static>,
+    value: BinlogValue<'_>,
 ) -> Result<Value, CdcError> {
     let value = MysqlValue::try_from(value)
         .map_err(|error| CdcError::Decode(format!("{table}.{}: {error}", column.name)))?;
@@ -382,12 +382,22 @@ fn adapt_binlog_value(column: &SourceColumn, value: MysqlValue) -> Result<MysqlV
     // the value crosses the signed midpoint. The probed declaration is the
     // authority: reinterpret the two's-complement bits at the column's width.
     // Under FULL metadata unsigned columns arrive as UInt and this never fires.
+    let declared_unsigned = column
+        .mysql_column_type
+        .to_ascii_lowercase()
+        .contains("unsigned");
+    // A signed MEDIUMINT is three bytes, and the binlog decoder widens them
+    // without their sign: every negative value arrives 2^24 too high.
+    if let MysqlValue::Int(read) = value
+        && !declared_unsigned
+        && mysql_type == "mediumint"
+        && (0x80_0000..0x100_0000).contains(&read)
+    {
+        return Ok(MysqlValue::Int(read - 0x100_0000));
+    }
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
     if let MysqlValue::Int(signed) = value
-        && column
-            .mysql_column_type
-            .to_ascii_lowercase()
-            .contains("unsigned")
+        && declared_unsigned
     {
         let reinterpreted = match mysql_type.as_str() {
             "tinyint" => Some(u64::from(signed as u8)),
@@ -518,7 +528,7 @@ fn declaration_labels(column_type: &str, kind: &str) -> Result<Vec<String>, CdcE
         .ok_or_else(|| CdcError::Decode(format!("cannot parse {kind} declaration {column_type}")))
 }
 
-fn is_textual(column: &SourceColumn) -> bool {
+pub(crate) fn is_textual(column: &SourceColumn) -> bool {
     matches!(
         column.mysql_data_type.to_ascii_lowercase().as_str(),
         "char" | "varchar" | "tinytext" | "text" | "mediumtext" | "longtext" | "enum" | "set"
@@ -548,7 +558,7 @@ fn transcode_text(column: &SourceColumn, bytes: &[u8]) -> Result<String, CdcErro
     }
 }
 
-fn key_part(value: &Value) -> Option<KeyPart> {
+pub(crate) fn key_part(value: &Value) -> Option<KeyPart> {
     match value {
         Value::Null => None,
         Value::Boolean(value) => Some(KeyPart::UInt64(u64::from(*value))),
@@ -834,6 +844,31 @@ mod tests {
         assert_eq!(
             adapt_binlog_value(&int_column, MysqlValue::UInt(3_000_000_000)).expect("full"),
             MysqlValue::UInt(3_000_000_000)
+        );
+    }
+
+    #[test]
+    fn a_negative_mediumint_keeps_its_sign() {
+        // Three bytes widened without their sign: -1 arrives as 2^24 - 1.
+        let signed = column("mediumint", "mediumint");
+        for (read, expected) in [
+            (0x00FF_FFFF, -1),
+            (0x0080_0000, -8_388_608),
+            (0x007F_FFFF, 8_388_607),
+            (0, 0),
+            (-5, -5),
+        ] {
+            assert_eq!(
+                adapt_binlog_value(&signed, MysqlValue::Int(read)).expect("mediumint"),
+                MysqlValue::Int(expected),
+                "{read}"
+            );
+        }
+        // An unsigned column holds the high half as it is.
+        let unsigned = column("mediumint", "mediumint unsigned");
+        assert_eq!(
+            adapt_binlog_value(&unsigned, MysqlValue::Int(0x00FF_FFFF)).expect("unsigned"),
+            MysqlValue::UInt(16_777_215)
         );
     }
 
