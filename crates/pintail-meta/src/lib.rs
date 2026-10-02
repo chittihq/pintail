@@ -5,7 +5,7 @@
 
 use std::{
     collections::BTreeSet,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Mutex, PoisonError},
     time::Duration,
 };
@@ -31,7 +31,98 @@ const CURRENT_SCHEMA_VERSION: u32 = 23;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
-    connection: Connection,
+    connection: HeldConnection,
+}
+
+/// Connections left open by stores that were dropped, for the next store
+/// opened on the same file.
+///
+/// A request opens the control plane two or three times - to authorize the
+/// caller, to load the database it names - and each open made a new
+/// connection, which reads and parses the whole schema before its first
+/// statement: most of a millisecond, several times the read it was opened
+/// for. A connection handed back here has done that once.
+///
+/// A connection is reused only for the file it was opened on, told by the
+/// file's device and inode: a database restored or replaced under the same
+/// path is a different file, and is opened, checked and migrated afresh.
+/// A few are kept, so a burst of requests does not leave a descriptor open
+/// per thread it ran on.
+static IDLE_CONNECTIONS: Mutex<Vec<(PathBuf, FileIdentity, Connection)>> = Mutex::new(Vec::new());
+
+/// Idle connections kept across every file.
+const MAX_IDLE_CONNECTIONS: usize = 4;
+
+/// What tells one file from another that took its path: device and inode.
+type FileIdentity = (u64, u64);
+
+#[cfg(unix)]
+fn file_identity(path: &Path) -> Option<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.dev(), metadata.ino()))
+}
+
+/// Without an identity no connection is kept: every open is a new one.
+#[cfg(not(unix))]
+fn file_identity(_path: &Path) -> Option<FileIdentity> {
+    None
+}
+
+/// Takes an idle connection to the file at `path`, closing any kept for a
+/// file that no longer holds that path.
+fn take_idle_connection(path: &Path, identity: FileIdentity) -> Option<Connection> {
+    let mut idle = IDLE_CONNECTIONS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    idle.retain(|(held, held_identity, _)| held != path || *held_identity == identity);
+    let position = idle.iter().position(|(held, _, _)| held == path)?;
+    Some(idle.swap_remove(position).2)
+}
+
+/// A store's connection, handed back for reuse when the store is dropped.
+struct HeldConnection {
+    connection: Option<Connection>,
+    /// The file the connection is open on; `None` keeps it from reuse.
+    home: Option<(PathBuf, FileIdentity)>,
+}
+
+impl std::ops::Deref for HeldConnection {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        self.connection
+            .as_ref()
+            .expect("a store holds its connection until it is dropped")
+    }
+}
+
+impl std::ops::DerefMut for HeldConnection {
+    fn deref_mut(&mut self) -> &mut Connection {
+        self.connection
+            .as_mut()
+            .expect("a store holds its connection until it is dropped")
+    }
+}
+
+impl Drop for HeldConnection {
+    fn drop(&mut self) {
+        let (Some(connection), Some((path, identity))) = (self.connection.take(), self.home.take())
+        else {
+            return;
+        };
+        // A connection dropped inside a transaction closes, which rolls
+        // the transaction back; only one at rest is worth keeping.
+        if !connection.is_autocommit() {
+            return;
+        }
+        let mut idle = IDLE_CONNECTIONS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if idle.len() < MAX_IDLE_CONNECTIONS {
+            idle.push((path, identity, connection));
+        }
+    }
 }
 
 /// A durable setting returned from an insert-if-absent operation.
@@ -215,22 +306,40 @@ impl MetaStore {
         let path = path
             .canonicalize()
             .with_context(|| format!("failed to resolve metadata database {}", path.display()))?;
-        let mut connection = Connection::open(&path)
-            .with_context(|| format!("failed to open metadata database {}", path.display()))?;
-        connection
-            .busy_timeout(Duration::from_secs(5))
-            .context("failed to configure SQLite busy timeout")?;
-        connection
-            .pragma_update(None, "foreign_keys", true)
-            .context("failed to enable SQLite foreign keys")?;
-        // Only a file behind the current schema needs WAL set and migrations
-        // run: re-running them on every open took write locks on the live
-        // file for nothing. Reading the version each time, rather than
-        // remembering a file as done, still upgrades one restored or
-        // replaced under the same path.
-        let version: u32 = connection
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .context("failed to read metadata schema version")?;
+        let identity = file_identity(&path);
+        // A kept connection is configured already. The version is read on
+        // it all the same: the file it is open on may have been set back
+        // by another connection since, and a file behind the current
+        // schema is migrated on a connection of its own, as it always was.
+        let read_version = |connection: &Connection| -> Result<u32> {
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .context("failed to read metadata schema version")
+        };
+        let kept = identity
+            .and_then(|identity| take_idle_connection(&path, identity))
+            .map(|connection| read_version(&connection).map(|version| (connection, version)))
+            .transpose()?
+            .filter(|(_, version)| *version >= CURRENT_SCHEMA_VERSION);
+        let (mut connection, version) = if let Some(kept) = kept {
+            kept
+        } else {
+            let connection = Connection::open(&path)
+                .with_context(|| format!("failed to open metadata database {}", path.display()))?;
+            connection
+                .busy_timeout(Duration::from_secs(5))
+                .context("failed to configure SQLite busy timeout")?;
+            connection
+                .pragma_update(None, "foreign_keys", true)
+                .context("failed to enable SQLite foreign keys")?;
+            // Only a file behind the current schema needs WAL set and
+            // migrations run: re-running them on every open took write
+            // locks on the live file for nothing. Reading the version each
+            // time, rather than remembering a file as done, still upgrades
+            // one restored or replaced under the same path.
+            let version = read_version(&connection)?;
+            (connection, version)
+        };
         if version < CURRENT_SCHEMA_VERSION {
             // One opener migrates at a time. Each migration reads the
             // version and then writes inside a transaction that starts as a
@@ -246,7 +355,12 @@ impl MetaStore {
                 .context("failed to enable SQLite WAL mode")?;
             migrate(&mut connection)?;
         }
-        Ok(Self { connection })
+        Ok(Self {
+            connection: HeldConnection {
+                connection: Some(connection),
+                home: identity.map(|identity| (path, identity)),
+            },
+        })
     }
 
     /// Returns the schema version applied to this database.

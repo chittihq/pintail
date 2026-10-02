@@ -4,6 +4,7 @@
 
 mod activity_scale;
 mod cdc;
+mod connection_reuse;
 mod control;
 mod copy_complete;
 mod interrupted_snapshots;
