@@ -53,6 +53,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memory bounds - runs on the workers or once per batch. A statement's
   audit row is written after its response is sent, so a crash can lose
   that row; it never delayed or failed the statement's data.
+- HTTP statements with a session token no longer write an audit row per
+  request thread; one writer commits them in batches, and a query's audit
+  row carries the time it was queued. Session authority, a query's
+  database check and a wire login's reads are read once per metadata
+  write instead of per request, so an edit to users, memberships, keys or
+  databases made by another process is seen within five seconds; one made
+  by the server itself is seen by the next request.
 - A scan under `LIMIT` reads the rows the limit can take: with or without
   predicates, with `OFFSET`, and from the end for `ORDER BY <whole
   integer key> DESC`. `SELECT * ... LIMIT 10` on a 100,000-row table
