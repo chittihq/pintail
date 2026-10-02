@@ -55,8 +55,10 @@ const WAL_CHECKPOINT_FRAMES: std::ffi::c_int = 1000;
 /// nothing decides by: an audit event, a sync run's start and finish, the
 /// time an API key was last used. A commit that wrote only those - one of
 /// the [`MetaStore`] methods that says so - leaves the number where it was,
-/// so a request that is audited, and a replication cycle that found
-/// nothing, do not make every reader of the configuration read it again.
+/// so a request that is audited, and a run that is started or finished, do
+/// not make every reader of the configuration read it again. The state a
+/// replication cycle writes back when it ends is not a journal row, and
+/// still moves it once a cycle.
 #[must_use]
 pub fn write_generation() -> u64 {
     WRITE_GENERATION.load(std::sync::atomic::Ordering::Acquire)
