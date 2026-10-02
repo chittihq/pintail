@@ -15,6 +15,11 @@
 // CHAOS_SEED picks the workload, CHAOS_DIR where the data directory, the
 // server logs and `chaos.jsonl` (one line per cycle) go, and
 // PINTAIL_RECOVERY_BINARY a server built with `--features failpoints`.
+//
+// No wait here is open-ended. A source statement that outlives its deadline,
+// a writer that cannot be paused and a source volume with no room left each
+// end the run with `CHAOS-FAIL <reason>` and a ledger line that names the
+// reason, and every ledger line says where the cycle's time went.
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import mysql from 'mysql2/promise'
@@ -27,6 +32,13 @@ const seed = Number(process.env.CHAOS_SEED ?? 4343)
 const dir = process.env.CHAOS_DIR ?? join(repository, 'validate-out/chaos', new Date().toISOString().replaceAll(':', '-'))
 const binary = process.env.PINTAIL_RECOVERY_BINARY ?? join(repository, 'target/recovery/pintail')
 const journalSeed = Number(process.env.CHAOS_JOURNAL_ROWS ?? 200_000)
+// The source keeps its tables and binary logs in memory. A log is rotated
+// once it passes `rotateBytes`, and the run stops when less than
+// `minFreeMegabytes` is left, before the source would block a commit.
+const sourceDisk = process.env.CHAOS_SOURCE_DISK ?? '4g'
+const rotateBytes = Number(process.env.CHAOS_ROTATE_MB ?? 256) * 1024 * 1024
+const minFreeMegabytes = Number(process.env.CHAOS_MIN_FREE_MB ?? 400)
+const statementMs = 60_000
 const dataDir = join(dir, 'data')
 mkdirSync(dataDir, { recursive: true })
 const ledger = join(dir, 'chaos.jsonl')
@@ -52,7 +64,7 @@ const sites = [
 
 // ---------------------------------------------------------------- source
 const source = new Source()
-await source.start()
+await source.start(sourceDisk)
 await source.root.query(`CREATE DATABASE ${schema}`)
 const writer = await source.connect(schema)
 const reader = await source.connect(schema)
@@ -208,15 +220,18 @@ function shapeOp(): Op {
   const set = shapeColumns.length ? `, ${pick(shapeColumns)} = id % 7` : ''
   return { sql: `UPDATE shape SET v = v + 1${set} WHERE id BETWEEN ${from} AND ${from + between(1, 300)}` }
 }
+/** A statement on the writer's connection. The deadline matters: a source that cannot write its log holds a commit forever. */
+const write = (sql: string) => writer.query({ sql, timeout: statementMs })
 async function alterShape() {
   if (shapeColumns.length < 3 && rand() < 0.7) {
     const column = `c${++shapeColumnSerial}`
-    await writer.query(`ALTER TABLE shape ADD COLUMN ${column} INT NULL`)
+    await write(`ALTER TABLE shape ADD COLUMN ${column} INT NULL`)
     shapeColumns.push(column)
   } else if (shapeColumns.length) {
-    await writer.query(`ALTER TABLE shape DROP COLUMN ${shapeColumns.shift()}`)
+    await write(`ALTER TABLE shape DROP COLUMN ${shapeColumns.shift()}`)
   }
 }
+let writerError = ''
 async function writeLoop() {
   while (writing) {
     transactions++
@@ -225,15 +240,15 @@ async function writeLoop() {
     const op = (truncates = true) => { const r = rand(); return r < 0.5 ? journalOp() : r < 0.7 ? slotsOp() : r < 0.87 ? pairsOp() : r < 0.94 ? scratchOp(truncates) : shapeOp() }
     if (roll < 0.04) {
       // Rolled back: nothing of it may reach the replica.
-      await writer.query(`START TRANSACTION; ${slotsOp().sql}; ${pairsOp().sql}; ${shapeOp().sql}; ROLLBACK`)
+      await write(`START TRANSACTION; ${slotsOp().sql}; ${pairsOp().sql}; ${shapeOp().sql}; ROLLBACK`)
     } else if (roll < 0.3) {
       const ops = Array.from({ length: between(2, 4) }, () => op(false))
-      await writer.query(`START TRANSACTION; ${ops.map(o => o.sql).join('; ')}; COMMIT`)
+      await write(`START TRANSACTION; ${ops.map(o => o.sql).join('; ')}; COMMIT`)
       const now = Date.now()
       for (const o of ops) for (const id of o.deletes ?? []) if (!deletedAt.has(id)) deletedAt.set(id, now)
     } else {
       const single = op()
-      await writer.query(single.sql)
+      await write(single.sql)
       const now = Date.now()
       for (const id of single.deletes ?? []) if (!deletedAt.has(id)) deletedAt.set(id, now)
     }
@@ -242,8 +257,20 @@ async function writeLoop() {
     if (transactions % 8 === 0) await Bun.sleep(between(0, 25))
   }
 }
-function startWriter() { writing = true; writerIdle = writeLoop() }
-async function pauseWriter() { writing = false; await writerIdle }
+function startWriter() {
+  writing = true
+  writerIdle = writeLoop().catch(error => { writerError = String(error).slice(0, 300) })
+}
+/** Megabytes left on the source volume, or a note that it could not be read. */
+async function sourceRoom(): Promise<string> {
+  try { return `${await source.freeMegabytes()} MB free on the source volume` } catch (error) { return `source volume unreadable: ${String(error).slice(0, 120)}` }
+}
+async function pauseWriter() {
+  writing = false
+  const idle = await Promise.race([writerIdle.then(() => true), Bun.sleep(statementMs + 30_000).then(() => false)])
+  if (!idle) throw new Error(`the writer did not finish its statement within ${(statementMs + 30_000) / 1000} s (${await sourceRoom()})`)
+  if (writerError) throw new Error(`the writer failed: ${writerError} (${await sourceRoom()})`)
+}
 
 // Queries that keep the scan paths busy between the checks: they build the
 // newer segments' key index and read the memtable image while both change.
@@ -315,15 +342,26 @@ startWriter()
 let epoch = 0
 let purgeTo = ''
 let armed = ''
+let record: Record<string, unknown> = {}
+let fatal = ''
+try {
 for (let cycle = 1; cycle <= cycles; cycle++) {
-  const record: Record<string, unknown> = { cycle, start: starts, armed }
+  record = { cycle, start: starts, armed }
+  // Where the cycle's time goes, in milliseconds per step.
+  const ms: Record<string, number> = {}
+  record.ms = ms
+  let mark = Date.now()
+  const lap = (step: string) => { const now = Date.now(); ms[step] = (ms[step] ?? 0) + now - mark; mark = now }
+  const transactionsBefore = transactions
   const problems: string[] = []
   alterAllowed = cycle % 3 === 0
   await Bun.sleep(between(300, 2500))
   // What the replica shows before it dies.
   let before: Awaited<ReturnType<typeof journalView>> | undefined
   try { if (alive()) before = await journalView() } catch (error) { record.beforeError = String(error).slice(0, 200) }
+  lap('before')
   await Bun.sleep(between(0, 1200))
+  lap('idle')
   // The kill.
   const logBefore = currentLog
   let how: string
@@ -340,7 +378,9 @@ for (let cycle = 1; cycle <= cycles; cycle++) {
   const kind = how.replace(/ hit \d+: aborting/, '').replace(/^failpoint /, '')
   killCounts[kind] = (killCounts[kind] ?? 0) + 1
   record.flagsBefore = logFlags(logBefore)
+  lap('kill')
   await Bun.sleep(between(0, 1500))
+  lap('idle')
   // A second death while the first one is still being recovered from.
   if (rand() < 0.2) {
     spawnServer('')
@@ -360,6 +400,7 @@ for (let cycle = 1; cycle <= cycles; cycle++) {
     up = await healthy()
     if (!up) { problems.push('the replica cannot start'); record.problems = problems; appendFileSync(ledger, JSON.stringify(record) + '\n'); break }
   }
+  lap('open')
   // While it catches up: nothing it showed before the kill may be undone.
   let maximum = 0
   if (before) for (const id of before.view.keys()) if (id > maximum) maximum = id
@@ -384,12 +425,15 @@ for (let cycle = 1; cycle <= cycles; cycle++) {
   }
   record.polls = polls
   if (pollErrors) record.pollErrors = pollErrors
+  lap('polls')
   // Quiesce and compare everything.
   await pauseWriter()
+  lap('pause')
+  record.cycleTransactions = transactions - transactionsBefore
   const lost = [...missing].filter(([id, seen]) => { const at = deletedAt.get(id); return at === undefined || at > seen + 100 })
   if (lost.length) problems.push(`${lost.length} rows the replica held before the kill were absent before the source deleted them (${lost.slice(0, 5).map(([id]) => id).join(', ')})`)
   epoch++
-  await writer.query(`UPDATE epoch SET n = ${epoch} WHERE id = 1`)
+  await write(`UPDATE epoch SET n = ${epoch} WHERE id = 1`)
   const waited = Date.now()
   let diffs: string[] = ['not compared']
   let reached = false
@@ -407,12 +451,14 @@ for (let cycle = 1; cycle <= cycles; cycle++) {
     }
     try { reached = String((await replicaRows('SELECT n FROM epoch WHERE id = 1'))[0]?.[0]) === String(epoch) } catch { reached = false }
     if (reached) {
+      if (ms.reach === undefined) lap('reach')
       diffs = await parity()
       if (!diffs.length) break
       // A table being copied again answers late; give it the rest of the deadline.
       await Bun.sleep(1000)
     } else await Bun.sleep(100)
   }
+  lap(reached ? 'compare' : 'reach')
   record.convergeMs = Date.now() - waited
   record.reachedEpoch = reached
   if (diffs.length) { parityFailures++; problems.push(...diffs.map(diff => `parity: ${diff}`)) }
@@ -423,22 +469,36 @@ for (let cycle = 1; cycle <= cycles; cycle++) {
   if (problems.length) { violations++; record.problems = problems }
   appendFileSync(ledger, JSON.stringify(record) + '\n')
   console.log(`cycle ${cycle}: ${how}${problems.length ? ` PROBLEMS ${JSON.stringify(problems).slice(0, 600)}` : ' ok'} (${record.convergeMs} ms)`)
-  if (!diffs.length && cycle % 10 === 0) {
-    // Rotate the source log and drop the files the replica finished with ten cycles ago.
+  if (!diffs.length) {
+    // Rotate the source log by size and drop the files before the one the
+    // replica finished at the rotation before this one. By cycle count the
+    // logs outgrew the volume: a cycle writes more as the run goes on.
     const [current] = await sourceRows('SHOW BINARY LOG STATUS')
-    await writer.query('FLUSH BINARY LOGS')
-    if (purgeTo) await writer.query(`PURGE BINARY LOGS TO '${purgeTo}'`)
-    purgeTo = String(current[0])
+    if (Number(current[1]) > rotateBytes || cycle % 10 === 0) {
+      await write('FLUSH BINARY LOGS')
+      if (purgeTo) await write(`PURGE BINARY LOGS TO '${purgeTo}'`)
+      purgeTo = String(current[0])
+    }
+    const free = await source.freeMegabytes()
+    if (free < minFreeMegabytes) throw new Error(`the source volume has ${free} MB left of ${sourceDisk}: stopping before a commit blocks on it`)
   }
   if (diffs.length) { console.log('a difference outlived the catch-up deadline: stopping with the data directory kept'); break }
   startWriter()
 }
 await pauseWriter()
+} catch (error) {
+  // A wait that ran out or a source that stopped taking writes: say which, keep everything.
+  fatal = String(error).slice(0, 400)
+  violations++
+  writing = false
+  appendFileSync(ledger, JSON.stringify({ ...record, fatal }) + '\n')
+  console.log(`CHAOS-FAIL cycle ${record.cycle}: ${fatal}`)
+}
 probing = false
-await prober
-const summary = { seed, cycles, completed: readFileSync(ledger, 'utf8').trim().split('\n').length, violations, parityFailures, late, killCounts, starts }
+await Promise.race([prober, Bun.sleep(30_000)])
+const summary = { seed, cycles, completed: readFileSync(ledger, 'utf8').trim().split('\n').filter(line => !line.includes('"fatal"')).length, fatal, violations, parityFailures, late, killCounts, starts }
 writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2))
 console.log(`CHAOS-DONE ${JSON.stringify(summary)}`)
 replica?.destroy()
-if (!parityFailures) { await kill('SIGTERM'); writer.destroy(); reader.destroy(); await source.close() }
+if (!parityFailures && !fatal) { await kill('SIGTERM'); writer.destroy(); reader.destroy(); await source.close() }
 process.exit(violations ? 1 : 0)

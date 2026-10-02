@@ -50,9 +50,10 @@ export class Source {
   port = 0
   root!: mysql.Connection
   created = false
-  async start() {
+  /** `disk` sizes the in-memory volume that holds the tables and the binary logs. */
+  async start(disk = '2g') {
     this.host = await dockerHost()
-    await docker('run', '--detach', '--name', this.name, '--publish', '0:3306', '--tmpfs', '/var/lib/mysql:rw,size=2g',
+    await docker('run', '--detach', '--name', this.name, '--publish', '0:3306', '--tmpfs', `/var/lib/mysql:rw,size=${disk}`,
       '--env', 'MYSQL_ROOT_PASSWORD=pintail-root', 'mysql:8.4', '--server-id=953', '--log-bin=mysql-bin',
       '--binlog-format=ROW', '--binlog-row-image=FULL', '--binlog-row-metadata=MINIMAL', '--gtid-mode=ON',
       '--enforce-gtid-consistency=ON', '--default-time-zone=+00:00', '--sql-mode=NO_ENGINE_SUBSTITUTION')
@@ -64,6 +65,11 @@ export class Source {
       catch(error) { connection.destroy(); throw error }
     }, 120_000)
     await this.root.query({sql:"CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail'; GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'",timeout:15_000})
+  }
+  /** Megabytes left on the source's data volume: a full one blocks every commit without an error. */
+  async freeMegabytes(): Promise<number> {
+    const lines = (await docker('exec', this.name, 'df', '-Pm', '/var/lib/mysql')).stdout.trim().split('\n')
+    return Number(lines[lines.length - 1].split(/\s+/)[3])
   }
   private connectOnce(schema?: string) {
     return mysql.createConnection({ host: this.host, port: this.port, user: 'root', password: 'pintail-root', database: schema,
