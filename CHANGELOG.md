@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The server logs which build it is and which execution paths it runs:
+  two lines after `pintail limits:` (`pintail optimizations:` and
+  `pintail paths:`) give the CPU and its instruction sets, the vector
+  kernels' dispatch level, the build's target level and variant (standard,
+  pgo, pgo+bolt), both pool widths and where they came from, each
+  switchable path on or off, and a `non_default` list of every setting
+  that moves the process off its defaults. `GET /api/storage` returns the
+  same as `optimizations`.
+
 ### Changed
 
 - Segment files are written as format version 7: dictionary indexes are
