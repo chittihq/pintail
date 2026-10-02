@@ -1,7 +1,7 @@
 use chrono::{Datelike as _, Timelike as _, Utc};
 use mysql_async::{
     Value as MysqlValue,
-    binlog::{events::OptionalMetaExtractor, row::BinlogRow, value::BinlogValue},
+    binlog::{events::OptionalMetaExtractor, jsonb, row::BinlogRow, value::BinlogValue},
     consts::ColumnType,
 };
 use pintail_probe::{SourceColumn, SourceTable};
@@ -365,10 +365,140 @@ pub(crate) fn decode_value(
     column: &SourceColumn,
     value: BinlogValue<'_>,
 ) -> Result<Value, CdcError> {
-    let value = MysqlValue::try_from(value)
-        .map_err(|error| CdcError::Decode(format!("{table}.{}: {error}", column.name)))?;
+    let decode_error = |error: &dyn std::fmt::Display| {
+        CdcError::Decode(format!("{table}.{}: {error}", column.name))
+    };
+    let value = match value {
+        BinlogValue::Jsonb(document) => {
+            let mut text = String::new();
+            jsonb_text(document, &mut text).map_err(|error| decode_error(&error))?;
+            MysqlValue::Bytes(text.into_bytes())
+        }
+        other => MysqlValue::try_from(other).map_err(|error| decode_error(&error))?,
+    };
     let value = adapt_binlog_value(column, value)?;
     map_mysql_value(table, column, value).map_err(|error| CdcError::Decode(error.to_string()))
+}
+
+/// Writes a binary JSON document as JSON text, every value printed as
+/// `MySQL` prints it.
+///
+/// Most of a document is plain JSON. The rest are opaque values: a SQL
+/// value that kept its own type inside the document - a DECIMAL, a date or
+/// time, a binary string - written as its column type and its packed bytes.
+/// `MySQL` prints a DECIMAL as a number keeping its scale (`1.50`), a date
+/// and time as a string with six fractional digits (`"10:11:12.000000"`),
+/// and anything else as `"base64:type<N>:<data>"`. Each has a printed form,
+/// so a document holding one is decoded like any other.
+fn jsonb_text(document: jsonb::Value<'_>, out: &mut String) -> std::io::Result<()> {
+    match document {
+        jsonb::Value::Null => out.push_str("null"),
+        jsonb::Value::Bool(value) => out.push_str(if value { "true" } else { "false" }),
+        jsonb::Value::I16(value) => out.push_str(&value.to_string()),
+        jsonb::Value::U16(value) => out.push_str(&value.to_string()),
+        jsonb::Value::I32(value) => out.push_str(&value.to_string()),
+        jsonb::Value::U32(value) => out.push_str(&value.to_string()),
+        jsonb::Value::I64(value) => out.push_str(&value.to_string()),
+        jsonb::Value::U64(value) => out.push_str(&value.to_string()),
+        jsonb::Value::F64(value) => out.push_str(&serde_json::Value::from(value).to_string()),
+        jsonb::Value::String(text) => json_quoted(text.str_raw(), out)?,
+        jsonb::Value::SmallArray(array) => {
+            out.push('[');
+            for (index, element) in array.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                jsonb_text(element?, out)?;
+            }
+            out.push(']');
+        }
+        jsonb::Value::LargeArray(array) => {
+            out.push('[');
+            for (index, element) in array.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                jsonb_text(element?, out)?;
+            }
+            out.push(']');
+        }
+        jsonb::Value::SmallObject(object) => {
+            out.push('{');
+            for (index, member) in object.iter().enumerate() {
+                let (key, element) = member?;
+                if index > 0 {
+                    out.push(',');
+                }
+                json_quoted(key.value_raw(), out)?;
+                out.push(':');
+                jsonb_text(element, out)?;
+            }
+            out.push('}');
+        }
+        jsonb::Value::LargeObject(object) => {
+            out.push('{');
+            for (index, member) in object.iter().enumerate() {
+                let (key, element) = member?;
+                if index > 0 {
+                    out.push(',');
+                }
+                json_quoted(key.value_raw(), out)?;
+                out.push(':');
+                jsonb_text(element, out)?;
+            }
+            out.push('}');
+        }
+        jsonb::Value::Opaque(opaque) => opaque_text(opaque, out)?,
+    }
+    Ok(())
+}
+/// Writes `text` as a quoted JSON string.
+fn json_quoted(text: &[u8], out: &mut String) -> std::io::Result<()> {
+    let text = std::str::from_utf8(text)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    out.push_str(&serde_json::Value::String(text.to_owned()).to_string());
+    Ok(())
+}
+
+/// Writes one opaque member of a binary JSON document as `MySQL` prints it.
+fn opaque_text(opaque: jsonb::OpaqueValue<'_>, out: &mut String) -> std::io::Result<()> {
+    let invalid = |what: &str| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("JSON holds an invalid {what}"),
+        )
+    };
+    match opaque.value_type() {
+        // Precision, scale, then the packed digits.
+        ColumnType::MYSQL_TYPE_NEWDECIMAL => {
+            let text = match opaque.data_raw() {
+                [precision, scale, digits @ ..] => crate::rowimage::decimal_text(
+                    digits,
+                    usize::from(*precision),
+                    usize::from(*scale),
+                ),
+                _ => None,
+            }
+            .ok_or_else(|| invalid("DECIMAL"))?;
+            out.push_str(&text);
+        }
+        ColumnType::MYSQL_TYPE_DATE
+        | ColumnType::MYSQL_TYPE_TIME
+        | ColumnType::MYSQL_TYPE_DATETIME
+        | ColumnType::MYSQL_TYPE_TIMESTAMP => match jsonb::Value::Opaque(opaque).parse()? {
+            jsonb::JsonDom::Scalar(jsonb::JsonScalar::DateTime(time)) => {
+                json_quoted(format!("{time:.6}").as_bytes(), out)?;
+            }
+            _ => return Err(invalid("date or time")),
+        },
+        _ => match jsonb::Value::Opaque(opaque).parse()? {
+            jsonb::JsonDom::Scalar(jsonb::JsonScalar::Opaque(opaque)) => {
+                json_quoted(opaque.to_string().as_bytes(), out)?;
+            }
+            _ => return Err(invalid("opaque value")),
+        },
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -498,7 +628,43 @@ fn adapt_binlog_value(column: &SourceColumn, value: MysqlValue) -> Result<MysqlV
             transcode_text(column, &bytes)?.into_bytes(),
         ));
     }
+    if let Some(width) = fixed_binary_width(column)
+        && let MysqlValue::Bytes(mut bytes) = value
+    {
+        pad_fixed_binary(&mut bytes, width);
+        return Ok(MysqlValue::Bytes(bytes));
+    }
     Ok(value)
+}
+
+/// The byte width of a `BINARY(n)` column, `None` for every other type.
+///
+/// A row image writes a fixed-width binary value without its trailing zero
+/// bytes - the pad byte of the binary character set, stripped the way a
+/// `CHAR` value's trailing spaces are - while the stored value, and every
+/// `SELECT` of it, is all `n` bytes. The width puts the padding back.
+pub(crate) fn fixed_binary_width(column: &SourceColumn) -> Option<usize> {
+    if !column.mysql_data_type.eq_ignore_ascii_case("binary") {
+        return None;
+    }
+    let declared = column.mysql_column_type.trim().to_ascii_lowercase();
+    let rest = declared.strip_prefix("binary")?.trim_start();
+    if rest.is_empty() {
+        return Some(1);
+    }
+    rest.strip_prefix('(')?
+        .split(')')
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Zero-pads a `BINARY(n)` value back to its declared `width`.
+pub(crate) fn pad_fixed_binary(bytes: &mut Vec<u8>, width: usize) {
+    if bytes.len() < width {
+        bytes.resize(width, 0);
+    }
 }
 
 fn numeric_index(value: &MysqlValue) -> Option<usize> {
@@ -625,45 +791,9 @@ mod tests {
                 values
                     .into_iter()
                     .map(|value| Some(BinlogValue::Value(value)))
-    if let Some(width) = fixed_binary_width(column)
-        && let MysqlValue::Bytes(mut bytes) = value
-    {
-        pad_fixed_binary(&mut bytes, width);
-        return Ok(MysqlValue::Bytes(bytes));
-    }
                     .collect(),
                 types
                     .iter()
-/// The byte width of a `BINARY(n)` column, `None` for every other type.
-///
-/// A row image writes a fixed-width binary value without its trailing zero
-/// bytes - the pad byte of the binary character set, stripped the way a
-/// `CHAR` value's trailing spaces are - while the stored value, and every
-/// `SELECT` of it, is all `n` bytes. The width puts the padding back.
-pub(crate) fn fixed_binary_width(column: &SourceColumn) -> Option<usize> {
-    if !column.mysql_data_type.eq_ignore_ascii_case("binary") {
-        return None;
-    }
-    let declared = column.mysql_column_type.trim().to_ascii_lowercase();
-    let rest = declared.strip_prefix("binary")?.trim_start();
-    if rest.is_empty() {
-        return Some(1);
-    }
-    rest.strip_prefix('(')?
-        .split(')')
-        .next()?
-        .trim()
-        .parse()
-        .ok()
-}
-
-/// Zero-pads a `BINARY(n)` value back to its declared `width`.
-pub(crate) fn pad_fixed_binary(bytes: &mut Vec<u8>, width: usize) {
-    if bytes.len() < width {
-        bytes.resize(width, 0);
-    }
-}
-
                     .map(|kind| Column::new(*kind))
                     .collect::<Vec<_>>()
                     .into(),
@@ -881,6 +1011,68 @@ pub(crate) fn pad_fixed_binary(bytes: &mut Vec<u8>, width: usize) {
             adapt_binlog_value(&int_column, MysqlValue::UInt(3_000_000_000)).expect("full"),
             MysqlValue::UInt(3_000_000_000)
         );
+    }
+
+    /// Opaque members of a binary JSON document print as `MySQL` prints
+    /// them, where they used to refuse the row and resync the table.
+    #[test]
+    fn json_opaque_values_print_as_mysql_prints_them() {
+        use mysql_async::binlog::jsonb::{OpaqueValue, Value as Jsonb};
+        let print = |kind: ColumnType, data: Vec<u8>| {
+            let mut text = String::new();
+            super::jsonb_text(Jsonb::Opaque(OpaqueValue::new(kind, data)), &mut text)
+                .map(|()| text)
+                .map_err(|error| error.to_string())
+        };
+        let datetime = |year: i64, month: i64, day: i64, clock: i64, micros: i64| {
+            let date = ((year * 13 + month) << 5) | day;
+            (((date << 17) | clock) << 24) | micros
+        };
+        let clock = |hour: i64, minute: i64, second: i64| (hour << 12) | (minute << 6) | second;
+        // DECIMAL(3,2) 1.50 and DECIMAL(4,3) -0.001: precision, scale, digits.
+        assert_eq!(
+            print(ColumnType::MYSQL_TYPE_NEWDECIMAL, vec![3, 2, 0x81, 0x32]).as_deref(),
+            Ok("1.50")
+        );
+        assert_eq!(
+            print(
+                ColumnType::MYSQL_TYPE_NEWDECIMAL,
+                vec![4, 3, 0x7f, 0xff, 0xfe]
+            )
+            .as_deref(),
+            Ok("-0.001")
+        );
+        assert_eq!(
+            print(
+                ColumnType::MYSQL_TYPE_DATE,
+                datetime(2024, 1, 2, 0, 0).to_le_bytes().to_vec()
+            )
+            .as_deref(),
+            Ok("\"2024-01-02\"")
+        );
+        assert_eq!(
+            print(
+                ColumnType::MYSQL_TYPE_DATETIME,
+                datetime(2024, 1, 2, clock(3, 4, 5), 250_000)
+                    .to_le_bytes()
+                    .to_vec()
+            )
+            .as_deref(),
+            Ok("\"2024-01-02 03:04:05.250000\"")
+        );
+        assert_eq!(
+            print(
+                ColumnType::MYSQL_TYPE_TIME,
+                (-(clock(10, 11, 12) << 24)).to_le_bytes().to_vec()
+            )
+            .as_deref(),
+            Ok("\"-10:11:12.000000\"")
+        );
+        assert_eq!(
+            print(ColumnType::MYSQL_TYPE_VARCHAR, vec![1, 2]).as_deref(),
+            Ok("\"base64:type15:AQI=\"")
+        );
+        assert!(print(ColumnType::MYSQL_TYPE_NEWDECIMAL, vec![3]).is_err());
     }
 
     #[test]

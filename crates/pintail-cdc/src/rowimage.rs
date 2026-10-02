@@ -198,7 +198,7 @@ fn push_number(text: &mut String, value: u32) {
 
 /// The text of a packed decimal, or `None` for a group outside the range
 /// its digits allow, which the general decoder then reports.
-fn decimal_text(raw: &[u8], precision: usize, scale: usize) -> Option<String> {
+pub(crate) fn decimal_text(raw: &[u8], precision: usize, scale: usize) -> Option<String> {
     let negative = raw.first()? & 0x80 == 0;
     let flip = if negative { 0xff } else { 0 };
     let mut position = 0_usize;

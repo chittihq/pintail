@@ -19,7 +19,7 @@ pub use canonical::{
     parse_decimal_scaled, parse_time_micros, read_duration_text, round_micros_to_fsp,
 };
 pub use charset::{CharacterSet, utf8_prefix};
-pub use json::mysql_json_text;
+pub use json::{mysql_json_document_text, mysql_json_text};
 pub use row::{KeyPart, PrimaryKey, StoredRow};
 pub use schema::{Column, KeyMode, SchemaError, TableSchema, declaration_labels};
 pub use value::{DataType, DecimalQuotient, Float64, NATIVE_DECIMAL_MAX_PRECISION, Value};

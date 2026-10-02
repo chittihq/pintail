@@ -1391,9 +1391,14 @@ pub fn map_mysql_value(
         DataType::Json => {
             let text = mysql_text(&value)
                 .ok_or_else(|| mapping_error(table, column, "JSON is not valid UTF-8"))?;
-            let parsed: serde_json::Value = serde_json::from_str(&text)
-                .map_err(|error| mapping_error(table, column, format!("invalid JSON: {error}")))?;
-            Value::Utf8(pintail_types::mysql_json_text(&parsed))
+            // Numbers keep their spelling: a DECIMAL member reads `1.50`
+            // from the source, and stores as that, not as the `1.5` a
+            // parsed number would print.
+            Value::Utf8(
+                pintail_types::mysql_json_document_text(&text).map_err(|error| {
+                    mapping_error(table, column, format!("invalid JSON: {error}"))
+                })?,
+            )
         }
     };
     Ok(mapped)
@@ -1863,6 +1868,53 @@ mod tests {
     use mysql_async::Value as MysqlValue;
     use pintail_types::{KeyPart, Value};
     use std::sync::atomic::AtomicUsize;
+
+    fn source_column(
+        data_type: &str,
+        column_type: &str,
+        pintail_type: pintail_types::DataType,
+    ) -> pintail_probe::SourceColumn {
+        pintail_probe::SourceColumn {
+            id: 1,
+            name: "value".to_owned(),
+            mysql_data_type: data_type.to_owned(),
+            mysql_column_type: column_type.to_owned(),
+            pintail_type,
+            nullable: true,
+            character_set: Some("utf8mb4".to_owned()),
+            collation: Some("utf8mb4_0900_ai_ci".to_owned()),
+            generated_stored: false,
+            generation_expression: String::new(),
+            generation_captured: true,
+            extra: String::new(),
+            auto_increment: false,
+            default_value: None,
+            default_generated: false,
+            ordinal: 0,
+        }
+    }
+
+    /// A copy stores values exactly as the changes streamed after it carry
+    /// them: a CHAR without its pad spaces even from a source that reads it
+    /// back padded, and a JSON document with each number as the source
+    /// printed it.
+    #[test]
+    fn copied_values_match_the_streamed_form() {
+        let fixed = source_column("char", "char(5)", pintail_types::DataType::Utf8);
+        let text = source_column("varchar", "varchar(5)", pintail_types::DataType::Utf8);
+        let map = |column, bytes: &[u8]| {
+            super::map_mysql_value("t", column, MysqlValue::Bytes(bytes.to_vec())).expect("maps")
+        };
+        assert_eq!(map(&fixed, b"q    "), Value::Utf8("q".to_owned()));
+        assert_eq!(map(&fixed, b" a b "), Value::Utf8(" a b".to_owned()));
+        assert_eq!(map(&text, b"q  "), Value::Utf8("q  ".to_owned()));
+        let json = source_column("json", "json", pintail_types::DataType::Json);
+        assert_eq!(
+            map(&json, br#"{"e": 3.000, "d": 1.50}"#),
+            Value::Utf8(r#"{"d": 1.50, "e": 3.000}"#.to_owned())
+        );
+        assert!(super::map_mysql_value("t", &json, MysqlValue::Bytes(b"{".to_vec())).is_err());
+    }
 
     #[test]
     fn a_journal_cursor_round_trips_every_value_kind() {
