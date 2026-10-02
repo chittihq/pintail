@@ -1211,6 +1211,8 @@ struct InFlight;
 impl InFlight {
     fn enter() -> Self {
         STATEMENTS_IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        // Background merges give way while a statement is being answered.
+        pintail_store::statement_started();
         Self
     }
 
@@ -1222,6 +1224,7 @@ impl InFlight {
 
 impl Drop for InFlight {
     fn drop(&mut self) {
+        pintail_store::statement_finished();
         STATEMENTS_IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }

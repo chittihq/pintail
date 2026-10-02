@@ -46,12 +46,14 @@ const BUILD_TARGET: &str = if cfg!(all(
 
 /// Settings that resize or instrument a path without turning it off. Named
 /// in `non_default` when set; their values are not printed.
-const TUNING_VARIABLES: [&str; 13] = [
+const TUNING_VARIABLES: [&str; 15] = [
     "PINTAIL_SECONDARY_INDEX_CACHE_MB",
     "PINTAIL_SECONDARY_INDEX_COLUMNS",
     "PINTAIL_LAYER_INDEX_MB",
     "PINTAIL_REPLICA_CACHE_DATABASES",
     "PINTAIL_SNAPSHOT_WORKERS",
+    "PINTAIL_MERGE_THREADS",
+    "PINTAIL_MERGE_WRITE_BYTES_PER_SEC",
     "PINTAIL_PROBE_PREFETCH_ALWAYS",
     "PINTAIL_PROFILE",
     "PINTAIL_QUERY_TRACE",

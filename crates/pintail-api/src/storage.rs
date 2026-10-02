@@ -56,6 +56,48 @@ pub(crate) struct StorageResponse {
     /// Which build this is and which execution paths are on: the facts the
     /// boot log's `pintail optimizations:` and `pintail paths:` lines carry.
     optimizations: crate::optimizations::Optimizations,
+    /// What background merges are doing, process-wide.
+    maintenance: Maintenance,
+}
+
+/// Background merges at this moment: how many run and wait, the bytes they
+/// have yet to finish, and whether they are giving way to statements.
+#[derive(Debug, Serialize)]
+pub(crate) struct Maintenance {
+    /// Merges holding a slot and working.
+    merges_running: usize,
+    /// Merges started and waiting for a slot.
+    merges_waiting: usize,
+    /// Merges that may run at once.
+    merge_threads: usize,
+    /// Segment bytes the running and waiting merges have yet to finish.
+    pending_bytes: u64,
+    /// `idle`, `running`, `waiting`, `yielding` (giving way to statements)
+    /// or `behind` (a table merging unpaced to catch up).
+    throttle: &'static str,
+    /// Statements being answered.
+    statements_active: usize,
+    /// Tables merging unpaced because they fell behind.
+    tables_behind: usize,
+    /// Time merges have slept for statements since the process started.
+    yielded_ms: u64,
+    /// Merges finished since the process started.
+    merges_completed: u64,
+}
+
+fn maintenance() -> Maintenance {
+    let status = pintail_store::maintenance_status();
+    Maintenance {
+        merges_running: status.merges_running,
+        merges_waiting: status.merges_waiting,
+        merge_threads: status.merge_threads,
+        pending_bytes: status.pending_bytes,
+        throttle: status.throttle(),
+        statements_active: status.statements_active,
+        tables_behind: status.tables_behind,
+        yielded_ms: status.yielded_micros / 1000,
+        merges_completed: status.merges_completed,
+    }
 }
 
 /// `GET /api/storage`.
@@ -104,6 +146,7 @@ fn report(data_dir: &Path) -> StorageResponse {
         system,
         metadata: crate::metadata_health::current(),
         optimizations: crate::optimizations::optimizations(),
+        maintenance: maintenance(),
     }
 }
 
