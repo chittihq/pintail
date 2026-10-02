@@ -3817,6 +3817,15 @@ pub(super) fn packed_lane(lane: &TwoPassLane, aggregate: &CompiledAggregate) -> 
         // its values, and its MIN and MAX compare the values themselves:
         // all three reduce to one total per group, as a decimal column's
         // do. The unsigned reading and the bit folds keep the per-row lane.
+        //
+        // A COUNT reads only whether the row holds a value, so an integer
+        // column of any type packs for it: an unsigned one used to send the
+        // whole aggregate to the scatter for the sake of a count.
+        TwoPassLane::Int { .. }
+            if !aggregate.distinct && aggregate.function == AggregateFunction::Count =>
+        {
+            Some(PackedLane::Present)
+        }
         TwoPassLane::Int {
             data_type: DataType::Int64,
             ..
