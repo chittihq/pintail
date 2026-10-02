@@ -115,6 +115,16 @@ pub(super) fn output_column(aggregate: &BoundAggregate, id: u64) -> BoundColumn 
     }
 }
 
+/// Whether an enclosing query would take any of `query`'s aggregates as
+/// its own, leaving `query` with fewer than it has now.
+pub(super) fn lifts_any(query: &BoundQuery) -> bool {
+    query.aggregates.iter().any(|aggregate| {
+        aggregate.declared
+            && aggregate.function != AggregateFunction::AnyValue
+            && aggregate.expr.as_ref().and_then(outer_only) == Some(true)
+    })
+}
+
 fn outer_only(expr: &BoundExpr) -> Option<bool> {
     match &expr.kind {
         BoundExprKind::Column(column) => column.outer.then_some(true),

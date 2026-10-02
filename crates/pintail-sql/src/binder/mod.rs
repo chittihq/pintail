@@ -4139,6 +4139,25 @@ fn bind_expr_inner(
             let resolver =
                 subqueries.ok_or_else(|| BindError::UnsupportedSubquery(subquery.to_string()))?;
             let mut query = resolver(subquery)?;
+            // An ungrouped aggregate is one row whatever it reads, so its
+            // existence is known without running it. Under HAVING the row
+            // exists exactly where the HAVING condition is true, which is a
+            // scalar subquery's question.
+            if one_row_aggregate(subquery, &query) {
+                if query.having.is_none() {
+                    return Ok(BoundExpr {
+                        kind: BoundExprKind::Literal(Value::Boolean(!*negated)),
+                        data_type: Some(DataType::Boolean),
+                        nullable: false,
+                    });
+                }
+                if let Some(held) = having_as_value(subquery, *negated)
+                    && let Ok(bound) =
+                        bind_expr_inner(&held, tables, aggregates, windows, subqueries)
+                {
+                    return Ok(bound);
+                }
+            }
             // Row presence is all that matters; one row decides EXISTS.
             if query.limit.is_none() {
                 query.limit = Some(BoundLimit {
@@ -4169,6 +4188,51 @@ fn bind_expr_inner(
         },
         _ => Err(BindError::UnsupportedExpression(expr.to_string())),
     }
+}
+
+/// Whether `bound`, the binding of `query`, is an aggregate over the whole
+/// of its input that no LIMIT can empty: exactly one row before HAVING.
+fn one_row_aggregate(query: &Query, bound: &BoundQuery) -> bool {
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return false;
+    };
+    let ungrouped = matches!(
+        &select.group_by,
+        GroupByExpr::Expressions(keys, modifiers) if keys.is_empty() && modifiers.is_empty()
+    );
+    ungrouped
+        && select.distinct.is_none()
+        && query.with.is_none()
+        && bound.group_by.is_empty()
+        && !bound.aggregates.is_empty()
+        && bound.windows.is_empty()
+        && bound.union_all.is_empty()
+        && bound.set_ops.is_empty()
+        && bound.recursive.is_none()
+        && bound
+            .limit
+            .is_none_or(|limit| limit.offset == 0 && limit.count >= 1)
+        && !outer_aggregate::lifts_any(bound)
+}
+
+/// `EXISTS (SELECT .. HAVING h)` over an ungrouped aggregate, as the truth
+/// of `(SELECT h ..)`; `None` when the subquery orders or limits its row.
+fn having_as_value(query: &Query, negated: bool) -> Option<Expr> {
+    if query.order_by.is_some() || query.limit_clause.is_some() {
+        return None;
+    }
+    let mut value = query.clone();
+    let SetExpr::Select(select) = value.body.as_mut() else {
+        return None;
+    };
+    let having = select.having.take()?;
+    select.projection = vec![SelectItem::UnnamedExpr(having)];
+    let held = Box::new(Expr::Subquery(Box::new(value)));
+    Some(if negated {
+        Expr::IsNotTrue(held)
+    } else {
+        Expr::IsTrue(held)
+    })
 }
 
 fn bind_scalar_subquery(
