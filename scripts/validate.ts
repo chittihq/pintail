@@ -228,6 +228,31 @@ const STAGES: Stage[] = [
     env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
   },
   {
+    // The MySQL suite replayed through replication: every table is created
+    // on a live source and reaches the mirror through its first copy and
+    // change capture, so each file's DROP and CREATE cycles, ALTERs and
+    // renames are states the SELECTs after them read. The `mtr` stage and
+    // the oracle build their tables directly and never reach those states -
+    // a lookup answered from a dropped table's rows passed both. Runs the
+    // directory of reproductions first (every statement must be exact),
+    // then the banked ratchet. MTR_REPLICA_SHARD=i/n replays one shard of
+    // the suite, so n boxes share it; unset, one run replays all of it.
+    name: 'mtr-replica',
+    secondHost: true,
+    remote: true,
+    timeoutMinutes: 60,
+    stallMinutes: 10,
+    command: [
+      'bash', '-c',
+      'bun install --frozen-lockfile && "$CARGO" build --release -p pintail' +
+        ' && export PINTAIL_MTR_BINARY=../../target/release/pintail MTR_MODE=replica' +
+        ' && MTR_LOCAL_DIR=cases/replica MTR_STRICT=1 bun run run.ts' +
+        ' && MTR_GATE=1 MTR_SHARD="${MTR_REPLICA_SHARD:-}" bun run run.ts',
+    ],
+    cwd: join(repository, 'tests', 'mtr'),
+    env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
+  },
+  {
     name: 'e2e',
     remote: true,
     // PINTAIL_E2E_DOCKER_HOST points this stage's source container at a
@@ -1137,7 +1162,7 @@ async function main() {
         process.exit(2)
       }
     }
-    const binaryConsumers = ['e2e', 'browser', 'accept', 'soak', 'mtr', 'migrations', 'e2e-mysql80']
+    const binaryConsumers = ['e2e', 'browser', 'accept', 'soak', 'mtr', 'mtr-replica', 'migrations', 'e2e-mysql80']
     if (
       !process.env.PINTAIL_E2E_BINARY
       && requested.some((name) => binaryConsumers.includes(name))

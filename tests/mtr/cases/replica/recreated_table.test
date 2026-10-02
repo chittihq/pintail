@@ -1,0 +1,19 @@
+# A table dropped and created again under its name, with the same columns
+# and as many rows, is stored where the dropped one was. A lookup on a value
+# only the new rows hold must find them: it was once answered from the rows
+# of the dropped table, and found nothing.
+CREATE TABLE gauge (a INT, b INT, INDEX (a));
+INSERT INTO gauge VALUES (1, 1), (1, 2), (1, 3);
+SELECT * FROM gauge WHERE a = (SELECT MAX(a) FROM gauge WHERE a = 1) ORDER BY b;
+SELECT b FROM gauge WHERE a = 1 ORDER BY b;
+DROP TABLE gauge;
+CREATE TABLE gauge (a INT, b INT);
+INSERT INTO gauge VALUES (1, 1), (2, 2), (3, 3);
+SELECT a FROM gauge WHERE a = 2;
+SELECT a FROM gauge HAVING a = 2;
+SELECT a FROM gauge WHERE a IN (2, 3) ORDER BY a;
+SELECT a FROM gauge WHERE a > ANY (SELECT a FROM gauge HAVING a = 2);
+SELECT a FROM gauge WHERE a <> ALL (SELECT a FROM gauge WHERE a = 2) ORDER BY a;
+SELECT a, b FROM gauge o WHERE b = (SELECT MIN(b) FROM gauge WHERE a = o.a) ORDER BY a;
+SELECT MIN(b) FROM gauge WHERE a = 3;
+DROP TABLE gauge;

@@ -1,0 +1,15 @@
+# A table renamed away with ALTER TABLE and renamed back. The pauses let the
+# mirror's repair look at the source while the table is under its other
+# name; the table must be readable under whichever name the source has it.
+CREATE TABLE ledger (id INT NOT NULL, v INT, PRIMARY KEY (id));
+INSERT INTO ledger VALUES (1, 10), (2, 20);
+SELECT * FROM ledger ORDER BY id;
+ALTER TABLE ledger RENAME AS ledger_moved;
+DO SLEEP(1.5);
+SELECT * FROM ledger_moved ORDER BY id;
+ALTER TABLE ledger_moved RENAME TO ledger;
+INSERT INTO ledger VALUES (3, 30);
+SELECT * FROM ledger ORDER BY id;
+DO SLEEP(1.5);
+SELECT v FROM ledger WHERE id = 3;
+DROP TABLE ledger;

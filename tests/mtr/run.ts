@@ -90,6 +90,11 @@ const SYNC_TIMEOUT_MS = Number(process.env.MTR_SYNC_TIMEOUT_MS ?? '60000')
 /// How long a sync waits for a quarantined table's automatic recopy.
 const REPAIR_WAIT_MS = Number(process.env.MTR_REPAIR_WAIT_MS ?? '15000')
 const DEBUG = process.env.MTR_DEBUG === '1'
+/// With `MTR_LOCAL_DIR`: fail unless every compared statement is exact and
+/// none stopped short of a comparison on the mirror's side. A directory of
+/// reproductions has no baseline to ratchet against; each of its statements
+/// is one the mirror once answered wrongly or could not answer.
+const STRICT = process.env.MTR_STRICT === '1'
 const oracleSuffix = ORACLE_IMAGE === 'mysql:8.4' ? '' : `-${ORACLE_IMAGE.replace(/[^a-z0-9]+/gi, '')}`
 const suffix = `${SUITE_NAME === 'mysql' ? '' : `-${SUITE_NAME}`}${MODE === 'replica' ? '-replica' : ''}${oracleSuffix}`
 const baselinePath = join(import.meta.dir, `baseline${suffix}.json`)
@@ -165,6 +170,12 @@ interface FileResult {
   errorClasses: Record<string, number>
   /// Identities of the statements that matched exactly, sorted.
   exact: string[]
+  /// Identities of the statements the oracle refused for their size
+  /// (ER_TOO_BIG_SELECT). The refusal compares the oracle's own row estimate
+  /// against the session's MAX_JOIN_SIZE, the estimate moves with table
+  /// statistics the oracle refreshes in the background, and a statement it
+  /// refuses has no answer to compare in this run.
+  oracleRefused: string[]
 }
 
 interface Stmt {
@@ -293,6 +304,12 @@ type TreeEntry = { path: string; type: string; sha: string }
 /// A directory of `.test` files to replay instead of an upstream suite: the
 /// reproduction loop for a finding, with invented schemas.
 const LOCAL_DIR = process.env.MTR_LOCAL_DIR ? resolve(process.env.MTR_LOCAL_DIR) : undefined
+if (STRICT && !LOCAL_DIR) throw new Error('MTR_STRICT=1 judges a directory of reproductions; set MTR_LOCAL_DIR')
+/// Where the ledger of a run goes. The tracked one describes the pinned
+/// suite; a directory of reproductions writes beside its own run instead.
+const ledgerDir = LOCAL_DIR ? join(runDir, 'ledger') : import.meta.dir
+/// The oracle's "the SELECT would examine more than MAX_JOIN_SIZE rows".
+const ER_TOO_BIG_SELECT = 1104
 
 async function listTestFiles(): Promise<string[]> {
   if (LOCAL_DIR) {
@@ -684,6 +701,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
     'replica-lag': 0, 'replica-unsettled': 0,
   }
   const exactIds: string[] = []
+  const refusedIds: string[] = []
   const seen = new Map<string, number>()
   const errorClasses: Record<string, number> = {}
   const { statements, note } = parse(text)
@@ -782,8 +800,9 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
         let expected: Answer
         try {
           expected = await run(my, rewritten)
-        } catch {
+        } catch (error) {
           counts['mysql-error'] += 1
+          if ((error as { errno?: number }).errno === ER_TOO_BIG_SELECT) refusedIds.push(id)
           continue
         }
         let actual: Answer
@@ -915,7 +934,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
   } else {
     rmSync(join(diffsDir, `${name}${suffix}-errors.md`), { force: true })
   }
-  return { file: name, statements: statements.length, counts, parserNote: note, errorClasses, exact: exactIds.sort() }
+  return { file: name, statements: statements.length, counts, parserNote: note, errorClasses, exact: exactIds.sort(), oracleRefused: refusedIds.sort() }
 }
 
 /// Files whose mirror stopped following the source (replica mode).
@@ -940,6 +959,7 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
     'replica-lag': 0, 'replica-unsettled': 0,
   } satisfies Record<Kind, number>
   const exactIds: string[] = []
+  const refusedIds: string[] = []
   const seen = new Map<string, number>()
   const errorClasses: Record<string, number> = {}
   const { statements, note } = parse(text)
@@ -1097,8 +1117,10 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
         let expected: Answer
         try {
           expected = await run(my, sql)
-        } catch {
+        } catch (error) {
           counts['mysql-error'] += 1
+          if ((error as { errno?: number }).errno === ER_TOO_BIG_SELECT) refusedIds.push(id)
+          if (DEBUG) log(`${name}: line ${statement.line} (${id}) refused by the oracle: ${String(error).slice(0, 200)}`)
           continue
         }
         await sync()
@@ -1152,7 +1174,8 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
         await my.query(sql)
         counts.setup += 1
         if (!/^(select|show|explain|describe|desc|analyze|check|checksum|help|do)\b/.test(shape)) dirty = true
-      } catch {
+      } catch (error) {
+        if (DEBUG && !statement.expectError) log(`${name}: line ${statement.line} setup refused by the oracle: ${String(error).slice(0, 200)}`)
         counts[statement.expectError ? 'skipped' : 'unsupported-setup'] += 1
         // A failing statement can still have changed rows (a multi-row
         // INSERT that stops midway without a transaction).
@@ -1176,7 +1199,7 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
   } else {
     rmSync(join(diffsDir, `${name}${suffix}-errors.md`), { force: true })
   }
-  return { file: name, statements: statements.length, counts, parserNote: note, errorClasses, exact: exactIds.sort() }
+  return { file: name, statements: statements.length, counts, parserNote: note, errorClasses, exact: exactIds.sort(), oracleRefused: refusedIds.sort() }
 }
 
 // ---------------------------------------------------------------------------
@@ -1291,17 +1314,18 @@ function publish(results: FileResult[], mysqlVersion: string) {
     `Per-file diffs for mismatches are written to \`${relative(repository, diffsDir)}/\` (not committed).`,
     '',
   ]
-  writeFileSync(join(import.meta.dir, `results${suffix}.md`), lines.join('\n'))
+  mkdirSync(ledgerDir, { recursive: true })
+  writeFileSync(join(ledgerDir, `results${suffix}.md`), lines.join('\n'))
   writeFileSync(join(runDir, 'results.md'), lines.join('\n'))
   writeFileSync(
-    join(import.meta.dir, `results${suffix}.json`),
+    join(ledgerDir, `results${suffix}.json`),
     JSON.stringify(
-      { suite: SUITE_NAME, mode: MODE, repo: SUITE.repo, ref: REF, mysqlVersion, provenance, artifacts: relative(repository, runDir), measuredAt: new Date().toISOString(), totals: { exact: total('exact'), compared, queries, replayed: compared + notCompared, notCompared }, results: results.map(({ exact: _, ...r }) => r) },
+      { suite: SUITE_NAME, mode: MODE, repo: SUITE.repo, ref: REF, mysqlVersion, provenance, artifacts: relative(repository, runDir), measuredAt: new Date().toISOString(), totals: { exact: total('exact'), compared, queries, replayed: compared + notCompared, notCompared }, results: results.map(({ exact: _, oracleRefused: __, ...r }) => r) },
       null,
       2,
     ) + '\n',
   )
-  writeFileSync(join(runDir, 'results.json'), readFileSync(join(import.meta.dir, `results${suffix}.json`)))
+  writeFileSync(join(runDir, 'results.json'), readFileSync(join(ledgerDir, `results${suffix}.json`)))
 }
 
 interface Baseline {
@@ -1342,9 +1366,18 @@ function bank(results: FileResult[], mysqlVersion: string) {
 }
 
 /// Statements the baseline holds as exact that this run did not match.
+/// One the oracle refused for its size is not among them: it was not
+/// compared, and `refusedStatements` reports it.
 function lostStatements(baseline: Baseline, result: FileResult): string[] {
   const now = new Set(result.exact)
-  return (baseline.files[result.file] ?? []).filter((id) => !now.has(id))
+  const refused = new Set(result.oracleRefused)
+  return (baseline.files[result.file] ?? []).filter((id) => !now.has(id) && !refused.has(id))
+}
+
+/// Banked statements the oracle refused for their size in this run.
+function refusedStatements(baseline: Baseline, result: FileResult): string[] {
+  const refused = new Set(result.oracleRefused)
+  return (baseline.files[result.file] ?? []).filter((id) => refused.has(id))
 }
 
 function loadBaseline(): Baseline {
@@ -1549,7 +1582,7 @@ async function main() {
   publish(results, mysqlVersion)
   const exact = results.reduce((s, r) => s + r.counts.exact, 0)
   const compared = results.reduce((s, r) => s + r.counts.exact + r.counts.mismatch + r.counts['name-mismatch'], 0)
-  log(`${exact} of ${compared} compared SELECTs exact; report at ${join(import.meta.dir, `results${suffix}.md`)}`)
+  log(`${exact} of ${compared} compared SELECTs exact; report at ${join(ledgerDir, `results${suffix}.md`)}`)
   // Every run leaves its exact set beside the gate evidence, so two runs -
   // two oracle versions, two binaries - can be compared statement by statement.
   mkdirSync(join(repository, 'validate-out', 'mtr'), { recursive: true })
@@ -1566,6 +1599,18 @@ async function main() {
   )
   writeFileSync(join(runDir, 'exact.json'), readFileSync(join(repository, 'validate-out', 'mtr', `exact${suffix}.json`)))
   if (BANK) bank(results, mysqlVersion)
+  if (STRICT) {
+    const short = (r: FileResult) =>
+      r.counts.mismatch + r.counts['name-mismatch'] + r.counts['pintail-error'] + r.counts['replica-lag'] + r.counts['replica-unsettled']
+    const failing = results.filter((r) => short(r) > 0)
+    for (const r of failing) log(`STRICT: ${r.file}: ${short(r)} statements not exact`)
+    if (failing.length || compared === 0) {
+      log(`MTR-STRICT-FAIL: ${failing.length} of ${results.length} files hold a statement that is not exact (diffs in ${relative(repository, diffsDir)}/)`)
+      process.exitCode = 1
+    } else {
+      log(`MTR-STRICT-PASS: all ${exact} compared statements of ${results.length} files exact`)
+    }
+  }
   if (baseline) {
     const ran = new Set(results.map((r) => r.file))
     // A shard answers for its own files, and the first shard also for
@@ -1579,6 +1624,9 @@ async function main() {
       .reduce((n, [, ids]) => n + ids.length, 0)
     for (const file of missing) log(`GATE: ${file} holds banked statements and did not run`)
     for (const entry of lost) log(`GATE: lost ${entry}`)
+    for (const r of results) {
+      for (const id of refusedStatements(baseline, r)) log(`GATE: not compared ${r.file}:${id} - the oracle refused it under its own MAX_JOIN_SIZE`)
+    }
     if (missing.length || lost.length) {
       log(`MTR-GATE-FAIL: ${lost.length} of ${banked} banked statements regressed, ${missing.length} files missing (diffs in ${relative(repository, diffsDir)}/)`)
       process.exitCode = 1
