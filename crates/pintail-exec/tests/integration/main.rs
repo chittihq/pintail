@@ -40,6 +40,7 @@ mod few_groups_wide_distinct;
 mod filter_first_phases;
 mod filter_kernels;
 mod filter_once_cost;
+mod fused_fold_rounds;
 mod fused_join_lanes;
 mod general_ci_parity;
 mod group_by_functional_dependency;
