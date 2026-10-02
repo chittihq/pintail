@@ -117,6 +117,7 @@ mod settled_memo_filter;
 mod settled_memo_group_concat;
 mod settled_memo_identity;
 mod settled_memo_scale;
+mod shared_or_join_condition;
 mod side_index;
 mod side_index_text;
 mod small_group_handover;

@@ -2393,12 +2393,161 @@ fn split_conjunction(expr: BoundExpr) -> Vec<BoundExpr> {
             values.extend(split_conjunction(*right));
             values
         }
+        kind @ BoundExprKind::Binary {
+            op: BinaryOp::Or, ..
+        } => factor_disjunction(BoundExpr {
+            kind,
+            data_type,
+            nullable,
+        }),
         kind => vec![BoundExpr {
             kind,
             data_type,
             nullable,
         }],
     }
+}
+
+/// The conjuncts of an OR whose every branch holds the same condition:
+/// `(j AND a) OR (j AND b)` is `j AND (a OR b)`, in three-valued logic too,
+/// and a branch that is `j` alone absorbs the rest, `(j AND a) OR j` being
+/// `j`.
+///
+/// Left whole, the OR is one predicate over both tables of
+/// `FROM t, u WHERE t.k = u.k AND t.k = 1 OR t.k = u.k AND t.k = 2`, and
+/// with no condition of their own the two tables are paired row by row:
+/// every row of one against every row of the other, for an answer of two
+/// rows. Taken out, the shared `t.k = u.k` is the join's key like any other.
+///
+/// Only a condition that reads columns and constants is taken out, since it
+/// is then evaluated once where it was written twice.
+fn factor_disjunction(expr: BoundExpr) -> Vec<BoundExpr> {
+    let mut branches = Vec::new();
+    or_branches(&expr, &mut branches);
+    let mut branches = branches
+        .into_iter()
+        .map(|branch| {
+            let mut parts = Vec::new();
+            and_parts(branch, &mut parts);
+            parts
+        })
+        .collect::<Vec<_>>();
+    let shared = branches[0]
+        .iter()
+        .filter(|candidate| {
+            reads_columns_and_constants(candidate)
+                && branches[1..]
+                    .iter()
+                    .all(|branch| branch.iter().any(|part| same_condition(part, candidate)))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    // The same condition twice in the first branch is one shared condition.
+    let mut shared_once: Vec<BoundExpr> = Vec::new();
+    for condition in shared {
+        if !shared_once
+            .iter()
+            .any(|kept| same_condition(kept, &condition))
+        {
+            shared_once.push(condition);
+        }
+    }
+    if shared_once.is_empty() {
+        return vec![expr];
+    }
+    for branch in &mut branches {
+        branch.retain(|part| {
+            !shared_once
+                .iter()
+                .any(|shared| same_condition(shared, part))
+        });
+    }
+    // A branch with nothing left is the shared conditions alone, and the
+    // whole OR is then no more than they are.
+    if branches.iter().any(Vec::is_empty) {
+        return shared_once;
+    }
+    let rest = branches
+        .into_iter()
+        .filter_map(|branch| branch.into_iter().reduce(and_expr))
+        .reduce(|left, right| BoundExpr {
+            nullable: left.nullable || right.nullable,
+            data_type: Some(DataType::Boolean),
+            kind: BoundExprKind::Binary {
+                op: BinaryOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+        });
+    shared_once.extend(rest);
+    shared_once
+}
+
+fn or_branches(expr: &BoundExpr, out: &mut Vec<BoundExpr>) {
+    if let BoundExprKind::Binary {
+        op: BinaryOp::Or,
+        left,
+        right,
+    } = &expr.kind
+    {
+        or_branches(left, out);
+        or_branches(right, out);
+    } else {
+        out.push(expr.clone());
+    }
+}
+
+fn and_parts(expr: BoundExpr, out: &mut Vec<BoundExpr>) {
+    let BoundExpr {
+        kind,
+        data_type,
+        nullable,
+    } = expr;
+    match kind {
+        BoundExprKind::Binary {
+            op: BinaryOp::And,
+            left,
+            right,
+        } => {
+            and_parts(*left, out);
+            and_parts(*right, out);
+        }
+        kind => out.push(BoundExpr {
+            kind,
+            data_type,
+            nullable,
+        }),
+    }
+}
+
+fn reads_columns_and_constants(expr: &BoundExpr) -> bool {
+    match &expr.kind {
+        BoundExprKind::Column(_) | BoundExprKind::Literal(_) => true,
+        BoundExprKind::Binary { op, left, right } => {
+            !matches!(op, BinaryOp::And | BinaryOp::Or)
+                && reads_columns_and_constants(left)
+                && reads_columns_and_constants(right)
+        }
+        BoundExprKind::Scalar {
+            function: ScalarFunction::Cast(_),
+            args,
+        } => args.iter().all(reads_columns_and_constants),
+        _ => false,
+    }
+}
+
+/// The same condition, or the same equality written the other way round.
+fn same_condition(left: &BoundExpr, right: &BoundExpr) -> bool {
+    if left == right {
+        return true;
+    }
+    matches!(
+        (&left.kind, &right.kind),
+        (
+            BoundExprKind::Binary { op: BinaryOp::Equal, left: a, right: b },
+            BoundExprKind::Binary { op: BinaryOp::Equal, left: c, right: d },
+        ) if a == d && b == c
+    )
 }
 
 fn and_expr(left: BoundExpr, right: BoundExpr) -> BoundExpr {
@@ -4021,6 +4170,48 @@ mod tests {
             TableStatistics::with_row_count(rows),
         )
         .expect("table")
+    }
+
+    /// How many relations the plan pairs with no condition between them.
+    fn cross_joined(plan: &LogicalPlan) -> usize {
+        match plan {
+            LogicalPlan::CrossJoin { inputs } => {
+                inputs.len() + inputs.iter().map(cross_joined).sum::<usize>()
+            }
+            LogicalPlan::Join { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
+                cross_joined(left) + cross_joined(right)
+            }
+            LogicalPlan::Filter { input, .. }
+            | LogicalPlan::Project { input, .. }
+            | LogicalPlan::Aggregate { input, .. }
+            | LogicalPlan::Window { input, .. }
+            | LogicalPlan::Distinct { input, .. }
+            | LogicalPlan::Sort { input, .. }
+            | LogicalPlan::Limit { input, .. }
+            | LogicalPlan::Derived { input, .. } => cross_joined(input),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn a_join_condition_every_or_branch_repeats_joins_the_tables() {
+        // Without the shared equality the two tables have no condition
+        // between them and are paired row by row.
+        let lone = optimized(
+            "SELECT e.id FROM events e, users u WHERE e.id = 3 AND u.name = 'a' OR e.id = 4",
+        );
+        assert_eq!(cross_joined(&lone), 2);
+        for sql in [
+            "SELECT e.id FROM events e, users u \
+              WHERE e.id = u.id AND e.id = 3 OR e.id = u.id AND e.id = 4",
+            "SELECT e.id FROM events e, users u \
+              WHERE e.id = u.id AND e.id = 3 OR u.id = e.id AND e.id = 4 AND u.name = 'a'",
+            "SELECT e.id FROM events e, users u \
+              WHERE e.id = u.id AND e.id = 3 AND u.name = 'a' OR e.id = u.id AND e.id = 3 \
+                 OR u.id = e.id",
+        ] {
+            assert_eq!(cross_joined(&optimized(sql)), 0, "{sql}");
+        }
     }
 
     /// Every scan in the plan as (table name, predicate count).
