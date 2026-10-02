@@ -4681,17 +4681,26 @@ fn read_held_or_stored_block(
     let stored = runs.block(path, place.blocks, place.fetched, place.index, place.alone)?;
     let mut decoder = Decoder::with_base_offset(stored, block.offset);
     let parsed = parse_block(path, &mut decoder, format_version)?;
-    // A payload that decompresses to several times its stored size is
-    // cheaper to decompress again than to keep: the stored bytes are few,
-    // long repeats expand at the speed of a copy into a buffer already in
-    // the processor's cache, and the held copy would be read from memory
-    // that is not. Measured on a column of repeating text indexes, holding
-    // them made its scans slower.
-    let worth_holding = parsed
-        .compressed
-        .len()
-        .saturating_mul(HELD_PAYLOAD_EXPANSION)
-        >= parsed.uncompressed_length;
+    // What is worth holding is a payload that costs something to produce
+    // and little to keep. A raw block costs a read the page cache already
+    // serves, and holding it copied every block a scan touched for no gain
+    // measured on full scans. A block that decompresses to several times
+    // its stored size is cheaper to expand again, into a buffer the
+    // processor already has, than to read back from memory it does not:
+    // holding a column of repeating text indexes made its scans slower.
+    // That leaves blocks LZ4 shrinks only moderately, and zstd blocks,
+    // whose decompression is the slow kind whatever the ratio.
+    let worth_holding = match parsed.compression {
+        Compression::None => false,
+        Compression::Zstd => true,
+        _ => {
+            parsed
+                .compressed
+                .len()
+                .saturating_mul(HELD_PAYLOAD_EXPANSION)
+                >= parsed.uncompressed_length
+        }
+    };
     let slot = place.slot.filter(|(slot, column)| {
         worth_holding && block_cache::admits_payload(*slot, *column, block.start)
     });
@@ -6027,7 +6036,8 @@ where
 }
 
 /// Decompresses a parsed block and decodes it. `keep`, when given, receives
-/// the decompressed payload for the block cache.
+/// the decompressed payload of a compressed block for the block cache; a
+/// raw block is never kept.
 fn decode_parsed_block(
     path: &Path,
     parsed: &ParsedBlock<'_>,
@@ -6051,6 +6061,38 @@ fn decode_parsed_block(
     // declared one above. A compressed one decompresses into this thread's
     // reused buffer; a fresh zeroed allocation per block had the allocator
     // returning and refaulting pages on every block of a scan.
+    // A payload the cache is to keep decompresses into a buffer of its own,
+    // which the cache then takes: nothing is copied to hold it.
+    if let Some(keep) = keep
+        && compression != Compression::None
+    {
+        let mut owned = Vec::new();
+        decompress_block_into(compression, compressed, uncompressed_length, &mut owned)
+            .map_err(|reason| corrupt(path, compressed_offset, reason))?;
+        let read = decode_block_payload(
+            path,
+            compressed_offset,
+            &PayloadView {
+                row_count: parsed.row_count,
+                null_bitmap: parsed.null_bitmap,
+                null_count: parsed.null_count,
+                encoding: parsed.encoding,
+                bytes: &owned,
+            },
+            logical_type,
+            memory,
+            utf8_sink,
+            int_sink,
+        )?;
+        *keep = Some(block_cache::CachedPayload {
+            row_count: parsed.row_count,
+            null_bitmap: parsed.null_bitmap.to_vec(),
+            null_count: parsed.null_count,
+            encoding: parsed.encoding,
+            bytes: owned,
+        });
+        return Ok(read);
+    }
     let mut scratch = None;
     let uncompressed: &[u8] = if compression == Compression::None {
         compressed
@@ -6063,15 +6105,6 @@ fn decode_parsed_block(
             .map_err(|reason| corrupt(path, compressed_offset, reason))?;
         buffer
     };
-    if let Some(keep) = keep {
-        *keep = Some(block_cache::CachedPayload {
-            row_count: parsed.row_count,
-            null_bitmap: parsed.null_bitmap.to_vec(),
-            null_count: parsed.null_count,
-            encoding: parsed.encoding,
-            bytes: uncompressed.to_vec(),
-        });
-    }
     decode_block_payload(
         path,
         compressed_offset,

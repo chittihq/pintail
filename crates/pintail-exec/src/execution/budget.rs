@@ -238,10 +238,14 @@ impl MemoryBudget {
         outcome
     }
 
-    /// Whether `bytes` would fit without taking them.
+    /// Whether `bytes` would fit without taking them. Like a reservation,
+    /// the question takes reclaimable memory back before it answers no: a
+    /// caller that checks first and refuses on the answer must not be
+    /// refused over memory that was only held on sufferance.
     #[must_use]
     pub fn would_fit(&self, bytes: usize) -> bool {
-        self.limit() == 0 || self.used().saturating_add(bytes) <= self.limit()
+        let fits = || self.limit() == 0 || self.used().saturating_add(bytes) <= self.limit();
+        fits() || (self.reclaim.get().is_some_and(|reclaim| reclaim(bytes) > 0) && fits())
     }
 }
 
@@ -254,6 +258,51 @@ mod tests {
     use crate::ExecError;
 
     const PATIENT: Duration = Duration::from_secs(30);
+
+    /// Memory held on sufferance, as the block cache holds it: charged to
+    /// the budget without asking for room, given back when a query asks.
+    static HELD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static SHARED: MemoryBudget = MemoryBudget::new(100);
+
+    fn give_back(wanted: usize) -> usize {
+        let held = HELD.load(std::sync::atomic::Ordering::Relaxed);
+        let freed = held.min(wanted.max(held / 2));
+        HELD.fetch_sub(freed, std::sync::atomic::Ordering::Relaxed);
+        SHARED.release(freed);
+        freed
+    }
+
+    #[test]
+    fn a_reservation_takes_back_reclaimable_memory_before_it_is_refused() {
+        SHARED.set_reclaim(give_back);
+        SHARED.reserve_as_is(70).expect("the cache's charge fits");
+        HELD.store(70, std::sync::atomic::Ordering::Relaxed);
+        // The holder's own charge never evicts to make room for itself.
+        assert!(SHARED.reserve_as_is(40).is_err());
+        assert_eq!(SHARED.used(), 70);
+        // A query's does: 40 does not fit beside 70, so held memory goes.
+        assert!(SHARED.would_fit(40), "asking whether it fits reclaims too");
+        SHARED
+            .reserve(40)
+            .expect("the query is served from reclaimed memory");
+        let held = HELD.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(held <= 30, "the cache kept {held} of 70 bytes");
+        assert_eq!(SHARED.used(), 40 + held);
+        // With nothing left to take back, a request that cannot fit is
+        // refused as before.
+        SHARED
+            .reserve(60)
+            .expect("fits once the rest is given back");
+        assert_eq!(HELD.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert!(matches!(
+            SHARED.reserve(1),
+            Err(ExecError::MemoryLimitExceeded {
+                scope: MemoryScope::Server,
+                ..
+            })
+        ));
+        SHARED.release(100);
+    }
 
     #[test]
     fn a_full_budget_waits_for_a_release_instead_of_refusing() {

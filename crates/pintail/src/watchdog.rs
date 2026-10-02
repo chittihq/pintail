@@ -38,6 +38,8 @@ pub fn spawn(mut shutdown: tokio::sync::broadcast::Receiver<()>) -> tokio::task:
             .and_then(|n| usize::try_from(n).ok())
             .unwrap_or(0);
         let mut cadence = CancellationCadence::default();
+        let mut cache_ticks = 0_u32;
+        let mut cache_reported = 0_usize;
         let mut ticks = tokio::time::interval(Duration::from_secs(1));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -46,6 +48,17 @@ pub fn spawn(mut shutdown: tokio::sync::broadcast::Receiver<()>) -> tokio::task:
                 _ = ticks.tick() => {
                     let resident = tokio::task::spawn_blocking(resident_bytes).await.ok().flatten();
                     let budget = shared_memory_budget();
+                    // What the block cache holds is charged to that budget:
+                    // said when it has changed, at most twice a minute.
+                    cache_ticks += 1;
+                    if cache_ticks >= 30 {
+                        cache_ticks = 0;
+                        let cache = pintail_store::block_cache_stats();
+                        if cache.held_bytes != cache_reported {
+                            cache_reported = cache.held_bytes;
+                            pintail_log::log_info!("block cache: held_bytes={} limit_bytes={} hits={} misses={} inserted={} evicted={} shared_memory_used={} shared_memory_limit={}", cache.held_bytes, cache.limit_bytes, cache.hits, cache.misses, cache.inserted, cache.evicted, budget.used(), budget.limit());
+                        }
+                    }
                     // At most one victim per tick.
                     let victim = cadence.try_cancel(Instant::now(), || {
                         resident.and_then(|used| cancel_query_under_memory_pressure(used, process_limit))

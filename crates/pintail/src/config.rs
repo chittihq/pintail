@@ -120,17 +120,21 @@ fn default_total_query_memory_limit() -> usize {
 }
 
 /// The block cache's byte budget: `PINTAIL_BLOCK_CACHE_MB` when it is set
-/// (zero holds nothing), otherwise an eighth of the memory this process
-/// may use, no less than 32 MiB and no more than 4 GiB. The cache gives
-/// memory back when queries need it, so the figure is a ceiling on what it
-/// holds while memory is free, not memory taken from queries.
+/// (zero holds nothing), otherwise 1/128 of the memory this process may
+/// use, no less than 32 MiB and no more than 1 GiB.
+///
+/// The cache holds what key lookups decode and the payloads of blocks that
+/// are slow to decompress; full scans of raw blocks do not use it. That
+/// working set is small, so the default is too: 32 MiB on a machine of up
+/// to 4 GiB, which is what key lookups alone held before, and 128 MiB at
+/// 16 GiB. What is held is given back when queries need the memory.
 #[must_use]
 pub fn block_cache_limit_bytes() -> usize {
     const FLOOR: usize = 32 * 1024 * 1024;
-    const CEILING: usize = 4 * 1024 * 1024 * 1024;
+    const CEILING: usize = 1024 * 1024 * 1024;
     pintail_store::block_cache_environment_limit().unwrap_or_else(|| {
         available_memory_bytes()
-            .and_then(|bytes| usize::try_from(bytes / 8).ok())
+            .and_then(|bytes| usize::try_from(bytes / 128).ok())
             .map_or(FLOOR, |bytes| bytes.clamp(FLOOR, CEILING))
     })
 }

@@ -30,6 +30,7 @@ fn schema() -> TableSchema {
             Column::new(1, "id", DataType::UInt64, false),
             Column::new(2, "state", DataType::Utf8, false),
             Column::new(3, "amount", DataType::Int64, true),
+            Column::new(4, "note", DataType::Utf8, false),
         ],
     )
     .expect("schema")
@@ -47,10 +48,17 @@ fn amount_of(id: u64, generation: u64) -> Value {
     if id.is_multiple_of(11) {
         Value::Null
     } else {
-        // Scattered, so its blocks compress little and are worth holding.
+        // Scattered, so its blocks are stored raw.
         let mixed = (id + generation * 1_000_003).wrapping_mul(0x9e37_79b9_7f4a_7c15);
         Value::Int64(i64::try_from(mixed >> 24).expect("fits"))
     }
+}
+
+/// Text that is different in every row and half alike: LZ4 shrinks its
+/// blocks, but not by much, which is what the cache holds for scans.
+fn note_of(id: u64, generation: u64) -> String {
+    let mixed = (id + generation * 7_919).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    format!("note for row {id:08}: {mixed:016x}")
 }
 
 fn row(id: u64, generation: u64, version: u64, deleted: bool) -> StoredRow {
@@ -60,6 +68,7 @@ fn row(id: u64, generation: u64, version: u64, deleted: bool) -> StoredRow {
             Value::UInt64(id),
             Value::Utf8(state_of(id, generation).to_owned()),
             amount_of(id, generation),
+            Value::Utf8(note_of(id, generation)),
         ],
         version,
         deleted,
@@ -75,7 +84,7 @@ fn options() -> StoreOptions {
     }
 }
 
-type Visible = Vec<(u64, String, Option<i64>)>;
+type Visible = Vec<(u64, String, Option<i64>, String)>;
 
 /// The table through the streaming projected scan, the path that decodes
 /// blocks in bulk.
@@ -83,7 +92,12 @@ fn projected(table: &TableStore) -> Visible {
     let snapshot = table.snapshot();
     let mut rows = Vec::new();
     let mut push = |values: &[Value]| match values {
-        [Value::UInt64(id), Value::Utf8(state), amount] => rows.push((
+        [
+            Value::UInt64(id),
+            Value::Utf8(state),
+            amount,
+            Value::Utf8(note),
+        ] => rows.push((
             *id,
             state.clone(),
             match amount {
@@ -91,11 +105,12 @@ fn projected(table: &TableStore) -> Visible {
                 Value::Null => None,
                 other => panic!("unexpected amount {other:?}"),
             },
+            note.clone(),
         )),
         other => panic!("unexpected projected row {other:?}"),
     };
     let mut stream = snapshot
-        .scan_projected_range_stream(&key(u64::MIN), &key(u64::MAX), &[1, 2, 3])
+        .scan_projected_range_stream(&key(u64::MIN), &key(u64::MAX), &[1, 2, 3, 4])
         .expect("stream");
     if let Some(stream) = stream.as_mut() {
         while let Some(chunk) = stream.next_chunk(64 * 1024 * 1024).expect("chunk") {
@@ -105,7 +120,7 @@ fn projected(table: &TableStore) -> Visible {
         }
     } else {
         let scan = snapshot
-            .scan_projected_range(&key(u64::MIN), &key(u64::MAX), &[1, 2, 3])
+            .scan_projected_range(&key(u64::MIN), &key(u64::MAX), &[1, 2, 3, 4])
             .expect("bounded scan");
         for projected in scan.rows() {
             push(projected.values());
@@ -150,6 +165,7 @@ fn expected(ids: impl Iterator<Item = u64>, generation: impl Fn(u64) -> u64) -> 
                 Value::Int64(amount) => Some(amount),
                 _ => None,
             },
+            note_of(id, generation),
         )
     })
     .collect()
