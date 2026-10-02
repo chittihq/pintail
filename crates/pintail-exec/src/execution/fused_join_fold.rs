@@ -134,6 +134,12 @@ impl UniqueKeyGroups {
                 }));
             }
         }
+        self.miss_invalid(valid, out);
+    }
+
+    /// Sends the rows `valid` marks NULL to the miss group.
+    #[inline]
+    fn miss_invalid(&self, valid: Option<&[bool]>, out: &mut [u32]) {
         if let Some(valid) = valid {
             for (group, valid) in out.iter_mut().zip(valid) {
                 if !valid {
@@ -141,6 +147,41 @@ impl UniqueKeyGroups {
                 }
             }
         }
+    }
+
+    /// The dense table and its smallest key in the key column's own 64
+    /// bits, when that key is one of them. A key at or above it has its
+    /// offset by one subtraction in those bits, and one bounds check then
+    /// says whether the table holds it, where the 128-bit difference took
+    /// a borrow and two tests for every row.
+    fn direct<T: TryFrom<i128>>(&self) -> Option<(T, &[u32])> {
+        match &self.keys {
+            GroupKeys::Direct { minimum, groups } => {
+                Some((T::try_from(*minimum).ok()?, groups.as_slice()))
+            }
+            GroupKeys::Sparse(_) => None,
+        }
+    }
+
+    /// Each offset's group into `out`: the table's entry, or the miss group
+    /// for an offset past its end.
+    #[inline]
+    fn resolve_offsets(
+        &self,
+        groups: &[u32],
+        offsets: impl Iterator<Item = u64>,
+        valid: Option<&[bool]>,
+        out: &mut Vec<u32>,
+    ) {
+        let miss = self.miss;
+        out.clear();
+        out.extend(offsets.map(|offset| {
+            usize::try_from(offset)
+                .ok()
+                .and_then(|offset| groups.get(offset).copied())
+                .unwrap_or(miss)
+        }));
+        self.miss_invalid(valid, out);
     }
 }
 
@@ -240,19 +281,52 @@ impl Keys<'_> {
         scratch: &mut Vec<i128>,
         out: &mut Vec<u32>,
     ) {
-        match (self, rows) {
-            (Self::Signed(values), Rows::Range(range)) => {
+        // A key below the smallest has no offset: past any table's end.
+        let signed = |key: i64, minimum: i64| {
+            if key >= minimum {
+                u64::from_ne_bytes(key.wrapping_sub(minimum).to_ne_bytes())
+            } else {
+                u64::MAX
+            }
+        };
+        let unsigned = |key: u64, minimum: u64| key.checked_sub(minimum).unwrap_or(u64::MAX);
+        match (self, rows, table.direct::<i64>(), table.direct::<u64>()) {
+            (Self::Signed(values), Rows::Range(range), Some((minimum, groups)), _) => {
+                let offsets = values[range.clone()]
+                    .iter()
+                    .map(|key| signed(*key, minimum));
+                table.resolve_offsets(groups, offsets, valid, out);
+            }
+            (Self::Unsigned(values), Rows::Range(range), _, Some((minimum, groups))) => {
+                let offsets = values[range.clone()]
+                    .iter()
+                    .map(|key| unsigned(*key, minimum));
+                table.resolve_offsets(groups, offsets, valid, out);
+            }
+            (Self::Signed(values), Rows::Picked(rows), Some((minimum, groups)), _) => {
+                let offsets = rows
+                    .iter()
+                    .map(|row| signed(values[*row as usize], minimum));
+                table.resolve_offsets(groups, offsets, valid, out);
+            }
+            (Self::Unsigned(values), Rows::Picked(rows), _, Some((minimum, groups))) => {
+                let offsets = rows
+                    .iter()
+                    .map(|row| unsigned(values[*row as usize], minimum));
+                table.resolve_offsets(groups, offsets, valid, out);
+            }
+            (Self::Signed(values), Rows::Range(range), ..) => {
                 table.resolve_into(&values[range.clone()], valid, out);
             }
-            (Self::Unsigned(values), Rows::Range(range)) => {
+            (Self::Unsigned(values), Rows::Range(range), ..) => {
                 table.resolve_into(&values[range.clone()], valid, out);
             }
-            (Self::Signed(values), Rows::Picked(rows)) => {
+            (Self::Signed(values), Rows::Picked(rows), ..) => {
                 scratch.clear();
                 scratch.extend(rows.iter().map(|row| i128::from(values[*row as usize])));
                 table.resolve_into(scratch, valid, out);
             }
-            (Self::Unsigned(values), Rows::Picked(rows)) => {
+            (Self::Unsigned(values), Rows::Picked(rows), ..) => {
                 scratch.clear();
                 scratch.extend(rows.iter().map(|row| i128::from(values[*row as usize])));
                 table.resolve_into(scratch, valid, out);
@@ -1031,5 +1105,161 @@ impl<'a> StatePool<'a> {
             total.absorb(set, self.aggregates, memory)?;
         }
         Ok(Some(total))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GroupKeys, Keys, Rows, UniqueKeyGroups};
+
+    /// A dense table of `len` keys from `minimum`, key `minimum + i` in
+    /// group `i % 7`, every fifth slot without a key.
+    fn table(minimum: i128, len: usize) -> UniqueKeyGroups {
+        let miss = 7;
+        UniqueKeyGroups {
+            keys: GroupKeys::Direct {
+                minimum,
+                groups: (0..len)
+                    .map(|slot| {
+                        if slot % 5 == 4 {
+                            miss
+                        } else {
+                            u32::try_from(slot % 7).expect("small")
+                        }
+                    })
+                    .collect(),
+            },
+            miss,
+        }
+    }
+
+    /// What the 128-bit difference answers for one key.
+    fn expected(table: &UniqueKeyGroups, key: i128) -> u32 {
+        let GroupKeys::Direct { minimum, groups } = &table.keys else {
+            unreachable!("built dense");
+        };
+        usize::try_from(key - minimum)
+            .ok()
+            .and_then(|offset| groups.get(offset).copied())
+            .unwrap_or(table.miss)
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn keys_resolve_in_64_bits_as_they_do_in_128() {
+        let signed = [
+            i64::MIN,
+            i64::MIN + 1,
+            -1_000_000,
+            -41,
+            -40,
+            -39,
+            -1,
+            0,
+            1,
+            58,
+            59,
+            60,
+            1_000_000,
+            i64::MAX - 1,
+            i64::MAX,
+        ];
+        let unsigned = [
+            0,
+            1,
+            39,
+            40,
+            41,
+            139,
+            140,
+            u64::MAX / 2,
+            u64::MAX / 2 + 1,
+            u64::MAX - 1,
+            u64::MAX,
+        ];
+        // A smallest key inside the column's type takes the 64-bit path;
+        // one outside it (a negative key under unsigned probes, a key past
+        // the signed range) keeps the 128-bit one. Both must agree with
+        // the reference for keys below, inside and beyond the table.
+        for minimum in [
+            i128::from(i64::MIN),
+            -40,
+            0,
+            40,
+            i128::from(i64::MAX) - 50,
+            i128::from(i64::MAX) + 10,
+            i128::from(u64::MAX) - 50,
+        ] {
+            let table = table(minimum, 100);
+            let valid = (0..signed.len())
+                .map(|row| row % 4 != 2)
+                .collect::<Vec<_>>();
+            let picked = [1_u32, 3, 4, 8, 9, 10];
+            let (mut scratch, mut out) = (Vec::new(), Vec::new());
+            Keys::Signed(&signed).resolve(
+                &table,
+                &Rows::Range(0..signed.len()),
+                Some(&valid),
+                &mut scratch,
+                &mut out,
+            );
+            for ((key, valid), group) in signed.iter().zip(&valid).zip(&out) {
+                let want = if *valid {
+                    expected(&table, i128::from(*key))
+                } else {
+                    table.miss
+                };
+                assert_eq!(*group, want, "signed key {key} from {minimum}");
+            }
+            Keys::Signed(&signed).resolve(
+                &table,
+                &Rows::Picked(&picked),
+                None,
+                &mut scratch,
+                &mut out,
+            );
+            for (row, group) in picked.iter().zip(&out) {
+                let key = signed[*row as usize];
+                assert_eq!(*group, expected(&table, i128::from(key)), "picked {key}");
+            }
+            Keys::Unsigned(&unsigned).resolve(
+                &table,
+                &Rows::Range(0..unsigned.len()),
+                None,
+                &mut scratch,
+                &mut out,
+            );
+            for (key, group) in unsigned.iter().zip(&out) {
+                assert_eq!(
+                    *group,
+                    expected(&table, i128::from(*key)),
+                    "unsigned key {key} from {minimum}"
+                );
+            }
+            Keys::Unsigned(&unsigned).resolve(
+                &table,
+                &Rows::Picked(&picked),
+                None,
+                &mut scratch,
+                &mut out,
+            );
+            for (row, group) in picked.iter().zip(&out) {
+                let key = unsigned[*row as usize];
+                assert_eq!(*group, expected(&table, i128::from(key)), "picked {key}");
+            }
+        }
+        // The path taken: only a smallest key the type holds is direct.
+        assert!(table(-40, 10).direct::<i64>().is_some());
+        assert!(table(-40, 10).direct::<u64>().is_none());
+        assert!(
+            table(i128::from(i64::MAX) + 10, 10)
+                .direct::<i64>()
+                .is_none()
+        );
+        assert!(
+            table(i128::from(i64::MAX) + 10, 10)
+                .direct::<u64>()
+                .is_some()
+        );
     }
 }
