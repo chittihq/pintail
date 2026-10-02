@@ -12,12 +12,18 @@
 //! `unsafe_code = "forbid"` and one release binary still runs on every
 //! x86-64 CPU. See `docs/decisions.md`, "SIMD route".
 //!
+//! A third kind is written for one instruction set outright and has no
+//! auto-vectorized form worth having: bit-unpacking ([`unpack_u64`]) and
+//! dictionary-code translation ([`translate_codes`]) have AVX2 bodies.
+//!
 //! Masks use the executor's selection-word layout: bit `i % 64` of word
 //! `i / 64` is row `i`, and bits past the last row are zero.
 //!
-//! `PINTAIL_SIMD=off` runs every kernel at the baseline target - the same
-//! binary, for A/B measurement and for ruling the dispatch out of a wrong
-//! answer.
+//! `PINTAIL_SIMD` is a diagnostic, read once: `off` (or `portable`,
+//! `baseline`) runs every kernel at the baseline target - the same binary,
+//! for A/B measurement and for ruling the dispatch out of a wrong answer;
+//! `avx2` is the default spelled out; `avx512` runs the auto-vectorized
+//! kernels at AVX-512.
 
 // `#[inline(always)]` is the mechanism here, not a hint: a kernel is only
 // compiled for AVX2 when it is inlined into the dispatcher's target-feature
@@ -26,7 +32,9 @@
 
 #[cfg(target_arch = "x86_64")]
 mod avx2;
+pub mod codes;
 pub mod portable;
+pub mod unpack;
 
 use std::sync::LazyLock;
 
@@ -64,16 +72,21 @@ enum Dispatch {
     Native(pulp::Arch),
 }
 
-static DISPATCH: LazyLock<Dispatch> = LazyLock::new(|| {
-    let cap = std::env::var("PINTAIL_SIMD")
+fn cap() -> String {
+    std::env::var("PINTAIL_SIMD")
         .unwrap_or_default()
-        .to_ascii_lowercase();
-    select(cap.as_str())
-});
+        .to_ascii_lowercase()
+}
+
+fn capped_to_baseline(cap: &str) -> bool {
+    matches!(cap, "off" | "baseline" | "portable")
+}
+
+static DISPATCH: LazyLock<Dispatch> = LazyLock::new(|| select(cap().as_str()));
 
 #[cfg(target_arch = "x86_64")]
 fn select(cap: &str) -> Dispatch {
-    if cap == "off" || cap == "baseline" {
+    if capped_to_baseline(cap) {
         return Dispatch::Baseline;
     }
     let Some(v3) = pulp::x86::V3::try_new() else {
@@ -91,7 +104,7 @@ fn select(cap: &str) -> Dispatch {
 
 #[cfg(not(target_arch = "x86_64"))]
 fn select(cap: &str) -> Dispatch {
-    if cap == "off" || cap == "baseline" {
+    if capped_to_baseline(cap) {
         Dispatch::Baseline
     } else {
         Dispatch::Native(pulp::Arch::new())
@@ -416,6 +429,185 @@ dispatched_avx2! {
     /// When `out` is too short.
     pub fn between_u32<'a, 'b>(values: &'a [u32], low: u32, high: u32, out: &'b mut [u64])
         => portable::between_u32, avx2::between_u32;
+}
+
+/// The instruction set [`unpack_u64`] decodes `width`-bit values at in
+/// this process. A caller with a decode of its own specialised per width
+/// keeps it where this answers [`Level::Baseline`].
+#[must_use]
+pub fn unpack_level(width: u32) -> Level {
+    #[cfg(target_arch = "x86_64")]
+    if (1..=unpack::AVX2_WIDEST).contains(&width) && avx2().is_some() {
+        return Level::Avx2;
+    }
+    let _ = width;
+    Level::Baseline
+}
+
+/// Decodes `out.len()` values of `width` bits, packed LSB-first from the
+/// start of `bytes`, one per `u64` (see [`unpack`]), each plus `base`
+/// (wrapping). `bytes` may run past the values; the kernels read only the
+/// bits the values occupy.
+///
+/// # Panics
+///
+/// When `width` exceeds 64 or `bytes` holds fewer bits than the values need.
+pub fn unpack_u64(width: u32, bytes: &[u8], base: u64, out: &mut [u64]) {
+    let ran = unpack_u64_at(unpack_level(width), width, bytes, base, out);
+    debug_assert!(ran, "the dispatched level is one the CPU has");
+}
+
+/// [`unpack_u64`] into signed values: the same bits, `base` added in two's
+/// complement.
+///
+/// # Panics
+///
+/// As [`unpack_u64`].
+pub fn unpack_i64(width: u32, bytes: &[u8], base: i64, out: &mut [i64]) {
+    unpack_u64(
+        width,
+        bytes,
+        base.cast_unsigned(),
+        pulp::bytemuck::cast_slice_mut(out),
+    );
+}
+
+/// [`unpack_u64`] at a named level, for tests and measurement: `false`,
+/// with `out` untouched, when this CPU lacks the level or the level has no
+/// kernel of its own.
+///
+/// # Panics
+///
+/// As [`unpack_u64`].
+pub fn unpack_u64_at(level: Level, width: u32, bytes: &[u8], base: u64, out: &mut [u64]) -> bool {
+    match level {
+        Level::Baseline => {
+            unpack::unpack_u64(width, bytes, base, out);
+            true
+        }
+        #[cfg(target_arch = "x86_64")]
+        Level::Avx2 => {
+            struct Fast<'a, 'b> {
+                simd: pulp::x86::V3,
+                width: u32,
+                bytes: &'a [u8],
+                base: u64,
+                out: &'b mut [u64],
+            }
+            impl pulp::WithSimd for Fast<'_, '_> {
+                type Output = ();
+
+                #[inline(always)]
+                fn with_simd<S: pulp::Simd>(self, _simd: S) {
+                    unpack::unpack_u64_avx2(self.simd, self.width, self.bytes, self.base, self.out);
+                }
+            }
+            let Some(simd) = pulp::x86::V3::try_new() else {
+                return false;
+            };
+            pulp::Simd::vectorize(
+                simd,
+                Fast {
+                    simd,
+                    width,
+                    bytes,
+                    base,
+                    out,
+                },
+            );
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The instruction set [`translate_codes`] runs at for a dictionary of
+/// `entries` values in this process.
+#[must_use]
+pub fn translate_level(entries: usize) -> Level {
+    #[cfg(target_arch = "x86_64")]
+    if entries <= codes::AVX2_ENTRIES && avx2().is_some() {
+        return Level::Avx2;
+    }
+    let _ = entries;
+    Level::Baseline
+}
+
+/// Appends `translation[code]` for each little-endian `u32` code in `raw`
+/// (see [`codes`]). `false`, with `out` as it was, when a code is out of
+/// bounds for `translation`.
+pub fn translate_codes(raw: &[u8], translation: &[u32], out: &mut Vec<u32>) -> bool {
+    let level = translate_level(translation.len());
+    match translate_codes_at(level, raw, translation, out) {
+        Some(in_bounds) => in_bounds,
+        // The dispatched level is one the CPU has; the portable lookup
+        // answers for any that is not.
+        None => codes::translate_codes(raw, translation, out),
+    }
+}
+
+/// [`translate_codes`] over codes already held as `u32`s.
+pub fn translate_u32(codes: &[u32], translation: &[u32], out: &mut Vec<u32>) -> bool {
+    // The vector kernel exists on little-endian x86-64 only, where a
+    // `u32`'s bytes are the little-endian code the byte form reads.
+    #[cfg(target_arch = "x86_64")]
+    if translate_level(translation.len()) != Level::Baseline {
+        return translate_codes(pulp::bytemuck::cast_slice(codes), translation, out);
+    }
+    let start = out.len();
+    let mut in_bounds = true;
+    out.extend(codes.iter().map(|code| {
+        translation.get(*code as usize).copied().unwrap_or_else(|| {
+            in_bounds = false;
+            0
+        })
+    }));
+    if !in_bounds {
+        out.truncate(start);
+    }
+    in_bounds
+}
+
+/// [`translate_codes`] at a named level, for tests and measurement: `None`,
+/// with `out` untouched, when this CPU lacks the level or the level has no
+/// kernel of its own.
+pub fn translate_codes_at(
+    level: Level,
+    raw: &[u8],
+    translation: &[u32],
+    out: &mut Vec<u32>,
+) -> Option<bool> {
+    match level {
+        Level::Baseline => Some(codes::translate_codes(raw, translation, out)),
+        #[cfg(target_arch = "x86_64")]
+        Level::Avx2 => {
+            struct Fast<'a, 'b, 'c> {
+                simd: pulp::x86::V3,
+                raw: &'a [u8],
+                translation: &'b [u32],
+                out: &'c mut Vec<u32>,
+            }
+            impl pulp::WithSimd for Fast<'_, '_, '_> {
+                type Output = bool;
+
+                #[inline(always)]
+                fn with_simd<S: pulp::Simd>(self, _simd: S) -> bool {
+                    codes::translate_codes_avx2(self.simd, self.raw, self.translation, self.out)
+                }
+            }
+            let simd = pulp::x86::V3::try_new()?;
+            Some(pulp::Simd::vectorize(
+                simd,
+                Fast {
+                    simd,
+                    raw,
+                    translation,
+                    out,
+                },
+            ))
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

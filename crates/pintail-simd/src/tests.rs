@@ -269,3 +269,191 @@ fn bools_pack_into_words() {
         );
     }
 }
+
+/// The decode spelled bit by bit, independent of every kernel.
+fn unpack_reference(width: u32, bytes: &[u8], count: usize) -> Vec<u64> {
+    (0..count)
+        .map(|index| {
+            (0..width as usize).fold(0_u64, |value, bit| {
+                let position = index * width as usize + bit;
+                let set = bytes[position / 8] >> (position % 8) & 1;
+                value | u64::from(set) << bit
+            })
+        })
+        .collect()
+}
+
+/// Every level this CPU has, the dispatched one included.
+fn unpack_levels() -> Vec<Level> {
+    [Level::Baseline, Level::Avx2]
+        .into_iter()
+        .filter(|level| unpack_u64_at(*level, 1, &[0], 0, &mut [0]))
+        .collect()
+}
+
+fn assert_unpacks(width: u32, bytes: &[u8], count: usize) {
+    const POISON: u64 = 0xA5A5_A5A5_A5A5_A5A5;
+    let plain = unpack_reference(width, bytes, count);
+    // No base; one that carries out of the value's bits; one that wraps.
+    for base in [0_u64, 0x0123_4567_89AB_CDEF, u64::MAX] {
+        let expected: Vec<u64> = plain.iter().map(|value| value.wrapping_add(base)).collect();
+        for level in unpack_levels() {
+            // A poisoned slot either side: the kernel writes its values only.
+            let mut out = vec![POISON; count + 2];
+            assert!(unpack_u64_at(
+                level,
+                width,
+                bytes,
+                base,
+                &mut out[1..=count]
+            ));
+            let context = format!("{level:?} width {width} count {count} base {base:#x}");
+            assert_eq!(out[0], POISON, "{context}");
+            assert_eq!(out[count + 1], POISON, "{context}");
+            assert_eq!(&out[1..=count], expected.as_slice(), "{context}");
+        }
+        let mut out = vec![0; count];
+        unpack_u64(width, bytes, base, &mut out);
+        assert_eq!(out, expected, "dispatched width {width} count {count}");
+        let mut signed = vec![0_i64; count];
+        unpack_i64(width, bytes, base.cast_signed(), &mut signed);
+        let signed: Vec<u64> = signed.into_iter().map(i64::cast_unsigned).collect();
+        assert_eq!(signed, expected, "signed width {width} count {count}");
+    }
+}
+
+#[test]
+fn unpack_matches_the_bitwise_decode_at_every_width_and_length() {
+    let mut rng = StdRng::seed_from_u64(56);
+    for width in 0..=64_u32 {
+        for count in (0..=300).chain([511, 512, 513, 1024, 4099, 16_384]) {
+            let exact = (count * width as usize).div_ceil(8);
+            let mut bytes: Vec<u8> = (0..exact).map(|_| rng.random()).collect();
+            assert_unpacks(width, &bytes, count);
+            // The payload may continue past the values: later bytes are
+            // another column's, and must not leak into the last values.
+            bytes.extend((0..count % 97).map(|_| rng.random::<u8>()));
+            assert_unpacks(width, &bytes, count);
+        }
+    }
+}
+
+#[test]
+fn unpack_decodes_from_every_byte_offset_of_a_payload() {
+    let mut rng = StdRng::seed_from_u64(57);
+    for width in 1..=64_u32 {
+        // Groups of eight values start on bytes: decode from each such
+        // start, at every distance from the payload's end.
+        let total = 96_usize;
+        let bytes: Vec<u8> = (0..total * width as usize / 8)
+            .map(|_| rng.random())
+            .collect();
+        let expected = unpack_reference(width, &bytes, total);
+        for run in 0..total / 8 {
+            let start = run * width as usize;
+            for count in 0..=total - run * 8 {
+                for level in unpack_levels() {
+                    let mut out = vec![0; count];
+                    assert!(unpack_u64_at(level, width, &bytes[start..], 0, &mut out));
+                    assert_eq!(
+                        out,
+                        &expected[run * 8..run * 8 + count],
+                        "{level:?} width {width} run {run} count {count}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn unpack_holds_the_extreme_patterns() {
+    for width in 1..=64_u32 {
+        for fill in [0x00_u8, 0xFF, 0xAA, 0x55, 0x80, 0x01] {
+            let bytes = vec![fill; 301 * width as usize / 8 + 1];
+            assert_unpacks(width, &bytes, 301);
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "need")]
+fn unpack_refuses_a_short_payload() {
+    unpack_u64(21, &[0; 20], 0, &mut [0; 8]);
+}
+
+#[test]
+fn this_machine_reports_the_levels_it_exercised() {
+    // Printed with `--nocapture`: which kernels the equivalence tests ran.
+    eprintln!(
+        "unpack levels exercised: {:?}; dispatched: 21 bits at {:?}, 57 at {:?}, 64 at {:?}",
+        unpack_levels(),
+        unpack_level(21),
+        unpack_level(57),
+        unpack_level(64)
+    );
+    assert!(unpack_levels().contains(&Level::Baseline));
+}
+
+#[test]
+fn code_translation_matches_the_checked_lookup_at_every_level() {
+    let mut rng = StdRng::seed_from_u64(58);
+    let levels: Vec<Level> = [Level::Baseline, Level::Avx2]
+        .into_iter()
+        .filter(|level| translate_codes_at(*level, &[], &[], &mut Vec::new()).is_some())
+        .collect();
+    for entries in (0..=40_usize).chain([255, 256, 1024]) {
+        let translation: Vec<u32> = (0..entries).map(|_| rng.random()).collect();
+        for rows in (0..=300_usize).chain([1000, 4099]) {
+            // In bounds; then one code just past the table at a random row,
+            // and one with only high bits set, which a lookup that masked
+            // the index would take for a valid code.
+            let bound = u32::try_from(entries).expect("entries fit u32");
+            for stray in [None, Some(bound), Some(0x8000_0000), Some(u32::MAX)] {
+                if entries == 0 && rows > 0 && stray.is_none() {
+                    continue;
+                }
+                let mut codes: Vec<u32> = (0..rows)
+                    .map(|_| rng.random_range(0..bound.max(1)))
+                    .collect();
+                if let Some(stray) = stray {
+                    if rows == 0 {
+                        continue;
+                    }
+                    codes[rng.random_range(0..rows)] = stray;
+                }
+                let mut raw: Vec<u8> = codes.iter().flat_map(|code| code.to_le_bytes()).collect();
+                // Bytes short of a row are not a row.
+                raw.extend(std::iter::repeat_n(0xEE, rows % 4));
+                let expected: Option<Vec<u32>> = codes
+                    .iter()
+                    .map(|code| translation.get(*code as usize).copied())
+                    .collect();
+                for &level in &levels {
+                    let mut out = vec![7_u32, 8, 9];
+                    let ok = translate_codes_at(level, &raw, &translation, &mut out)
+                        .expect("level present");
+                    let context = format!("{level:?} entries {entries} rows {rows} {stray:?}");
+                    assert_eq!(ok, expected.is_some(), "{context}");
+                    assert_eq!(&out[..3], &[7, 8, 9], "{context}");
+                    match &expected {
+                        Some(values) => assert_eq!(&out[3..], values.as_slice(), "{context}"),
+                        None => assert_eq!(out.len(), 3, "{context}"),
+                    }
+                }
+                let mut out = Vec::new();
+                assert_eq!(
+                    translate_codes(&raw, &translation, &mut out),
+                    expected.is_some()
+                );
+                assert_eq!(&out, expected.as_deref().unwrap_or_default());
+                let mut out = vec![5_u32];
+                assert_eq!(
+                    translate_u32(&codes, &translation, &mut out),
+                    expected.is_some()
+                );
+                assert_eq!(&out[1..], expected.as_deref().unwrap_or_default());
+            }
+        }
+    }
+}
