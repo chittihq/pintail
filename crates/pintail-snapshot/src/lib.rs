@@ -1366,10 +1366,19 @@ pub fn map_mysql_value(
             normalize_time(&value, fsp)
                 .ok_or_else(|| mapping_error(table, column, "invalid MySQL TIME value"))?,
         ),
-        DataType::Utf8 => Value::Utf8(
-            mysql_text(&value)
-                .ok_or_else(|| mapping_error(table, column, "value is not valid UTF-8"))?,
-        ),
+        DataType::Utf8 => {
+            let mut text = mysql_text(&value)
+                .ok_or_else(|| mapping_error(table, column, "value is not valid UTF-8"))?;
+            // A CHAR(n) value is stored without its trailing spaces: that is
+            // what a row image carries and what a default session reads. A
+            // source whose sql_mode has PAD_CHAR_TO_FULL_LENGTH reads it back
+            // padded to n, and the copy would then disagree with every
+            // change streamed after it.
+            if column.mysql_data_type.eq_ignore_ascii_case("char") {
+                text.truncate(text.trim_end_matches(' ').len());
+            }
+            Value::Utf8(text)
+        }
         DataType::Binary => Value::Binary(
             // Geometry stays in MySQL's internal format - 4-byte SRID then
             // WKB - because that is byte-for-byte what a MySQL client reads

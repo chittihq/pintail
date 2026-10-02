@@ -26,7 +26,9 @@ use pintail_types::{DataType, KeyMode, PrimaryKey, Value};
 
 use crate::{
     CdcError,
-    decoder::{RowAlignment, decode_value, is_textual, key_part},
+    decoder::{
+        RowAlignment, decode_value, fixed_binary_width, is_textual, key_part, pad_fixed_binary,
+    },
 };
 
 /// Decimal digits one four-byte group of a packed decimal holds.
@@ -83,9 +85,11 @@ enum Reader {
     Text {
         prefix: usize,
     },
-    /// Length-prefixed bytes kept as they are.
+    /// Length-prefixed bytes, zero-padded back to `width` for a fixed-width
+    /// `BINARY(n)` column (0 for any other).
     Binary {
         prefix: usize,
+        width: usize,
     },
     /// A packed decimal.
     Decimal {
@@ -478,7 +482,10 @@ fn bytes_reader(prefix: usize, column: &SourceColumn, special: bool) -> Reader {
     });
     match (is_textual(column), column.pintail_type) {
         (true, DataType::Utf8) if utf8 => Reader::Text { prefix },
-        (false, DataType::Binary) => Reader::Binary { prefix },
+        (false, DataType::Binary) => Reader::Binary {
+            prefix,
+            width: fixed_binary_width(column).unwrap_or(0),
+        },
         _ => Reader::General,
     }
 }
@@ -656,7 +663,7 @@ impl Reader {
             Self::DateTime { fraction, .. } => 5 + fraction,
             Self::Timestamp { fraction, .. } => 4 + fraction,
             Self::Date => 3,
-            Self::Text { prefix } | Self::Binary { prefix } => {
+            Self::Text { prefix } | Self::Binary { prefix, .. } => {
                 let length = take(data, *prefix, table)?;
                 let length = usize::try_from(unsigned(length, false)).unwrap_or(usize::MAX);
                 let body = take(data, length, table)?;
@@ -682,7 +689,12 @@ impl Reader {
             )))),
             Self::Double => Some(Value::float64(f64::from_le_bytes(body.try_into().ok()?))),
             Self::Text { .. } => Some(Value::Utf8(std::str::from_utf8(body).ok()?.to_owned())),
-            Self::Binary { .. } => Some(Value::Binary(body.to_vec())),
+            Self::Binary { width, .. } => {
+                let mut bytes = Vec::with_capacity(body.len().max(*width));
+                bytes.extend_from_slice(body);
+                pad_fixed_binary(&mut bytes, *width);
+                Some(Value::Binary(bytes))
+            }
             Self::Decimal {
                 precision, scale, ..
             } => decimal_text(body, *precision, *scale).map(Value::Utf8),
@@ -1263,6 +1275,35 @@ mod tests {
         }
         let float = column("float", "float", DataType::Float32);
         let double = column("double", "double", DataType::Float64);
+        // A BINARY(n) image drops the value's trailing zero bytes; both
+        // decoders put them back, and only for that type.
+        let mut fixed_binary = column("binary", "binary(6)", DataType::Binary);
+        fixed_binary.character_set = None;
+        let plan_fixed_binary = plan(
+            ColumnType::MYSQL_TYPE_STRING,
+            &[0xfe, 6],
+            false,
+            &fixed_binary,
+        );
+        for raw in [&[2_u8, 0xab, 0x01][..], &[0], &[6, 1, 0, 2, 0, 3, 4]] {
+            assert!(agree(&plan_fixed_binary, &fixed_binary, raw));
+            let read = plan_fixed_binary
+                .read("t", Some(&fixed_binary), &mut &*raw)
+                .expect("framed")
+                .expect("read");
+            let mut expected = raw[1..].to_vec();
+            expected.resize(6, 0);
+            assert_eq!(read, Value::Binary(expected));
+        }
+        let mut data = &[1_u8, 7][..];
+        assert_eq!(
+            raw_bytes
+                .read("t", Some(&binary), &mut data)
+                .expect("framed")
+                .expect("read"),
+            Value::Binary(vec![7]),
+            "a VARBINARY value is kept at its own length"
+        );
         let plan_float = plan(ColumnType::MYSQL_TYPE_FLOAT, &[4], false, &float);
         let plan_double = plan(ColumnType::MYSQL_TYPE_DOUBLE, &[8], false, &double);
         for _ in 0..500 {

@@ -625,9 +625,45 @@ mod tests {
                 values
                     .into_iter()
                     .map(|value| Some(BinlogValue::Value(value)))
+    if let Some(width) = fixed_binary_width(column)
+        && let MysqlValue::Bytes(mut bytes) = value
+    {
+        pad_fixed_binary(&mut bytes, width);
+        return Ok(MysqlValue::Bytes(bytes));
+    }
                     .collect(),
                 types
                     .iter()
+/// The byte width of a `BINARY(n)` column, `None` for every other type.
+///
+/// A row image writes a fixed-width binary value without its trailing zero
+/// bytes - the pad byte of the binary character set, stripped the way a
+/// `CHAR` value's trailing spaces are - while the stored value, and every
+/// `SELECT` of it, is all `n` bytes. The width puts the padding back.
+pub(crate) fn fixed_binary_width(column: &SourceColumn) -> Option<usize> {
+    if !column.mysql_data_type.eq_ignore_ascii_case("binary") {
+        return None;
+    }
+    let declared = column.mysql_column_type.trim().to_ascii_lowercase();
+    let rest = declared.strip_prefix("binary")?.trim_start();
+    if rest.is_empty() {
+        return Some(1);
+    }
+    rest.strip_prefix('(')?
+        .split(')')
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Zero-pads a `BINARY(n)` value back to its declared `width`.
+pub(crate) fn pad_fixed_binary(bytes: &mut Vec<u8>, width: usize) {
+    if bytes.len() < width {
+        bytes.resize(width, 0);
+    }
+}
+
                     .map(|kind| Column::new(*kind))
                     .collect::<Vec<_>>()
                     .into(),
