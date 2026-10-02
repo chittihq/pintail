@@ -1056,6 +1056,9 @@ struct Backend {
     /// The statement whose result is streaming, until the connection has
     /// written it: its worker, and what the statement holds until then.
     pending_stream: Mutex<Option<PendingStream>>,
+    /// Statement shapes the engine declined to run inline, so a statement
+    /// that has to go to a worker is offered inline once, not every time.
+    inline_declined: Mutex<std::collections::HashSet<u64>>,
     prepared: BTreeMap<u32, Prepared>,
     named_prepared: BTreeMap<String, sql_prepare::NamedStatement>,
     /// Statement text held by `prepared`, so the byte ceiling is a counter
@@ -1117,6 +1120,310 @@ struct PendingStream {
     sql: String,
 }
 
+/// Where a statement runs: on a worker thread that may block, or on the
+/// connection's own task.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Lane {
+    Worker,
+    Inline,
+}
+
+/// What [`StatementRun::run`] came to.
+enum Ran<T> {
+    /// The statement ran: what its caller made of the answer, unless the
+    /// result streamed, and what it leaves behind.
+    Done(Option<T>, Settled),
+    /// The engine declined to run it inline and nothing was executed; the
+    /// run is intact. `remember` when the statement's shape is the reason,
+    /// so asking again would be declined again.
+    Declined { remember: bool },
+}
+
+/// How many declined statement shapes one connection remembers.
+const MAX_REMEMBERED_SHAPES: usize = 1024;
+
+/// Whether bounded statements run on the connection's task
+/// (`PINTAIL_INLINE_STATEMENTS=0` sends every statement to a worker).
+fn inline_statements() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        !matches!(
+            std::env::var("PINTAIL_INLINE_STATEMENTS")
+                .unwrap_or_default()
+                .trim(),
+            "0" | "false" | "off"
+        )
+    })
+}
+
+/// A hash of a statement with its literals left out, so statements that
+/// differ only in their constants share one.
+fn shape_hash(sql: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    let mut quote = None;
+    let mut escaped = false;
+    for byte in sql.bytes() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == open {
+                quote = None;
+            }
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            continue;
+        }
+        if byte.is_ascii_digit() {
+            continue;
+        }
+        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// The session settings one statement reads from its executing thread,
+/// installed for exactly that statement and taken down when this drops -
+/// also when the statement panics, so nothing of one session is left on a
+/// thread the next statement, or another connection's, runs on.
+struct SessionInstalls;
+
+impl SessionInstalls {
+    fn install(session: &Session) -> Self {
+        // The session zone shifts statement-pinned time functions;
+        // optimization runs on this thread, so install-and-restore
+        // brackets exactly one statement.
+        let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
+        pintail_exec::set_session_timestamp_micros(session.timestamp_micros);
+        pintail_exec::set_session_default_week_format(Some(session.default_week_format));
+        let _ = pintail_exec::set_session_calendar_locale(Some(session.calendar_locale));
+        pintail_sql::set_session_client_character_set(pintail_types::CharacterSet::from_name(
+            &session.charset_client,
+        ));
+        pintail_sql::set_session_binary_literals(session.charset_connection == "binary");
+        pintail_sql::set_session_character_set(pintail_types::CharacterSet::from_name(
+            &session.charset_connection,
+        ));
+        pintail_sql::set_session_default_collation(Some(session.collation_connection));
+        pintail_sql::set_session_div_precision_increment(Some(session.div_precision_increment));
+        pintail_sql::set_session_select_limit(session.sql_select_limit);
+        pintail_exec::set_session_window_high_precision(Some(session.window_high_precision));
+        pintail_exec::set_session_group_concat_max_len(Some(session.group_concat_max_len));
+        pintail_exec::set_session_cte_max_recursion_depth(Some(session.cte_max_recursion_depth));
+        Self
+    }
+}
+
+impl Drop for SessionInstalls {
+    fn drop(&mut self) {
+        pintail_exec::set_session_window_high_precision(None);
+        pintail_exec::set_session_group_concat_max_len(None);
+        pintail_exec::set_session_cte_max_recursion_depth(None);
+        pintail_sql::set_session_default_collation(None);
+        pintail_sql::set_session_binary_literals(false);
+        pintail_sql::set_session_character_set(None);
+        pintail_sql::set_session_client_character_set(None);
+        pintail_sql::set_session_div_precision_increment(None);
+        pintail_sql::set_session_select_limit(None);
+        let _ = pintail_exec::set_session_time_zone(None);
+        let _ = pintail_exec::set_session_calendar_locale(None);
+        pintail_exec::set_session_default_week_format(None);
+        pintail_exec::set_session_timestamp_micros(None);
+    }
+}
+
+/// One statement ready to execute: everything it needs from its
+/// connection, owned, so it can run where it was received or be moved to a
+/// worker thread.
+struct StatementRun<F> {
+    engine: ReplicaEngine,
+    database_id: String,
+    sql: String,
+    session: Session,
+    parse_mode: pintail_sql::ParseMode,
+    cancellation: pintail_exec::ExecutionCancellation,
+    deadline: Option<Instant>,
+    sink: Option<WireSink>,
+    trace: Option<crate::trace::Trace>,
+    /// Makes the caller's answer of the result, on the thread that
+    /// executed it; taken when the statement completes.
+    finish: Option<F>,
+}
+
+impl<F> StatementRun<F> {
+    /// Executes the statement on this thread and hands its result to
+    /// `finish`.
+    ///
+    /// A result is turned into packets by `finish` here, not afterwards on
+    /// the connection's task: encoding a large result is CPU work the size
+    /// of the result. In the inline lane the engine runs only a statement
+    /// whose work is bounded and declines the rest untouched, leaving this
+    /// run as it was for a worker to execute.
+    #[allow(clippy::too_many_lines)]
+    fn run<T>(&mut self, lane: Lane) -> Ran<T>
+    where
+        F: FnOnce(Result<QueryOutput, QueryError>) -> T,
+    {
+        crate::trace::install(self.trace.take());
+        crate::trace::mark(if lane == Lane::Inline {
+            "inline"
+        } else {
+            "worker"
+        });
+        let _ = pintail_exec::take_exec_counters();
+        let Self {
+            engine,
+            database_id,
+            sql,
+            session,
+            parse_mode,
+            cancellation,
+            deadline,
+            sink,
+            trace,
+            finish,
+        } = self;
+        let (engine, database_id, sql, session, deadline) = (
+            &*engine,
+            database_id.as_str(),
+            sql.as_str(),
+            &*session,
+            *deadline,
+        );
+        let ran = pintail_sql::with_parse_mode(*parse_mode, || {
+            pintail_exec::with_execution_cancellation(cancellation.clone(), || {
+                let installs = SessionInstalls::install(session);
+                let variable_writes = pintail_sql::UserVariableWrites::default();
+                let answer = pintail_sql::with_user_variable_writes(
+                    sql.contains(":=").then(|| variable_writes.clone()),
+                    || {
+                        pintail_sql::with_user_variables(session.user_variables.clone(), || {
+                            let system_variables = session_expression::variables(sql, session);
+                            pintail_sql::with_system_variables(system_variables, || {
+                                if lane == Lane::Inline {
+                                    engine.execute_answer_inline(
+                                        database_id,
+                                        sql,
+                                        max_result_rows(),
+                                        deadline,
+                                    )
+                                } else {
+                                    engine
+                                        .execute_answer(
+                                            database_id,
+                                            sql,
+                                            max_result_rows(),
+                                            deadline,
+                                            sink.as_mut().map(|sink| {
+                                                sink as &mut dyn crate::engine::RowSink
+                                            }),
+                                        )
+                                        .map(crate::engine::InlineAnswer::Answered)
+                                }
+                            })
+                        })
+                    },
+                );
+                let warnings = (
+                    pintail_exec::take_session_group_concat_warnings(),
+                    pintail_exec::take_session_division_warnings(),
+                    pintail_exec::take_session_conversion_warnings(),
+                );
+                drop(installs);
+                let answer = match answer {
+                    Ok(crate::engine::InlineAnswer::Answered(answer)) => Ok(answer),
+                    Ok(crate::engine::InlineAnswer::NotBounded) => {
+                        return Ran::Declined { remember: true };
+                    }
+                    Ok(crate::engine::InlineAnswer::NotNow) => {
+                        return Ran::Declined { remember: false };
+                    }
+                    Err(error) => Err(error),
+                };
+                crate::trace::label_exec_counters();
+                // Division by zero is a warning only under
+                // ERROR_FOR_DIVISION_BY_ZERO. No statement of this
+                // connection can change the mode while this one runs.
+                let (group_concat, division, conversion) = warnings;
+                let division = if sql_mode_has(&session.sql_mode, "ERROR_FOR_DIVISION_BY_ZERO") {
+                    division
+                } else {
+                    0
+                };
+                let row_count = match &answer {
+                    Ok(crate::engine::Answer::Whole(output)) => output
+                        .affected
+                        .map_or(-1, |rows| i64::try_from(rows).unwrap_or(i64::MAX)),
+                    _ => -1,
+                };
+                let mut finish = || finish.take().expect("a statement is finished once");
+                let (finished, rows) = match answer {
+                    Ok(crate::engine::Answer::Whole(output)) => {
+                        if sql.contains(":=") && outer_order_by(sql) {
+                            settle_projected_assignments(&output, &variable_writes);
+                        }
+                        let result = refuse_truncated(output);
+                        let rows = result
+                            .as_ref()
+                            .map(|output| output.rows.len())
+                            .map_err(Clone::clone);
+                        (Some(finish()(result)), rows)
+                    }
+                    Ok(crate::engine::Answer::Streamed { rows, .. }) => {
+                        if let Some(sink) = sink.as_ref() {
+                            sink.end(Ok(()));
+                        }
+                        (None, Ok(rows))
+                    }
+                    // After rows went out the error follows them; before,
+                    // it is the whole answer.
+                    Err(error) => match sink.as_ref() {
+                        Some(sink) if sink.streaming() => {
+                            sink.end(Err(&error));
+                            (None, Err(error))
+                        }
+                        _ => (Some(finish()(Err(error.clone()))), Err(error)),
+                    },
+                };
+                drop(sink.take());
+                let (mut listed, mut count) = statement_conditions(&rows, group_concat, division);
+                if rows.is_ok() {
+                    count = count.saturating_add(conversion.1);
+                    listed.extend(
+                        conversion
+                            .0
+                            .into_iter()
+                            .take(MAX_LISTED_CONDITIONS.saturating_sub(listed.len()))
+                            .map(|warning| Condition {
+                                level: "Warning",
+                                code: warning.code,
+                                sql_state: warning.sql_state,
+                                message: warning.message,
+                            }),
+                    );
+                }
+                let conditions = (listed, count);
+                let settled = Settled {
+                    variable_writes,
+                    row_count,
+                    conditions,
+                    rows,
+                    trace: crate::trace::take(),
+                };
+                Ran::Done(finished, settled)
+            })
+        });
+        if matches!(ran, Ran::Declined { .. }) {
+            // The trace goes on with the statement to its worker.
+            *trace = crate::trace::take();
+        }
+        ran
+    }
+}
+
 struct CancelExecutionOnDrop(Option<pintail_exec::ExecutionCancellation>);
 
 impl CancelExecutionOnDrop {
@@ -1154,6 +1461,7 @@ impl Backend {
             default_sql_mode: DEFAULT_SQL_MODE.to_owned(),
             pending_trace: Mutex::new(None),
             pending_stream: Mutex::new(None),
+            inline_declined: Mutex::new(std::collections::HashSet::new()),
             prepared: BTreeMap::new(),
             named_prepared: BTreeMap::new(),
             prepared_bytes: 0,
@@ -1409,7 +1717,10 @@ impl Backend {
         sql: &str,
         mode: Option<pintail_sql::ParseMode>,
     ) -> Result<QueryOutput, QueryError> {
-        match self.execute_then(sql, mode, None, |result| result).await? {
+        match self
+            .execute_then(sql, mode, None, sql, |result| result)
+            .await?
+        {
             Executed::Done(result) => result,
             Executed::Streaming(_) => Err(QueryError::Internal(
                 "a result streamed with nowhere to go".to_owned(),
@@ -1417,13 +1728,18 @@ impl Backend {
         }
     }
 
-    /// Runs one statement and hands its result to `finish` on the worker
-    /// thread that executed it, returning what `finish` makes of it.
+    /// Runs one statement and hands its result to `finish` on the thread
+    /// that executed it, returning what `finish` makes of it.
     ///
-    /// A result is turned into packets by `finish` there, not on the
-    /// connection's I/O task: encoding a large result is CPU work the size
-    /// of the result, and on the I/O task it would stall every other
-    /// connection that task serves. With a `stream` request a result that
+    /// A statement whose work the engine can bound - one that reads no
+    /// table - runs on the connection's own task. Every other statement runs on a worker thread, and its result
+    /// is turned into packets by `finish` there, not on the connection's
+    /// I/O task: encoding a large result is CPU work the size of the
+    /// result, and on the I/O task it would stall every other connection
+    /// that task serves. `shape` is the text whose shape names the
+    /// statement among those already found to need a worker: the statement
+    /// itself, or the prepared text it was built from. With a `stream`
+    /// request a result that
     /// outgrows [`crate::engine::STREAM_AFTER_ROWS`] streams instead, and
     /// this returns as soon as it starts; the statement is settled in
     /// [`Handler::finish_stream`]. `Err` is a failure before the statement
@@ -1434,6 +1750,7 @@ impl Backend {
         sql: &str,
         mode: Option<pintail_sql::ParseMode>,
         stream: Option<StreamRequest>,
+        shape: &str,
         finish: F,
     ) -> Result<Executed<T>, QueryError>
     where
@@ -1483,8 +1800,6 @@ impl Backend {
             }
             None => (None, None),
         };
-        let engine = self.engine.clone();
-        let database_id = authenticated.database_id;
         // The shape is logged rather than the text: a literal is a row value,
         // and `WHERE email = '...'` would put a real address into whatever
         // consumes the log. The full statement is kept only at `debug`, where
@@ -1494,165 +1809,75 @@ impl Backend {
             full: pintail_log::enabled(pintail_log::DEBUG).then(|| sql.to_owned()),
         });
         let statement_text = sql.to_owned();
-        let sql = sql.to_owned();
         let parse_mode =
             mode.unwrap_or_else(|| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode));
         let mut trace = crate::trace::Trace::start(started);
         if let Some(trace) = &mut trace {
             trace.mark("dispatched");
         }
-        let worker = tokio::task::spawn_blocking(move || {
-            let mut sink = sink;
-            crate::trace::install(trace);
-            crate::trace::mark("worker");
-            let _ = pintail_exec::take_exec_counters();
-            pintail_sql::with_parse_mode(parse_mode, || {
-                pintail_exec::with_execution_cancellation(cancellation, || {
-                    // The session zone shifts statement-pinned time functions;
-                    // optimization runs on this thread, so install-and-restore
-                    // brackets exactly one statement.
-                    let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
-                    pintail_exec::set_session_timestamp_micros(session.timestamp_micros);
-                    pintail_exec::set_session_default_week_format(Some(
-                        session.default_week_format,
-                    ));
-                    let _ =
-                        pintail_exec::set_session_calendar_locale(Some(session.calendar_locale));
-                    pintail_sql::set_session_client_character_set(
-                        pintail_types::CharacterSet::from_name(&session.charset_client),
-                    );
-                    pintail_sql::set_session_binary_literals(
-                        session.charset_connection == "binary",
-                    );
-                    pintail_sql::set_session_character_set(pintail_types::CharacterSet::from_name(
-                        &session.charset_connection,
-                    ));
-                    pintail_sql::set_session_default_collation(Some(session.collation_connection));
-                    pintail_sql::set_session_div_precision_increment(Some(
-                        session.div_precision_increment,
-                    ));
-                    pintail_sql::set_session_select_limit(session.sql_select_limit);
-                    pintail_exec::set_session_window_high_precision(Some(
-                        session.window_high_precision,
-                    ));
-                    pintail_exec::set_session_group_concat_max_len(Some(
-                        session.group_concat_max_len,
-                    ));
-                    pintail_exec::set_session_cte_max_recursion_depth(Some(
-                        session.cte_max_recursion_depth,
-                    ));
-                    let variable_writes = pintail_sql::UserVariableWrites::default();
-                    let answer = pintail_sql::with_user_variable_writes(
-                        sql.contains(":=").then(|| variable_writes.clone()),
-                        || {
-                            pintail_sql::with_user_variables(session.user_variables.clone(), || {
-                                let system_variables =
-                                    session_expression::variables(&sql, &session);
-                                pintail_sql::with_system_variables(system_variables, || {
-                                    engine.execute_answer(
-                                        &database_id,
-                                        &sql,
-                                        max_result_rows(),
-                                        deadline,
-                                        sink.as_mut()
-                                            .map(|sink| sink as &mut dyn crate::engine::RowSink),
-                                    )
-                                })
-                            })
-                        },
-                    );
-                    let warnings = (
-                        pintail_exec::take_session_group_concat_warnings(),
-                        pintail_exec::take_session_division_warnings(),
-                        pintail_exec::take_session_conversion_warnings(),
-                    );
-                    pintail_exec::set_session_window_high_precision(None);
-                    pintail_exec::set_session_group_concat_max_len(None);
-                    pintail_exec::set_session_cte_max_recursion_depth(None);
-                    pintail_sql::set_session_default_collation(None);
-                    pintail_sql::set_session_binary_literals(false);
-                    pintail_sql::set_session_character_set(None);
-                    pintail_sql::set_session_client_character_set(None);
-                    pintail_sql::set_session_div_precision_increment(None);
-                    pintail_sql::set_session_select_limit(None);
-                    let _ = pintail_exec::set_session_time_zone(None);
-                    let _ = pintail_exec::set_session_calendar_locale(None);
-                    pintail_exec::set_session_default_week_format(None);
-                    pintail_exec::set_session_timestamp_micros(None);
-                    crate::trace::label_exec_counters();
-                    // Division by zero is a warning only under
-                    // ERROR_FOR_DIVISION_BY_ZERO. No statement of this
-                    // connection can change the mode while this one runs.
-                    let (group_concat, division, conversion) = warnings;
-                    let division = if sql_mode_has(&session.sql_mode, "ERROR_FOR_DIVISION_BY_ZERO")
-                    {
-                        division
-                    } else {
-                        0
-                    };
-                    let row_count = match &answer {
-                        Ok(crate::engine::Answer::Whole(output)) => output
-                            .affected
-                            .map_or(-1, |rows| i64::try_from(rows).unwrap_or(i64::MAX)),
-                        _ => -1,
-                    };
-                    let (finished, rows) = match answer {
-                        Ok(crate::engine::Answer::Whole(output)) => {
-                            if sql.contains(":=") && outer_order_by(&sql) {
-                                settle_projected_assignments(&output, &variable_writes);
-                            }
-                            let result = refuse_truncated(output);
-                            let rows = result
-                                .as_ref()
-                                .map(|output| output.rows.len())
-                                .map_err(Clone::clone);
-                            (Some(finish(result)), rows)
-                        }
-                        Ok(crate::engine::Answer::Streamed { rows, .. }) => {
-                            if let Some(sink) = &sink {
-                                sink.end(Ok(()));
-                            }
-                            (None, Ok(rows))
-                        }
-                        // After rows went out the error follows them; before,
-                        // it is the whole answer.
-                        Err(error) => match &sink {
-                            Some(sink) if sink.streaming() => {
-                                sink.end(Err(&error));
-                                (None, Err(error))
-                            }
-                            _ => (Some(finish(Err(error.clone()))), Err(error)),
-                        },
-                    };
-                    drop(sink);
-                    let (mut listed, mut count) =
-                        statement_conditions(&rows, group_concat, division);
-                    if rows.is_ok() {
-                        count = count.saturating_add(conversion.1);
-                        listed.extend(
-                            conversion
-                                .0
-                                .into_iter()
-                                .take(MAX_LISTED_CONDITIONS.saturating_sub(listed.len()))
-                                .map(|warning| Condition {
-                                    level: "Warning",
-                                    code: warning.code,
-                                    sql_state: warning.sql_state,
-                                    message: warning.message,
-                                }),
-                        );
+        let mut run = StatementRun {
+            engine: self.engine.clone(),
+            database_id: authenticated.database_id,
+            sql: sql.to_owned(),
+            session,
+            parse_mode,
+            cancellation,
+            deadline,
+            sink,
+            trace,
+            finish: Some(finish),
+        };
+        // A statement whose work is bounded runs here, on the connection's
+        // own task: handing it to a worker thread and waiting to be woken
+        // with its answer costs more than the statement does. Anything
+        // else - and anything the engine declines - goes to a worker as
+        // before, from the beginning.
+        let shape = shape_hash(shape);
+        if inline_statements() && !self.declined_inline(shape) {
+            let attempt =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.run(Lane::Inline)));
+            match attempt {
+                Ok(Ran::Done(finished, settled)) => {
+                    drop(run);
+                    cancel_on_drop.disarm();
+                    drop(running_guard);
+                    self.settle(settled, recorded, started);
+                    return finished.map(Executed::Done).ok_or_else(|| {
+                        QueryError::Internal("a statement ended without an answer".to_owned())
+                    });
+                }
+                Ok(Ran::Declined { remember }) => {
+                    if remember {
+                        self.remember_declined_inline(shape);
                     }
-                    let conditions = (listed, count);
-                    let settled = Settled {
-                        variable_writes,
-                        row_count,
-                        conditions,
-                        rows,
-                        trace: crate::trace::take(),
-                    };
-                    (finished, settled)
-                })
-            })
+                }
+                Err(panic) => {
+                    let message = panic
+                        .downcast_ref::<&str>()
+                        .map(|message| (*message).to_owned())
+                        .or_else(|| panic.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "panicked".to_owned());
+                    return Err(QueryError::Internal(format!(
+                        "query worker failed: {message}"
+                    )));
+                }
+            }
+        }
+        let worker = tokio::task::spawn_blocking(move || match run.run(Lane::Worker) {
+            Ran::Done(finished, settled) => (finished, settled),
+            // A worker runs every statement it is given.
+            Ran::Declined { .. } => (
+                None,
+                Settled {
+                    variable_writes: pintail_sql::UserVariableWrites::default(),
+                    row_count: -1,
+                    conditions: (Vec::new(), 0),
+                    rows: Err(QueryError::Internal(
+                        "a worker declined a statement".to_owned(),
+                    )),
+                    trace: None,
+                },
+            ),
         });
         let worker_failed = |error: tokio::task::JoinError| {
             QueryError::Internal(format!("query worker failed: {error}"))
@@ -1682,6 +1907,25 @@ impl Backend {
             .ok_or_else(|| QueryError::Internal("a statement ended without an answer".to_owned()))
     }
 
+    /// Whether a statement of this shape was declined inline before on this
+    /// connection, so the attempt is not paid for again.
+    fn declined_inline(&self, shape: u64) -> bool {
+        self.inline_declined
+            .lock()
+            .is_ok_and(|declined| declined.contains(&shape))
+    }
+
+    fn remember_declined_inline(&self, shape: u64) {
+        if let Ok(mut declined) = self.inline_declined.lock() {
+            // A connection that sends more shapes than this is not one a
+            // few repeated attempts would slow.
+            if declined.len() >= MAX_REMEMBERED_SHAPES {
+                declined.clear();
+            }
+            declined.insert(shape);
+        }
+    }
+
     /// Runs a wire statement and answers it: the packets `finish` encodes,
     /// or the stream its result started. `traced` names the statement in
     /// its trace, written once the answer is.
@@ -1696,7 +1940,10 @@ impl Backend {
     where
         F: FnOnce(Result<QueryOutput, QueryError>) -> Response + Send + 'static,
     {
-        let response = match self.execute_then(sql, mode, Some(stream), finish).await {
+        let response = match self
+            .execute_then(sql, mode, Some(stream), traced, finish)
+            .await
+        {
             Ok(Executed::Done(response)) => response,
             // Its trace is written when the stream has been.
             Ok(Executed::Streaming(stream)) => return Response::Stream(Box::new(stream)),
@@ -5853,6 +6100,26 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
     /// idle flow. Before the pre-authentication exchange had a deadline the
     /// task blocked on that read forever, holding its descriptors, and enough
     /// of them stopped the server accepting anybody at all.
+    /// Statements that differ only in their constants are one shape, so a
+    /// shape found to need a worker is not offered inline again under a
+    /// different literal.
+    #[test]
+    fn a_shape_ignores_literals_and_nothing_else() {
+        use super::shape_hash;
+        assert_eq!(
+            shape_hash("SELECT a FROM t WHERE id = 1 AND name = 'x'"),
+            shape_hash("SELECT a FROM t WHERE id = 99 AND name = 'it''s \\' y'"),
+        );
+        assert_ne!(
+            shape_hash("SELECT a FROM t WHERE id = 1"),
+            shape_hash("SELECT a FROM t WHERE id > 1"),
+        );
+        assert_ne!(
+            shape_hash("SELECT a FROM t WHERE id = 1"),
+            shape_hash("SELECT b FROM t WHERE id = 1"),
+        );
+    }
+
     #[tokio::test]
     async fn a_client_that_never_finishes_the_handshake_is_dropped() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

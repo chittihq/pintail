@@ -17,8 +17,9 @@ pub use admission::{
     shared_admission,
 };
 pub use engine::{
-    Answer, DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput,
-    QueryStats, ReplicaEngine, RowSink, STREAM_AFTER_ROWS, SqlRejection, table_directory,
+    Answer, DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, InlineAnswer, QueryError, QueryField,
+    QueryOutput, QueryStats, ReplicaEngine, RowSink, STREAM_AFTER_ROWS, SqlRejection,
+    table_directory,
 };
 pub mod managed_tls;
 

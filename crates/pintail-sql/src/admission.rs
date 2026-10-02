@@ -46,6 +46,54 @@ pub fn has_bounded_planning_shape(statement: &Statement) -> bool {
     .is_continue()
 }
 
+/// Whether a statement is one `SELECT` that reads no table and is small
+/// enough for its work to be bounded by its own text: no `FROM`, no common
+/// table expression, no subquery, and at most a few dozen expressions. Its
+/// functions take what the text spells out and return values of capped
+/// size, so nothing in it can grow with stored data.
+#[must_use]
+pub fn has_bounded_table_less_shape(statement: &Statement) -> bool {
+    let Statement::Query(query) = statement else {
+        return false;
+    };
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return false;
+    };
+    if query.with.is_some()
+        || !select.from.is_empty()
+        || select.into.is_some()
+        || !select.lateral_views.is_empty()
+    {
+        return false;
+    }
+    let mut count = 0;
+    visit_expressions(statement, |expr| {
+        count += 1;
+        // Matching a pattern is the one thing here whose cost the length of
+        // the text does not bound.
+        let pattern = match expr {
+            Expr::RLike { .. } | Expr::SimilarTo { .. } => true,
+            Expr::Function(function) => {
+                let name = function.name.to_string().to_ascii_lowercase();
+                name.contains("regexp") || name.contains("rlike")
+            }
+            _ => false,
+        };
+        if count > 32
+            || pattern
+            || matches!(
+                expr,
+                Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. }
+            )
+        {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })
+    .is_continue()
+}
+
 /// Whether a statement has a small, predictable operator shape. This is only
 /// syntax eligibility: callers must also bound the actual pinned input size.
 /// Functions, joins, subqueries and unknown syntax always use general capacity.
@@ -136,6 +184,39 @@ pub fn has_bounded_admission_shape(statement: &Statement) -> bool {
 mod tests {
     use super::has_bounded_admission_shape;
     use crate::parse_statement;
+
+    #[test]
+    fn only_a_small_select_without_tables_is_table_less() {
+        use super::has_bounded_table_less_shape;
+        for sql in [
+            "SELECT 1 + 1",
+            "SELECT UPPER('abc'), CONCAT('a', 'b') AS joined",
+            "SELECT NOW(), @v := 3 ORDER BY 1 LIMIT 1",
+        ] {
+            assert!(
+                has_bounded_table_less_shape(&parse_statement(sql).unwrap()),
+                "{sql}"
+            );
+        }
+        let wide = format!("SELECT {}", vec!["1"; 40].join(" + "));
+        for sql in [
+            "SELECT id FROM t",
+            "SELECT 1 FROM DUAL",
+            "SELECT (SELECT 1)",
+            "SELECT 1 IN (SELECT id FROM t)",
+            "WITH c AS (SELECT 1) SELECT 2",
+            "SELECT 1 UNION SELECT 2",
+            "SELECT 'aaa' REGEXP '(a+)+$'",
+            "SELECT REGEXP_REPLACE('abc', 'b', 'x')",
+            "SHOW TABLES",
+            wide.as_str(),
+        ] {
+            assert!(
+                !has_bounded_table_less_shape(&parse_statement(sql).unwrap()),
+                "{sql}"
+            );
+        }
+    }
 
     #[test]
     fn only_bounded_operator_shapes_are_eligible() {

@@ -224,6 +224,38 @@ impl QueryAdmission {
             reserved,
         })
     }
+
+    /// Takes a slot only if one is free now, never waiting: for a caller on
+    /// a thread that must not block. `None` says nothing about saturation;
+    /// the caller asks again through [`Self::try_admit_class`] from a
+    /// thread that may wait.
+    #[must_use]
+    pub fn try_admit_class_now(&self, class: QueryClass) -> Option<QueryPermit<'_>> {
+        if self.limit == 0 {
+            return Some(QueryPermit {
+                admission: None,
+                reserved: false,
+            });
+        }
+        let mut available = self
+            .available
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reserved = class == QueryClass::Short && available.reserved > 0;
+        let slots = if reserved {
+            &mut available.reserved
+        } else {
+            &mut available.general
+        };
+        if *slots == 0 {
+            return None;
+        }
+        *slots -= 1;
+        Some(QueryPermit {
+            admission: Some(self),
+            reserved,
+        })
+    }
 }
 
 /// Releases its slot when dropped, including on panic or early return, so a

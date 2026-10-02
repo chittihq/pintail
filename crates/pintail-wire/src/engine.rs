@@ -330,7 +330,54 @@ struct Classified {
     replica: Arc<LoadedReplica>,
     prepared: Option<PreparedSelect>,
     short: bool,
+    /// Whether the statement's work is small enough to run on the thread
+    /// that received it: see [`ReplicaEngine::execute_answer_inline`].
+    inline: bool,
 }
+
+/// Why classification settled nothing for a statement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Unclassified {
+    /// The statement itself: its shape is not one classification bounds,
+    /// or it does not bind. Asking again gives the same answer.
+    Shape,
+    /// The moment: no current replica is cached to classify against.
+    Unready,
+}
+
+/// Where a statement is being executed from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Lane {
+    /// A thread that may block: waits for capacity, loads replicas, joins
+    /// identical requests.
+    Worker,
+    /// The thread that received the statement, which serves other
+    /// connections too: only bounded work, and nothing that waits.
+    Inline,
+}
+
+/// What one pass over a statement came to.
+enum Attempt {
+    Answered(Answer),
+    Declined(InlineAnswer),
+}
+
+/// The outcome of [`ReplicaEngine::execute_answer_inline`].
+#[derive(Debug)]
+pub enum InlineAnswer {
+    /// The statement ran; this is its result.
+    Answered(Answer),
+    /// The statement's work is not bounded tightly enough to run inline.
+    /// Nothing was executed, and asking again will say the same.
+    NotBounded,
+    /// The statement could not run inline at this moment - its replica has
+    /// to be loaded, or capacity waited for. Nothing was executed.
+    NotNow,
+}
+
+/// The longest statement text considered for inline execution. Parsing is
+/// part of the inline work, and it grows with the text.
+const INLINE_STATEMENT_BYTES: usize = 2048;
 
 /// One SELECT bound and planned, with the result metadata binding decided.
 /// Built once per statement: by admission classification when it costs
@@ -640,12 +687,17 @@ impl ReplicaEngine {
     // A statement whose cost must be known is prepared to cost it, and that
     // preparation is the one execution runs. `None` sends the statement down
     // the general path, which loads the replica and prepares it there.
-    fn classify(&self, database_id: &str, sql: &str, statement: &Statement) -> Option<Classified> {
+    fn classify(
+        &self,
+        database_id: &str,
+        sql: &str,
+        statement: &Statement,
+    ) -> Result<Classified, Unclassified> {
         if !pintail_sql::has_bounded_planning_shape(statement) {
-            return None;
+            return Err(Unclassified::Shape);
         }
         let key = self.cache_key(database_id);
-        let replica = self.cache.peek(&key)?;
+        let replica = self.cache.peek(&key).ok_or(Unclassified::Unready)?;
         let stamp = self.replica_stamp(database_id);
         let tiny = pintail_sql::has_bounded_admission_shape(statement)
             && replica.targets.len() <= 16
@@ -674,26 +726,37 @@ impl ReplicaEngine {
                     }) <= 4 * 1024 * 1024
             };
         if tiny {
-            return revalidated(&self.cache, &key, &stamp, &replica).map(|replica| Classified {
-                replica,
-                prepared: None,
-                short: true,
-            });
+            return revalidated(&self.cache, &key, &stamp, &replica)
+                .map(|replica| Classified {
+                    replica,
+                    prepared: None,
+                    short: true,
+                    inline: pintail_sql::has_bounded_table_less_shape(statement),
+                })
+                .ok_or(Unclassified::Unready);
         }
         let prepared = Self::prepare_select(
             statement,
             sql,
-            replica.catalog().ok()?,
+            replica.catalog().map_err(|_| Unclassified::Unready)?,
             replica.facts(),
             &replica.database.name,
             true,
         )
-        .ok()?;
-        let short = {
-            let provider = build_provider(&replica).ok()?;
-            QueryClass::from_cost(Some(provider.admission_cost(&prepared.physical)?))
-                == QueryClass::Short
-        };
+        .map_err(|_| Unclassified::Shape)?;
+        let cost = build_provider(&replica)
+            .map_err(|_| Unclassified::Unready)?
+            .admission_cost(&prepared.physical);
+        // A statement that reads no table does work bounded by its own
+        // text, whatever its expressions are. One that reads a table is not
+        // run inline however few rows it reads: measured, a ten-row scan
+        // run inline answered sooner alone and with a worse tail at eight
+        // connections, where a thread held up inside a scan holds up every
+        // connection it serves.
+        let inline = pintail_sql::has_bounded_table_less_shape(statement);
+        // A plan classification cannot bound still runs the preparation made
+        // here, on general capacity: it is the one execution would make.
+        let short = QueryClass::from_cost(cost) == QueryClass::Short;
         // Preparing took time a commit could land in: prove the replica
         // current against the files as they are now.
         let replica = revalidated(
@@ -701,11 +764,13 @@ impl ReplicaEngine {
             &key,
             &self.replica_stamp(database_id),
             &replica,
-        )?;
-        Some(Classified {
+        )
+        .ok_or(Unclassified::Unready)?;
+        Ok(Classified {
             replica,
             prepared: Some(prepared),
             short,
+            inline,
         })
     }
 
@@ -909,13 +974,21 @@ impl ReplicaEngine {
                 inner: &mut **inner,
                 begun: false,
             });
-            let result = self.execute_answer_once(
-                database_id,
-                sql,
-                max_rows,
-                deadline,
-                tracked.as_mut().map(|sink| sink as &mut dyn RowSink),
-            );
+            let result = self
+                .execute_answer_once(
+                    database_id,
+                    sql,
+                    max_rows,
+                    deadline,
+                    tracked.as_mut().map(|sink| sink as &mut dyn RowSink),
+                    Lane::Worker,
+                )
+                .and_then(|attempt| match attempt {
+                    Attempt::Answered(answer) => Ok(answer),
+                    Attempt::Declined(_) => Err(QueryError::Internal(
+                        "a worker declined a statement".to_owned(),
+                    )),
+                });
             let retryable = matches!(result, Err(QueryError::NotReady(_)))
                 && !tracked.as_ref().is_some_and(|sink| sink.begun)
                 && give_up.is_some_and(|give_up| Instant::now() < give_up)
@@ -939,6 +1012,42 @@ impl ReplicaEngine {
         }
     }
 
+    /// Executes one statement on the calling thread when its work is small
+    /// and nothing about it has to wait, and declines otherwise without
+    /// having executed anything.
+    ///
+    /// The caller is a thread that serves other connections, so everything
+    /// done here is bounded: the statement text is short and reads no
+    /// table, its replica is already loaded and current, a slot is free
+    /// now, and its result is held whole. A statement declined here is given to
+    /// [`Self::execute_answer`] on a thread that may block, which starts it
+    /// from the beginning. Identical concurrent statements are not joined:
+    /// following one costs more than a statement this small.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::execute_answer`] for a statement
+    /// it ran.
+    pub fn execute_answer_inline(
+        &self,
+        database_id: &str,
+        sql: &str,
+        max_rows: usize,
+        deadline: Option<Instant>,
+    ) -> Result<InlineAnswer, QueryError> {
+        if sql.len() > INLINE_STATEMENT_BYTES {
+            return Ok(InlineAnswer::NotBounded);
+        }
+        match self.execute_answer_once(database_id, sql, max_rows, deadline, None, Lane::Inline) {
+            Ok(Attempt::Answered(answer)) => Ok(InlineAnswer::Answered(answer)),
+            Ok(Attempt::Declined(declined)) => Ok(declined),
+            // A table being recopied is waited for, and waiting is a
+            // worker's to do.
+            Err(QueryError::NotReady(_)) => Ok(InlineAnswer::NotNow),
+            Err(error) => Err(error),
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn execute_answer_once(
         &self,
@@ -947,7 +1056,8 @@ impl ReplicaEngine {
         max_rows: usize,
         deadline: Option<Instant>,
         mut sink: Option<&mut dyn RowSink>,
-    ) -> Result<Answer, QueryError> {
+        lane: Lane,
+    ) -> Result<Attempt, QueryError> {
         let started = Instant::now();
         // Bound classification work itself. Large statements acquire general
         // capacity before parsing; small ones may qualify for the reserve.
@@ -955,24 +1065,50 @@ impl ReplicaEngine {
             let statement =
                 parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
             crate::trace::mark("parsed");
+            // Decided before classification, which binds and plans: a
+            // statement that reads a table is declined for the price of
+            // its parse.
+            if lane == Lane::Inline && !pintail_sql::has_bounded_table_less_shape(&statement) {
+                return Ok(Attempt::Declined(InlineAnswer::NotBounded));
+            }
             let classified = self.classify(database_id, sql, &statement);
-            let short = classified
-                .as_ref()
-                .is_some_and(|classified| classified.short);
+            let short = classified.as_ref().is_ok_and(|classified| classified.short);
             crate::trace::mark("classified");
             crate::trace::label("class", if short { "short" } else { "general" });
-            // Admission does not wait, so the replica classification proved
-            // current is still the one to answer from.
-            let permit = self
-                .admission
-                .try_admit_class(if short {
-                    QueryClass::Short
-                } else {
-                    QueryClass::General
-                })
-                .ok_or(QueryError::Overloaded)?;
+            let class = if short {
+                QueryClass::Short
+            } else {
+                QueryClass::General
+            };
+            let permit = if lane == Lane::Inline {
+                match &classified {
+                    Ok(classified) if classified.inline => {}
+                    Ok(_) | Err(Unclassified::Shape) => {
+                        return Ok(Attempt::Declined(InlineAnswer::NotBounded));
+                    }
+                    Err(Unclassified::Unready) => {
+                        return Ok(Attempt::Declined(InlineAnswer::NotNow));
+                    }
+                }
+                // The metadata tables are built per statement, which is not
+                // bounded work.
+                if contains_ignore_ascii_case(sql, "information_schema") {
+                    return Ok(Attempt::Declined(InlineAnswer::NotBounded));
+                }
+                // Waiting for a slot is a worker's to do.
+                let Some(permit) = self.admission.try_admit_class_now(class) else {
+                    return Ok(Attempt::Declined(InlineAnswer::NotNow));
+                };
+                permit
+            } else {
+                // Admission does not wait, so the replica classification
+                // proved current is still the one to answer from.
+                self.admission
+                    .try_admit_class(class)
+                    .ok_or(QueryError::Overloaded)?
+            };
             crate::trace::mark("admitted");
-            (statement, classified, permit)
+            (statement, classified.ok(), permit)
         } else {
             let permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
             let statement =
@@ -985,7 +1121,7 @@ impl ReplicaEngine {
         if matches!(statement, Statement::CreateTable(_) | Statement::Insert(_)) {
             return self
                 .execute_write(database_id, &statement, started)
-                .map(Answer::Whole);
+                .map(|output| Attempt::Answered(Answer::Whole(output)));
         }
         if is_transaction_control(&statement) {
             return Err(self.transaction_control_rejection(database_id));
@@ -1013,34 +1149,40 @@ impl ReplicaEngine {
         };
         let facts = replica.facts();
         match execute_metadata(&statement, catalog, Some(&replica.database.name), facts) {
-            Ok(result) => return Ok(Answer::Whole(metadata_output(result, started))),
+            Ok(result) => {
+                return Ok(Attempt::Answered(Answer::Whole(metadata_output(
+                    result, started,
+                ))));
+            }
             Err(MetadataError::Unsupported(_)) => {}
             Err(error) => return Err(QueryError::Invalid(error.to_string())),
         }
         crate::trace::mark("metadata");
         if matches!(statement, Statement::Query(_))
-            && sql.to_ascii_lowercase().contains("information_schema")
+            && contains_ignore_ascii_case(sql, "information_schema")
         {
             let mut statement = statement.clone();
             pintail_sql::resolve_database_function(&mut statement, &replica.database.name);
             let (metadata_catalog, metadata_provider) =
                 crate::metadata_provider::MetadataProvider::new(catalog, facts)?;
-            return self.execute_select(
-                &statement,
-                sql,
-                &metadata_catalog,
-                &metadata_provider,
-                &SourceFacts::default(),
-                "information_schema",
-                QueryStats::default(),
-                started,
-                max_rows,
-                deadline,
-                false,
-                None,
-            );
+            return self
+                .execute_select(
+                    &statement,
+                    sql,
+                    &metadata_catalog,
+                    &metadata_provider,
+                    &SourceFacts::default(),
+                    "information_schema",
+                    QueryStats::default(),
+                    started,
+                    max_rows,
+                    deadline,
+                    false,
+                    None,
+                )
+                .map(Attempt::Answered);
         }
-        match statement {
+        let answer = match statement {
             Statement::Query(_) => {
                 let mut run = || match prepared.take() {
                     Some(prepared) => {
@@ -1077,8 +1219,8 @@ impl ReplicaEngine {
                 // statement whose answer cannot depend on the clock, the
                 // connection or a random source is offered; everything
                 // else executes as it always did.
-                if !pintail_sql::is_repeatable_statement(&statement) {
-                    return run();
+                if lane == Lane::Inline || !pintail_sql::is_repeatable_statement(&statement) {
+                    return run().map(Attempt::Answered);
                 }
                 let key = SharedQueryKey::for_current_session(replica.load_id, sql, max_rows);
                 match shared_queries().join(&key, deadline) {
@@ -1116,7 +1258,8 @@ impl ReplicaEngine {
             _ => Err(QueryError::Invalid(
                 "Pintail's query surfaces are read-only".to_owned(),
             )),
-        }
+        };
+        answer.map(Attempt::Answered)
     }
 
     /// Why transaction control is refused here: a local database has no
@@ -2029,6 +2172,15 @@ fn source_result_nullability(
 /// already holds would prove nothing: that stamp was recorded when the
 /// replica was loaded, and the commit this query must see may have landed
 /// since.
+/// Whether `text` holds `needle` (given in lower case), compared without
+/// regard to ASCII case and without copying `text`.
+fn contains_ignore_ascii_case(text: &str, needle: &str) -> bool {
+    let needle = needle.as_bytes();
+    text.as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
 fn revalidated(
     cache: &ReplicaCache<LoadedReplica>,
     key: &CacheKey,
@@ -2564,5 +2716,170 @@ mod admission_tests {
             .map(|_| engine.admission.try_admit().unwrap())
             .collect::<Vec<_>>();
         assert!(engine.execute("db", "SELECT id FROM a LIMIT 1", 10).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod inline_tests {
+    use super::*;
+    use pintail_write::LocalDatabase;
+
+    /// A local database holding table `a` with ids `1..=rows`, and an
+    /// engine whose replica of it is loaded.
+    fn loaded(rows: u64) -> (tempfile::TempDir, LocalDatabase, ReplicaEngine) {
+        let directory = tempfile::tempdir().unwrap();
+        let metadata_path = directory.path().join("meta.db");
+        let meta = MetaStore::open(&metadata_path).unwrap();
+        meta.create_local_database("db", "scratch", "2026-10-02T00:00:00Z")
+            .unwrap();
+        drop(meta);
+        std::fs::create_dir_all(directory.path().join("databases/db/tables")).unwrap();
+        let writer = LocalDatabase::new(directory.path(), &metadata_path, "db");
+        writer.recover().unwrap();
+        let values = (1..=rows)
+            .map(|id| format!("({id}, {})", id % 7))
+            .collect::<Vec<_>>()
+            .join(",");
+        for sql in [
+            "CREATE TABLE a (id BIGINT UNSIGNED NOT NULL, n BIGINT NOT NULL, PRIMARY KEY (id))"
+                .to_owned(),
+            format!("INSERT INTO a VALUES {values}"),
+        ] {
+            writer.execute(&parse_statement(&sql).unwrap()).unwrap();
+        }
+        let engine = ReplicaEngine::new(directory.path(), &metadata_path);
+        engine
+            .execute("db", "SELECT id FROM a WHERE id = 1", 10)
+            .unwrap();
+        (directory, writer, engine)
+    }
+
+    fn inline(engine: &ReplicaEngine, sql: &str) -> InlineAnswer {
+        engine.execute_answer_inline("db", sql, 1000, None).unwrap()
+    }
+
+    /// The inline lane is the same engine on another thread: what it runs
+    /// it answers exactly as a worker does.
+    #[test]
+    fn a_statement_that_reads_no_table_runs_inline_and_answers_as_a_worker_does() {
+        let (_directory, _writer, engine) = loaded(10);
+        for sql in [
+            "SELECT 1 + 1",
+            "SELECT UPPER('abc'), CONCAT('a', 'b') AS joined, 7 / 0",
+            "SELECT 3 AS n, NULL, 'x' ORDER BY 1 LIMIT 1",
+            "SELECT 1 WHERE 1 = 0",
+        ] {
+            let InlineAnswer::Answered(Answer::Whole(answered)) = inline(&engine, sql) else {
+                panic!("{sql} is bounded and must run inline");
+            };
+            let worker = engine.execute("db", sql, 1000).unwrap();
+            assert_eq!(answered.rows, worker.rows, "{sql}");
+            assert_eq!(
+                answered
+                    .fields
+                    .iter()
+                    .map(|field| (&field.name, field.data_type, field.nullable))
+                    .collect::<Vec<_>>(),
+                worker
+                    .fields
+                    .iter()
+                    .map(|field| (&field.name, field.data_type, field.nullable))
+                    .collect::<Vec<_>>(),
+                "{sql}"
+            );
+        }
+        // An error is the statement's answer on either thread.
+        for sql in ["SELECT nope", "SELEC 1"] {
+            let inline = engine.execute_answer_inline("db", sql, 10, None);
+            let worker = engine.execute("db", sql, 10);
+            assert!(worker.is_err(), "{sql}");
+            assert_eq!(
+                inline.err().map(|error| error.to_string()),
+                worker.err().map(|error| error.to_string()),
+                "{sql}"
+            );
+        }
+    }
+
+    /// The thread a statement arrives on serves other connections, so
+    /// anything that reads a table, or whose work its text does not bound,
+    /// is left for a worker - and left untouched, so the worker starts it
+    /// clean.
+    #[test]
+    fn work_that_is_not_bounded_is_declined_inline() {
+        let (_directory, _writer, engine) = loaded(10);
+        let long = format!("SELECT '{}'", "x".repeat(INLINE_STATEMENT_BYTES));
+        for sql in [
+            "SELECT id FROM a WHERE id = 3",
+            "SELECT COUNT(*) FROM a",
+            "SELECT id FROM a ORDER BY n LIMIT 1",
+            "SELECT 'aaaa' REGEXP '(a+)+$'",
+            "SELECT (SELECT 1)",
+            "SELECT 1 UNION SELECT 2",
+            "WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < 9) SELECT i FROM c",
+            "SELECT table_name FROM information_schema.tables",
+            "SELECT 'information_schema'",
+            "SHOW TABLES",
+            long.as_str(),
+        ] {
+            assert!(
+                matches!(inline(&engine, sql), InlineAnswer::NotBounded),
+                "{sql} must go to a worker"
+            );
+        }
+    }
+
+    /// Waiting for capacity is a worker's to do: with every slot taken the
+    /// inline lane declines at once rather than holding its thread.
+    #[test]
+    fn a_statement_is_not_run_inline_while_no_slot_is_free() {
+        let (_directory, _writer, mut engine) = loaded(10);
+        engine.admission = Arc::new(QueryAdmission::with_wait(4, Duration::from_secs(30)));
+        let permits = (0..4)
+            .map(|_| engine.admission.try_admit_class(QueryClass::Short).unwrap())
+            .collect::<Vec<_>>();
+        let asked = Instant::now();
+        assert!(matches!(
+            inline(&engine, "SELECT 1 + 1"),
+            InlineAnswer::NotNow
+        ));
+        assert!(matches!(
+            inline(&engine, "SELECT UPPER('abc')"),
+            InlineAnswer::NotNow
+        ));
+        assert!(
+            asked.elapsed() < Duration::from_secs(5),
+            "the inline lane waited for a slot"
+        );
+        drop(permits);
+        assert!(matches!(
+            inline(&engine, "SELECT 1 + 1"),
+            InlineAnswer::Answered(_)
+        ));
+    }
+
+    /// A replica a commit has superseded is reloaded by a worker, never on
+    /// the receiving thread, and never answered from stale.
+    #[test]
+    fn a_superseded_replica_is_left_for_a_worker_to_reload() {
+        let (_directory, writer, engine) = loaded(10);
+        writer
+            .execute(&parse_statement("INSERT INTO a VALUES (11, 4)").unwrap())
+            .unwrap();
+        assert!(matches!(
+            inline(&engine, "SELECT 1 + 1"),
+            InlineAnswer::NotNow
+        ));
+        assert_eq!(
+            engine
+                .execute("db", "SELECT id FROM a WHERE id = 11", 10)
+                .unwrap()
+                .rows,
+            vec![vec![Value::UInt64(11)]]
+        );
+        assert!(matches!(
+            inline(&engine, "SELECT 1 + 1"),
+            InlineAnswer::Answered(_)
+        ));
     }
 }
