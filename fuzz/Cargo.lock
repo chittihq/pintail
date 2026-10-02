@@ -948,6 +948,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "mysql_async",
+ "mysql_common",
  "pintail-failpoint",
  "pintail-log",
  "pintail-meta",

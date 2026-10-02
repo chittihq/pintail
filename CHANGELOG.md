@@ -53,6 +53,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memory bounds - runs on the workers or once per batch. A statement's
   audit row is written after its response is sent, so a crash can lose
   that row; it never delayed or failed the statement's data.
+- Change apply decodes row images with a plan compiled once per table
+  map and moves a batch's rows into the memtable instead of copying them:
+  about 2.3 times the rows per second on update-heavy catch-up, and half
+  the CPU per row.
 - HTTP statements with a session token no longer write an audit row per
   request thread; one writer commits them in batches, and a query's audit
   row carries the time it was queued. Session authority, a query's
@@ -106,6 +110,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A negative value in a signed `MEDIUMINT` column arrived through change
+  capture 2^24 too high (-1 became 16777215) once the row had changed at
+  the source. Rows copied by a snapshot were right; recopying a table
+  repairs values already stored wrong.
 - A lookup on a table dropped and created again, or recopied, with the
   same columns and row count could be answered from the earlier table's
   rows: an equality, `IN`, `ANY`/`ALL` or correlated lookup then missed
