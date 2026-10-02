@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2583;
+const EXPECTED_CASES: usize = 2586;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -2231,6 +2231,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "group by with rollup",
             "SELECT active, note, active AS a2, COUNT(*) FROM events \
              GROUP BY active, note, a2 WITH ROLLUP",
+        ),
+        // An unqualified outer column whose name the select-list
+        // subquery's table also has is the outer query's own.
+        ordered(
+            "scalar subquery leaves outer names alone",
+            "SELECT id, (SELECT COUNT(*) FROM orders r WHERE r.user_id = o.id) FROM users o \
+             ORDER BY id",
+        ),
+        ordered(
+            "scalar subquery leaves outer names alone",
+            "SELECT id, name, (SELECT MAX(r.total) FROM orders r WHERE r.user_id = o.id) AS m \
+             FROM users o WHERE id > 2 ORDER BY id DESC",
+        ),
+        ordered(
+            "scalar subquery leaves outer names alone",
+            "SELECT id, (SELECT COUNT(*) FROM orders r WHERE r.user_id = o.id AND id > 3) AS c \
+             FROM users o GROUP BY id HAVING id < 6 ORDER BY id",
         ),
         // Hex literals read as the unsigned integer their bytes spell where
         // a number is wanted, and stay bytes where a string is.

@@ -2086,7 +2086,16 @@ impl<'catalog> Binder<'catalog> {
         let outer_scope = tables.clone();
         let alias = format!("{SCALAR_TABLE_PREFIX}{}", tables.len());
         let input = self.bind_query(&derived_query, ctes)?;
-        let derived = self.bind_derived_table(alias.clone(), alias.clone(), &[], input);
+        let mut derived = self.bind_derived_table(alias.clone(), alias.clone(), &[], input);
+        // The derived table is the rewrite's, not the query's: its key
+        // columns carry the inner table's names, and an unqualified name in
+        // the outer query - `SELECT id, (SELECT COUNT(*) FROM r WHERE
+        // r.id = o.id) FROM o` - must keep meaning the outer query's own
+        // column rather than become ambiguous with them. Everything the
+        // rewrite itself writes reaches them qualified.
+        for column in &mut derived.columns {
+            column.using_shadowed = true;
+        }
         tables.push(derived.clone());
         let condition_ast = keys
             .iter()
@@ -9691,6 +9700,39 @@ mod tests {
         Binder::new(&catalog, Some("analytics")).bind(&statement)
     }
 
+    /// An unqualified outer column whose name the select-list subquery's
+    /// table also has stays the outer query's own, in every clause: the
+    /// decorrelated subquery's rewrite table must not compete for it.
+    #[test]
+    fn an_outer_column_named_like_a_scalar_subquery_column_is_not_ambiguous() {
+        for sql in [
+            "SELECT id, (SELECT COUNT(*) FROM users r WHERE r.id = o.id) FROM events o",
+            "SELECT (SELECT COUNT(*) FROM users r WHERE r.id = o.id), id FROM events o",
+            "SELECT id, (SELECT MAX(r.id) FROM users r WHERE r.id = o.id) AS m FROM events o \
+             ORDER BY id",
+            "SELECT id, (SELECT COUNT(*) FROM users r WHERE r.id = o.id) c FROM events o \
+             GROUP BY id HAVING id > 1",
+            "SELECT id, (SELECT COUNT(*) FROM users r WHERE r.id = o.id AND id > 2) FROM events o",
+            "SELECT id, (SELECT COUNT(*) FROM users WHERE users.id = events.id) FROM events",
+        ] {
+            let query = bind(sql).unwrap_or_else(|error| panic!("{sql}: {error}"));
+            let id = query
+                .projection
+                .iter()
+                .find(|item| item.name == "id")
+                .unwrap_or_else(|| panic!("{sql}: no id column"));
+            let resolved = match &id.expr.kind {
+                BoundExprKind::GroupKey(index) => &query.group_by[*index].kind,
+                other => other,
+            };
+            assert!(
+                matches!(resolved, BoundExprKind::Column(column)
+                    if column.table_id == TableId::new(11) && column.name == "id"),
+                "{sql}: id must be the outer table's column, got {resolved:?}"
+            );
+        }
+    }
+
     #[test]
     fn mysql_literal_forms_bind() {
         let query = bind(
@@ -10057,7 +10099,7 @@ mod tests {
         // aggregated" and could not act on it: neither name appears in the
         // SQL they submitted.
         let error = bind(
-            "SELECT id, (SELECT COUNT(*) FROM Events e WHERE e.id = Events.id) AS total, \
+            "SELECT id, (SELECT COUNT(*) FROM Events e WHERE e.name = Events.name) AS total, \
              COUNT(*) AS c FROM Events GROUP BY id",
         )
         .expect_err("a correlated scalar under GROUP BY is still refused");
