@@ -236,10 +236,13 @@ fn inventory(cases: &[OracleCase]) -> serde_json::Value {
         "sourceSha256": hash(include_bytes!("../mysql_oracle.rs")),
         "sourceFiles": { "tests/sqllogic/tests/support/oracle_boundaries.rs": hash(include_bytes!("oracle_boundaries.rs")), "tests/sqllogic/tests/support/oracle_reviewed_cases.json": hash(include_bytes!("oracle_reviewed_cases.json")), "tests/sqllogic/tests/support/oracle_seed_cases.json": hash(include_bytes!("oracle_seed_cases.json")) },
         "fixtureSQL": format!("{}{}", super::FIXTURE_SQL, super::oracle_boundaries::SQL),
+        // Tables only some families read, each with the statements that
+        // create and fill it. A consumer loads them after `fixtureSQL`.
+        "caseFixtures": [{ "table": super::oracle_calendar::TABLE, "sql": super::oracle_calendar::sql() }],
         "cases": cases.iter().map(|c| serde_json::json!({
             "id": case_id(c), "family": c.family, "sql": c.sql, "ordered": c.ordered,
             "fixture": "fixture-v1", "sqlMode": if c.sql_mode.is_empty() { DEFAULT_MODE } else { c.sql_mode },
-            "timeZone": "+00:00", "collation": "utf8mb4_0900_ai_ci",
+            "timeZone": super::oracle_calendar::session_zone(c.family), "collation": "utf8mb4_0900_ai_ci",
             "ledger": "docs/mysql-parity/ledger.json",
         })).collect::<Vec<_>>()
     })
