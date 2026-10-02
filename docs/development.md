@@ -150,6 +150,13 @@ run execute.
 
 An unprofiled execution builds no recorder and pays nothing for this.
 
+`PINTAIL_SIMD` pins the instruction set the vector kernels run at, for
+ruling them in or out of a slow or a wrong answer. It is read once, at the
+first kernel call: `off` (or `portable`) runs every kernel's portable
+fallback, `avx2` is the default where the CPU has AVX2, and `avx512` runs
+the auto-vectorized kernels at AVX-512. The answers are the same at every
+level.
+
 ### A timeline instead of a table
 
 `PINTAIL_QUERY_TRACE_JSON=<file>` writes the same per-statement phases as a

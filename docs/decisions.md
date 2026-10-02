@@ -1888,7 +1888,9 @@ Rules this sets for kernel authors:
   code, and only the disassembly showed it.
 - AVX-512 is opt-in (`PINTAIL_SIMD=avx512`). On this machine its
   auto-vectorized copies streamed a 16M-row column 3-5x slower than the
-  AVX2 copies, though they matched AVX2 in cache.
+  AVX2 copies, though they matched AVX2 in cache. No kernel has a
+  hand-written AVX-512 body: the ones tried (below) won in isolation and
+  not in the server, and were removed.
 - Where the auto-vectorizer lowers a loop badly, write the AVX2 body by
   hand:
   - Compare-to-bitmask, range tests and flag packing use one compare plus
@@ -1903,8 +1905,23 @@ Rules this sets for kernel authors:
   Where the auto-vectorizer does well, keep the plain loop. For `i64`
   min and max the plain fold beats the lane form under AVX2, so each
   instruction set gets the body that wins on it.
+- A kernel's loop holds no closure and no call. A closure is a function
+  of its own and is compiled for the kernel's instruction set only when it
+  is inlined; one with three call sites was not, and every intrinsic in it
+  became a call (4 ns a value where the scalar loop took 0.4). A call that
+  can be reached inside the loop - even one taken only for the last few
+  values - makes the compiler keep the kernel's constants in memory and
+  spill each result; splitting the loop into a call-free body and a tail
+  halved the unpack kernel's time. Shared loop structure is a macro.
+- Building a 256-bit vector out of two 16-byte arrays in memory makes the
+  wide load wait on the two narrow stores. Load each half into a 128-bit
+  register and join them there.
+- The safe intrinsic wrappers stop at AVX-512 F, BW, CD, DQ and IFMA. The
+  dispatcher can detect VBMI, VBMI2, VPOPCNTDQ and GFNI but exposes no
+  intrinsic of theirs.
 - Grouped updates (sum, count, min and max by a precomputed group index)
-  are scatters, and they do not vectorize. Interleaving partial tables to
+  are scatters, and they do not vectorize.
+  Interleaving partial tables to
   break the store-to-load chain on repeated groups measured within noise.
   The kernel's value is one typed pass per batch, without per-row
   dispatch, `Option` or `Result`. A fused sum and count measured 1.4x
@@ -1981,3 +1998,80 @@ kernel instead.
 The three binaries came from the pinned toolchain on the measuring box and
 ran in a plain base image, not the release image; the comparison is
 between targets, not against published release figures.
+
+**What the kernels are worth, and two more of them (2026-10-02).** The
+crate's own contribution had not been measured, so it was switched off in
+one binary (`PINTAIL_SIMD=off`) and compared with itself: the 26-case
+instruction suite, and the 20M-row engine track with the binaries
+interleaved (one run each per cycle, order rotating, six rounds of fifteen
+cycles, result memo off). The kernels were then the compare and range
+kernels of a filter and nothing else: off, a filtered count cost 7% more
+instructions, a filtered monthly aggregate 9%, a time-window aggregate
+2-3%, and every unfiltered `GROUP BY` the same to the instruction. On the
+server that was 5% of Q2's time and CPU, 2-3% of Q5's, and nothing
+measurable on Q3, Q4, Q6, Q7 or Q8.
+
+The time in those queries is in decoding bit-packed columns, translating
+dictionary codes and folding, none of which the compiler vectorizes: the
+per-width unpack loop compiles to scalar loads, shifts and masks with not
+one vector instruction. Two AVX2 kernels were kept.
+
+- **Unpack.** Eight values of `w` bits fill `w` bytes, so a run of eight
+  starts on a byte and the position of each value inside it depends on the
+  width alone: a constant byte shuffle moves each value into its 64-bit
+  lane, a per-lane shift aligns it, a mask trims it, and the block's base
+  is added while the value is in the register. Four values a step, two to
+  a 128-bit lane, widths to 57. Decoding and appending a 16,384-value
+  block takes 0.13 ns a value at every width, where the per-width scalar
+  loop takes 0.33 (11 bits), 0.40 (21 bits) and 0.65 (47 bits).
+- **Code translation.** A dictionary of at most 8 values fits a register,
+  and a register permutation is then the lookup; one running maximum
+  replaces the bounds check a row.
+
+What they buy is fewer instructions more than less time: the grouped
+aggregates of the suite fall 4-20% in instructions, and the same queries
+on the 20M-row server by the few percent recorded with the change. These
+loops are bounded by what moving eight bytes a value costs, and a query's
+decode is a fraction of its whole.
+
+**Tried and removed.** AVX-512 bodies for both kernels (a 16-bit
+permutation for the unpack, a 32-entry permutation for the codes) and a
+few-group fold that kept each group's count, sum, minimum and maximum in
+registers, one comparison and one masked add a group for eight rows. Each
+beat its AVX2 or scalar form in isolation (the unpack 0.11 ns a value
+against 0.13). In the server, on the one AVX-512 machine measured (a Zen 5
+desktop part, 8 virtual CPUs), turning them on gave back what the AVX2
+bodies had won on Q3, Q4 and Q8. Wiring the fold into the packed
+aggregate also cost the highest-cardinality `GROUP BY` 3-5% of its cycles
+at every dispatch level, kernels off included. The cost followed that one
+file - with it alone put back the query was level with the engine before -
+and it came with one instruction a row fewer and 4% more first-level cache
+misses: a fold that scatters into 100,000 slots is decided by its memory
+traffic, and hardware counters, not instruction counts, are the instrument
+for it.
+
+**Build target, with the kernels in (2026-10-02): still generic.** The
+same commit built generic, `-C target-cpu=x86-64-v3` and `x86-64-v4`,
+interleaved as above; CPU time per run in ms, and the change against the
+generic build:
+
+| Query | generic | x86-64-v3 | x86-64-v4 |
+|---|---|---|---|
+| Q2 | 38.3 | 34.0 (-11%) | 34.3 (-10%) |
+| Q3 | 124.6 | 118.0 (-5%) | 116.2 (-7%) |
+| Q4 | 193.3 | 186.3 (-4%) | 185.7 (-4%) |
+| Q5 | 82.6 | 75.3 (-9%) | 81.1 (-2%) |
+| Q6 | 397.3 | 379.7 (-4%) | 368.2 (-7%) |
+| Q7 | 237.6 | 227.1 (-4%) | 236.0 (-1%) |
+| Q8 | 177.7 | 176.1 (-1%) | 172.7 (-3%) |
+
+(Measured before the removals above, on the previous segment format; all
+three builds ran the same kernels.) A v3 build is worth 4-11% of CPU time
+on five of the seven, and a v4 build no more than that except on Q6. Which
+loops gain was not broken down. It is not free: a v3 binary
+does not start on a CPU or a hypervisor CPU model without AVX2. Shipping it
+means a second artifact per release (the image built twice and tagged by
+level, or one image holding both binaries behind a launcher that reads the
+CPU's features before it execs one), each gated on its own, and the
+generic one staying the default. Until a deployment asks for it the release
+stays one generic binary.
