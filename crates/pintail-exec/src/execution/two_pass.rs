@@ -899,6 +899,81 @@ fn laned_batch(
     }
 }
 
+/// Below this much remaining budget the driver lanes one batch at a time
+/// on its own thread.
+const LANED_AHEAD_FLOOR_BYTES: usize = 64 * 1024 * 1024;
+/// The batches laned together hold at most one part in this many of what
+/// the query has left.
+const LANED_AHEAD_SHARE: usize = 16;
+
+/// The input's batches, laned a pool's width at a time.
+///
+/// The driver takes one batch per turn. A key computed over every row of
+/// the batch used to be evaluated then, on the query's thread, between the
+/// pool's folds and with every worker idle: for a key such as the day of a
+/// timestamp that was a third of the statement. Pulling as many batches as
+/// the pool has threads and laning them together puts the evaluation on
+/// the workers. The driver still takes the batches one at a time and in
+/// input order, and the evaluation reads nothing the query's thread owns.
+#[derive(Default)]
+struct LanedAhead {
+    ready: VecDeque<Result<RecordBatch, RecordBatch>>,
+    drained: bool,
+}
+
+impl LanedAhead {
+    /// The input's next batch as [`laned_batch`] leaves it.
+    fn next(
+        &mut self,
+        input: &mut PullOperator,
+        keys: TwoPassKeySource,
+        key_exprs: &[CompiledExpr],
+        lanes: &[TwoPassLane],
+        memory: &MemoryTracker,
+    ) -> Result<Option<Result<RecordBatch, RecordBatch>>, ExecError> {
+        if let Some(next) = self.ready.pop_front() {
+            return Ok(Some(next));
+        }
+        if self.drained {
+            return Ok(None);
+        }
+        let Some(batch) = input.next_batch(memory)? else {
+            self.drained = true;
+            return Ok(None);
+        };
+        // What is worth a round on the pool: a key computed over every
+        // row. Every other batch is laned by looking at its columns.
+        let computes = matches!(keys, TwoPassKeySource::Int { .. })
+            && key_exprs
+                .first()
+                .is_some_and(|key| key.column_index().is_none());
+        let threads = rayon::current_num_threads();
+        // Under a tight ceiling the driver holds one batch, as it always
+        // has: the batches kept ready are not charged to the query.
+        let room = memory.remaining();
+        if !computes || threads < 2 || room < LANED_AHEAD_FLOOR_BYTES {
+            return Ok(Some(laned_batch(batch, keys, key_exprs, lanes)));
+        }
+        let mut held = batch.estimated_bytes();
+        let mut pulled = Vec::with_capacity(threads);
+        pulled.push(batch);
+        while pulled.len() < threads && held < room / LANED_AHEAD_SHARE {
+            let Some(batch) = input.next_batch(memory)? else {
+                self.drained = true;
+                break;
+            };
+            held = held.saturating_add(batch.estimated_bytes());
+            pulled.push(batch);
+        }
+        let prepared: Vec<_> = pulled
+            .into_par_iter()
+            .map(|batch| laned_batch(batch, keys, key_exprs, lanes))
+            .collect();
+        self.ready.extend(prepared);
+        Ok(self.ready.pop_front())
+    }
+}
+
 /// The bits of a unit key's value, as the lanes would have read them from
 /// its column; `None` for a value with no units - a zero date, text that is
 /// not the canonical spelling - whose group is then kept by value.
@@ -1235,7 +1310,8 @@ fn streaming_two_pass(
     let mut odd = OddGroups::new();
     let mut odd_reserved = 0_usize;
     let mut odd_batches = 0_usize;
-    let mut batch = Some(first);
+    let mut ahead = LanedAhead::default();
+    let mut batch = Some(laned_batch(first, keys, key_exprs, lanes));
     // A batch larger than one flush of the window, cut into pieces the
     // window takes one at a time, each with its share of the batch's bytes.
     // The input is not pulled again until the last piece is taken.
@@ -1244,9 +1320,15 @@ fn streaming_two_pass(
     loop {
         let slice = sliced.pop_front();
         let fresh = slice.is_none();
-        let Some((current, held_bytes)) = slice.or_else(|| batch.take().map(|batch| (batch, 0)))
+        // A piece of a batch already cut carries its lanes.
+        let Some((carried, held_bytes)) = slice
+            .map(|(piece, bytes)| (Ok(piece), bytes))
+            .or_else(|| batch.take().map(|laned| (laned, 0)))
         else {
             break;
+        };
+        let current = match &carried {
+            Ok(batch) | Err(batch) => batch,
         };
         for (slot, key_column) in key_columns.iter().enumerate() {
             // A complete declaration settles the slot. A table rebuilt from
@@ -1277,12 +1359,6 @@ fn streaming_two_pass(
                 key_set_members[slot] = strings.declared_set_members().cloned();
             }
         }
-        // A piece of a batch already cut carries its lanes.
-        let carried = if fresh {
-            laned_batch(current, keys, key_exprs, lanes)
-        } else {
-            Ok(current)
-        };
         let current = match carried {
             Ok(current) => current,
             Err(current) => {
@@ -1329,7 +1405,7 @@ fn streaming_two_pass(
                 group_reserved = group_reserved.saturating_add(grown.saturating_sub(kept_bytes));
                 kept?;
                 odd_batches += 1;
-                batch = input.next_batch(memory)?;
+                batch = ahead.next(input, keys, key_exprs, lanes, memory)?;
                 continue;
             }
         };
@@ -1512,7 +1588,7 @@ fn streaming_two_pass(
                 }
             }
             if sliced.is_empty() {
-                batch = input.next_batch(memory)?;
+                batch = ahead.next(input, keys, key_exprs, lanes, memory)?;
             }
             continue;
         }
@@ -1670,7 +1746,7 @@ fn streaming_two_pass(
             }
         }
         if sliced.is_empty() {
-            batch = input.next_batch(memory)?;
+            batch = ahead.next(input, keys, key_exprs, lanes, memory)?;
         }
     }
     two_pass_relieve(
