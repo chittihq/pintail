@@ -4879,6 +4879,180 @@ impl ProjectedScanStream {
         Ok(span)
     }
 
+    /// One key of a directly served segment, answered from the one block
+    /// that can hold it.
+    ///
+    /// The sparse index names the block; its key columns say whether the
+    /// key is there and at which row; the projected columns' blocks give
+    /// the row. Each of those is a block already decoded when a recent
+    /// lookup landed in it, so a lookup into a block held decodes nothing,
+    /// and one into a block not held decodes it once for the lookups after
+    /// it - where reading a run of rows decodes the key block to find the
+    /// run and then every projected block again, the key's own included.
+    ///
+    /// `None` leaves the lookup to the general path: without the key's
+    /// columns, in a segment that may hold a key twice, before the
+    /// segment's first key, or when a block is too large to hold.
+    #[allow(clippy::too_many_lines)]
+    fn decode_point(
+        &self,
+        segment: &segment::SegmentMeta,
+        memory: &segment::ScanMemoryBudget<'_>,
+    ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
+        /// Rows in a block worth holding decoded for the next lookup.
+        const HELD_BLOCK_ROWS: usize = 1 << 17;
+        let Some(key_ids) = self.overlay_key.as_deref() else {
+            return Ok(None);
+        };
+        if !segment.unique_keys || key_ids.len() != self.start.parts().len() {
+            return Ok(None);
+        }
+        let position = |id: &u32| {
+            self.snapshot
+                .schema
+                .columns()
+                .iter()
+                .position(|column| column.id() == *id)
+        };
+        let (Some(mut wanted), Some(projection)) = (
+            key_ids.iter().map(position).collect::<Option<Vec<_>>>(),
+            self.column_ids
+                .iter()
+                .map(position)
+                .collect::<Option<Vec<_>>>(),
+        ) else {
+            return Ok(None);
+        };
+        let key_width = wanted.len();
+        // Where each projected column's block sits among the blocks read:
+        // the key's columns first, then the others, each once.
+        let places = projection
+            .iter()
+            .map(|column| {
+                wanted
+                    .iter()
+                    .position(|held| held == column)
+                    .unwrap_or_else(|| {
+                        wanted.push(*column);
+                        wanted.len() - 1
+                    })
+            })
+            .collect::<Vec<_>>();
+        let row_count = usize::try_from(segment.row_count)
+            .map_err(|_| StoreError::FormatLimit("segment row count exceeds usize".into()))?;
+        let sparse =
+            segment::sparse_index_shared(&self.snapshot.directory, segment, &self.snapshot.schema)?;
+        // The block that can hold the key is the last one starting at or
+        // before it.
+        let Some(block) = sparse
+            .partition_point(|(_, key)| *key <= self.start)
+            .checked_sub(1)
+        else {
+            return Ok(None);
+        };
+        let block_row = |block: usize| {
+            sparse
+                .get(block)
+                .map_or(Ok(row_count), |(row, _)| usize::try_from(*row))
+                .map_err(|_| StoreError::FormatLimit("block row exceeds usize".into()))
+        };
+        let window = block_row(block)?..block_row(block + 1)?;
+        if window.is_empty() || window.len() > HELD_BLOCK_ROWS {
+            return Ok(None);
+        }
+        let blocks = match segment::point_blocks(
+            &self.snapshot.directory,
+            segment,
+            &self.snapshot.schema,
+            &wanted,
+            window.clone(),
+            memory,
+        ) {
+            Ok(blocks) => blocks,
+            // The general path reads within what the scan may hold.
+            Err(StoreError::MemoryLimitExceeded { .. }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if blocks.columns.len() != wanted.len()
+            || blocks
+                .columns
+                .iter()
+                .any(|column| column.len() != window.len())
+        {
+            return Ok(None);
+        }
+        let key_columns = blocks.columns[..key_width]
+            .iter()
+            .map(|column| &**column)
+            .collect::<Vec<_>>();
+        // Every key column must show its part: a column that decoded in a
+        // shape with no key part to read has none.
+        if key_columns
+            .iter()
+            .any(|column| key_part_at(column, 0).is_none())
+        {
+            return Ok(None);
+        }
+        let key = KeyList::of(&self.start);
+        // The first row at or past the key; rows are in key order.
+        let (mut low, mut high) = (0, window.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if compare_row_key(&key_columns, middle, key.get(0)).is_ge() {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        let found = low < window.len() && compare_row_key(&key_columns, low, key.get(0)).is_eq();
+        let found_rows = usize::from(found);
+        let columns = places
+            .iter()
+            .map(|place| {
+                DecodedColumn::Values(
+                    found
+                        .then(|| blocks.columns[*place].value_at(low))
+                        .flatten()
+                        .into_iter()
+                        .collect(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let column_decode = self
+            .column_ids
+            .iter()
+            .zip(&places)
+            .map(|(column_id, place)| segment::ColumnDecode {
+                column_id: *column_id,
+                bytes_decompressed: blocks.bytes_decompressed[*place],
+                values_decoded: u64::from(found),
+            })
+            .collect::<Vec<_>>();
+        let retained_bytes = size_of::<ProjectedColumnChunk>()
+            .saturating_add(
+                columns
+                    .capacity()
+                    .saturating_mul(size_of::<DecodedColumn>()),
+            )
+            .saturating_add(columns.iter().map(DecodedColumn::retained_bytes).sum());
+        memory.reserve(retained_bytes)?;
+        Ok(Some(ProjectedColumnChunk {
+            prefiltered: false,
+            columns,
+            row_count: found_rows,
+            stats: ScanStats {
+                segments_read: 1,
+                blocks_decoded: blocks.blocks_decoded,
+                blocks_read: 1,
+                blocks_pruned: sparse.len() - 1,
+                ..ScanStats::default()
+            }
+            .with_decode(&column_decode),
+            retained_bytes,
+            column_decode,
+        }))
+    }
+
     /// A run of a segment's rows decoded as the projected columns.
     fn decode_segment_rows(
         &self,
@@ -4911,6 +5085,12 @@ impl ProjectedScanStream {
         let covered = self.start <= segment.min_key && self.end >= segment.max_key;
         let scan_memory = AtomicUsize::new(0);
         let span_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
+        if !covered
+            && self.start == self.end
+            && let Some(chunk) = self.decode_point(&segment, &span_budget)?
+        {
+            return Ok(chunk);
+        }
         let span = if covered {
             None
         } else {

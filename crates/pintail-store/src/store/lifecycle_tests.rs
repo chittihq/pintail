@@ -1629,3 +1629,211 @@ fn staged_rows_are_all_or_nothing_and_a_replay_adds_nothing() {
     assert_eq!(table.snapshot().scan().unwrap().len(), 49);
     assert_eq!(segment_files(directory.path()), published);
 }
+
+/// A lookup of one key reads the one block that can hold it, and reads it
+/// once: the lookups that land in a block after the first decode nothing.
+/// What they answer is what the store holds for the key at that moment -
+/// through a row still in the memtable, a delete, and a later segment that
+/// rewrites a key inside a block already held.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn a_key_lookup_decodes_a_block_once_and_answers_from_the_newest_version() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "amount", DataType::Int64, true),
+            Column::new(3, "label", DataType::Utf8, true),
+        ],
+    )
+    .unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        block_rows: 64,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema, options).unwrap();
+    let key = |id: u64| PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap();
+    let row = |id: u64, amount: i64, version: u64, deleted: bool| {
+        StoredRow::new(
+            key(id),
+            vec![
+                pintail_types::Value::UInt64(id),
+                if id.is_multiple_of(5) {
+                    pintail_types::Value::Null
+                } else {
+                    pintail_types::Value::Int64(amount)
+                },
+                pintail_types::Value::Utf8(format!("label-{amount}")),
+            ],
+            version,
+            deleted,
+        )
+    };
+    // Sixteen blocks of sixty-four rows, keys 1..=1024.
+    table
+        .ingest(
+            (1..=1024)
+                .map(|id| row(id, i64::try_from(id).unwrap(), 1, false))
+                .collect(),
+        )
+        .unwrap();
+    table.flush().unwrap();
+    assert_eq!(table.manifest.segments.len(), 1);
+
+    // The rows a lookup of `id` returns, and what it decoded to find them.
+    let lookup = |snapshot: &TableSnapshot, id: u64| {
+        let mut stream = snapshot
+            .scan_projected_range_stream_unbuffered(&key(id), &key(id), &[1, 2, 3], &[])
+            .unwrap();
+        stream.enable_memtable_overlay(&[1]);
+        let mut rows = Vec::new();
+        let mut stats = ScanStats::default();
+        loop {
+            let chunks = stream.next_column_chunks(1, usize::MAX).unwrap();
+            if chunks.is_empty() {
+                break;
+            }
+            for chunk in chunks {
+                stats.add(chunk.stats());
+                let mut columns = chunk
+                    .into_decoded_columns()
+                    .into_iter()
+                    .map(DecodedColumn::into_values)
+                    .collect::<Vec<_>>();
+                let labels = columns.pop().unwrap();
+                let amounts = columns.pop().unwrap();
+                let ids = columns.pop().unwrap();
+                rows.extend(
+                    ids.into_iter()
+                        .zip(amounts)
+                        .zip(labels)
+                        .map(|((id, amount), label)| vec![id, amount, label]),
+                );
+            }
+        }
+        // The lookup answers what reading the key through every layer does.
+        let held = snapshot
+            .get(&key(id))
+            .unwrap()
+            .map(|row| row.values().to_vec())
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(rows, held, "key {id}");
+        (rows, stats)
+    };
+    let amount_of = |rows: &[Vec<pintail_types::Value>]| rows.first().map(|row| row[1].clone());
+
+    let snapshot = table.snapshot();
+    // The first lookup in a block decodes that block of each column, the
+    // key's column once although it is both searched and returned.
+    let (rows, stats) = lookup(&snapshot, 42);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(amount_of(&rows), Some(pintail_types::Value::Int64(42)));
+    assert_eq!(
+        stats.blocks_decoded(),
+        3,
+        "one block of each of three columns"
+    );
+    assert_eq!((stats.blocks_read(), stats.blocks_pruned()), (1, 15));
+    // Every later lookup in that block decodes nothing - not the key
+    // looked up before, not its neighbours, not the block's first and
+    // last keys, not a row holding a null.
+    for id in [42, 43, 1, 64, 45] {
+        let (rows, stats) = lookup(&snapshot, id);
+        assert_eq!(rows.len(), 1, "key {id}");
+        assert_eq!(
+            stats.blocks_decoded(),
+            0,
+            "key {id} is in a block already held"
+        );
+        assert_eq!(stats.bytes_decompressed(), 0, "key {id}");
+        assert_eq!(
+            stats.values_decoded(),
+            3,
+            "key {id}: one value of each column"
+        );
+    }
+    assert_eq!(
+        amount_of(&lookup(&snapshot, 45).0),
+        Some(pintail_types::Value::Null)
+    );
+    // Another block is decoded when a lookup first lands in it, and only
+    // that block.
+    let (_, stats) = lookup(&snapshot, 65);
+    assert_eq!(stats.blocks_decoded(), 3);
+    assert_eq!(lookup(&snapshot, 100).1.blocks_decoded(), 0);
+    // Keys outside what the segment holds find nothing.
+    for id in [0, 1025, 5000] {
+        assert!(lookup(&snapshot, id).0.is_empty(), "key {id}");
+    }
+
+    // Rows still in the memtable: a newer version of a key in a held
+    // block, a delete of another, and a key the segment never had.
+    table
+        .ingest(vec![
+            row(43, -43, 2, false),
+            row(44, 0, 2, true),
+            row(2000, -2000, 2, false),
+        ])
+        .unwrap();
+    let snapshot = table.snapshot();
+    assert_eq!(
+        amount_of(&lookup(&snapshot, 43).0),
+        Some(pintail_types::Value::Int64(-43))
+    );
+    assert!(
+        lookup(&snapshot, 44).0.is_empty(),
+        "deleted in the memtable"
+    );
+    assert_eq!(lookup(&snapshot, 2000).0.len(), 1);
+    let (rows, stats) = lookup(&snapshot, 42);
+    assert_eq!(amount_of(&rows), Some(pintail_types::Value::Int64(42)));
+    assert_eq!(
+        stats.blocks_decoded(),
+        0,
+        "its neighbours changed; it did not"
+    );
+
+    // The same changes as a later segment, plus one more: the block held
+    // for keys 1..=64 of the first segment no longer says what keys 43, 44
+    // and 46 are.
+    table.flush().unwrap();
+    table
+        .ingest(vec![row(46, -46, 3, false), row(47, 0, 3, true)])
+        .unwrap();
+    table.flush().unwrap();
+    assert_eq!(table.manifest.segments.len(), 3);
+    let snapshot = table.snapshot();
+    for (id, amount) in [(43, Some(-43)), (44, None), (46, Some(-46)), (47, None)] {
+        assert_eq!(
+            amount_of(&lookup(&snapshot, id).0),
+            amount.map(pintail_types::Value::Int64),
+            "key {id} was rewritten by a later segment"
+        );
+    }
+    assert_eq!(
+        amount_of(&lookup(&snapshot, 42).0),
+        Some(pintail_types::Value::Int64(42))
+    );
+
+    // Compaction replaces the segments with one new file; nothing held for
+    // the old ones answers for it.
+    table.compact().unwrap();
+    let snapshot = table.snapshot();
+    for (id, amount) in [
+        (42, Some(42)),
+        (43, Some(-43)),
+        (44, None),
+        (46, Some(-46)),
+        (47, None),
+        (48, Some(48)),
+    ] {
+        assert_eq!(
+            amount_of(&lookup(&snapshot, id).0),
+            amount.map(pintail_types::Value::Int64),
+            "key {id} after compaction"
+        );
+    }
+}

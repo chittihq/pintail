@@ -1855,6 +1855,202 @@ pub(crate) fn read_sparse_index(
     Ok(read_footer_layout(&path, meta)?.sparse)
 }
 
+/// A segment's sparse primary-key index, read once per segment as it
+/// exists on disk and shared after that.
+///
+/// A lookup of one key reads this to find the block that can hold the key,
+/// and reading it means opening the file, reading and checksumming its
+/// footer and parsing a key per block - more than the lookup itself once
+/// the block is at hand.
+pub(crate) fn sparse_index_shared(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+) -> Result<std::sync::Arc<Vec<(u64, PrimaryKey)>>, StoreError> {
+    const CACHE_BYTES: usize = 16 * 1024 * 1024;
+    #[derive(Default)]
+    struct Cache {
+        entries: HashMap<VerifiedKey, std::sync::Arc<Vec<(u64, PrimaryKey)>>>,
+        bytes: usize,
+    }
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Cache>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(Cache::default()));
+    let path = directory.join(&meta.file_name);
+    let key = verified_key(&path, meta, schema);
+    if let Some(key) = &key
+        && let Some(sparse) = cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entries
+            .get(key)
+    {
+        return Ok(sparse.clone());
+    }
+    // No I/O while holding the cache lock; two first readers may both read
+    // the footer, and publishing either copy is harmless.
+    let sparse = std::sync::Arc::new(read_footer_layout(&path, meta)?.sparse);
+    if let Some(key) = key {
+        let bytes = sparse
+            .iter()
+            .map(|(_, first)| size_of::<(u64, PrimaryKey)>() + first.parts().len() * 32)
+            .sum::<usize>()
+            .saturating_add(size_of::<VerifiedKey>() + key.0.as_os_str().len());
+        if bytes <= CACHE_BYTES {
+            let mut cache = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !cache.entries.contains_key(&key) {
+                if cache.bytes.saturating_add(bytes) > CACHE_BYTES || cache.entries.len() >= 8192 {
+                    cache.entries.clear();
+                    cache.bytes = 0;
+                }
+                cache.bytes += bytes;
+                cache.entries.insert(key, sparse.clone());
+            }
+        }
+    }
+    Ok(sparse)
+}
+
+/// The blocks a lookup of one key reads: one block of each column asked
+/// for, decoded.
+pub(crate) struct PointBlocks {
+    /// The block of each column, in the order asked.
+    pub(crate) columns: Vec<std::sync::Arc<DecodedColumn>>,
+    /// How many of them had to be decoded for this lookup; the rest were
+    /// already held.
+    pub(crate) blocks_decoded: usize,
+    /// Bytes each column's block decompressed to for this lookup: zero for
+    /// a block already held.
+    pub(crate) bytes_decompressed: Vec<u64>,
+}
+
+/// Decoded blocks held for key lookups, by the segment as it exists on
+/// disk, the column, and the block's first row.
+#[derive(Default)]
+struct PointBlockCache {
+    entries: HashMap<(VerifiedKey, u32, usize), std::sync::Arc<DecodedColumn>>,
+    bytes: usize,
+}
+
+/// The most the blocks held for key lookups may retain, process-wide.
+const POINT_BLOCK_CACHE_BYTES: usize = 32 * 1024 * 1024;
+
+fn point_block_cache() -> &'static std::sync::Mutex<PointBlockCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<PointBlockCache>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(PointBlockCache::default()))
+}
+
+/// One block (`rows`, block-aligned) of each of `columns`, decoded, for a
+/// lookup of a key that block can hold.
+///
+/// A row cannot be read out of a block without decoding the block: its
+/// payload is compressed as a whole, and a delta-coded or length-prefixed
+/// value is found only by walking the ones before it. So a lookup that
+/// wants one row pays for a block of every column it names - unless the
+/// block is one a recent lookup already decoded. Decoded blocks are
+/// therefore held, and a lookup into a block held decodes nothing. A
+/// segment file is immutable and the key names it as it is on disk under
+/// one schema generation, so a held block cannot differ from what decoding
+/// it again would give; a segment a later flush or compaction replaces is
+/// another file, and its blocks age out with the rest.
+///
+/// What is held is bounded process-wide and belongs to no query: the
+/// reservation a decode makes against `memory` is released before
+/// returning.
+pub(crate) fn point_blocks(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+    columns: &[usize],
+    rows: std::ops::Range<usize>,
+    memory: &ScanMemoryBudget<'_>,
+) -> Result<PointBlocks, StoreError> {
+    let path = directory.join(&meta.file_name);
+    let key = verified_key(&path, meta, schema);
+    let column_id = |column: usize| schema.columns().get(column).map(pintail_types::Column::id);
+    let mut held: Vec<Option<std::sync::Arc<DecodedColumn>>> = vec![None; columns.len()];
+    if let Some(key) = &key {
+        let cache = point_block_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut probe = (key.clone(), 0_u32, rows.start);
+        for (slot, column) in held.iter_mut().zip(columns) {
+            if let Some(id) = column_id(*column) {
+                probe.1 = id;
+                *slot = cache.entries.get(&probe).cloned();
+            }
+        }
+    }
+    let missing = columns
+        .iter()
+        .zip(&held)
+        .filter(|(_, block)| block.is_none())
+        .map(|(column, _)| *column)
+        .collect::<Vec<_>>();
+    let mut bytes_decompressed = vec![0_u64; columns.len()];
+    if missing.is_empty() {
+        return Ok(PointBlocks {
+            columns: held.into_iter().flatten().collect(),
+            blocks_decoded: 0,
+            bytes_decompressed,
+        });
+    }
+    let fetch = read_projected_columns(
+        directory, meta, schema, &missing, rows.start, rows.end, memory,
+    )?;
+    memory.release(fetch.reserved_bytes);
+    let blocks_decoded = fetch.blocks_decoded;
+    let mut decoded = fetch
+        .columns
+        .into_iter()
+        .zip(fetch.column_decode)
+        .map(|(column, decode)| (std::sync::Arc::new(column), decode.bytes_decompressed));
+    let mut fresh = Vec::with_capacity(missing.len());
+    for ((slot, column), bytes) in held.iter_mut().zip(columns).zip(&mut bytes_decompressed) {
+        if slot.is_none() {
+            let Some((block, decompressed)) = decoded.next() else {
+                return Err(corrupt(&path, 0, "a projected column was not decoded"));
+            };
+            *bytes = decompressed;
+            fresh.push((*column, block.clone()));
+            *slot = Some(block);
+        }
+    }
+    if let Some(key) = key {
+        let mut cache = point_block_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (column, block) in fresh {
+            let Some(id) = column_id(column) else {
+                continue;
+            };
+            let bytes = block
+                .retained_bytes()
+                .saturating_add(size_of::<(VerifiedKey, u32, usize)>() + key.0.as_os_str().len());
+            if bytes > POINT_BLOCK_CACHE_BYTES / 8 {
+                continue;
+            }
+            let entry = (key.clone(), id, rows.start);
+            if cache.entries.contains_key(&entry) {
+                continue;
+            }
+            if cache.bytes.saturating_add(bytes) > POINT_BLOCK_CACHE_BYTES {
+                cache.entries.clear();
+                cache.bytes = 0;
+            }
+            cache.bytes += bytes;
+            cache.entries.insert(entry, block);
+        }
+    }
+    Ok(PointBlocks {
+        columns: held.into_iter().flatten().collect(),
+        blocks_decoded,
+        bytes_decompressed,
+    })
+}
+
 /// Reads and verifies the footer, returning the column directory offsets
 /// and the sparse primary-key index.
 pub(crate) fn read_footer_layout(
