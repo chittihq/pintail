@@ -1,5 +1,8 @@
 use sqlparser::{
-    ast::{AlterTableOperation, ObjectName, ObjectType, Statement, TableConstraint},
+    ast::{
+        AlterTableOperation, ObjectName, ObjectType, RenameTableNameKind, Statement,
+        TableConstraint,
+    },
     dialect::MySqlDialect,
     parser::Parser,
 };
@@ -443,6 +446,27 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
                 let Some(table) = table_in_schema(&alter.name, database, &mut parsed)? else {
                     continue;
                 };
+                // `ALTER TABLE old RENAME [TO | AS] new` with nothing beside
+                // it is `RENAME TABLE old TO new` spelled the other way: the
+                // rows stay where they are and only the name moves. Read as
+                // a change needing a recopy, the old name was set aside for
+                // a copy its source no longer has a table for and retained
+                // as dropped, and a table renamed away and back kept that
+                // dropped row under its own name, so nothing mirrored it.
+                if let [AlterTableOperation::RenameTable { table_name }] =
+                    alter.operations.as_slice()
+                {
+                    let (RenameTableNameKind::As(new_name) | RenameTableNameKind::To(new_name)) =
+                        table_name;
+                    match table_in_schema(new_name, database, &mut parsed)? {
+                        Some(new_name) => parsed.actions.push(DdlAction::Alter {
+                            table,
+                            kind: AlterKind::RenameTable { new_name },
+                        }),
+                        None => parsed.actions.push(DdlAction::Drop { table }),
+                    }
+                    continue;
+                }
                 let kind = if alter.operations.iter().all(|operation| {
                     matches!(
                         operation,
@@ -888,6 +912,49 @@ mod tests {
                 .actions,
             vec![DdlAction::Drop {
                 table: "events".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn alter_table_rename_alone_is_a_table_rename() {
+        for ddl in [
+            "ALTER TABLE events RENAME TO archived_events",
+            "ALTER TABLE events RENAME AS archived_events",
+            "alter table `events` rename as `archived_events`",
+            "ALTER TABLE app.events RENAME TO app.archived_events",
+        ] {
+            assert_eq!(
+                parse_ddl(ddl, "app").unwrap().actions,
+                vec![DdlAction::Alter {
+                    table: "events".to_owned(),
+                    kind: AlterKind::RenameTable {
+                        new_name: "archived_events".to_owned(),
+                    },
+                }],
+                "{ddl}"
+            );
+        }
+        // Into another schema, the table leaves this one.
+        assert_eq!(
+            parse_ddl("ALTER TABLE events RENAME TO archive.events", "app")
+                .unwrap()
+                .actions,
+            vec![DdlAction::Drop {
+                table: "events".to_owned(),
+            }]
+        );
+        // Beside another change, the rows do not stay as they are.
+        assert_eq!(
+            parse_ddl(
+                "ALTER TABLE events RENAME AS archived_events, DROP note",
+                "app"
+            )
+            .unwrap()
+            .actions,
+            vec![DdlAction::Alter {
+                table: "events".to_owned(),
+                kind: AlterKind::RequiresResnapshot,
             }]
         );
     }
