@@ -1059,6 +1059,10 @@ struct Backend {
     /// Statement shapes the engine declined to run inline, so a statement
     /// that has to go to a worker is offered inline once, not every time.
     inline_declined: Mutex<std::collections::HashSet<u64>>,
+    /// Statement shapes a worker ran from a kept plan as a small read: the
+    /// next statement of such a shape is offered to this connection's own
+    /// thread, which runs it if it is kept and still small.
+    small_read_shapes: Mutex<std::collections::HashSet<u64>>,
     prepared: BTreeMap<u32, Prepared>,
     named_prepared: BTreeMap<String, sql_prepare::NamedStatement>,
     /// Statement text held by `prepared`, so the byte ceiling is a counter
@@ -1088,6 +1092,9 @@ struct Settled {
     conditions: (Vec<Condition>, u64),
     rows: Result<usize, QueryError>,
     trace: Option<crate::trace::Trace>,
+    /// Whether a worker ran the statement from a kept plan as a small read:
+    /// the next one of its shape is offered to the connection's own thread.
+    small_read: bool,
 }
 
 /// A statement's outcome as its connection sees it.
@@ -1121,11 +1128,97 @@ struct PendingStream {
 }
 
 /// Where a statement runs: on a worker thread that may block, or on the
-/// connection's own task.
+/// connection's own task - there either as a statement that reads no
+/// table, or as one already seen to be a small read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Lane {
     Worker,
     Inline,
+    SmallRead(SmallReads),
+}
+
+/// How a small read runs on the thread that received it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SmallReads {
+    /// As it stands, and only while no other statement is being answered.
+    Alone,
+    /// As it stands, whatever else is being answered.
+    Hold,
+    /// After the thread has handed the other connections it serves to
+    /// another thread, so a read that waits on a file holds up nobody else.
+    HandOver,
+}
+
+/// How small reads run (`PINTAIL_SMALL_READS`).
+///
+/// `alone`, the default: on the connection's own thread while no other
+/// statement is being answered, and on a worker thread otherwise. `hold`:
+/// always on the connection's own thread. `handover`: there too, after
+/// handing the thread's other connections to another thread. `worker`: on
+/// a worker thread, as every table read ran before.
+///
+/// Measured at one, eight and thirty-two connections sending one key
+/// lookup, each lane with the statement kept prepared. On its own thread a
+/// lookup's median fell by a third at every level. But the thread that
+/// runs it reads no other connection's command until it is done: at eight
+/// connections the time a statement spent inside the server fell (41
+/// microseconds at the 99th percentile against a worker's 66) while the
+/// time its client waited rose (178 against 109, and 561 against 152 at
+/// the 99.9th) - the difference is commands sitting unread in their
+/// sockets behind a thread busy with someone else's. Handing the thread's
+/// connections over first kept that tail down at eight connections and
+/// doubled it at thirty-two, where every hand-over starts a thread and the
+/// threads outnumber the processors. So a small read runs in place when
+/// nothing else is being answered - there is then nobody to hold up - and
+/// goes to a worker when anything is.
+fn small_reads() -> Option<SmallReads> {
+    static MODE: std::sync::OnceLock<Option<SmallReads>> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| {
+        match std::env::var("PINTAIL_SMALL_READS")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "worker" | "0" | "false" | "off" => None,
+            "hold" => Some(SmallReads::Hold),
+            "handover" => Some(SmallReads::HandOver),
+            _ => Some(SmallReads::Alone),
+        }
+    })
+}
+
+/// Statements being answered at this moment, on any connection and in any
+/// lane.
+static STATEMENTS_IN_FLIGHT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// One statement being answered, counted until this drops.
+struct InFlight;
+
+impl InFlight {
+    fn enter() -> Self {
+        STATEMENTS_IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Self
+    }
+
+    /// Whether this statement is the only one being answered.
+    fn alone() -> bool {
+        STATEMENTS_IN_FLIGHT.load(std::sync::atomic::Ordering::Acquire) <= 1
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        STATEMENTS_IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// Whether this thread can hand its other work over: only a thread of a
+/// runtime with other threads to hand it to.
+fn can_hand_over() -> bool {
+    tokio::runtime::Handle::try_current()
+        .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
 }
 
 /// What [`StatementRun::run`] came to.
@@ -1269,10 +1362,10 @@ impl<F> StatementRun<F> {
         F: FnOnce(Result<QueryOutput, QueryError>) -> T,
     {
         crate::trace::install(self.trace.take());
-        crate::trace::mark(if lane == Lane::Inline {
-            "inline"
-        } else {
-            "worker"
+        crate::trace::mark(match lane {
+            Lane::Inline => "inline",
+            Lane::SmallRead(_) => "small-read",
+            Lane::Worker => "worker",
         });
         let _ = pintail_exec::take_exec_counters();
         let Self {
@@ -1303,27 +1396,35 @@ impl<F> StatementRun<F> {
                     || {
                         pintail_sql::with_user_variables(session.user_variables.clone(), || {
                             let system_variables = session_expression::variables(sql, session);
-                            pintail_sql::with_system_variables(system_variables, || {
-                                if lane == Lane::Inline {
-                                    engine.execute_answer_inline(
+                            pintail_sql::with_system_variables(system_variables, || match lane {
+                                Lane::Inline => engine.execute_answer_inline(
+                                    database_id,
+                                    sql,
+                                    max_result_rows(),
+                                    deadline,
+                                ),
+                                Lane::SmallRead(how) => engine.execute_answer_in_place(
+                                    database_id,
+                                    sql,
+                                    max_result_rows(),
+                                    deadline,
+                                    &|read: &mut dyn FnMut()| match how {
+                                        SmallReads::HandOver => {
+                                            tokio::task::block_in_place(read);
+                                        }
+                                        SmallReads::Alone | SmallReads::Hold => read(),
+                                    },
+                                ),
+                                Lane::Worker => engine
+                                    .execute_answer(
                                         database_id,
                                         sql,
                                         max_result_rows(),
                                         deadline,
+                                        sink.as_mut()
+                                            .map(|sink| sink as &mut dyn crate::engine::RowSink),
                                     )
-                                } else {
-                                    engine
-                                        .execute_answer(
-                                            database_id,
-                                            sql,
-                                            max_result_rows(),
-                                            deadline,
-                                            sink.as_mut().map(|sink| {
-                                                sink as &mut dyn crate::engine::RowSink
-                                            }),
-                                        )
-                                        .map(crate::engine::InlineAnswer::Answered)
-                                }
+                                    .map(crate::engine::InlineAnswer::Answered),
                             })
                         })
                     },
@@ -1333,6 +1434,7 @@ impl<F> StatementRun<F> {
                     pintail_exec::take_session_division_warnings(),
                     pintail_exec::take_session_conversion_warnings(),
                 );
+                let small_read = crate::engine::take_small_read_seen() && lane == Lane::Worker;
                 drop(installs);
                 let answer = match answer {
                     Ok(crate::engine::InlineAnswer::Answered(answer)) => Ok(answer),
@@ -1413,6 +1515,7 @@ impl<F> StatementRun<F> {
                     conditions,
                     rows,
                     trace: crate::trace::take(),
+                    small_read,
                 };
                 Ran::Done(finished, settled)
             })
@@ -1463,6 +1566,7 @@ impl Backend {
             pending_trace: Mutex::new(None),
             pending_stream: Mutex::new(None),
             inline_declined: Mutex::new(std::collections::HashSet::new()),
+            small_read_shapes: Mutex::new(std::collections::HashSet::new()),
             prepared: BTreeMap::new(),
             named_prepared: BTreeMap::new(),
             prepared_bytes: 0,
@@ -1784,6 +1888,7 @@ impl Backend {
             return Ok(Executed::Done(finish(Ok(output))));
         }
 
+        let _in_flight = InFlight::enter();
         let deadline = (session.max_execution_time_ms > 0)
             .then(|| {
                 Instant::now().checked_add(Duration::from_millis(session.max_execution_time_ms))
@@ -1837,9 +1942,24 @@ impl Backend {
         // else - and anything the engine declines - goes to a worker as
         // before, from the beginning.
         let shape = shape_hash(shape);
-        if inline_statements() && !self.declined_inline(shape) {
-            let attempt =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.run(Lane::Inline)));
+        // A shape a worker has run as a small read is offered here as one:
+        // the engine runs it if this statement is kept prepared and still
+        // small, and declines it for the price of a lookup if not.
+        let small_read = small_reads()
+            .filter(|how| match how {
+                SmallReads::Alone => InFlight::alone(),
+                SmallReads::Hold => true,
+                SmallReads::HandOver => can_hand_over(),
+            })
+            .filter(|_| self.small_read_shape(shape));
+        let offered = match small_read {
+            Some(how) => Some(Lane::SmallRead(how)),
+            None => (!self.declined_inline(shape)).then_some(Lane::Inline),
+        };
+        if inline_statements()
+            && let Some(lane) = offered
+        {
+            let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.run(lane)));
             match attempt {
                 Ok(Ran::Done(finished, settled)) => {
                     drop(run);
@@ -1851,7 +1971,11 @@ impl Backend {
                     });
                 }
                 Ok(Ran::Declined { remember }) => {
-                    if remember {
+                    if remember && small_read.is_some() {
+                        // No longer a small read: a worker's from here on,
+                        // until one sees it small again.
+                        self.forget_small_read(shape);
+                    } else if remember {
                         self.remember_declined_inline(shape);
                     }
                 }
@@ -1880,6 +2004,7 @@ impl Backend {
                         "a worker declined a statement".to_owned(),
                     )),
                     trace: None,
+                    small_read: false,
                 },
             ),
         });
@@ -1905,6 +2030,9 @@ impl Backend {
         let (finished, settled) = worker.await.map_err(worker_failed)?;
         cancel_on_drop.disarm();
         drop(running_guard);
+        if settled.small_read && small_reads().is_some() {
+            self.remember_small_read(shape);
+        }
         self.settle(settled, recorded, started);
         finished
             .map(Executed::Done)
@@ -1927,6 +2055,27 @@ impl Backend {
                 declined.clear();
             }
             declined.insert(shape);
+        }
+    }
+
+    fn small_read_shape(&self, shape: u64) -> bool {
+        self.small_read_shapes
+            .lock()
+            .is_ok_and(|shapes| shapes.contains(&shape))
+    }
+
+    fn remember_small_read(&self, shape: u64) {
+        if let Ok(mut shapes) = self.small_read_shapes.lock() {
+            if shapes.len() >= MAX_REMEMBERED_SHAPES {
+                shapes.clear();
+            }
+            shapes.insert(shape);
+        }
+    }
+
+    fn forget_small_read(&self, shape: u64) {
+        if let Ok(mut shapes) = self.small_read_shapes.lock() {
+            shapes.remove(&shape);
         }
     }
 

@@ -685,3 +685,152 @@ fn a_kept_plan_waits_for_a_recopied_table_as_a_fresh_one_does() {
         ready.map(|answer| answer.1)
     );
 }
+
+/// What [`ReplicaEngine::execute_answer_in_place`] did with a statement,
+/// and how many times it entered the place it was given to run a read in.
+fn in_place(engine: &ReplicaEngine, sql: &str, deadline: Option<Instant>) -> (String, usize) {
+    let entered = std::cell::Cell::new(0);
+    let outcome = engine.execute_answer_in_place("db", sql, 1000, deadline, &|read| {
+        entered.set(entered.get() + 1);
+        read();
+    });
+    let outcome = match outcome {
+        Ok(InlineAnswer::Answered(Answer::Whole(output))) => {
+            format!("{:?}", seen(Ok(output)))
+        }
+        Ok(other) => format!("{other:?}"),
+        Err(error) => format!("{:?}", seen(Err(error))),
+    };
+    (outcome, entered.get())
+}
+
+/// A small read that is kept prepared runs where it is received, inside
+/// the place its caller gives it, and answers what a worker answers.
+/// Everything else is declined untouched.
+#[test]
+fn a_kept_small_read_runs_in_place_and_nothing_else_does() {
+    let pair = pair(5000);
+    // The replica is loaded: what follows is about plans.
+    pair.fresh
+        .execute("db", "SELECT COUNT(*) FROM a", 10)
+        .unwrap();
+    let lookup = "SELECT id, n, label FROM a WHERE id = 4242";
+    let aggregate = "SELECT COUNT(*), MAX(n) FROM a WHERE id = 17";
+    let table_less = "SELECT 1 + 1";
+    let whole = "SELECT COUNT(*) FROM a WHERE n = 3";
+    let joined = "SELECT COUNT(*) FROM a x JOIN a y ON x.n = y.n";
+
+    // Not kept yet: declined, and not for good - a worker prepares it.
+    for sql in [lookup, aggregate, table_less, whole, joined, "SELEC 1"] {
+        assert_eq!(
+            in_place(&pair.kept, sql, None),
+            ("NotNow".to_owned(), 0),
+            "{sql}"
+        );
+    }
+    // A worker that runs a kept small read says so, and only then.
+    for (sql, small) in [
+        (lookup, true),
+        (aggregate, true),
+        (table_less, false),
+        (whole, false),
+        (joined, false),
+    ] {
+        let _ = take_small_read_seen();
+        pair.kept.execute("db", sql, 1000).unwrap();
+        assert!(!take_small_read_seen(), "{sql}: prepared, not kept");
+        pair.kept.execute("db", sql, 1000).unwrap();
+        assert!(!take_small_read_seen(), "{sql}: kept by this execution");
+        pair.kept.execute("db", sql, 1000).unwrap();
+        assert_eq!(take_small_read_seen(), small, "{sql}");
+        assert!(!take_small_read_seen(), "taken once");
+    }
+    for sql in [lookup, aggregate] {
+        let worker = format!("{:?}", seen(pair.fresh.execute("db", sql, 1000)));
+        assert_eq!(in_place(&pair.kept, sql, None), (worker, 1), "{sql}");
+    }
+    // No table: bounded by its text, it runs without the place.
+    let worker = format!("{:?}", seen(pair.fresh.execute("db", table_less, 1000)));
+    assert_eq!(in_place(&pair.kept, table_less, None), (worker, 0));
+    // Kept, and not small.
+    for sql in [whole, joined] {
+        assert_eq!(
+            in_place(&pair.kept, sql, None),
+            ("NotBounded".to_owned(), 0),
+            "{sql}"
+        );
+    }
+    // An engine without a cache keeps nothing to run.
+    assert_eq!(
+        in_place(&pair.fresh, lookup, None),
+        ("NotBounded".to_owned(), 0)
+    );
+
+    // A write replaces the replica the plan was kept against.
+    pair.write("INSERT INTO a VALUES (900000, 1, 'late')");
+    assert_eq!(in_place(&pair.kept, lookup, None), ("NotNow".to_owned(), 0));
+
+    // Over a database small enough that anything of bounded shape is a
+    // short query, a scan is a small read too.
+    let small = super::plan_cache_tests::pair(100);
+    let scan = "SELECT id, label FROM a WHERE n > 2";
+    for _ in 0..4 {
+        small.kept.execute("db", scan, 1000).unwrap();
+    }
+    assert!(take_small_read_seen());
+    let worker = format!("{:?}", seen(small.fresh.execute("db", scan, 1000)));
+    assert_eq!(in_place(&small.kept, scan, None), (worker, 1));
+}
+
+/// A small read in place is stopped, refused and made to wait by what
+/// does so on a worker.
+#[test]
+fn a_small_read_in_place_is_killed_timed_out_and_admitted_as_on_a_worker() {
+    let mut pair = pair(5000);
+    let admission = Arc::new(QueryAdmission::with_wait(4, Duration::from_millis(1)));
+    pair.kept.admission = Arc::clone(&admission);
+    pair.fresh.admission = Arc::clone(&admission);
+    let sql = "SELECT id, n, label FROM a WHERE id = 4242";
+    pair.agree_kept(sql).unwrap();
+    let worker = |deadline| {
+        format!(
+            "{:?}",
+            seen(pair.fresh.execute_with_deadline("db", sql, 1000, deadline))
+        )
+    };
+
+    // max_execution_time: a deadline that has passed.
+    let elapsed = Instant::now().checked_sub(Duration::from_millis(1));
+    assert_eq!(in_place(&pair.kept, sql, elapsed).0, worker(elapsed));
+    // KILL QUERY: an execution cancelled before it started.
+    let cancellation = pintail_exec::ExecutionCancellation::new();
+    cancellation.cancel();
+    pintail_exec::with_execution_cancellation(cancellation, || {
+        assert_eq!(in_place(&pair.kept, sql, None).0, worker(None));
+    });
+    // The memory ceiling is the running engine's.
+    let small = |engine: &ReplicaEngine| engine.clone().with_memory_limit(1);
+    assert_eq!(
+        in_place(&small(&pair.kept), sql, None).0,
+        format!("{:?}", seen(small(&pair.fresh).execute("db", sql, 1000)))
+    );
+
+    // General capacity gone: a short read still has the reserve.
+    let general = (0..3)
+        .map(|_| admission.try_admit().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(in_place(&pair.kept, sql, None), (worker(None), 1));
+    // Every slot gone: waiting for one is a worker's to do.
+    let reserve = admission.try_admit_class(QueryClass::Short).unwrap();
+    assert_eq!(in_place(&pair.kept, sql, None), ("NotNow".to_owned(), 0));
+    drop((general, reserve));
+
+    // A table under copy is waited for, which is a worker's to do too.
+    let metadata_path = pair.directory.path().join("meta.db");
+    let meta = MetaStore::open(&metadata_path).unwrap();
+    meta.begin_table_resnapshot("db", "a").unwrap();
+    assert_eq!(in_place(&pair.kept, sql, None).0, "NotNow");
+    meta.finish_table_resnapshot("db", "a", "ready").unwrap();
+    drop(meta);
+    assert_eq!(pair.agree(sql).map(|answer| answer.1.len()), Ok(1));
+}

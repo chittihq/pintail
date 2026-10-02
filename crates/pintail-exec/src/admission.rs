@@ -32,6 +32,11 @@ struct Work {
     outputs: u64,
     scans: usize,
     filtered: bool,
+    /// Stored rows the plan may have to look at: a key lookup looks at the
+    /// one block that can hold its key however many rows share the block's
+    /// segment, and counts as one; any other scan may look at every row its
+    /// key range can hold.
+    looked: u64,
 }
 
 impl SnapshotScanProvider<'_> {
@@ -43,6 +48,17 @@ impl SnapshotScanProvider<'_> {
         (work.outputs <= 1000 && work.scans <= 2 && work.cost.within_budget()).then_some(work.cost)
     }
 
+    /// How many stored rows a plan of one bounded scan may have to look at,
+    /// or `None` for a plan [`Self::admission_cost`] does not bound or one
+    /// that scans twice. A lookup by a whole key counts as one row: it
+    /// reads the block that can hold the key and nothing else.
+    #[must_use]
+    pub fn bounded_scan_rows(&self, plan: &PhysicalPlan) -> Option<u64> {
+        let work = self.admission_work(plan)?;
+        (work.outputs <= 1000 && work.scans <= 1 && work.cost.within_budget())
+            .then_some(work.looked)
+    }
+
     #[allow(clippy::too_many_lines)] // one arm per eligible physical operator
     fn admission_work(&self, plan: &PhysicalPlan) -> Option<Work> {
         match plan {
@@ -51,6 +67,7 @@ impl SnapshotScanProvider<'_> {
                 outputs: 1,
                 scans: 0,
                 filtered: false,
+                looked: 0,
             }),
             PhysicalPlan::Scan(scan) => {
                 if !scan.predicates.iter().all(cheap_expression) {
@@ -62,6 +79,7 @@ impl SnapshotScanProvider<'_> {
                     outputs: if point { 1 } else { cost.rows },
                     scans: 1,
                     filtered: !scan.predicates.is_empty(),
+                    looked: if point { 1 } else { cost.rows },
                 })
             }
             PhysicalPlan::Project { input, expressions } => {
@@ -161,6 +179,7 @@ impl SnapshotScanProvider<'_> {
                     outputs: left.outputs.saturating_add(right.outputs),
                     scans: 2,
                     filtered: left.filtered || right.filtered,
+                    looked: left.looked.saturating_add(right.looked),
                 })
             }
             // A remaining sort really materializes input; LIMIT alone does

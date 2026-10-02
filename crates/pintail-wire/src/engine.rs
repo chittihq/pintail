@@ -1362,6 +1362,62 @@ impl ReplicaEngine {
         }
     }
 
+    /// Executes one statement on the calling thread when it is kept
+    /// prepared and its work is small: one that reads no table, or a small
+    /// read - a key lookup or a scan of at most [`SMALL_READ_ROWS`] stored
+    /// rows that classifies as a short query. Anything else is declined
+    /// with nothing executed, and - unlike [`Self::execute_answer_inline`] -
+    /// without the statement being parsed: what is not kept costs a lookup.
+    ///
+    /// A small read may wait on a file, which the thread that received the
+    /// statement must not do while other connections are queued behind it.
+    /// Its execution therefore runs inside `in_place`, which the caller
+    /// supplies to do whatever makes blocking on this thread safe - hand
+    /// the thread's other work to another thread first - and which must
+    /// call what it is given exactly once. A statement that reads no table
+    /// runs without it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::execute_answer`] for a statement
+    /// it ran.
+    pub fn execute_answer_in_place(
+        &self,
+        database_id: &str,
+        sql: &str,
+        max_rows: usize,
+        deadline: Option<Instant>,
+        in_place: InPlace<'_>,
+    ) -> Result<InlineAnswer, QueryError> {
+        let started = Instant::now();
+        if sql.len() > INLINE_STATEMENT_BYTES {
+            return Ok(InlineAnswer::NotBounded);
+        }
+        let Some(plans) = &self.plans else {
+            return Ok(InlineAnswer::NotBounded);
+        };
+        let attempt = self.execute_kept(
+            plans,
+            database_id,
+            sql,
+            max_rows,
+            deadline,
+            &mut None,
+            Lane::Inline,
+            Some(in_place),
+            started,
+        );
+        match attempt {
+            Some(Ok(Attempt::Answered(answer))) => Ok(InlineAnswer::Answered(answer)),
+            Some(Ok(Attempt::Declined(declined))) => Ok(declined),
+            // Not kept, or kept against a replica that has been replaced:
+            // a worker prepares it. And a table being recopied is waited
+            // for, which is a worker's to do as well.
+            None | Some(Err(QueryError::NotReady(_))) => Ok(InlineAnswer::NotNow),
+            Some(Err(error)) => Err(error),
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn execute_answer_once(
         &self,
@@ -1383,6 +1439,7 @@ impl ReplicaEngine {
                 deadline,
                 &mut sink,
                 lane,
+                None,
                 started,
             )
         {
@@ -1615,13 +1672,15 @@ impl ReplicaEngine {
         deadline: Option<Instant>,
         sink: &mut Option<&mut dyn RowSink>,
         lane: Lane,
+        in_place: Option<InPlace<'_>>,
         started: Instant,
     ) -> Option<Result<Attempt, QueryError>> {
         let cache_key = self.cache_key(database_id);
         let candidate = self.cache.peek(&cache_key)?;
         let key = SharedQueryKey::for_current_session(candidate.load_id, sql, max_rows);
         let kept = plans.get(&key)?;
-        if lane == Lane::Inline && !(kept.bounded_planning && kept.table_less) {
+        let table_less = kept.bounded_planning && kept.table_less;
+        if lane == Lane::Inline && !table_less && in_place.is_none() {
             return Some(Ok(Attempt::Declined(InlineAnswer::NotBounded)));
         }
         // Kept against this load: the load has still to be the current one.
@@ -1629,7 +1688,7 @@ impl ReplicaEngine {
         plans.used();
         crate::trace::mark("kept");
         Some(self.run_kept(
-            &kept, &replica, &key, sql, max_rows, deadline, sink, lane, started,
+            &kept, &replica, &key, sql, max_rows, deadline, sink, lane, in_place, started,
         ))
     }
 
@@ -1644,16 +1703,36 @@ impl ReplicaEngine {
         deadline: Option<Instant>,
         sink: &mut Option<&mut dyn RowSink>,
         lane: Lane,
+        in_place: Option<InPlace<'_>>,
         started: Instant,
     ) -> Result<Attempt, QueryError> {
         let provider = build_provider(replica)?;
         // The class [`Self::classify`] gives this statement over this
         // replica: its shape is kept, its cost is the plan's over the
         // snapshots as they are now.
-        let short = kept.bounded_planning
-            && ((kept.bounded_admission && replica.is_tiny())
-                || QueryClass::from_cost(provider.admission_cost(&kept.prepared.physical))
-                    == QueryClass::Short);
+        let tiny = kept.bounded_planning && kept.bounded_admission && replica.is_tiny();
+        let cost = if kept.bounded_planning && !tiny {
+            provider.admission_cost(&kept.prepared.physical)
+        } else {
+            None
+        };
+        let short = tiny || QueryClass::from_cost(cost) == QueryClass::Short;
+        let table_less = kept.bounded_planning && kept.table_less;
+        // A small read: a short query that looks at few stored rows - a
+        // lookup by a whole key, a scan of a small table or of a narrow key
+        // range.
+        let small_read = !table_less
+            && short
+            && (tiny
+                || provider
+                    .bounded_scan_rows(&kept.prepared.physical)
+                    .is_some_and(|rows| rows <= SMALL_READ_ROWS));
+        if lane == Lane::Inline && !table_less && !small_read {
+            return Ok(Attempt::Declined(InlineAnswer::NotBounded));
+        }
+        if lane == Lane::Worker && small_read {
+            SMALL_READ_SEEN.set(true);
+        }
         crate::trace::mark("classified");
         crate::trace::label("class", if short { "short" } else { "general" });
         let class = if short {
@@ -1692,6 +1771,17 @@ impl ReplicaEngine {
             )
         };
         if lane == Lane::Inline {
+            if let (false, Some(in_place)) = (table_less, in_place) {
+                let mut answer = None;
+                in_place(&mut || answer = Some(run()));
+                return answer
+                    .unwrap_or_else(|| {
+                        Err(QueryError::Internal(
+                            "a small read was given nowhere to run".to_owned(),
+                        ))
+                    })
+                    .map(Attempt::Answered);
+            }
             return run().map(Attempt::Answered);
         }
         run_shared(key, deadline, started, run).map(Attempt::Answered)
@@ -2135,6 +2225,31 @@ impl ReplicaEngine {
 /// The longest statement text kept prepared: the text is part of the key
 /// every execution builds and compares.
 const KEPT_STATEMENT_BYTES: usize = 8192;
+
+/// Where a small read runs on the thread that received it: given the read,
+/// it makes blocking on this thread safe and runs the read, once. See
+/// [`ReplicaEngine::execute_answer_in_place`].
+pub type InPlace<'a> = &'a dyn Fn(&mut dyn FnMut());
+
+/// The most stored rows a read may have to look at and still run on the
+/// thread that received it ([`ReplicaEngine::execute_answer_in_place`]).
+pub const SMALL_READ_ROWS: u64 = 1024;
+
+thread_local! {
+    /// Whether the statement a worker last ran on this thread from a kept
+    /// plan was a small read.
+    static SMALL_READ_SEEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the last statement this thread executed as a worker ran from a
+/// kept plan and was a small read - one that
+/// [`ReplicaEngine::execute_answer_in_place`] would have run - and forgets
+/// it. A connection uses it to learn which of its statements to offer
+/// there.
+#[must_use]
+pub fn take_small_read_seen() -> bool {
+    SMALL_READ_SEEN.replace(false)
+}
 
 /// A statement's deadline under its own `MAX_EXECUTION_TIME` hint.
 ///
