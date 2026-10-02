@@ -233,7 +233,32 @@ pub enum SqlRejection {
 
 /// The metadata files a database's signature was last read against, and
 /// that signature.
-type SignatureMemo = (Vec<FileStamp>, u64);
+///
+/// The files stand in for the signature so that a statement learns nothing
+/// changed from two `stat` calls, without opening the store. They are not
+/// the same thing: a commit writes the store's write-ahead log, syncs it,
+/// and only then publishes itself to readers. A signature read between the
+/// write and the publication sees the files as the commit leaves them and
+/// the rows as they were before it, and remembered against those files it
+/// would hide the commit from every statement until another write moved
+/// the files again. So a signature is held as read only provisionally:
+/// once its files have stood unchanged for [`SIGNATURE_SETTLES_AFTER`] it
+/// is read once more, and that reading - which no write preceded so
+/// closely - is the one kept.
+#[derive(Clone, Debug)]
+struct SignatureMemo {
+    files: Vec<FileStamp>,
+    signature: u64,
+    /// When the signature was read.
+    read_at: Instant,
+    /// Whether it was read with the files already settled.
+    settled: bool,
+}
+
+/// How long a signature's files must have stood unchanged before the
+/// signature read against them is taken as final. Far longer than a commit
+/// takes to publish after writing its log.
+const SIGNATURE_SETTLES_AFTER: Duration = Duration::from_secs(1);
 
 /// A tables directory as last listed: its modification time, when it was
 /// listed, and each entry's name, path and whether it is a directory.
@@ -515,12 +540,21 @@ impl ReplicaEngine {
     /// read falls back to a hash of the files themselves, which is the old
     /// behaviour: safe, and no worse.
     fn metadata_signature(&self, database_id: &str, files: &[FileStamp]) -> u64 {
-        if let Ok(memo) = self.signatures.lock()
-            && let Some((known_files, signature)) = memo.get(database_id)
-            && known_files == files
-        {
-            return *signature;
-        }
+        // Read against these same files before: the reading stands, unless
+        // it was made close behind a write and is now due its second look.
+        let settling = match self.signatures.lock() {
+            Ok(memo) => match memo.get(database_id) {
+                Some(known) if known.files == files => {
+                    if known.settled || known.read_at.elapsed() < SIGNATURE_SETTLES_AFTER {
+                        return known.signature;
+                    }
+                    true
+                }
+                _ => false,
+            },
+            Err(_) => false,
+        };
+        let read_at = Instant::now();
         let signature = {
             let mut reader = self
                 .signature_reader
@@ -544,9 +578,31 @@ impl ReplicaEngine {
             std::hash::Hasher::finish(&hasher)
         });
         if let Ok(mut memo) = self.signatures.lock() {
-            memo.insert(database_id.to_owned(), (files.to_vec(), signature));
+            memo.insert(
+                database_id.to_owned(),
+                SignatureMemo {
+                    files: files.to_vec(),
+                    signature,
+                    read_at,
+                    settled: settling,
+                },
+            );
         }
         signature
+    }
+
+    /// Forgets the signature held for `database_id`, so the next stamp
+    /// reads the store whatever its files look like.
+    ///
+    /// For a statement refused because a table is not ready: the refusal
+    /// may rest on a signature read just behind the commit that made the
+    /// table ready, and whoever asks again - this statement, waiting for
+    /// the copy, or the next one - must see every change committed before
+    /// it asked.
+    fn forget_signature(&self, database_id: &str) {
+        if let Ok(mut memo) = self.signatures.lock() {
+            memo.remove(database_id);
+        }
     }
 
     /// Everything that can change what a query sees: the metadata store
@@ -997,6 +1053,9 @@ impl ReplicaEngine {
                         "a worker declined a statement".to_owned(),
                     )),
                 });
+            if matches!(result, Err(QueryError::NotReady(_))) {
+                self.forget_signature(database_id);
+            }
             let retryable = matches!(result, Err(QueryError::NotReady(_)))
                 && !tracked.as_ref().is_some_and(|sink| sink.begun)
                 && give_up.is_some_and(|give_up| Instant::now() < give_up)
@@ -2658,6 +2717,121 @@ mod admission_tests {
         assert!(started.elapsed() >= Duration::from_millis(250));
         assert_eq!(answered.rows.len(), 1);
         finisher.join().unwrap();
+    }
+
+    /// A table under copy, its engine holding the replica that says so,
+    /// then the copy finished - and the engine left holding what a signature
+    /// read just behind that commit leaves: the files as the commit wrote
+    /// them, remembered against the signature from before it.
+    fn engine_holding_a_signature_read_behind_a_commit(
+        recopy_wait: Duration,
+    ) -> (tempfile::TempDir, ReplicaEngine) {
+        const NOW: &str = "2026-10-02T00:00:00Z";
+        let directory = tempfile::tempdir().unwrap();
+        let metadata_path = directory.path().join("meta.db");
+        let meta = MetaStore::open(&metadata_path).unwrap();
+        meta.create_local_database("db", "scratch", NOW).unwrap();
+        std::fs::create_dir_all(directory.path().join("databases/db/tables")).unwrap();
+        let writer = LocalDatabase::new(directory.path(), &metadata_path, "db");
+        writer.recover().unwrap();
+        for sql in [
+            "CREATE TABLE a (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))",
+            "INSERT INTO a VALUES (1), (2)",
+        ] {
+            writer.execute(&parse_statement(sql).unwrap()).unwrap();
+        }
+        let engine =
+            ReplicaEngine::new(directory.path(), &metadata_path).with_recopy_wait(Duration::ZERO);
+        meta.begin_table_resnapshot("db", "a").unwrap();
+        assert!(matches!(
+            engine.execute("db", "SELECT COUNT(*) FROM a", 10),
+            Err(QueryError::NotReady(_))
+        ));
+        let copying = engine.replica_stamp("db").metadata.signature;
+        meta.finish_table_resnapshot("db", "a", "ready").unwrap();
+        let files = engine.replica_stamp("db").metadata.files;
+        engine.signatures.lock().unwrap().insert(
+            "db".to_owned(),
+            SignatureMemo {
+                files,
+                signature: copying,
+                read_at: Instant::now(),
+                settled: false,
+            },
+        );
+        assert_eq!(
+            engine.replica_stamp("db").metadata.signature,
+            copying,
+            "the engine holds the signature from before the commit"
+        );
+        (directory, engine.with_recopy_wait(recopy_wait))
+    }
+
+    /// A statement refused for a table still being copied asks the store
+    /// again rather than the signature it holds: that signature may have
+    /// been read just behind the commit that finished the copy, with the
+    /// files already as the commit left them, and nothing would ever move
+    /// them again. The statement that waits must answer at its next look.
+    #[test]
+    fn a_refused_statement_sees_a_copy_that_finished_before_it_asked_again() {
+        let (_directory, engine) =
+            engine_holding_a_signature_read_behind_a_commit(Duration::from_secs(600));
+        let started = Instant::now();
+        let answered = engine
+            .execute("db", "SELECT COUNT(*) FROM a", 10)
+            .expect("the copy finished before the statement arrived");
+        assert_eq!(answered.rows, vec![vec![Value::UInt64(2)]]);
+        assert!(
+            started.elapsed() < Duration::from_secs(300),
+            "the statement waited out a copy that had finished"
+        );
+    }
+
+    /// The same for a statement that does not wait: its refusal stands, as
+    /// what it was told was read before the commit, and the next statement
+    /// is answered.
+    #[test]
+    fn a_refusal_is_not_repeated_from_a_signature_read_behind_the_commit() {
+        let (_directory, engine) = engine_holding_a_signature_read_behind_a_commit(Duration::ZERO);
+        assert!(matches!(
+            engine.execute("db", "SELECT COUNT(*) FROM a", 10),
+            Err(QueryError::NotReady(_))
+        ));
+        assert_eq!(
+            engine
+                .execute("db", "SELECT COUNT(*) FROM a", 10)
+                .unwrap()
+                .rows,
+            vec![vec![Value::UInt64(2)]]
+        );
+    }
+
+    /// With no refusal to prompt it, a signature read close behind a write
+    /// is read once more when its files have settled, and corrected.
+    #[test]
+    fn a_signature_read_behind_a_commit_is_read_again_once_its_files_settle() {
+        let (_directory, engine) = engine_holding_a_signature_read_behind_a_commit(Duration::ZERO);
+        let held = engine.replica_stamp("db").metadata.signature;
+        // As if it had been read longer ago than a commit takes to publish.
+        {
+            let mut memo = engine.signatures.lock().unwrap();
+            let entry = memo.get_mut("db").unwrap();
+            entry.read_at = Instant::now()
+                .checked_sub(SIGNATURE_SETTLES_AFTER * 2)
+                .expect("a clock that has run for two seconds");
+        }
+        let settled = engine.replica_stamp("db").metadata.signature;
+        assert_ne!(settled, held, "the second reading sees the commit");
+        assert!(engine.signatures.lock().unwrap()["db"].settled);
+        // And a settled reading is not read again.
+        assert_eq!(engine.replica_stamp("db").metadata.signature, settled);
+        assert_eq!(
+            engine
+                .execute("db", "SELECT COUNT(*) FROM a", 10)
+                .unwrap()
+                .rows,
+            vec![vec![Value::UInt64(2)]]
+        );
     }
 
     #[test]
