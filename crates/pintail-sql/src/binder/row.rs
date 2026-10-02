@@ -15,14 +15,15 @@
 //!   successors cannot settle the comparison.
 //! - `IN` is equality with any listed row, and `NOT IN` its negation. Against
 //!   a subquery, `IN` asks whether some member row equals, through EXISTS
-//!   over the subquery with its columns renamed.
+//!   over a derived table of the subquery that names its columns.
 //!
 //! Rows nest: a column that is itself a row compares by the same rules when
 //! the rewritten pair is bound.
 
 use sqlparser::ast::{
     BinaryOperator, CaseWhen, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Ident, Query,
-    Select, SelectItem, SetExpr, TableFactor, helpers::attached_token::AttachedToken,
+    Select, SelectItem, SetExpr, TableAliasColumnDef, TableFactor,
+    helpers::attached_token::AttachedToken,
 };
 
 use super::BindError;
@@ -201,8 +202,10 @@ fn member_column(index: usize) -> Ident {
 
 const MEMBERS: &str = "<row-members>";
 
-/// `EXISTS (SELECT 1 FROM (members) AS <row-members> WHERE condition)`.
-fn exists_member(members: &Query, condition: Expr) -> Result<Expr, BindError> {
+/// `EXISTS (SELECT 1 FROM (members) AS <row-members> (columns) WHERE
+/// condition)`, the derived table naming the subquery's `width` columns for
+/// the rewrite.
+fn exists_member(members: &Query, width: usize, condition: Expr) -> Result<Expr, BindError> {
     let template = crate::parse_expression(&format!(
         "EXISTS (SELECT 1 FROM (SELECT 1) AS `{MEMBERS}` WHERE TRUE)"
     ))
@@ -218,10 +221,21 @@ fn exists_member(members: &Query, condition: Expr) -> Result<Expr, BindError> {
         unreachable!("the template's body is a SELECT");
     };
     select.selection = Some(condition);
-    let TableFactor::Derived { subquery: from, .. } = &mut select.from[0].relation else {
-        unreachable!("the template reads a derived table");
+    let TableFactor::Derived {
+        subquery: from,
+        alias: Some(alias),
+        ..
+    } = &mut select.from[0].relation
+    else {
+        unreachable!("the template reads a derived table under an alias");
     };
     **from = members.clone();
+    alias.columns = (0..width)
+        .map(|index| TableAliasColumnDef {
+            name: member_column(index),
+            data_type: None,
+        })
+        .collect();
     Ok(Expr::Exists { subquery, negated })
 }
 
@@ -236,28 +250,29 @@ fn naming_select(body: &mut SetExpr) -> Option<&mut Select> {
     }
 }
 
-/// `subquery` with its columns renamed for the rewrite, checked against the
-/// row's width.
+/// `subquery` as the rewrite reads it, checked against the row's width.
+///
+/// The subquery is left as written and the derived table over it names its
+/// columns. Renaming its select list instead took away the aliases its own
+/// GROUP BY, HAVING and ORDER BY name: `(a, b) IN (SELECT x AS a, y AS b
+/// FROM t GROUP BY a, b)` then grouped by the outer row's `a` and `b`, one
+/// group for the whole subquery, and under any other alias it did not bind.
 fn members(subquery: &Query, width: usize) -> Result<Query, BindError> {
     let mut members = subquery.clone();
     let select = naming_select(members.body.as_mut())
         .ok_or_else(|| BindError::UnsupportedSubquery(subquery.to_string()))?;
-    let mut renamed = Vec::with_capacity(select.projection.len());
-    for (index, item) in select.projection.iter().enumerate() {
-        let expr = match item {
-            SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } => expr.clone(),
-            // A star's width is the table's, which is not known here.
-            _ => return Err(BindError::UnsupportedSubquery(subquery.to_string())),
-        };
-        renamed.push(SelectItem::ExprWithAlias {
-            expr,
-            alias: member_column(index),
-        });
+    // A star's width is the table's, which is not known here.
+    if !select.projection.iter().all(|item| {
+        matches!(
+            item,
+            SelectItem::UnnamedExpr(_) | SelectItem::ExprWithAlias { .. }
+        )
+    }) {
+        return Err(BindError::UnsupportedSubquery(subquery.to_string()));
     }
-    if renamed.len() != width {
+    if select.projection.len() != width {
         return Err(arity_error(width));
     }
-    select.projection = renamed;
     Ok(members)
 }
 
@@ -302,12 +317,13 @@ pub(super) fn in_subquery(
     };
     let members = members(subquery, row.len())?;
     let equal = equal_to_member(&row);
-    let found = exists_member(&members, equal.clone())?;
+    let found = exists_member(&members, row.len(), equal.clone())?;
     if filter && !negated {
         return Ok(Some(found));
     }
     let undecided = exists_member(
         &members,
+        row.len(),
         Expr::IsNull(Box::new(Expr::Nested(Box::new(equal)))),
     )?;
     let boolean = |value| Expr::value(sqlparser::ast::Value::Boolean(value));

@@ -2597,14 +2597,32 @@ impl<'catalog> Binder<'catalog> {
             let alias = alias
                 .as_ref()
                 .ok_or_else(|| BindError::UnsupportedTableFactor(factor.to_string()))?;
-            if !alias.columns.is_empty() || alias.at.is_some() {
+            if alias.at.is_some() {
                 return Err(BindError::UnsupportedTableFactor(factor.to_string()));
             }
             let input = self.bind_query(subquery, ctes)?;
+            // `(SELECT ..) AS d (a, b)` names the derived table's columns
+            // itself, in order, whatever the query calls them.
+            let column_names = alias
+                .columns
+                .iter()
+                .map(|column| column.name.value.clone())
+                .collect::<Vec<_>>();
+            let produced = input
+                .projection
+                .len()
+                .saturating_sub(input.hidden_sort_columns);
+            if !column_names.is_empty() && column_names.len() != produced {
+                return Err(BindError::IncompatibleSetOperation(format!(
+                    "derived table {} declares {} columns but produces {produced}",
+                    alias.name.value,
+                    column_names.len(),
+                )));
+            }
             return Ok(self.bind_derived_table(
                 alias.name.value.clone(),
                 alias.name.value.clone(),
-                &[],
+                &column_names,
                 input,
             ));
         }
@@ -3557,7 +3575,21 @@ fn bind_group_by(
             // GROUP BY resolves a source column before a SELECT alias. A name
             // the sources hold more than once is not a column at all there, and
             // MySQL takes the one alias of that name instead of refusing.
+            //
+            // The sources are this query's own. A column of an outer query is
+            // further away than this query's alias: in
+            // `o.k IN (SELECT i.id AS k FROM i GROUP BY k)` the subquery
+            // groups by its own `i.id`. Taking the outer `o.k` grouped every
+            // row of the subquery into one group per outer row, and the
+            // membership was tested against one arbitrary row of it.
+            let mut outer = None;
             let ambiguous = match bind_expr(expr, tables, subqueries) {
+                Ok(column)
+                    if matches!(&column.kind, BoundExprKind::Column(column) if column.outer) =>
+                {
+                    outer = Some(column);
+                    None
+                }
                 Ok(column) => return Ok(column),
                 Err(BindError::UnknownColumn(_)) => None,
                 Err(error @ BindError::AmbiguousColumn(_)) => Some(error),
@@ -3576,9 +3608,10 @@ fn bind_group_by(
                 .collect::<Vec<_>>();
             match aliases.as_slice() {
                 [alias_expression] => bind_expr(alias_expression, tables, subqueries),
-                [] => match ambiguous {
-                    Some(error) => Err(error),
-                    None => bind_expr(expr, tables, subqueries),
+                [] => match (outer, ambiguous) {
+                    (Some(column), _) => Ok(column),
+                    (None, Some(error)) => Err(error),
+                    (None, None) => bind_expr(expr, tables, subqueries),
                 },
                 _ => Err(BindError::InvalidGrouping(format!(
                     "GROUP BY alias {} is ambiguous",

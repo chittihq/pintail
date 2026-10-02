@@ -568,3 +568,100 @@ fn a_subquery_left_to_the_per_row_path_says_why() {
         grouped.profile
     );
 }
+
+fn ids(rows: &[Vec<String>]) -> Vec<String> {
+    rows.iter().map(|row| row[0].clone()).collect()
+}
+
+/// A subquery's GROUP BY and HAVING name its own select aliases before a
+/// column of the enclosing query, whatever the alias is called. `scans` has
+/// no `weight`; `parcels`, the outer table, does.
+#[test]
+fn a_subquery_groups_by_its_own_alias_before_an_outer_column_of_that_name() {
+    let fixture = fixture(260);
+    let ok_values = |parcel: u64| {
+        scans_of(parcel)
+            .into_iter()
+            .filter_map(|(ok, _)| ok)
+            .collect::<Vec<_>>()
+    };
+    // The members are the distinct `ok` values, 0, 1 and 2.
+    let single = ran(
+        &fixture,
+        "SELECT p.id FROM parcels p WHERE p.weight IN \
+           (SELECT s.ok AS weight FROM scans s WHERE s.ok IS NOT NULL GROUP BY weight) \
+         ORDER BY p.id",
+    );
+    let expected = (1..=260_u64)
+        .filter(|parcel| weight(*parcel) <= 2)
+        .map(|parcel| parcel.to_string())
+        .collect::<Vec<_>>();
+    assert!(expected.len() > 3, "the fixture holds such parcels");
+    assert_eq!(ids(&single.rows), expected);
+
+    // A row against a grouped subquery, under aliases the outer row has too
+    // and under aliases nothing else has.
+    let expected = (1..=260_u64)
+        .filter(|parcel| ok_values(*parcel).contains(&weight(*parcel)))
+        .map(|parcel| parcel.to_string())
+        .collect::<Vec<_>>();
+    assert!(!expected.is_empty(), "the fixture holds such parcels");
+    for (first, second) in [("id", "weight"), ("member", "reading")] {
+        let row = ran(
+            &fixture,
+            &format!(
+                "SELECT p.id FROM parcels p WHERE (p.id, p.weight) IN \
+                   (SELECT s.parcel_id AS {first}, s.ok AS {second} FROM scans s \
+                     WHERE s.ok IS NOT NULL GROUP BY s.parcel_id, {second}) \
+                 ORDER BY p.id"
+            ),
+        );
+        assert_eq!(ids(&row.rows), expected, "{first}, {second}");
+    }
+
+    // HAVING reads the alias the group was made by: zone 3 exists, so every
+    // parcel has the row, not only the parcels whose own weight is 3.
+    let having = ran(
+        &fixture,
+        "SELECT p.id FROM parcels p WHERE EXISTS \
+           (SELECT s.zone_id AS weight FROM scans s GROUP BY weight HAVING weight = 3) \
+         ORDER BY p.id",
+    );
+    assert_eq!(having.rows.len(), 260);
+    // With no alias of the name, the outer column is what the name means.
+    let outer = ran(
+        &fixture,
+        "SELECT p.id FROM parcels p WHERE EXISTS \
+           (SELECT COUNT(*) FROM scans s GROUP BY weight HAVING weight = 3) \
+         ORDER BY p.id",
+    );
+    let expected = (1..=260_u64)
+        .filter(|parcel| weight(*parcel) == 3)
+        .map(|parcel| parcel.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(ids(&outer.rows), expected);
+}
+
+#[test]
+fn a_derived_table_names_its_columns_in_its_alias() {
+    let fixture = fixture(20);
+    let named = ran(
+        &fixture,
+        "SELECT d.k, d.v FROM (SELECT id, open FROM zones) AS d (k, v) WHERE d.v = 1 ORDER BY d.k",
+    );
+    assert_eq!(
+        named.rows,
+        vec![
+            vec!["1".to_owned(), "1".to_owned()],
+            vec!["3".to_owned(), "1".to_owned()]
+        ]
+    );
+    let statement =
+        parse_statement("SELECT d.k FROM (SELECT id, open FROM zones) AS d (k)").expect("parse");
+    assert!(
+        Binder::new(&fixture.catalog, Some("app"))
+            .bind(&statement)
+            .is_err(),
+        "one name for two columns"
+    );
+}

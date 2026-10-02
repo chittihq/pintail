@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2573;
+const EXPECTED_CASES: usize = 2579;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1834,6 +1834,15 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered("where edge cases", "SELECT id FROM orders WHERE meta->>'$.tags[0]' = 'premium' ORDER BY id"),
         ordered("where edge cases", "SELECT id FROM orders WHERE JSON_CONTAINS(meta->'$.tags', '\"premium\"') ORDER BY id"),
         ordered("where edge cases", "SELECT id FROM orders WHERE JSON_LENGTH(meta, '$.items') >= 4 ORDER BY id"),
+        // A subquery's GROUP BY and HAVING name its own select aliases
+        // before a column of the enclosing query (`orders.user_id`,
+        // `orders.total`), and a derived table may name its columns.
+        ordered("subquery alias scope", "SELECT id FROM orders WHERE user_id IN (SELECT id AS user_id FROM users WHERE id > 2 GROUP BY user_id) ORDER BY id"),
+        ordered("subquery alias scope", "SELECT id FROM orders WHERE (user_id, id) IN (SELECT u.id AS user_id, o.id AS id FROM users u INNER JOIN orders o ON o.user_id = u.id WHERE u.id > 2 GROUP BY user_id, o.id) ORDER BY id"),
+        ordered("subquery alias scope", "SELECT id FROM orders WHERE (user_id, status) IN (SELECT o.user_id AS buyer, o.status AS state FROM orders o WHERE o.total > 20 GROUP BY buyer, state) ORDER BY id"),
+        ordered("subquery alias scope", "SELECT id FROM orders WHERE EXISTS (SELECT id AS user_id FROM users GROUP BY user_id HAVING user_id = 8) ORDER BY id"),
+        ordered("subquery alias scope", "SELECT id FROM orders WHERE user_id NOT IN (SELECT id + 1 AS total FROM users GROUP BY total) ORDER BY id"),
+        ordered("subquery alias scope", "SELECT d.k, d.v FROM (SELECT id, total FROM orders) AS d (k, v) WHERE d.k < 5 ORDER BY d.k"),
         // A JSON branch beside a number, a decimal or a date in a
         // conditional: the answer is the text of whichever branch the row
         // took, never the document read as a number.
