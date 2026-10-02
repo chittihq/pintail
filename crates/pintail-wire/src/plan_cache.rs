@@ -294,9 +294,17 @@ impl<V> PlanCache<V> {
     }
 }
 
+/// The bounds a process has when nothing overrides them: entries, then
+/// estimated bytes.
+#[must_use]
+pub const fn default_bounds() -> (usize, usize) {
+    (DEFAULT_ENTRIES, DEFAULT_BYTES)
+}
+
 /// The configured bounds: entries, then estimated bytes. Either at zero, or
 /// `PINTAIL_PLAN_CACHE=0`, turns the cache off.
-pub(crate) fn configured_bounds() -> Option<(usize, usize)> {
+#[must_use]
+pub fn configured_bounds() -> Option<(usize, usize)> {
     let setting = |name: &str, default: usize| {
         std::env::var(name)
             .ok()

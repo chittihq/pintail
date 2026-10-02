@@ -126,6 +126,12 @@ pub struct Optimizations {
     pub build: Build,
     pub threads: Threads,
     pub paths: Vec<Path>,
+    /// How small reads run: `alone`, `hold`, `handover` or `worker`
+    /// (`PINTAIL_SMALL_READS`).
+    pub small_reads: &'static str,
+    /// The kept-plan cache's bounds, entries then estimated bytes; `None`
+    /// when it is off.
+    pub plan_cache_bounds: Option<(usize, usize)>,
     /// The segment format version this build writes.
     pub segment_format: u8,
     /// Compaction and memtable sizes an environment variable overrides, as
@@ -181,17 +187,51 @@ fn cpu_features() -> Vec<&'static str> {
     Vec::new()
 }
 
+/// The statement path's settings that are off their defaults.
+fn statement_settings(small_reads: &str, plan_cache_bounds: Option<(usize, usize)>) -> Vec<String> {
+    let mut settings = Vec::new();
+    if small_reads != "alone" {
+        settings.push(format!("PINTAIL_SMALL_READS={small_reads}"));
+    }
+    if let Some((entries, bytes)) = plan_cache_bounds {
+        let (default_entries, default_bytes) = pintail_wire::plan_cache_default_bounds();
+        if entries != default_entries {
+            settings.push(format!("PINTAIL_PLAN_CACHE_ENTRIES={entries}"));
+        }
+        if bytes != default_bytes {
+            settings.push(format!("PINTAIL_PLAN_CACHE_BYTES={bytes}"));
+        }
+    }
+    settings
+}
+
+/// The tuning and diagnostic variables that are set, by name.
+fn tuning_settings() -> Vec<String> {
+    TUNING_VARIABLES
+        .iter()
+        .filter(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        .map(|name| (*name).to_owned())
+        .collect()
+}
+
 /// Reads the report from the running process.
 #[must_use]
 pub fn optimizations() -> Optimizations {
     let (level, setting) = pintail_store::simd_dispatch();
     let scan_setting = pintail_store::scan_threads_setting();
     let (execute_threads, execute_overridden) = pintail_exec::parallel_pool_threads();
+    let plan_cache_bounds = pintail_wire::plan_cache_bounds();
+    let small_reads = pintail_wire::small_reads_mode();
     let mut paths = vec![
         Path {
             name: "inline_statements",
             enabled: pintail_wire::inline_statements(),
             variable: "PINTAIL_INLINE_STATEMENTS",
+        },
+        Path {
+            name: "plan_cache",
+            enabled: plan_cache_bounds.is_some(),
+            variable: "PINTAIL_PLAN_CACHE",
         },
         Path {
             name: "shared_queries",
@@ -237,13 +277,9 @@ pub fn optimizations() -> Optimizations {
             .filter(|path| !path.enabled)
             .map(|path| path.variable.to_owned()),
     );
+    non_default.extend(statement_settings(small_reads, plan_cache_bounds));
     non_default.extend(size_overrides.iter().cloned());
-    non_default.extend(
-        TUNING_VARIABLES
-            .iter()
-            .filter(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
-            .map(|name| (*name).to_owned()),
-    );
+    non_default.extend(tuning_settings());
 
     Optimizations {
         cpu: Cpu {
@@ -277,6 +313,8 @@ pub fn optimizations() -> Optimizations {
             },
         },
         paths,
+        small_reads,
+        plan_cache_bounds,
         segment_format: pintail_store::WRITTEN_SEGMENT_FORMAT,
         size_overrides,
         non_default,
@@ -316,11 +354,12 @@ impl Optimizations {
             .join(" ");
         let running = format!(
             "pintail paths: scan_threads={} scan_threads_from={} execute_threads={} \
-             execute_threads_from={} {paths} segment_format={} size_overrides={} non_default={}",
+             execute_threads_from={} {paths} small_reads={} segment_format={} size_overrides={} non_default={}",
             self.threads.scan.threads,
             self.threads.scan.source,
             self.threads.execute.threads,
             self.threads.execute.source,
+            self.small_reads,
             self.segment_format,
             list(&self.size_overrides),
             list(&self.non_default),
@@ -337,7 +376,7 @@ mod tests {
     /// report and nothing else.
     const CHILD: &str = "PINTAIL_OPTIMIZATIONS_TEST_CHILD";
 
-    const KEYS: [&str; 22] = [
+    const KEYS: [&str; 24] = [
         "cpu_model=",
         "cpu_cores=",
         "cpu_features=",
@@ -352,6 +391,8 @@ mod tests {
         "execute_threads=",
         "execute_threads_from=",
         "inline_statements=",
+        "plan_cache=",
+        "small_reads=",
         "shared_queries=",
         "secondary_index=",
         "settled_memo=",
@@ -398,6 +439,8 @@ mod tests {
             .env("PINTAIL_DISABLE_PACKED_GROUP", "1")
             .env("PINTAIL_INLINE_STATEMENTS", "0")
             .env("PINTAIL_SCAN_THREADS", "3")
+            .env("PINTAIL_PLAN_CACHE", "0")
+            .env("PINTAIL_SMALL_READS", "worker")
             .output()
             .expect("run the child");
         let output = String::from_utf8_lossy(&child.stdout);
@@ -421,12 +464,16 @@ mod tests {
         assert!(paths.contains(" packed_group=off "), "{paths}");
         assert!(paths.contains(" inline_statements=off "), "{paths}");
         assert!(paths.contains(" settled_memo=on "), "{paths}");
+        assert!(paths.contains(" plan_cache=off "), "{paths}");
+        assert!(paths.contains(" small_reads=worker "), "{paths}");
         let non_default = paths.split_once("non_default=").expect("the list").1;
         for setting in [
             "PINTAIL_SIMD=off",
             "PINTAIL_SCAN_THREADS=3",
             "PINTAIL_DISABLE_PACKED_GROUP",
             "PINTAIL_INLINE_STATEMENTS",
+            "PINTAIL_PLAN_CACHE",
+            "PINTAIL_SMALL_READS=worker",
         ] {
             assert!(
                 non_default.contains(setting),

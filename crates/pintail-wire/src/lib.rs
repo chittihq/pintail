@@ -34,10 +34,13 @@ pub use server::{
 };
 
 pub use engine::{plan_cache_stats, replica_cache_stats};
-pub use plan_cache::PlanCacheStats;
+pub use plan_cache::{
+    PlanCacheStats, configured_bounds as plan_cache_bounds,
+    default_bounds as plan_cache_default_bounds,
+};
 pub use replica_cache::ReplicaCacheStats;
 pub use result_rows::ResultRows;
-pub use server::inline_statements;
+pub use server::{inline_statements, small_reads_mode};
 pub use shared_query::{SharedQueryStats, shared_queries_enabled, shared_query_stats};
 
 mod metadata_provider;

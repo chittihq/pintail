@@ -152,6 +152,8 @@ of the rule.
 | `scan_threads`, `scan_threads_from` | Width of the scan pool, and `cores` or the variable that set it. | `PINTAIL_SCAN_THREADS` |
 | `execute_threads`, `execute_threads_from` | The same for the execute pool. | `RAYON_NUM_THREADS` |
 | `inline_statements` | Bounded statements run on the connection's task. | `PINTAIL_INLINE_STATEMENTS=0` |
+| `plan_cache` | Plans of repeated statements are kept (4,096 entries, 64 MiB by default). | `PINTAIL_PLAN_CACHE=0`, `PINTAIL_PLAN_CACHE_ENTRIES`, `PINTAIL_PLAN_CACHE_BYTES` |
+| `small_reads` | Where a small read runs: `alone` (the default), `hold`, `handover` or `worker`. | `PINTAIL_SMALL_READS` |
 | `shared_queries` | Identical concurrent requests share one execution. | `PINTAIL_DISABLE_SHARED_QUERIES` |
 | `secondary_index` | Lookups through the side index. | `PINTAIL_SECONDARY_INDEX=0` |
 | `settled_memo` | A settled aggregate replays its answer. | `PINTAIL_DISABLE_SETTLED_MEMO` |

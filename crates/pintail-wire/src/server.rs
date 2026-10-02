@@ -1188,6 +1188,18 @@ fn small_reads() -> Option<SmallReads> {
     })
 }
 
+/// The small-read mode of this process by its setting's name: `alone`,
+/// `hold`, `handover` or `worker`.
+#[must_use]
+pub fn small_reads_mode() -> &'static str {
+    match small_reads() {
+        Some(SmallReads::Alone) => "alone",
+        Some(SmallReads::Hold) => "hold",
+        Some(SmallReads::HandOver) => "handover",
+        None => "worker",
+    }
+}
+
 /// Statements being answered at this moment, on any connection and in any
 /// lane.
 static STATEMENTS_IN_FLIGHT: std::sync::atomic::AtomicUsize =
