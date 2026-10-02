@@ -101,6 +101,7 @@ mod probe_peek;
 mod profile;
 mod range_join;
 mod range_prune_bench;
+mod recreated_table_lookup;
 mod row_constructors;
 mod row_path_text_cost;
 mod runtime_join_filter;

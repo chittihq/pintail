@@ -2165,16 +2165,27 @@ fn verified_segments() -> &'static std::sync::Mutex<HashSet<VerifiedKey>> {
     VERIFIED.get_or_init(|| std::sync::Mutex::new(HashSet::new()))
 }
 
-fn verified_key(path: &Path, meta: &SegmentMeta, schema: &TableSchema) -> Option<VerifiedKey> {
+/// The file at `path` as it exists on disk now: its length and its
+/// modification time in nanoseconds. A table dropped and created again, or
+/// copied again from its source, writes new files under the names the old
+/// ones had, and what the manifest says of a segment (id, row count,
+/// versions, schema) can be the same for both; this is what tells the two
+/// files apart. `None` when the file cannot be read.
+pub(crate) fn file_identity(path: &Path) -> Option<(u64, i128)> {
     let stat = std::fs::metadata(path).ok()?;
     let modified = stat.modified().ok()?;
     let nanos = match modified.duration_since(std::time::UNIX_EPOCH) {
         Ok(duration) => i128::try_from(duration.as_nanos()).ok()?,
         Err(before_epoch) => -i128::try_from(before_epoch.duration().as_nanos()).ok()?,
     };
+    Some((stat.len(), nanos))
+}
+
+fn verified_key(path: &Path, meta: &SegmentMeta, schema: &TableSchema) -> Option<VerifiedKey> {
+    let (length, nanos) = file_identity(path)?;
     Some((
         path.to_path_buf(),
-        stat.len(),
+        length,
         nanos,
         schema.version(),
         meta.schema_fingerprint,

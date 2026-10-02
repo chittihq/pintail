@@ -392,9 +392,19 @@ impl Postings {
 /// change keeps the file while changing what its values mean, so the
 /// segment's identity, versions and schema fingerprint and the column's
 /// declared type are part of the key.
+///
+/// Nor is everything the manifest says of the segment: a table dropped and
+/// created again under its name, or copied again from its source, lives in
+/// the same directory, and its first segment has the id, the row count, the
+/// versions and the schema of the one before whenever the two tables have
+/// the same shape and as many rows. So the key also carries the file as it
+/// exists on disk, and postings built from the earlier file are never found
+/// for the later one.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct CacheKey {
     path: PathBuf,
+    /// Length and modification time of the segment file.
+    file: (u64, i128),
     segment_id: u64,
     row_count: u64,
     versions: (u64, u64),
@@ -412,9 +422,12 @@ impl CacheKey {
         schema: &TableSchema,
         column_id: u32,
         key: &IndexKey,
-    ) -> Self {
-        Self {
-            path: directory.join(&meta.file_name),
+    ) -> Option<Self> {
+        let path = directory.join(&meta.file_name);
+        let file = segment::file_identity(&path)?;
+        Some(Self {
+            path,
+            file,
             segment_id: meta.id,
             row_count: meta.row_count,
             versions: (meta.min_version, meta.max_version),
@@ -426,7 +439,7 @@ impl CacheKey {
                 .find(|column| column.id() == column_id)
                 .map(pintail_types::Column::data_type),
             key_id: key.cache_id(),
-        }
+        })
     }
 }
 
@@ -598,7 +611,11 @@ pub(crate) fn postings(
     column_id: u32,
     index_key: &IndexKey,
 ) -> Result<Option<Arc<Postings>>, StoreError> {
-    let key = CacheKey::new(directory, meta, schema, column_id, index_key);
+    let Some(key) = CacheKey::new(directory, meta, schema, column_id, index_key) else {
+        // A file that cannot be identified is not cached: the build reads
+        // it, and says what is wrong with it if it cannot.
+        return Ok(build(directory, meta, schema, column_id, index_key)?.map(Arc::new));
+    };
     let slot = lock_cache().slot(key.clone());
     if let Some(found) = slot.get() {
         return Ok(found.clone());
@@ -1320,6 +1337,7 @@ mod tests {
     fn cache_evicts_least_recently_used_postings_past_its_limit() {
         let key = |column_id| CacheKey {
             path: PathBuf::from("segment"),
+            file: (64, 7),
             segment_id: 1,
             row_count: 10,
             versions: (1, 2),
@@ -1356,6 +1374,13 @@ mod tests {
             ..key(5)
         };
         assert_ne!(typed, key(5));
+        // So is another file under the same name with the same manifest
+        // entry: a table created again in the directory of a dropped one.
+        let rewritten = CacheKey {
+            file: (64, 8),
+            ..key(5)
+        };
+        assert_ne!(rewritten, key(5));
     }
 
     fn owner_rows(count: u64) -> Vec<StoredRow> {
