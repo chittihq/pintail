@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2514;
+const EXPECTED_CASES: usize = 2537;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1843,6 +1843,29 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered("where edge cases", "SELECT user_id, SUM(total) FROM orders WHERE status <> 'cancelled' GROUP BY user_id HAVING SUM(total) > 50 ORDER BY user_id"),
         ordered("where edge cases", "SELECT id FROM orders WHERE total > 10 ORDER BY placed_at DESC LIMIT 3"),
         ordered("where edge cases", "SELECT id FROM orders WHERE placed_at >= '2024-06-01' AND placed_at < '2025-03-01' AND status <> 'cancelled' AND total BETWEEN 10 AND 200 ORDER BY id"),
+        ordered("batched dependent subqueries", "SELECT id FROM users u WHERE EXISTS (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id HAVING COUNT(*) > 1) ORDER BY id"),
+        ordered("batched dependent subqueries", "SELECT id FROM users u WHERE NOT EXISTS (SELECT SUM(o.total) FROM orders o WHERE o.user_id = u.id HAVING SUM(o.total) > 20) ORDER BY id"),
+        ordered("batched dependent subqueries", "SELECT u.id, EXISTS (SELECT MAX(o.total) FROM orders o WHERE o.user_id = u.id), NOT EXISTS (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id HAVING COUNT(*) = 0) FROM users u ORDER BY u.id"),
+        ordered("batched dependent subqueries", "SELECT u.id, EXISTS (SELECT 1 FROM orders o JOIN users v ON v.id = o.user_id WHERE o.user_id = u.id LIMIT 1 OFFSET 1) FROM users u WHERE u.id <= 8 ORDER BY u.id"),
+        ordered("batched dependent subqueries", "SELECT u.id FROM users AS u WHERE (u.id, 'pending') IN (SELECT o.user_id, o.status FROM orders AS o WHERE o.user_id = u.id) ORDER BY u.id"),
+        ordered("batched dependent subqueries", "SELECT u.id, (u.id, 50.00) IN (SELECT o.user_id, o.total FROM orders AS o WHERE o.user_id = u.id), (u.id, 50.00) NOT IN (SELECT o.user_id, o.total FROM orders AS o WHERE o.user_id = u.id) FROM users AS u ORDER BY u.id"),
+        ordered("batched dependent subqueries", "SELECT e.id, (e.id, e.note) IN (SELECT e2.id, e2.note FROM events e2 WHERE e2.score >= e.score), (e.id, e.note) NOT IN (SELECT e2.id + 1, e2.note FROM events e2 WHERE e2.score < e.score) FROM events e WHERE e.id <= 10 ORDER BY e.id"),
+        ordered("batched dependent subqueries", "SELECT id, (id, note) IN (SELECT id, note FROM events WHERE id < 6), (score, note) NOT IN (SELECT score + 10, note FROM events WHERE id < 6) FROM events ORDER BY id"),
+        ordered("batched dependent subqueries", "SELECT id, (user_id, status) IN (SELECT id, 'pending' FROM users WHERE id < 4), (user_id, total) NOT IN (SELECT user_id, total FROM orders WHERE id < 4) FROM orders ORDER BY id"),
+        ordered("batched dependent subqueries", "SELECT e.id, e.note IN (SELECT e2.note FROM events e2 WHERE e2.active = e.active), e.note NOT IN (SELECT e2.note FROM events e2 WHERE e2.active = e.active AND e2.id <> e.id) FROM events e ORDER BY e.id"),
+        ordered("batched dependent subqueries", "SELECT e.id, e.tag IN (SELECT e2.tag FROM events e2 WHERE e2.active = e.active AND e2.id <> e.id), e.tag NOT IN (SELECT e2.tag FROM events e2 WHERE e2.active = e.active AND e2.id > e.id) FROM events e WHERE e.id <= 10 ORDER BY e.id"),
+        ordered("batched dependent subqueries", "SELECT u.id, u.id IN (SELECT o.user_id FROM orders o JOIN users v ON v.id = o.user_id WHERE v.id = u.id AND o.total > 20) FROM users u ORDER BY u.id"),
+        ordered("batched dependent subqueries", "SELECT e.id, e.note NOT IN (SELECT o.status FROM orders o WHERE o.user_id = e.id), e.id NOT IN (SELECT e2.score / 10 FROM events e2 WHERE e2.active = e.active AND e2.note IS NOT NULL) FROM events e WHERE e.id <= 10 ORDER BY e.id"),
+        ordered("batched dependent subqueries", "SELECT u.id, EXISTS (SELECT 1 FROM orders o JOIN events e ON e.id = o.id WHERE o.user_id = u.id AND e.active = 1), NOT EXISTS (SELECT * FROM orders o JOIN events e ON e.id = o.id WHERE o.user_id = u.id AND e.note IS NULL) FROM users u ORDER BY u.id"),
+        ordered("batched dependent subqueries", "SELECT o.id, (SELECT u.name FROM users u JOIN events e ON e.id = u.id WHERE u.id = o.user_id) FROM orders o ORDER BY o.id"),
+        ordered("batched dependent subqueries", "SELECT u.id, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS n, (SELECT COALESCE(SUM(o.total), 0) FROM orders o WHERE o.user_id = u.id) AS spend, (SELECT IFNULL(MAX(o.total), -1) + COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.status = 'shipped') AS mix FROM users u ORDER BY u.id"),
+        ordered("batched dependent subqueries", "SELECT e.id, (SELECT (SELECT v.name FROM users v WHERE v.id = u.id LIMIT 1) FROM users u WHERE u.id = e.id) FROM events e ORDER BY e.id"),
+        ordered("batched dependent subqueries", "SELECT e.id, (SELECT (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.id <> e.id) FROM users u WHERE u.id = e.id) FROM events e WHERE e.id <= 10 ORDER BY e.id"),
+        ordered("batched dependent subqueries", "SELECT u.id, EXISTS (SELECT 1 FROM orders o JOIN users v ON v.id = o.user_id WHERE o.user_id = u.id AND RAND() >= 0) FROM users u WHERE u.id <= 8 ORDER BY u.id"),
+        ordered("batched dependent subqueries", "SELECT e.id, (SELECT COUNT(o.id) FROM orders o JOIN users u ON u.id = o.user_id WHERE u.id = e.id), (SELECT COALESCE(MIN(o.total), -1) FROM orders o JOIN users u ON u.id = o.user_id WHERE u.id = e.id) FROM events e ORDER BY e.id"),
+        ordered("outer join-condition subquery", "SELECT u.id, COUNT(o.id) AS n FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.id IN (SELECT o2.id FROM orders o2 JOIN users u2 ON u2.id = o2.user_id WHERE u2.id = u.id AND o2.total > 12) GROUP BY u.id ORDER BY u.id"),
+        ordered("outer join-condition subquery", "SELECT u.id, e.id FROM users u LEFT JOIN events e ON e.id = u.id AND e.note NOT IN (SELECT e2.note FROM events e2 WHERE e2.active = e.active AND e2.id > u.id) WHERE u.id <= 8 ORDER BY u.id"),
+        ordered("outer join-condition subquery", "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND EXISTS (SELECT 1 FROM orders o2 JOIN users u2 ON u2.id = o2.user_id WHERE u2.id = u.id AND o2.status = 'shipped') ORDER BY u.id, o.id"),
         ordered("review edge cases", "SELECT id FROM users u WHERE EXISTS (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.total > 1000000) ORDER BY id"),
         ordered("review edge cases", "SELECT id FROM users u WHERE NOT EXISTS (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.total > 1000000) ORDER BY id"),
         ordered("review edge cases", "SELECT id FROM users u WHERE EXISTS (SELECT SUM(o.total) FROM orders o WHERE o.user_id = u.id AND o.total > 1000000) ORDER BY id"),
@@ -5067,6 +5090,14 @@ fn documented_rejects_stay_explicit() {
 /// wrong result. Needles are matched case-insensitively on the error string.
 fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
+        (
+            // Answered a batch at a time, a scalar subquery of two rows is
+            // still the error of the row that asked.
+            "reject batched scalar subquery of two rows",
+            "SELECT u.id, (SELECT o.total FROM orders o JOIN users v ON v.id = o.user_id \
+             WHERE o.user_id = u.id) FROM users u ORDER BY u.id",
+            "scalar subquery|more than",
+        ),
         (
             // A JSON window key partitions by the JSON ladder; text that is
             // not JSON fails as it does in MySQL.
