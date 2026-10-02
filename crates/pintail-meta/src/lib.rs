@@ -38,7 +38,8 @@ static WRITE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 const WAL_CHECKPOINT_FRAMES: std::ffi::c_int = 1000;
 
 /// A number that moves whenever a [`MetaStore`] in this process commits a
-/// write, to any metadata file.
+/// write, to any metadata file, that changes more than the store's journal
+/// rows.
 ///
 /// It moves twice per commit: once as the commit begins, and once more
 /// after it has been published to other connections (in write-ahead-log
@@ -49,12 +50,39 @@ const WAL_CHECKPOINT_FRAMES: std::ffi::c_int = 1000;
 /// process that is the only writer of its metadata store, an unmoved number
 /// therefore means unchanged rows, with no file to inspect. It says nothing
 /// about what another process wrote.
+///
+/// The journal rows are the ones that record what happened and that
+/// nothing decides by: an audit event, a sync run's start and finish, the
+/// time an API key was last used. A commit that wrote only those - one of
+/// the [`MetaStore`] methods that says so - leaves the number where it was,
+/// so a request that is audited, and a replication cycle that found
+/// nothing, do not make every reader of the configuration read it again.
 #[must_use]
 pub fn write_generation() -> u64 {
     WRITE_GENERATION.load(std::sync::atomic::Ordering::Acquire)
 }
 
+thread_local! {
+    /// Set on a thread while it runs a statement that writes only journal
+    /// rows; the commit hooks, which run on that thread, read it.
+    static JOURNAL_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Journal-only commits this process has made: what the generation was
+/// spared.
+static JOURNAL_COMMITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many commits this process made that wrote only journal rows and so
+/// left [`write_generation`] where it was.
+#[must_use]
+pub fn journal_commits() -> u64 {
+    JOURNAL_COMMITS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn count_write() {
+    if JOURNAL_ONLY.get() {
+        return;
+    }
     WRITE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 }
 
@@ -81,6 +109,9 @@ fn after_logged_commit(
 /// Makes every commit on `connection` move [`write_generation`].
 fn count_commits(connection: &Connection) {
     connection.commit_hook(Some(|| {
+        if JOURNAL_ONLY.get() {
+            JOURNAL_COMMITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         count_write();
         // Never turns a commit into a rollback.
         false
@@ -421,6 +452,31 @@ impl MetaStore {
                 home: identity.map(|identity| (path, identity)),
             },
         })
+    }
+
+    /// Runs one autocommitted statement that writes only journal rows, so
+    /// its commit leaves [`write_generation`] where it was.
+    ///
+    /// Inside a transaction the caller opened on this connection the
+    /// statement commits nothing by itself, and the transaction's own
+    /// commit is counted like any other.
+    pub(crate) fn journal_write<T>(
+        &self,
+        write: impl FnOnce(&Connection) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        /// Clears the mark however the statement ends.
+        struct Unmark;
+        impl Drop for Unmark {
+            fn drop(&mut self) {
+                JOURNAL_ONLY.set(false);
+            }
+        }
+        if !self.connection.is_autocommit() {
+            return write(&self.connection);
+        }
+        JOURNAL_ONLY.set(true);
+        let _unmark = Unmark;
+        write(&self.connection)
     }
 
     /// Returns the schema version applied to this database.

@@ -981,8 +981,8 @@ impl MetaStore {
     ///
     /// Returns an error when the event row cannot be written.
     pub fn record_audit_event(&self, event: &NewAuditEvent<'_>) -> Result<()> {
-        self.connection
-            .execute(
+        self.journal_write(|connection| {
+            connection.execute(
                 "INSERT INTO audit_log (\
                    id, workspace_id, actor_type, actor_id, actor_label, action, \
                    target_type, target_id, detail_json, created_at, client_ip\
@@ -1001,8 +1001,53 @@ impl MetaStore {
                     event.client_ip,
                 ],
             )
-            .context("failed to record audit event")?;
+        })
+        .context("failed to record audit event")?;
         Ok(())
+    }
+
+    /// Records several audit events in one commit: all of them or none.
+    ///
+    /// One commit synchronizes the log once however many events it holds,
+    /// where an event apiece synchronizes it per event and has every writer
+    /// queue for the write lock in between.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any event row cannot be written; none is then
+    /// kept.
+    pub fn record_audit_events(&self, events: &[NewAuditEvent<'_>]) -> Result<()> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        self.journal_write(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            {
+                let mut insert = transaction.prepare_cached(
+                    "INSERT INTO audit_log (\
+                       id, workspace_id, actor_type, actor_id, actor_label, action, \
+                       target_type, target_id, detail_json, created_at, client_ip\
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                )?;
+                for event in events {
+                    insert.execute(params![
+                        event.id,
+                        event.workspace_id,
+                        event.actor_type,
+                        event.actor_id,
+                        event.actor_label,
+                        event.action,
+                        event.target_type,
+                        event.target_id,
+                        event.detail_json,
+                        event.created_at,
+                        event.client_ip,
+                    ])?;
+                }
+            }
+            transaction.commit()
+        })
+        .context("failed to record audit events")
     }
 
     /// Lists recent audit events for one workspace, most recent first.
@@ -1583,12 +1628,13 @@ impl MetaStore {
     ///
     /// Returns an error when the key cannot be updated.
     pub fn touch_api_key(&self, id: &str, now: &str) -> Result<()> {
-        self.connection
-            .execute(
+        self.journal_write(|connection| {
+            connection.execute(
                 "UPDATE api_keys SET last_used_at = ?2 WHERE id = ?1",
                 (id, now),
             )
-            .context("failed to update API-key usage")?;
+        })
+        .context("failed to update API-key usage")?;
         Ok(())
     }
 
@@ -1618,14 +1664,15 @@ impl MetaStore {
         kind: &str,
         now: &str,
     ) -> Result<()> {
-        self.connection
-            .execute(
+        self.journal_write(|connection| {
+            connection.execute(
                 "INSERT INTO sync_runs (\
                    id, db_id, table_name, kind, status, started_at\
                  ) VALUES (?1, ?2, ?3, ?4, 'running', ?5)",
                 (id, database_id, table_name, kind, now),
             )
-            .context("failed to start sync run")?;
+        })
+        .context("failed to start sync run")?;
         Ok(())
     }
 
@@ -1648,12 +1695,13 @@ impl MetaStore {
         let bytes = i64::try_from(bytes).context("sync bytes exceed SQLite range")?;
         let duration = i64::try_from(duration_ms).context("sync duration exceeds SQLite range")?;
         let changed = self
-            .connection
-            .execute(
-                "UPDATE sync_runs SET status = ?2, rows = ?3, bytes = ?4, \
-                   duration_ms = ?5, error = ?6 WHERE id = ?1",
-                (id, status, rows, bytes, duration, error),
-            )
+            .journal_write(|connection| {
+                connection.execute(
+                    "UPDATE sync_runs SET status = ?2, rows = ?3, bytes = ?4, \
+                       duration_ms = ?5, error = ?6 WHERE id = ?1",
+                    (id, status, rows, bytes, duration, error),
+                )
+            })
             .context("failed to complete sync run")?;
         if changed == 0 {
             bail!("sync run {id} does not exist");
