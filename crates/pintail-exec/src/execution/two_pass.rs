@@ -4474,16 +4474,34 @@ fn dense_row_slots(
     let no_nulls = readers
         .iter()
         .all(|(codes, validity, _)| validity.no_nulls() && codes.len() >= rows);
-    match (readers.as_slice(), tables.as_slice()) {
-        // One NOT NULL key: a lookup per listed row, whole span or filtered.
-        ([(codes, ..)], [table]) if no_nulls => match selected {
-            FoldRows::Span(span) => {
-                slots.extend(codes[span.clone()].iter().map(|code| share(table, *code)));
+    let out_of_bounds = || ExecError::InvalidBatch("dictionary code is out of bounds");
+    match (readers.as_slice(), tables.as_slice(), selected) {
+        // NOT NULL keys over a whole span: each key's codes translate in one
+        // pass - a register permutation where the dictionary is small - and
+        // the shares add up column by column.
+        (_, _, FoldRows::Span(span)) if no_nulls && !readers.is_empty() => {
+            let mut shares = Vec::new();
+            for (index, ((codes, ..), table)) in readers.iter().zip(&tables).enumerate() {
+                let codes = &codes[span.clone()];
+                if index == 0 {
+                    if !pintail_simd::translate_u32(codes, table, &mut slots) {
+                        return Err(out_of_bounds());
+                    }
+                    continue;
+                }
+                shares.clear();
+                if !pintail_simd::translate_u32(codes, table, &mut shares) {
+                    return Err(out_of_bounds());
+                }
+                for (slot, share) in slots.iter_mut().zip(&shares) {
+                    *slot = slot.saturating_add(*share);
+                }
             }
-            FoldRows::Picked(picked) => {
-                slots.extend(picked.iter().map(|row| share(table, codes[*row as usize])));
-            }
-        },
+        }
+        // One NOT NULL key, filtered: a lookup per listed row.
+        ([(codes, ..)], [table], FoldRows::Picked(picked)) if no_nulls => {
+            slots.extend(picked.iter().map(|row| share(table, codes[*row as usize])));
+        }
         _ => {
             for row in batch.selection().selected_rows() {
                 let mut slot = 0_u32;
@@ -4497,8 +4515,11 @@ fn dense_row_slots(
         }
     }
     let slot_count = dense_slot_count(keys).expect("text keys have dense slots");
-    if slots.iter().any(|slot| *slot as usize >= slot_count) {
-        return Err(ExecError::InvalidBatch("dictionary code is out of bounds"));
+    // The greatest slot, not a search for the first bad one: a fold with no
+    // early exit runs as a vector maximum.
+    let greatest = slots.iter().copied().fold(0_u32, u32::max);
+    if !slots.is_empty() && greatest as usize >= slot_count {
+        return Err(out_of_bounds());
     }
     Ok(Some(slots))
 }
