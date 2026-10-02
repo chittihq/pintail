@@ -542,6 +542,35 @@ pub(crate) fn load_database(
     record.ok_or_else(|| ApiError::not_found("database does not exist"))
 }
 
+/// What [`load_database`] checks, for a handler that needs the check and
+/// not the record: the database exists, in the session's workspace when
+/// the caller is a session. In the server the answer is read from the
+/// store once per write generation rather than once per request, so a
+/// query does not read a row on the thread that serves its connection to
+/// learn what the store has not been written to change.
+pub(crate) fn require_database(
+    state: &ApiState,
+    principal: &AuthPrincipal,
+    id: &str,
+) -> Result<(), ApiError> {
+    let workspace = if principal.database_id.is_some() {
+        None
+    } else {
+        Some(principal.require_workspace()?)
+    };
+    let generation = state.metadata_generation();
+    if let Some(generation) = generation
+        && state.database_stands(id, workspace, generation)
+    {
+        return Ok(());
+    }
+    load_database(state, principal, id)?;
+    if let Some(generation) = generation {
+        state.keep_database(id, workspace, generation);
+    }
+    Ok(())
+}
+
 fn validate_database_request(name: &str, dsn: &str, mode: &str) -> Result<(), ApiError> {
     if name.trim().is_empty() {
         return Err(ApiError::bad_request("database name is required"));

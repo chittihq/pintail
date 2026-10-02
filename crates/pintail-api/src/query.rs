@@ -306,7 +306,7 @@ pub(crate) async fn query(
 ) -> Result<Json<QueryResponse>, ApiError> {
     principal.require_scope("query")?;
     principal.authorize_database(&request.db)?;
-    crate::databases::load_database(&state, &principal, &request.db)?;
+    crate::databases::require_database(&state, &principal, &request.db)?;
     let session = QuerySession::of(&request)?;
     let response = execute_query(&state, &request.db, &request.sql, session).await?;
     // The answer does not wait for its audit row: the row is queued for

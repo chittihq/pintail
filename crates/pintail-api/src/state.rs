@@ -200,6 +200,49 @@ struct ApiStateInner {
     /// Audit events of the actions that arrive at the workload's rate,
     /// waiting for the one thread that writes them (`audit::record_later`).
     audit: crate::audit::Queue,
+    /// What the store last said a session and a database stand for, each
+    /// held against the store's write generation it was read under
+    /// ([`Standing`]).
+    standing: Mutex<StandingReads>,
+    /// How many requests were answered from `standing` instead of the
+    /// store.
+    standing_hits: AtomicU64,
+    /// Set by a test that stands in for the server process, which is the
+    /// only writer of its store.
+    sole_writer_assumed: AtomicBool,
+}
+
+/// Something read from the metadata store, and the store's write
+/// generation taken before it was read.
+///
+/// The server is the only writer of its store, and every commit it makes
+/// to anything but the journal rows moves the generation: while the number
+/// stands, the rows that were read are the rows that are there, and
+/// reading them again would return the same. A change made by this
+/// process is therefore seen by the very next request. One made by another
+/// process - an operator editing the file - moves nothing here, which is
+/// why a reading is also let lapse after [`STANDING_LAPSES`].
+struct Standing<T> {
+    value: T,
+    generation: u64,
+    read_at: Instant,
+}
+
+/// How long a reading is reused before the store is read again whatever
+/// the generation says.
+const STANDING_LAPSES: Duration = Duration::from_secs(5);
+
+/// Readings kept per kind before the oldest way of bounding them is used:
+/// all are dropped and read again.
+const STANDING_ENTRIES: usize = 4096;
+
+#[derive(Default)]
+struct StandingReads {
+    /// The role an enabled user holds in a workspace, by (user, workspace).
+    roles: HashMap<(String, String), Standing<String>>,
+    /// The databases found to exist: in a workspace, for a session, or at
+    /// all, for the API key scoped to one.
+    databases: HashMap<(String, Option<String>), Standing<()>>,
 }
 
 #[derive(Clone)]
@@ -286,6 +329,9 @@ impl ApiState {
         Ok(Self {
             inner: Some(Arc::new(ApiStateInner {
                 audit: crate::audit::Queue::new(metadata_path.clone()),
+                standing: Mutex::new(StandingReads::default()),
+                standing_hits: AtomicU64::new(0),
+                sole_writer_assumed: AtomicBool::new(false),
                 metadata_path,
                 data_dir,
                 jwt_secret: jwt_secret.into(),
@@ -361,6 +407,124 @@ impl ApiState {
             .as_ref()
             .map(|inner| inner.metadata_path.as_path())
             .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))
+    }
+
+    /// The metadata store's write generation, in a process whose reading
+    /// of it can stand in for reading the store: the only writer of its
+    /// data directory. `None` anywhere else, where nothing is kept.
+    ///
+    /// Take it before reading the store, and keep what was read against
+    /// the number taken: a commit after that moves it.
+    pub(crate) fn metadata_generation(&self) -> Option<u64> {
+        let inner = self.inner.as_ref()?;
+        (inner.sole_writer_assumed.load(Ordering::Acquire)
+            || pintail_store::writer_locks_retained())
+        .then(pintail_meta::write_generation)
+    }
+
+    /// Lets a test stand in for the server process.
+    #[cfg(test)]
+    pub(crate) fn assume_sole_writer(&self) {
+        if let Some(inner) = &self.inner {
+            inner.sole_writer_assumed.store(true, Ordering::Release);
+        }
+    }
+
+    /// Requests answered from a standing reading instead of the store.
+    #[cfg(test)]
+    pub(crate) fn standing_hits(&self) -> u64 {
+        self.inner
+            .as_ref()
+            .map_or(0, |inner| inner.standing_hits.load(Ordering::Acquire))
+    }
+
+    /// The role `user_id` was last read to hold in `workspace_id`, as an
+    /// enabled account, if that reading stands under `generation`.
+    pub(crate) fn standing_role(
+        &self,
+        user_id: &str,
+        workspace_id: &str,
+        generation: u64,
+    ) -> Option<String> {
+        let inner = self.inner.as_ref()?;
+        let standing = inner.standing.lock().ok()?;
+        let kept = standing
+            .roles
+            .get(&(user_id.to_owned(), workspace_id.to_owned()))?;
+        let stands = kept.generation == generation && kept.read_at.elapsed() < STANDING_LAPSES;
+        stands.then(|| {
+            inner.standing_hits.fetch_add(1, Ordering::AcqRel);
+            kept.value.clone()
+        })
+    }
+
+    /// Keeps the role read for an enabled user under `generation`.
+    pub(crate) fn keep_role(&self, user_id: &str, workspace_id: &str, role: &str, generation: u64) {
+        if let Some(inner) = &self.inner
+            && let Ok(mut standing) = inner.standing.lock()
+        {
+            if standing.roles.len() >= STANDING_ENTRIES {
+                standing.roles.clear();
+            }
+            standing.roles.insert(
+                (user_id.to_owned(), workspace_id.to_owned()),
+                Standing {
+                    value: role.to_owned(),
+                    generation,
+                    read_at: Instant::now(),
+                },
+            );
+        }
+    }
+
+    /// Whether `database_id` was last read to exist - in `workspace_id`
+    /// when one is given - and that reading stands under `generation`.
+    pub(crate) fn database_stands(
+        &self,
+        database_id: &str,
+        workspace_id: Option<&str>,
+        generation: u64,
+    ) -> bool {
+        let Some(inner) = &self.inner else {
+            return false;
+        };
+        let Ok(standing) = inner.standing.lock() else {
+            return false;
+        };
+        let stands = standing
+            .databases
+            .get(&(database_id.to_owned(), workspace_id.map(str::to_owned)))
+            .is_some_and(|kept| {
+                kept.generation == generation && kept.read_at.elapsed() < STANDING_LAPSES
+            });
+        if stands {
+            inner.standing_hits.fetch_add(1, Ordering::AcqRel);
+        }
+        stands
+    }
+
+    /// Keeps the finding that `database_id` exists under `generation`.
+    pub(crate) fn keep_database(
+        &self,
+        database_id: &str,
+        workspace_id: Option<&str>,
+        generation: u64,
+    ) {
+        if let Some(inner) = &self.inner
+            && let Ok(mut standing) = inner.standing.lock()
+        {
+            if standing.databases.len() >= STANDING_ENTRIES {
+                standing.databases.clear();
+            }
+            standing.databases.insert(
+                (database_id.to_owned(), workspace_id.map(str::to_owned)),
+                Standing {
+                    value: (),
+                    generation,
+                    read_at: Instant::now(),
+                },
+            );
+        }
     }
 
     /// The queue of audit events waiting for their writer.

@@ -445,10 +445,28 @@ pub(crate) fn authenticate_jwt(state: &ApiState, token: &str) -> Result<AuthPrin
     // issue fresh admin invites to it, which renews the access indefinitely.
     // Disabling an account had the same delay.
     //
-    // Two local SQLite reads per request. The identity in the token is still
-    // authenticated by its signature; only the *authority* is re-read.
+    // The identity in the token is still authenticated by its signature;
+    // only the *authority* is re-read: two local reads, on the thread that
+    // serves the connection. In the server - the only writer of its store -
+    // they are made again only once the store has been written since the
+    // last time: an account disabled or a member removed moves the write
+    // generation, so the request after it reads the store and is refused,
+    // and until then the store would say what it said before.
     let subject = token.claims.sub;
     let workspace_id = token.claims.workspace_id;
+    let generation = state.metadata_generation();
+    if let Some(generation) = generation
+        && let Some(role) = state.standing_role(&subject, &workspace_id, generation)
+    {
+        return Ok(AuthPrincipal {
+            subject,
+            role,
+            database_id: None,
+            workspace_id: Some(workspace_id),
+            scopes: vec!["*".to_owned()],
+            client_ip: None,
+        });
+    }
     let metadata = state.metadata()?;
     let user = metadata
         .user_by_id(&subject)
@@ -463,6 +481,9 @@ pub(crate) fn authenticate_jwt(state: &ApiState, token: &str) -> Result<AuthPrin
         .ok_or_else(|| {
             ApiError::unauthorized("this account is no longer a member of that workspace")
         })?;
+    if let Some(generation) = generation {
+        state.keep_role(&subject, &workspace_id, &role, generation);
+    }
     Ok(AuthPrincipal {
         subject,
         role,
@@ -606,5 +627,146 @@ fn is_expired(value: &str) -> bool {
     match DateTime::parse_from_rfc3339(value) {
         Ok(expires) => expires <= Utc::now(),
         Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+
+    use crate::test_support::Node;
+
+    async fn session(node: &Node, bearer: &str) -> (StatusCode, serde_json::Value) {
+        node.call("GET", "/api/session", Some(bearer), None).await
+    }
+
+    /// In the server a session's authority is read from the store once and
+    /// then stands until the store is written: a journal row leaves it
+    /// standing, and a demotion, a removal or a disabled account is seen by
+    /// the very next request.
+    #[tokio::test]
+    async fn a_session_is_read_again_only_after_the_store_is_written() {
+        let node = Node::new().await;
+        node.state.assume_sole_writer();
+        let (member_id, member) = node.member(&node.first_workspace, "viewer");
+
+        // The generation is the process's: a test beside this one that
+        // writes its own store moves it too. A round nothing else wrote
+        // during is the evidence, and an audit row that moved the
+        // generation would leave no such round.
+        let mut undisturbed = false;
+        for round in 0..64 {
+            let generation = pintail_meta::write_generation();
+            let (status, first) = session(&node, &member).await;
+            assert_eq!(status, StatusCode::OK, "{first}");
+            assert_eq!(first["role"], "viewer");
+            node.metadata()
+                .record_audit_event(&pintail_meta::NewAuditEvent {
+                    id: &format!("audit_example_{round}"),
+                    workspace_id: &node.first_workspace,
+                    actor_type: "user",
+                    actor_id: &member_id,
+                    actor_label: "member1@example.com",
+                    action: "query.run",
+                    target_type: None,
+                    target_id: None,
+                    detail_json: None,
+                    created_at: "2026-10-03T00:00:00Z",
+                    client_ip: None,
+                })
+                .expect("audit");
+            let read = node.state.standing_hits();
+            let (status, _) = session(&node, &member).await;
+            assert_eq!(status, StatusCode::OK);
+            if pintail_meta::write_generation() == generation {
+                assert_eq!(
+                    node.state.standing_hits(),
+                    read + 1,
+                    "answered without the store, the audit row notwithstanding"
+                );
+                undisturbed = true;
+                break;
+            }
+        }
+        assert!(undisturbed, "an audit row moved the write generation");
+
+        assert!(
+            node.metadata()
+                .update_workspace_member_role(&node.first_workspace, &member_id, "admin")
+                .expect("promotion")
+        );
+        let read = node.state.standing_hits();
+        let (status, promoted) = session(&node, &member).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(promoted["role"], "admin");
+        assert_eq!(node.state.standing_hits(), read, "read from the store");
+
+        assert!(
+            node.metadata()
+                .remove_workspace_member(&node.first_workspace, &member_id)
+                .expect("removal")
+        );
+        let (status, _) = session(&node, &member).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let (status, _) = session(&node, &node.admin).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = session(&node, &node.admin).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            node.metadata()
+                .set_user_enabled(&node.admin_id, false)
+                .expect("disable")
+        );
+        let (status, _) = session(&node, &node.admin).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// The database a query names is checked against the store once per
+    /// write generation, and a database deleted is gone for the next query.
+    #[tokio::test]
+    async fn a_queried_database_is_checked_again_only_after_the_store_is_written() {
+        let node = Node::new().await;
+        node.state.assume_sole_writer();
+        let database = node.database(&node.admin, "shop").await;
+        let body = format!(r#"{{"db":"{database}","sql":"SELECT 1"}}"#);
+        let query = || node.call("POST", "/api/query", Some(&node.admin), Some(&body));
+
+        // As above: one round that nothing else in the process wrote
+        // during.
+        let mut undisturbed = false;
+        for _ in 0..64 {
+            let generation = pintail_meta::write_generation();
+            let (first, _) = query().await;
+            assert_ne!(first, StatusCode::NOT_FOUND);
+            let read = node.state.standing_hits();
+            let (second, _) = query().await;
+            assert_eq!(second, first);
+            if pintail_meta::write_generation() == generation {
+                assert_eq!(
+                    node.state.standing_hits(),
+                    read + 2,
+                    "the session and the database both stood"
+                );
+                undisturbed = true;
+                break;
+            }
+        }
+        assert!(undisturbed, "a query moved the write generation");
+
+        assert!(node.metadata().delete_database(&database).expect("delete"));
+        let (status, _) = query().await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// Any other process reads the store on every request, as before.
+    #[tokio::test]
+    async fn nothing_stands_outside_the_server() {
+        let node = Node::new().await;
+        for _ in 0..3 {
+            let (status, _) = session(&node, &node.admin).await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        assert_eq!(node.state.standing_hits(), 0);
     }
 }
