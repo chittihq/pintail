@@ -2695,12 +2695,16 @@ fn drain_two_pass_window(
             spill,
         )?;
     }
+    // What the range fold left for the scatter: every morsel when it took
+    // none, the rest of the ones it stopped in when it gave up part-way.
+    let mut left = None;
     if let TwoPassKeySource::Int { column, group_type } = keys
         && (matches!(
             group_type.storage_type(),
             DataType::Int64 | DataType::UInt64
         ) || matches!(group_type, DataType::Date32 | DataType::DateTime64 { .. }))
-        && fold_int_range_window(
+    {
+        left = fold_int_range_window(
             window,
             column,
             lanes,
@@ -2711,26 +2715,30 @@ fn drain_two_pass_window(
             memory,
             group_reserved,
             spill,
-        )?
-    {
-        window.clear();
-        memory.release(*window_reserved);
-        *window_reserved = 0;
-        return Ok(());
+        )?;
+        if left.is_none() {
+            window.clear();
+            memory.release(*window_reserved);
+            *window_reserved = 0;
+            return Ok(());
+        }
     }
     // Row-range morsels rather than whole batches: the window's width then
     // comes from the pool, and a window of one or two batches - the tail of
     // a scan, or a small table - no longer scatters on one or two threads.
-    let morsels: Vec<(Morsel<'_>, &Vec<Vec<u64>>)> = morsel_plan(
-        window.iter().map(|(batch, _)| batch.row_count()),
-        default_morsel_limit(),
-    )
-    .into_iter()
-    .map(|(index, rows)| {
-        let (batch, translations) = &window[index];
-        (Morsel { batch, rows }, translations)
-    })
-    .collect();
+    let morsels: Vec<(Morsel<'_>, &Vec<Vec<u64>>)> = left
+        .unwrap_or_else(|| {
+            morsel_plan(
+                window.iter().map(|(batch, _)| batch.row_count()),
+                default_morsel_limit(),
+            )
+        })
+        .into_iter()
+        .map(|(index, rows)| {
+            let (batch, translations) = &window[index];
+            (Morsel { batch, rows }, translations)
+        })
+        .collect();
     let mut sets = morsels
         .par_iter()
         .map(
@@ -2834,6 +2842,10 @@ struct IntRangeFold {
     /// when the groups are committed: merging them whole after every window
     /// was a serial pass over every slot of every partial.
     folds: Vec<PackedFold>,
+    /// The pool thread each fold belongs to, fold for fold. A worker takes
+    /// its own fold back in every window: handed whichever was free, it
+    /// pulled another core's megabytes of slots across for every morsel.
+    seats: Vec<usize>,
     /// Rows folded so far, for the density bound.
     rows: usize,
     reserved: usize,
@@ -2938,32 +2950,50 @@ fn key_bounds(
     }
 }
 
-/// Each listed row's slot: `1 + key - base`, or 0 for a NULL key. Every
-/// key was checked against the range before the fold began.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+/// Each listed row's slot: `1 + key - base`, or 0 for a NULL key. `false`
+/// when a key lies outside the `span` keys from `base`; the slots are then
+/// not to be used.
+///
+/// The check rides the pass that computes the slots: an offset is inside
+/// when neither it nor `span - 1 - offset` has its top bit set, and the OR
+/// of both over every row answers for all of them at once.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 fn range_slots(
     keys: PackedInts<'_>,
     validity: &crate::array::ValidityMask,
     rows: &FoldRows<'_>,
     base: i128,
+    span: usize,
     slots: &mut Vec<u32>,
-) {
+) -> bool {
     slots.clear();
-    // Offsets are below RANGE_SLOT_CAP, so the wrapping difference in the
-    // key's own width is the offset, and it fits u32.
+    let last = (span as u64).wrapping_sub(1);
+    let mut outside = 0_u64;
+    // Inside the range an offset is below RANGE_SLOT_CAP, so the wrapping
+    // difference in the key's own width is the offset, and it fits u32.
     macro_rules! fill {
-        ($values:expr, $base:expr) => {{
+        ($values:expr, $base:expr, $bits:expr) => {{
             let values = $values;
             let base = $base;
+            let bits = $bits;
+            let mut slot = |offset| {
+                let offset: u64 = bits(offset);
+                outside |= offset | last.wrapping_sub(offset);
+                (offset as u32).wrapping_add(1)
+            };
             match rows {
                 FoldRows::Span(span) if validity.no_nulls() => slots.extend(
                     values[span.clone()]
                         .iter()
-                        .map(|key| (key.wrapping_sub(base) as u32) + 1),
+                        .map(|key| slot(key.wrapping_sub(base))),
                 ),
                 FoldRows::Span(span) => slots.extend(span.clone().map(|row| {
                     if validity.is_valid(row) {
-                        (values[row].wrapping_sub(base) as u32) + 1
+                        slot(values[row].wrapping_sub(base))
                     } else {
                         0
                     }
@@ -2971,7 +3001,7 @@ fn range_slots(
                 FoldRows::Picked(picked) => slots.extend(picked.iter().map(|row| {
                     let row = *row as usize;
                     if validity.is_valid(row) {
-                        (values[row].wrapping_sub(base) as u32) + 1
+                        slot(values[row].wrapping_sub(base))
                     } else {
                         0
                     }
@@ -2980,23 +3010,30 @@ fn range_slots(
         }};
     }
     match keys {
-        PackedInts::Signed(values) => fill!(values, base as i64),
-        PackedInts::Unsigned(values) => fill!(values, base as u64),
+        PackedInts::Signed(values) => fill!(values, base as i64, |offset: i64| offset as u64),
+        PackedInts::Unsigned(values) => fill!(values, base as u64, |offset: u64| offset),
     }
+    outside >> 63 == 0
 }
 
-/// Folds one morsel into a worker's range fold.
+/// Folds one morsel into a worker's range fold, as far as its keys lie in
+/// the range: the row it stopped at when a key does not, with the rows
+/// before it folded and the ones from it on untouched.
 fn fold_range_morsel(
     morsel: &Morsel<'_>,
     column: usize,
     lanes: &[TwoPassLane],
-    base: i128,
+    (base, span, signed): (i128, usize, bool),
     fold: &mut PackedFold,
-) -> Result<(), ExecError> {
+) -> Option<usize> {
     let batch = morsel.batch;
-    let (keys, validity) = int_key_column(batch, column).ok_or(ExecError::InvalidBatch(
-        "range fold key lost its packed projection",
-    ))?;
+    let Some((keys, validity)) = int_key_column(batch, column) else {
+        return Some(morsel.rows.start);
+    };
+    // Keys of the other signedness are not offsets from this base.
+    if matches!(keys, PackedInts::Signed(_)) != signed {
+        return Some(morsel.rows.start);
+    }
     let inputs = fold.resolve(batch, lanes);
     let readers = inputs.is_none().then(|| lane_readers(batch, lanes));
     let mut selected = Vec::new();
@@ -3005,7 +3042,9 @@ fn fold_range_morsel(
     while start < morsel.rows.end {
         let end = start.saturating_add(RANGE_FOLD_ROWS).min(morsel.rows.end);
         let rows = fold_rows(batch, start..end, &mut selected);
-        range_slots(keys, validity, &rows, base, &mut slots);
+        if !range_slots(keys, validity, &rows, base, span, &mut slots) {
+            return Some(start);
+        }
         match (&inputs, &readers) {
             (Some(inputs), _) => fold.fold(inputs, &slots, &rows),
             (None, Some(readers)) => {
@@ -3017,7 +3056,7 @@ fn fold_range_morsel(
         }
         start = end;
     }
-    Ok(())
+    None
 }
 
 /// Commits the range fold's groups into the partition maps, where the
@@ -3439,9 +3478,79 @@ fn joined_pieces(pieces: Vec<(usize, Vec<ReadyColumn>)>) -> (usize, Vec<ReadyCol
     (total, columns.unwrap_or_default())
 }
 
-/// Folds one window through the integer-range fold. `false`, with the fold
-/// committed to the maps and switched off, when the key or the lanes do not
-/// fit it; the caller then scatters the window.
+/// Row ranges of a window's batches: each a batch's position in the window
+/// and the physical rows of it.
+type MorselRanges = Vec<(usize, std::ops::Range<usize>)>;
+
+/// Folds the morsels of `pending` into the active range's folds, each pool
+/// thread into its own. A morsel stops at the first rows holding a key
+/// outside the range, and what it did not fold comes back.
+fn fold_range_morsels(
+    active: &mut IntRangeFold,
+    window: &[(RecordBatch, Vec<Vec<u64>>)],
+    pending: &[(usize, std::ops::Range<usize>)],
+    column: usize,
+    lanes: &[TwoPassLane],
+    packed: &[Option<PackedLane>],
+) -> Result<MorselRanges, ExecError> {
+    let poisoned = || ExecError::InvalidBatch("range fold seat poisoned");
+    let workers = rayon::current_num_threads().max(1);
+    let range = (active.base, active.span, active.signed);
+    let slot_count = active.slot_count;
+    // One seat per pool thread and one for a caller outside the pool. A
+    // thread folds one morsel at a time, so its seat is never contended.
+    let mut seats: Vec<std::sync::Mutex<Option<PackedFold>>> = Vec::new();
+    seats.resize_with(workers + 1, || std::sync::Mutex::new(None));
+    let mut spare = Vec::new();
+    for (seat, fold) in std::mem::take(&mut active.seats)
+        .into_iter()
+        .zip(std::mem::take(&mut active.folds))
+    {
+        let seat = seats[seat.min(workers)].get_mut().map_err(|_| poisoned())?;
+        if seat.is_none() {
+            *seat = Some(fold);
+        } else {
+            spare.push(fold);
+        }
+    }
+    let fresh = || PackedFold::sharing(slot_count, packed, lanes);
+    let rest = pending
+        .par_iter()
+        .map(|(index, rows)| {
+            let seat = rayon::current_thread_index().map_or(workers, |index| index.min(workers));
+            let mut seat = seats[seat].lock().map_err(|_| poisoned())?;
+            let fold = seat.get_or_insert_with(fresh);
+            let morsel = Morsel {
+                batch: &window[*index].0,
+                rows: rows.clone(),
+            };
+            Ok(fold_range_morsel(&morsel, column, lanes, range, fold)
+                .map(|stopped| (*index, stopped..rows.end)))
+        })
+        .collect::<Result<Vec<_>, ExecError>>();
+    for (index, seat) in seats.into_iter().enumerate() {
+        if let Some(fold) = seat.into_inner().map_err(|_| poisoned())? {
+            active.seats.push(index);
+            active.folds.push(fold);
+        }
+    }
+    for fold in spare {
+        active.seats.push(workers);
+        active.folds.push(fold);
+    }
+    Ok(rest?.into_iter().flatten().collect())
+}
+
+/// Folds one window through the integer-range fold. `None` when every row
+/// was folded; otherwise the morsels left for the caller to scatter, with
+/// the fold committed to the maps and switched off: the key or the lanes
+/// do not fit it.
+///
+/// A window after the first folds against the range the fold already has,
+/// each morsel checking its keys as it computes their slots. Only the rows
+/// that fall outside it - a table whose keys grow, a first window - have
+/// their bounds read ahead of the fold, which is a second pass over keys
+/// that have left the cache by the time a window is folded.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn fold_int_range_window(
     window: &[(RecordBatch, Vec<Vec<u64>>)],
@@ -3454,11 +3563,11 @@ fn fold_int_range_window(
     memory: &MemoryTracker,
     group_reserved: &mut usize,
     spill: &mut GroupSpill<'_>,
-) -> Result<bool, ExecError> {
+) -> Result<Option<MorselRanges>, ExecError> {
     let mut give_up = |range: &mut IntRange,
                        maps: &mut [GroupKeyMap],
                        group_reserved: &mut usize|
-     -> Result<bool, ExecError> {
+     -> Result<(), ExecError> {
         if let IntRange::Active(active) = std::mem::replace(range, IntRange::Off) {
             fold_int_range_into_maps(
                 &active,
@@ -3470,10 +3579,14 @@ fn fold_int_range_window(
                 spill,
             )?;
         }
-        Ok(false)
+        Ok(())
     };
+    let mut pending = morsel_plan(
+        window.iter().map(|(batch, _)| batch.row_count()),
+        default_morsel_limit(),
+    );
     if matches!(range, IntRange::Off) {
-        return Ok(false);
+        return Ok(Some(pending));
     }
     let packed = lanes
         .iter()
@@ -3481,19 +3594,32 @@ fn fold_int_range_window(
         .map(|(lane, aggregate)| packed_lane(lane, aggregate))
         .collect::<Vec<_>>();
     if packed.iter().any(Option::is_none) {
-        return give_up(range, maps, group_reserved);
+        give_up(range, maps, group_reserved)?;
+        return Ok(Some(pending));
     }
-    let morsels: Vec<Morsel<'_>> = morsel_plan(
-        window.iter().map(|(batch, _)| batch.row_count()),
-        default_morsel_limit(),
-    )
-    .into_iter()
-    .map(|(index, rows)| Morsel {
-        batch: &window[index].0,
-        rows,
-    })
-    .collect();
-    // The window's key bounds and signedness, read in parallel.
+    let window_rows: usize = window
+        .iter()
+        .map(|(batch, _)| batch.visible_row_count())
+        .sum();
+    if let IntRange::Active(active) = range
+        && active.span > 0
+    {
+        pending = fold_range_morsels(active, window, &pending, column, lanes, &packed)?;
+        if pending.is_empty() {
+            active.rows = active.rows.saturating_add(window_rows);
+            crate::counters::count(|counters| counters.range_windows_in_range += 1);
+            return Ok(None);
+        }
+    }
+    crate::counters::count(|counters| counters.range_windows_bounded += 1);
+    let morsels: Vec<Morsel<'_>> = pending
+        .iter()
+        .map(|(index, rows)| Morsel {
+            batch: &window[*index].0,
+            rows: rows.clone(),
+        })
+        .collect();
+    // The key bounds and signedness of what is left, read in parallel.
     let bounds = morsels
         .par_iter()
         .map(|morsel| {
@@ -3505,14 +3631,16 @@ fn fold_int_range_window(
         })
         .collect::<Option<Vec<_>>>();
     let Some(bounds) = bounds else {
-        return give_up(range, maps, group_reserved);
+        give_up(range, maps, group_reserved)?;
+        return Ok(Some(pending));
     };
     let signed = match range {
         IntRange::Active(active) => active.signed,
         _ => bounds.first().is_none_or(|(signed, _)| *signed),
     };
     if bounds.iter().any(|(each, _)| *each != signed) {
-        return give_up(range, maps, group_reserved);
+        give_up(range, maps, group_reserved)?;
+        return Ok(Some(pending));
     }
     let mut low_high = bounds
         .iter()
@@ -3529,26 +3657,26 @@ fn fold_int_range_window(
             (low.min(other_low), high.max(other_high))
         }));
     }
-    let window_rows: usize = window
-        .iter()
-        .map(|(batch, _)| batch.visible_row_count())
-        .sum();
     let rows_seen = match range {
         IntRange::Active(active) => active.rows,
         _ => 0,
     }
     .saturating_add(window_rows);
     let (base, span) = match low_high {
-        Some((low, high)) => match usize::try_from(high - low + 1) {
-            Ok(span) => (low, span),
-            Err(_) => return give_up(range, maps, group_reserved),
-        },
+        Some((low, high)) => {
+            let Ok(span) = usize::try_from(high - low + 1) else {
+                give_up(range, maps, group_reserved)?;
+                return Ok(Some(pending));
+            };
+            (low, span)
+        }
         None => (0, 0),
     };
     // Dense enough to beat a hash table: no wider than the rows that fill
     // it (a small floor lets a short input in), and within the cache bound.
     if span > RANGE_SLOT_CAP || span > rows_seen.max(4_096) {
-        return give_up(range, maps, group_reserved);
+        give_up(range, maps, group_reserved)?;
+        return Ok(Some(pending));
     }
     let slot_count = span + 1;
     let workers = rayon::current_num_threads().max(1);
@@ -3564,7 +3692,8 @@ fn fold_int_range_window(
     };
     if rebase {
         if memory.reserve(needed).is_err() {
-            return give_up(range, maps, group_reserved);
+            give_up(range, maps, group_reserved)?;
+            return Ok(Some(pending));
         }
         let mut folds = Vec::new();
         let mut rows = 0;
@@ -3588,6 +3717,7 @@ fn fold_int_range_window(
             span,
             signed,
             slot_count,
+            seats: (0..folds.len()).collect(),
             folds,
             rows,
             reserved: needed,
@@ -3598,25 +3728,15 @@ fn fold_int_range_window(
     let IntRange::Active(active) = range else {
         unreachable!("the range was just made active");
     };
-    let pool = std::sync::Mutex::new(std::mem::take(&mut active.folds));
-    let fresh = || PackedFold::sharing(slot_count, &packed, lanes);
-    morsels.par_iter().try_for_each(|morsel| {
-        let taken = pool
-            .lock()
-            .map_err(|_| ExecError::InvalidBatch("range fold pool poisoned"))?
-            .pop();
-        let mut fold = taken.unwrap_or_else(fresh);
-        let outcome = fold_range_morsel(morsel, column, lanes, base, &mut fold);
-        pool.lock()
-            .map_err(|_| ExecError::InvalidBatch("range fold pool poisoned"))?
-            .push(fold);
-        outcome
-    })?;
-    active.folds = pool
-        .into_inner()
-        .map_err(|_| ExecError::InvalidBatch("range fold pool poisoned"))?;
+    drop(morsels);
+    // Every key left was just measured into the range.
+    if !fold_range_morsels(active, window, &pending, column, lanes, &packed)?.is_empty() {
+        return Err(ExecError::InvalidBatch(
+            "range fold met a key outside the bounds it read",
+        ));
+    }
     active.rows = rows_seen;
-    Ok(true)
+    Ok(None)
 }
 
 /// A lane whose rows reduce to one integer total and a row count, so a

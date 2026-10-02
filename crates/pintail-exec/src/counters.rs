@@ -47,6 +47,12 @@ pub struct ExecCounters {
     /// `IN (subquery)` tests of a constant answered by asking the subquery
     /// about that constant alone.
     pub membership_point_queries: u64,
+    /// Windows an integer-range fold took whole against the range it
+    /// already had, checking each key as its slot was computed.
+    pub range_windows_in_range: u64,
+    /// Windows an integer-range fold read key bounds for ahead of folding:
+    /// the first one, and any whose keys left the range.
+    pub range_windows_bounded: u64,
 }
 
 thread_local! {
@@ -66,6 +72,8 @@ thread_local! {
             lookup_rows_joined: 0,
             membership_rows_looked_up: 0,
             membership_point_queries: 0,
+            range_windows_in_range: 0,
+            range_windows_bounded: 0,
         })
     };
 }

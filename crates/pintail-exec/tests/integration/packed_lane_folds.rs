@@ -390,3 +390,30 @@ fn range_fold_groups_served_as_columns_match_general() {
         }
     }
 }
+
+/// A range fold reads a window's key bounds ahead of folding it only while
+/// the range is unknown or the keys leave it: over a stretch whose keys all
+/// lie in the first window's range, every later window is folded against
+/// that range, each key checked as its slot is computed.
+#[test]
+fn range_fold_reads_key_bounds_only_for_the_first_window_of_a_stable_range() {
+    let fixture = fixture(DataType::Int64);
+    let _ = pintail_exec::take_exec_counters();
+    let rows = run(
+        &fixture,
+        &format!("SELECT owner AS k, {LANES} FROM stock WHERE id < 200000 GROUP BY k ORDER BY k"),
+    );
+    let counters = pintail_exec::take_exec_counters();
+    // 600 keys and the NULL group.
+    assert_eq!(rows.len(), 601);
+    assert_eq!(counters.range_windows_bounded, 1, "{counters:?}");
+    assert!(counters.range_windows_in_range >= 1, "{counters:?}");
+    // Keys that widen the range are met by reading the bounds again.
+    let _ = run(
+        &fixture,
+        &format!("SELECT owner AS k, {LANES} FROM stock WHERE id < 400000 GROUP BY k ORDER BY k"),
+    );
+    let widened = pintail_exec::take_exec_counters();
+    assert!(widened.range_windows_bounded >= 2, "{widened:?}");
+    assert!(widened.range_windows_in_range >= 1, "{widened:?}");
+}
