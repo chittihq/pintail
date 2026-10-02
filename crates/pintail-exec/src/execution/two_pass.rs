@@ -1270,6 +1270,7 @@ fn streaming_two_pass(
         index: HashMap::new(),
         values: Vec::new(),
         reserved: 0,
+        recent: Vec::new(),
         collation,
     });
     // Distinct lanes take the dense slots too: each worker's partial holds
@@ -2543,6 +2544,16 @@ struct StringIntern {
     values: Vec<String>,
     /// Bytes reserved for the entries, handed back when the table is cleared.
     reserved: usize,
+    /// The ids of the first few short spellings, by their exact bytes.
+    ///
+    /// Every batch asks for the ids of its dictionary's entries again, and
+    /// a dictionary of a handful of words repeats from batch to batch.
+    /// Finding an id through the collation folds the spelling into its
+    /// sort key and hashes that: a microsecond an entry, once per entry
+    /// per batch, on the query's thread. A spelling keeps the id it was
+    /// given for as long as the table lives, so its exact bytes find it
+    /// again without the fold.
+    recent: Vec<(Box<[u8]>, u64)>,
     /// The plan's collation. Held here because the table IS the equivalence
     /// relation - two spellings share an id exactly when the collation says
     /// they are equal - so it cannot be decided per call.
@@ -2553,6 +2564,7 @@ impl StringIntern {
     fn clear(&mut self, memory: &MemoryTracker) {
         self.index = HashMap::new();
         self.values = Vec::new();
+        self.recent = Vec::new();
         memory.release(self.reserved);
         self.reserved = 0;
     }
@@ -2561,11 +2573,20 @@ impl StringIntern {
         // Group keys unify through the same sort key used by comparison,
         // hashing, DISTINCT, and joins. Keep the first-seen spelling
         // separately for MySQL-compatible GROUP BY output.
+        if let Some((_, id)) = self
+            .recent
+            .iter()
+            .find(|(spelling, _)| **spelling == *bytes)
+        {
+            return Ok(*id);
+        }
         let value = std::str::from_utf8(bytes)
             .map_err(|_| ExecError::InvalidBatch("string group key is not UTF-8"))?;
         let folded = normalized_group_text(value, self.collation).into_bytes();
         if let Some(id) = self.index.get(&folded) {
-            return Ok(*id);
+            let id = *id;
+            self.remember(bytes, id, memory);
+            return Ok(id);
         }
         let id = u64::try_from(self.values.len()).expect("intern ids fit u64");
         let entry = bytes
@@ -2577,9 +2598,29 @@ impl StringIntern {
         self.reserved = self.reserved.saturating_add(entry);
         self.index.insert(folded, id);
         self.values.push(value.to_owned());
+        self.remember(bytes, id, memory);
         Ok(id)
     }
+
+    /// Keeps a short spelling's id by its exact bytes, while there are few
+    /// of them and the query has the room.
+    fn remember(&mut self, bytes: &[u8], id: u64, memory: &MemoryTracker) {
+        if self.recent.len() >= RECENT_SPELLINGS || bytes.len() > RECENT_SPELLING_BYTES {
+            return;
+        }
+        let entry = bytes.len().saturating_add(size_of::<(Box<[u8]>, u64)>());
+        if memory.reserve(entry).is_ok() {
+            self.reserved = self.reserved.saturating_add(entry);
+            self.recent.push((bytes.into(), id));
+        }
+    }
 }
+
+/// Spellings an intern table finds by their exact bytes, and the longest
+/// it keeps that way: a search of this many short strings costs less than
+/// one fold through the collation.
+const RECENT_SPELLINGS: usize = 32;
+const RECENT_SPELLING_BYTES: usize = 64;
 
 /// Pass 2: fold every partition\'s scattered rows into its typed group
 /// map, in parallel, then clear the buckets (keeping capacity).
@@ -5403,5 +5444,53 @@ mod dense_date_tests {
                 assert_eq!(dense_date_key(YEAR_MONTH, slot), bits);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod intern_tests {
+    use super::{MemoryTracker, RECENT_SPELLINGS, StringIntern};
+
+    /// A spelling found again by its bytes has the id the collation gave
+    /// it, whether or not the table still keeps it that way, and a cleared
+    /// table has forgotten both.
+    #[test]
+    fn a_spelling_keeps_its_id_however_it_is_found() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut intern = StringIntern::default();
+        let words = (0..RECENT_SPELLINGS * 3)
+            .map(|index| format!("word-{index}"))
+            .collect::<Vec<_>>();
+        let first = words
+            .iter()
+            .map(|word| intern.intern(word.as_bytes(), &memory).expect("intern"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            first,
+            (0..words.len() as u64).collect::<Vec<_>>(),
+            "ids follow the order the spellings were met in"
+        );
+        for _ in 0..2 {
+            let again = words
+                .iter()
+                .map(|word| intern.intern(word.as_bytes(), &memory).expect("intern"))
+                .collect::<Vec<_>>();
+            assert_eq!(again, first);
+        }
+        // The same answer a table that never met the spelling before gives
+        // for two spellings the collation may hold equal.
+        let mut fresh = StringIntern::default();
+        let lower = fresh.intern(b"word-1", &memory).expect("intern");
+        let upper = fresh.intern(b"WORD-1", &memory).expect("intern");
+        let kept = intern.intern(b"WORD-1", &memory).expect("intern");
+        assert_eq!(kept == first[1], upper == lower);
+        assert_eq!(
+            intern.values[1], "word-1",
+            "the first spelling names the id"
+        );
+        fresh.clear(&memory);
+        intern.clear(&memory);
+        assert_eq!(memory.used(), 0, "a cleared table holds nothing");
+        assert_eq!(intern.intern(b"word-7", &memory).expect("intern"), 0);
     }
 }
