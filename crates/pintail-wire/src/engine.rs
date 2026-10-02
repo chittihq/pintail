@@ -2829,6 +2829,70 @@ mod inline_tests {
         }
     }
 
+    /// A statement in the inline lane is stopped by what stops it on a
+    /// worker: a cancelled execution (`KILL QUERY`) and an elapsed deadline
+    /// (`max_execution_time`) are read from the same place by the same
+    /// code, so each gives the answer a worker gives. A statement that
+    /// would take time or wait is never in the lane to begin with.
+    #[test]
+    fn a_killed_or_timed_out_statement_ends_inline_as_it_does_on_a_worker() {
+        let (_directory, _writer, engine) = loaded(10);
+        let outcome = |result: Result<String, QueryError>| match result {
+            Ok(rows) => format!("ok {rows}"),
+            Err(error) => format!("err {error}"),
+        };
+        let inline_rows = |engine: &ReplicaEngine, sql: &str, deadline| {
+            engine
+                .execute_answer_inline("db", sql, 1000, deadline)
+                .map(|answer| match answer {
+                    InlineAnswer::Answered(Answer::Whole(output)) => format!("{:?}", output.rows),
+                    other => panic!("{sql} must run inline, got {other:?}"),
+                })
+        };
+        let worker_rows = |engine: &ReplicaEngine, sql: &str, deadline| {
+            engine
+                .execute_with_deadline("db", sql, 1000, deadline)
+                .map(|output| format!("{:?}", output.rows))
+        };
+        for sql in [
+            "SELECT 1 + 1",
+            "SELECT REPEAT('ab', 2000), UPPER('abc'), MD5('a')",
+        ] {
+            // A deadline that passed before the statement started.
+            let elapsed = Instant::now().checked_sub(Duration::from_millis(1));
+            assert_eq!(
+                outcome(inline_rows(&engine, sql, elapsed)),
+                outcome(worker_rows(&engine, sql, elapsed)),
+                "{sql} past its deadline"
+            );
+            // An execution cancelled before the statement started.
+            let killed = |run: &dyn Fn() -> Result<String, QueryError>| {
+                let cancellation = pintail_exec::ExecutionCancellation::new();
+                cancellation.cancel();
+                pintail_exec::with_execution_cancellation(cancellation, run)
+            };
+            assert_eq!(
+                outcome(killed(&|| inline_rows(&engine, sql, None))),
+                outcome(killed(&|| worker_rows(&engine, sql, None))),
+                "{sql} killed"
+            );
+        }
+        // What takes time or waits is declined before anything runs.
+        for sql in [
+            "SELECT SLEEP(5)",
+            "SELECT BENCHMARK(100000000, MD5('a'))",
+            "SELECT GET_LOCK('a', 10)",
+        ] {
+            assert!(
+                matches!(
+                    engine.execute_answer_inline("db", sql, 10, None),
+                    Ok(InlineAnswer::NotBounded)
+                ),
+                "{sql} must go to a worker"
+            );
+        }
+    }
+
     /// Waiting for capacity is a worker's to do: with every slot taken the
     /// inline lane declines at once rather than holding its thread.
     #[test]

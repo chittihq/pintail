@@ -69,13 +69,22 @@ pub fn has_bounded_table_less_shape(statement: &Statement) -> bool {
     let mut count = 0;
     visit_expressions(statement, |expr| {
         count += 1;
-        // Matching a pattern is the one thing here whose cost the length of
-        // the text does not bound.
+        // Two things here have a cost the length of the text does not
+        // bound: matching a pattern, and a function whose purpose is to
+        // take time or to wait - for a clock, a lock, a replication
+        // position, a file. None of the waiting ones is implemented, and
+        // they are named so that implementing one cannot put a wait on a
+        // thread that serves other connections.
         let pattern = match expr {
             Expr::RLike { .. } | Expr::SimilarTo { .. } => true,
             Expr::Function(function) => {
                 let name = function.name.to_string().to_ascii_lowercase();
-                name.contains("regexp") || name.contains("rlike")
+                let name = name.trim_matches('`');
+                name.contains("regexp")
+                    || name.contains("rlike")
+                    || name.contains("lock")
+                    || name.contains("wait")
+                    || matches!(name, "sleep" | "benchmark" | "load_file")
             }
             _ => false,
         };
@@ -208,6 +217,14 @@ mod tests {
             "SELECT 1 UNION SELECT 2",
             "SELECT 'aaa' REGEXP '(a+)+$'",
             "SELECT REGEXP_REPLACE('abc', 'b', 'x')",
+            "SELECT SLEEP(5)",
+            "SELECT 1 + sleep(0.5)",
+            "SELECT BENCHMARK(100000000, MD5('a'))",
+            "SELECT GET_LOCK('a', 10)",
+            "SELECT IS_FREE_LOCK('a')",
+            "SELECT SOURCE_POS_WAIT('f', 4)",
+            "SELECT WAIT_FOR_EXECUTED_GTID_SET('x', 10)",
+            "SELECT LOAD_FILE('/etc/hostname')",
             "SHOW TABLES",
             wide.as_str(),
         ] {
