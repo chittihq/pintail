@@ -26,7 +26,16 @@ COPY tests/sqllogic ./tests/sqllogic
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
+# 1 builds the binary profile-guided: instrumented, trained by
+# benchmark/pgo-train.ts (no source server needed), rebuilt with the profile.
 ARG PINTAIL_PGO=0
+# 1 adds a second, profile-guided binary compiled for x86-64-v3 next to the
+# generic one, and makes `pintail` a launcher that picks by the processor's
+# flags (scripts/pintail-launch.sh). linux/amd64 only; other platforms keep
+# the single binary. The build machine must itself be x86-64-v3, because the
+# training run executes that binary.
+ARG PINTAIL_X86_64_V3=0
+ARG TARGETARCH
 COPY --from=planner /source/recipe.json recipe.json
 # Rebuilds only when Cargo.lock changes.
 RUN --mount=type=cache,target=/source/target,sharing=locked \
@@ -35,7 +44,11 @@ RUN --mount=type=cache,target=/source/target,sharing=locked \
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY tests/sqllogic ./tests/sqllogic
-COPY scripts/pgo-build.sh ./scripts/pgo-build.sh
+COPY scripts/pgo-build.sh scripts/pintail-launch.sh ./scripts/
+# The training workload and the runtime it runs under. Neither reaches the
+# runtime image.
+COPY benchmark/package.json benchmark/bun.lock benchmark/pgo-train.ts benchmark/queries.ts ./benchmark/
+COPY --from=dashboard /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=dashboard /source/packages/dashboard/.output/public \
     ./packages/dashboard/.output/public
 ENV PINTAIL_DASHBOARD_PREBUILT=1
@@ -52,14 +65,24 @@ ENV PINTAIL_DASHBOARD_PREBUILT=1
 RUN --mount=type=cache,target=/source/target,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     find crates tests/sqllogic -name '*.rs' -exec touch {} + \
+    && mkdir -p /out/bin \
     && if [ "$PINTAIL_PGO" = 1 ]; then \
       rustup component add llvm-tools-preview \
       && bash scripts/pgo-build.sh server \
-      && cp /source/target/pgo/pintail /usr/local/bin/pintail-built; \
+      && cp /source/target/pgo/pintail /out/bin/pintail; \
     elif [ "$PINTAIL_PGO" = 0 ]; then \
       cargo build --locked --release --package pintail \
-      && cp /source/target/release/pintail /usr/local/bin/pintail-built; \
-    else echo 'PINTAIL_PGO must be 0 or 1' >&2; exit 2; fi
+      && cp /source/target/release/pintail /out/bin/pintail; \
+    else echo 'PINTAIL_PGO must be 0 or 1' >&2; exit 2; fi \
+    && if [ "$PINTAIL_X86_64_V3" = 1 ] && [ "$TARGETARCH" = amd64 ]; then \
+      rustup component add llvm-tools-preview \
+      && PINTAIL_TARGET_CPU=x86-64-v3 bash scripts/pgo-build.sh server \
+      && mkdir -p /out/lib/pintail \
+      && mv /out/bin/pintail /out/lib/pintail/pintail-generic \
+      && cp /source/target/pgo/pintail /out/lib/pintail/pintail-x86-64-v3 \
+      && install --mode 0755 scripts/pintail-launch.sh /out/bin/pintail; \
+    elif [ "$PINTAIL_X86_64_V3" != 0 ] && [ "$PINTAIL_X86_64_V3" != 1 ]; then \
+      echo 'PINTAIL_X86_64_V3 must be 0 or 1' >&2; exit 2; fi
 
 FROM debian:bookworm-slim
 
@@ -75,7 +98,10 @@ RUN apt-get update \
     && install --directory --owner pintail --group pintail /var/lib/pintail \
     && install --directory --owner pintail --group pintail /var/lib/pintail/spill
 
-COPY --from=builder /usr/local/bin/pintail-built /usr/local/bin/pintail
+# One binary at /usr/local/bin/pintail by default. With PINTAIL_X86_64_V3=1
+# that path is the launcher and the two binaries are under
+# /usr/local/lib/pintail.
+COPY --from=builder /out/ /usr/local/
 
 # jemalloc (the binary's allocator) returns freed pages after a second
 # instead of its ten-second default, from a background thread so the purge
