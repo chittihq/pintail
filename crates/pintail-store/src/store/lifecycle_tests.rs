@@ -90,6 +90,7 @@ fn reset_discards_completed_unpublished_compaction_outputs() {
         None,
         999,
         &std::sync::atomic::AtomicBool::new(false),
+        &mut crate::maintenance::MergeTicket::queue(0, true),
     )
     .unwrap();
     let (sender, receiver) = mpsc::channel();
@@ -2024,4 +2025,51 @@ mod mixed_segment_versions {
                 .exists()
         );
     }
+}
+
+/// Disjoint segments past the file-pressure bound merge for fewer files.
+/// A merge writes its rows back in bounded chunks, so once the neighbours
+/// fill their chunks there is nothing left to gain: the table must come to
+/// rest, where it used to merge the same full chunks again on every pass.
+#[test]
+fn merging_for_fewer_files_stops_when_no_merge_would_leave_fewer() {
+    let directory = tempfile::tempdir().unwrap();
+    let row_bytes = keyed_row(1, 1, false).estimated_bytes();
+    let options = StoreOptions {
+        background_compaction: false,
+        // An output chunk holds about 2,500 rows.
+        max_compaction_output_bytes: row_bytes * 2_500,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), keyed_schema(), options).unwrap();
+    for segment in 0..40_u64 {
+        let rows = (0..1_000)
+            .map(|row| keyed_row(segment * 1_000 + row + 1, 1, false))
+            .collect();
+        table.ingest(rows).unwrap();
+        table.flush().unwrap();
+    }
+    let mut passes = 0;
+    while table.compact().unwrap().input_segments() > 0 {
+        table.reclaim_obsolete_segments().unwrap();
+        passes += 1;
+        assert!(
+            passes < 200,
+            "the table never came to rest: {} segments after {passes} merges",
+            table.manifest.segments.len()
+        );
+    }
+    assert!(passes > 0, "forty small neighbours are worth merging");
+    // 40,000 rows in chunks of about 2,500 are sixteen files; small
+    // segments left between full ones stay as they are.
+    let segments = table.manifest.segments.len();
+    assert!(
+        (16..=28).contains(&segments),
+        "{segments} segments at rest after {passes} merges"
+    );
+    assert!(table.compaction_plan().unwrap().is_none());
+    assert_eq!(
+        visible_ids(&table.snapshot()),
+        (1..=40_000).collect::<Vec<u64>>()
+    );
 }

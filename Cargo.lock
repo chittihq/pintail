@@ -2719,6 +2719,7 @@ dependencies = [
  "pintail-types",
  "rand 0.9.5",
  "rayon",
+ "rustix",
  "tempfile",
  "xxhash-rust",
  "zstd",

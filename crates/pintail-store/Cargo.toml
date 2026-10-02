@@ -23,6 +23,10 @@ rayon.workspace = true
 xxhash-rust.workspace = true
 zstd.workspace = true
 
+# Scheduling a merge thread below the default is a safe call here.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, features = ["thread"] }
+
 [dev-dependencies]
 rand.workspace = true
 tempfile.workspace = true

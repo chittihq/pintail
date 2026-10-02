@@ -467,6 +467,9 @@ pub struct TableStore {
     last_background_error: Option<String>,
     /// Set by whoever must not wait for this table's merges to finish.
     merge_yield: Arc<std::sync::atomic::AtomicBool>,
+    /// Whether the table was behind on its merges when the last one
+    /// started, so falling behind is logged once and not per merge.
+    merges_behind: bool,
     /// Segments written for a batch too large for the log and not yet
     /// named by a manifest: no reader sees them, and an open that finds
     /// them sweeps them as orphans.
@@ -748,6 +751,7 @@ impl TableStore {
             background: None,
             last_background_error: None,
             merge_yield: Arc::default(),
+            merges_behind: false,
             staged: Vec::new(),
             staged_ids: 0..0,
         })
@@ -1849,6 +1853,23 @@ impl TableStore {
         if !self.merge_fits_on_disk(&plan)? {
             return Ok(());
         }
+        // A pass this wide is one the planner widened because segments
+        // arrive faster than merges retire them. It runs ahead of the
+        // statements it would otherwise give way to: every read of the
+        // table pays for each of those files, and a merge that keeps
+        // yielding never catches up.
+        let behind = plan.catching_up || plan.indices.len() >= crate::maintenance::BEHIND_INPUTS;
+        if behind && !self.merges_behind {
+            pintail_log::log_info!(
+                "pintail store table {} is behind on merges: {} of {} segments, {} bytes, in \
+                 the next merge; merging without yielding to statements until it catches up",
+                self.directory.display(),
+                plan.indices.len(),
+                self.manifest.segments.len(),
+                plan.debt_bytes
+            );
+        }
+        self.merges_behind = behind;
         let full_merge = plan.indices.len() == self.manifest.segments.len();
         let drop_tombstones = merge_drops_tombstones(&self.manifest.segments, &plan.indices);
         let window = plan.window.clone();
@@ -1889,20 +1910,29 @@ impl TableStore {
         let options = self.options;
         let yield_flag = Arc::clone(&self.merge_yield);
         let (sender, receiver) = std::sync::mpsc::channel();
+        // Queued here, so the merge's bytes are pending from now; the
+        // worker waits its turn among the other tables' merges.
+        let mut ticket = crate::maintenance::MergeTicket::queue(plan.debt_bytes, behind);
         let worker = std::thread::Builder::new()
             .name("pintail-compaction".to_owned())
             .spawn(move || {
-                let result = run_background_merge(
-                    &directory,
-                    &schema,
-                    options,
-                    &input_metas,
-                    full_merge,
-                    drop_tombstones,
-                    window.as_ref(),
-                    id_base,
-                    &yield_flag,
-                );
+                let result = if ticket.admit(&yield_flag) {
+                    run_background_merge(
+                        &directory,
+                        &schema,
+                        options,
+                        &input_metas,
+                        full_merge,
+                        drop_tombstones,
+                        window.as_ref(),
+                        id_base,
+                        &yield_flag,
+                        &mut ticket,
+                    )
+                } else {
+                    Err(merge_yielded())
+                };
+                drop(ticket);
                 // The owner joins this worker before releasing its writer
                 // lock; the next open may then sweep unpublished chunks.
                 let _ = sender.send(result);
@@ -2346,9 +2376,23 @@ impl TableStore {
                 // A cluster the budget cannot take whole is folded a key
                 // range at a time rather than a few of its segments at a
                 // time.
-                if splits_a_layer(&cluster, &candidates)
-                    && let Some(plan) = self.windowed_plan(&candidates, &cluster)
-                {
+                if splits_a_layer(&cluster, &candidates) {
+                    if let Some(plan) = self.windowed_plan(&candidates, &cluster) {
+                        return Ok(Some(plan));
+                    }
+                    // No key range of the cluster can be folded within the
+                    // budget: the changes alone outweigh it, or the cluster
+                    // has no bases left to fold a range between. Merging
+                    // the pair instead folds a base into some of what lies
+                    // over it and keeps the deletes for the rest, so the
+                    // output is no base any more; a few such passes leave a
+                    // cluster nothing can fold, read row by row, taking
+                    // one segment per pass while flushes add several. The
+                    // whole cluster is merged, past the budget: its deletes
+                    // go, its output is bases again, and the table is
+                    // behind until it is done.
+                    let mut plan = plan_for(&reached_by(&candidates, &cluster));
+                    plan.catching_up = true;
                     return Ok(Some(plan));
                 }
                 return Ok(Some(plan_for(&cluster)));
@@ -2377,13 +2421,74 @@ impl TableStore {
             return Ok(None);
         }
         candidates.sort_by(|left, right| left.minimum.cmp(&right.minimum));
+        Ok(self.fewer_files_plan(&candidates))
+    }
+
+    /// A merge of neighbours in key order, taken for fewer files alone:
+    /// nothing in `candidates`, sorted by key, overlaps.
+    fn fewer_files_plan(&self, candidates: &[CompactionCandidate]) -> Option<CompactionPlan> {
+        // A merge writes its rows back in chunks of a bounded size, so
+        // neighbours that already fill their chunks come back out as the
+        // same files: a table of them was merged again on every pass,
+        // forever, for nothing. Only a merge that leaves fewer files than
+        // it took is worth its rewrite here, where fewer files is the
+        // whole prize; and a segment already a full chunk is left alone.
+        let chunk_rows = candidates
+            .first()
+            .and_then(|candidate| self.merge_chunk_rows(candidate.index));
         for window in candidates.windows(self.options.compaction_fan_in) {
             let selected = window.iter().collect::<Vec<_>>();
-            if self.admits_window(&selected) {
-                return Ok(Some(plan_for(&selected)));
+            if !self.admits_window(&selected) {
+                continue;
             }
+            if let Some(chunk_rows) = chunk_rows {
+                // A margin, since rows of one table are not all one size.
+                let full = chunk_rows.saturating_sub(chunk_rows / 10).max(1);
+                let rows = selected
+                    .iter()
+                    .map(|candidate| candidate.row_count)
+                    .sum::<u64>();
+                let fewer = u64::try_from(selected.len().saturating_sub(1)).unwrap_or(u64::MAX);
+                if selected.iter().any(|candidate| candidate.row_count >= full)
+                    || rows > fewer.saturating_mul(full)
+                {
+                    continue;
+                }
+            }
+            return Some(plan_for(&selected));
         }
-        Ok(None)
+        None
+    }
+
+    /// Rows one output chunk of a merge of this table holds, estimated
+    /// from the first rows of the segment at `index`: the merge closes a
+    /// chunk at a row count or at a size in memory, whichever comes first.
+    /// `None` when the segment cannot be read, which leaves the planner as
+    /// it was without the estimate.
+    fn merge_chunk_rows(&self, index: usize) -> Option<u64> {
+        const SAMPLED_ROWS: usize = 256;
+        let meta = self.manifest.segments.get(index)?;
+        let mut stream =
+            segment::SegmentRowStream::open(&self.directory, meta, &self.schema).ok()?;
+        let mut bytes = 0_usize;
+        let mut rows = 0_usize;
+        while rows < SAMPLED_ROWS {
+            let Ok(Some(row)) = stream.next_row() else {
+                break;
+            };
+            bytes = bytes.saturating_add(row.estimated_bytes());
+            rows += 1;
+        }
+        if rows == 0 || bytes == 0 {
+            return None;
+        }
+        let by_size = self.options.max_compaction_output_bytes / (bytes / rows).max(1);
+        Some(
+            u64::try_from(by_size)
+                .unwrap_or(u64::MAX)
+                .min(self.options.max_compaction_rows)
+                .max(1),
+        )
     }
 
     /// Grows an overlapping pair to every segment its key span reaches, while
@@ -2439,26 +2544,12 @@ impl TableStore {
     /// that segment across the table instead of folding the lowest keys
     /// again while it waits. `None` when the cluster has no such shape or
     /// even one base does not fit beside the changes.
-    fn windowed_plan(
+    fn windowed_plan<'a>(
         &self,
-        candidates: &[CompactionCandidate],
-        seed: &[&CompactionCandidate],
+        candidates: &'a [CompactionCandidate],
+        seed: &[&'a CompactionCandidate],
     ) -> Option<CompactionPlan> {
-        // Everything the seed reaches, whatever it holds.
-        let mut cluster = seed.to_vec();
-        loop {
-            let reached = candidates
-                .iter()
-                .filter(|candidate| {
-                    !cluster.iter().any(|member| member.index == candidate.index)
-                        && cluster.iter().any(|member| member.overlaps(candidate))
-                })
-                .collect::<Vec<_>>();
-            if reached.is_empty() {
-                break;
-            }
-            cluster.extend(reached);
-        }
+        let cluster = reached_by(candidates, seed);
         let mut by_age = cluster.clone();
         by_age.sort_by_key(|candidate| (candidate.min_version, candidate.max_version));
         let mut bases: Vec<&CompactionCandidate> = Vec::new();
@@ -2554,6 +2645,29 @@ fn plan_for(window: &[&CompactionCandidate]) -> CompactionPlan {
         indices: window.iter().map(|candidate| candidate.index).collect(),
         debt_bytes: window.iter().map(|candidate| candidate.size).sum(),
         window: None,
+        catching_up: false,
+    }
+}
+
+/// Everything `seed` reaches through overlapping key ranges, whatever it
+/// holds: the seed, what overlaps it, what overlaps that.
+fn reached_by<'a>(
+    candidates: &'a [CompactionCandidate],
+    seed: &[&'a CompactionCandidate],
+) -> Vec<&'a CompactionCandidate> {
+    let mut cluster = seed.to_vec();
+    loop {
+        let reached = candidates
+            .iter()
+            .filter(|candidate| {
+                !cluster.iter().any(|member| member.index == candidate.index)
+                    && cluster.iter().any(|member| member.overlaps(candidate))
+            })
+            .collect::<Vec<_>>();
+        if reached.is_empty() {
+            return cluster;
+        }
+        cluster.extend(reached);
     }
 }
 
@@ -2619,6 +2733,10 @@ struct CompactionPlan {
     /// newest version of a key, a delete kept - into segments of their own,
     /// so no output spans a boundary of the range.
     window: Option<MergeWindow>,
+    /// The merge takes more than one pass's budget because nothing
+    /// smaller would bring the table's cluster back to bases: the table
+    /// is behind, and the merge does not give way to statements.
+    catching_up: bool,
 }
 
 /// Whether `key` lies inside a merge's window; every key does without one.
@@ -2697,6 +2815,17 @@ fn apply_latest(rows: &mut BTreeMap<PrimaryKey, StoredRow>, row: StoredRow) {
     }
 }
 
+/// The error a merge ends with when it was asked to stop early.
+fn merge_yielded() -> StoreError {
+    StoreError::io(
+        "background merge",
+        std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "the merge yielded to an operator action",
+        ),
+    )
+}
+
 /// The background thread's merge: same winner-per-key loop as the inline
 /// pass, writing chunks from a reserved segment-ID range and returning
 /// their metadata for publication on the store's thread.
@@ -2711,6 +2840,7 @@ fn run_background_merge(
     window: Option<&MergeWindow>,
     id_base: u64,
     yield_flag: &std::sync::atomic::AtomicBool,
+    ticket: &mut crate::maintenance::MergeTicket,
 ) -> Result<Vec<segment::SegmentMeta>, StoreError> {
     let mut streams = Vec::with_capacity(input_metas.len());
     for meta in input_metas {
@@ -2731,7 +2861,8 @@ fn run_background_merge(
     let mut next_id = id_base;
     let mut outputs = Vec::new();
     let mut was_inside = false;
-    let mut write_chunk = |rows: &[StoredRow], next_id: &mut u64| -> Result<(), StoreError> {
+    // Answers the bytes written, which the merge's write budget counts.
+    let mut write_chunk = |rows: &[StoredRow], next_id: &mut u64| -> Result<u64, StoreError> {
         let output = segment::write(
             directory,
             *next_id,
@@ -2744,8 +2875,10 @@ fn run_background_merge(
             rows.iter().all(|row| !row.is_deleted()),
         )?;
         *next_id = next_id.checked_add(1).ok_or(StoreError::SequenceOverflow)?;
+        let written = std::fs::metadata(directory.join(&output.file_name))
+            .map_or(0, |metadata| metadata.len());
         outputs.push(output);
-        Ok(())
+        Ok(written)
     };
     while let Some(minimum) = heads
         .iter()
@@ -2754,14 +2887,9 @@ fn run_background_merge(
         .cloned()
     {
         if yield_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(StoreError::io(
-                "background merge",
-                std::io::Error::new(
-                    std::io::ErrorKind::Interrupted,
-                    "the merge yielded to an operator action",
-                ),
-            ));
+            return Err(merge_yielded());
         }
+        ticket.pace_row();
         let mut winner = None;
         for (stream, head) in streams.iter_mut().zip(&mut heads) {
             while head.as_ref().is_some_and(|row| row.key() == &minimum) {
@@ -2788,7 +2916,8 @@ fn run_background_merge(
         // and drops deletes only inside it.
         let inside = in_merge_window(window, &minimum);
         if window.is_some() && inside != was_inside && !rows.is_empty() {
-            write_chunk(&rows, &mut next_id)?;
+            let written = write_chunk(&rows, &mut next_id)?;
+            ticket.pace(written);
             rows.clear();
             buffered_bytes = 0;
         }
@@ -2803,7 +2932,8 @@ fn run_background_merge(
             rows.push(winner);
         }
         if rows.len() >= output_row_limit || buffered_bytes >= options.max_compaction_output_bytes {
-            write_chunk(&rows, &mut next_id)?;
+            let written = write_chunk(&rows, &mut next_id)?;
+            ticket.pace(written);
             rows.clear();
             buffered_bytes = 0;
         }

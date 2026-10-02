@@ -9,6 +9,7 @@
 mod codec;
 mod database;
 mod error;
+mod maintenance;
 mod manifest;
 mod memtable;
 mod publication;
@@ -19,6 +20,10 @@ mod wal;
 
 pub use database::DatabaseStore;
 pub use error::StoreError;
+pub use maintenance::{
+    MaintenanceStatus, maintenance_status, merge_threads, merge_write_rate, statement_finished,
+    statement_started,
+};
 pub use publication::{
     directory_epoch, lease_unwritten_table, publication_epoch, publish_changes_under,
     published_generation, retain_writer_locks, writer_locks_retained,
