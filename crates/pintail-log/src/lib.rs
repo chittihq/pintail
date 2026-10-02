@@ -97,8 +97,19 @@ pub fn emit(message: &str) {
 /// stderr is written first. A remote exporter is the part most likely to be
 /// misconfigured or unreachable, and the local line is the one an operator
 /// reads when it is.
+///
+/// The line reaches stderr in one write. stderr is unbuffered, so a line
+/// written in pieces is a system call per piece - three for every line, on
+/// the thread that logged it - and two threads' pieces can interleave. A
+/// stderr that cannot be written to is ignored: a log line must never be
+/// what stops the work it describes.
 pub fn emit_at(level: u8, message: &str) {
-    eprintln!("pintail {message}");
+    use std::io::Write as _;
+    let mut line = String::with_capacity(message.len() + 9);
+    line.push_str("pintail ");
+    line.push_str(message);
+    line.push('\n');
+    let _ = std::io::stderr().lock().write_all(line.as_bytes());
     if let Some(sink) = SINK.get() {
         sink(level, message);
     }
