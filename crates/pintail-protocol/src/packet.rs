@@ -17,12 +17,25 @@ pub const MAX_PAYLOAD: usize = 0xff_ff_ff;
 pub struct PacketReader<R> {
     inner: R,
     sequence: u8,
-    /// Bytes a caller unavoidably consumed from the transport (for example,
-    /// while probing for a peer disconnect) and is handing back. Drained
-    /// before the underlying stream is touched again, so a byte can be read
-    /// exactly once no matter which caller ends up reading it.
-    primed: std::collections::VecDeque<u8>,
+    /// Bytes taken from the transport and not yet consumed: what one read
+    /// brought beyond the bytes asked for, and bytes a caller unavoidably
+    /// consumed (for example, while probing for a peer disconnect) and
+    /// handed back. Drained before the underlying stream is touched again,
+    /// so a byte is read exactly once no matter which caller reads it.
+    buffer: Vec<u8>,
+    /// Where the unconsumed bytes of `buffer` begin and end.
+    start: usize,
+    end: usize,
+    /// Whether a read may take more from the transport than was asked for.
+    read_ahead: bool,
 }
+
+/// The most one read takes from the transport when reading ahead. A command
+/// is a four-byte header and its body, and nearly every command is far
+/// smaller than this, so one read brings all of it; a larger body is read
+/// straight into its payload. Small enough that an idle connection holding
+/// it costs nothing worth counting.
+const READ_AHEAD: usize = 1024;
 
 impl<R: AsyncRead + Unpin> PacketReader<R> {
     /// Wraps a stream at sequence zero.
@@ -30,7 +43,10 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
         Self {
             inner,
             sequence: 0,
-            primed: std::collections::VecDeque::new(),
+            buffer: Vec::new(),
+            start: 0,
+            end: 0,
+            read_ahead: false,
         }
     }
 
@@ -45,21 +61,49 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
         self.sequence = sequence;
     }
 
+    /// Lets a read take whatever the transport has, up to a small bound,
+    /// instead of exactly the bytes asked for.
+    ///
+    /// Read exactly, a command costs three reads: the byte that proves it
+    /// arrived, the rest of its header, its body. Read ahead, it costs one.
+    /// Off until the caller turns it on, because bytes read ahead belong
+    /// to this reader: a stream handed back through [`Self::into_inner`]
+    /// for a TLS upgrade must not have had the next protocol's first bytes
+    /// taken from it.
+    pub const fn set_read_ahead(&mut self, read_ahead: bool) {
+        self.read_ahead = read_ahead;
+    }
+
+    /// Whether bytes already taken from the transport are waiting here.
+    #[must_use]
+    pub const fn has_buffered(&self) -> bool {
+        self.start < self.end
+    }
+
     /// Queues bytes to be read before the underlying stream is touched
     /// again. For a caller that had to perform a real read while checking
     /// whether the peer was still connected and got data rather than EOF —
     /// those bytes are still owed to the protocol and must not be dropped
     /// silently or read twice.
-    pub fn prime(&mut self, bytes: Vec<u8>) {
-        self.primed.extend(bytes);
+    pub fn prime(&mut self, bytes: &[u8]) {
+        if !self.has_buffered() {
+            self.start = 0;
+            self.end = 0;
+        }
+        let end = self.end + bytes.len();
+        if self.buffer.len() < end {
+            self.buffer.resize(end, 0);
+        }
+        self.buffer[self.end..end].copy_from_slice(bytes);
+        self.end = end;
     }
 
     /// Waits until the next packet has begun to arrive, without consuming it.
     ///
-    /// The byte that proves it arrived is handed straight back through the
-    /// primed queue, so the packet still reads whole afterwards. This is what
-    /// lets a caller put a deadline on an idle connection without putting one
-    /// on the work a command asks for.
+    /// What the read that proves it arrived brought is kept, so the packet
+    /// still reads whole afterwards. This is what lets a caller put a
+    /// deadline on an idle connection without putting one on the work a
+    /// command asks for.
     ///
     /// `Ok(false)` is end of stream: the peer closed while nothing was in
     /// flight.
@@ -67,40 +111,73 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
     /// # Errors
     /// Propagates I/O failures from the underlying stream.
     pub async fn wait_for_packet(&mut self) -> std::io::Result<bool> {
-        if !self.primed.is_empty() {
+        if self.has_buffered() {
             return Ok(true);
+        }
+        if self.read_ahead {
+            return Ok(self.fill().await? > 0);
         }
         let mut byte = [0_u8; 1];
         if self.inner.read(&mut byte).await? == 0 {
             return Ok(false);
         }
-        self.primed.push_back(byte[0]);
+        self.prime(&byte);
         Ok(true)
+    }
+
+    /// Takes what the transport has into the buffer, up to [`READ_AHEAD`]
+    /// bytes, and returns how many arrived; zero is end of stream.
+    async fn fill(&mut self) -> std::io::Result<usize> {
+        debug_assert!(!self.has_buffered(), "a fill replaces a drained buffer");
+        if self.buffer.len() < READ_AHEAD {
+            self.buffer.resize(READ_AHEAD, 0);
+        }
+        self.start = 0;
+        self.end = 0;
+        let read = self.inner.read(&mut self.buffer).await?;
+        self.end = read;
+        Ok(read)
     }
 
     /// Returns the stream, so a plaintext connection can be upgraded to TLS
     /// mid-handshake without losing the sequence.
     ///
-    /// Any bytes still queued via [`Self::prime`] are prepended to the
-    /// returned pair rather than lost — a caller upgrading a connection has
-    /// no other place to put them, and dropping them would answer a
-    /// different command than the client actually sent.
+    /// Bytes still buffered would be lost with this reader, and dropping
+    /// them would answer a different command than the client actually sent;
+    /// a caller upgrading a connection must not have read ahead.
     #[must_use]
     pub fn into_inner(self) -> (R, u8) {
         debug_assert!(
-            self.primed.is_empty(),
-            "primed bytes must be drained before an upgrade, or they are lost"
+            !self.has_buffered(),
+            "buffered bytes must be drained before an upgrade, or they are lost"
         );
         (self.inner, self.sequence)
     }
 
+    /// Moves buffered bytes into `buf` and returns how many were moved.
+    fn take_buffered(&mut self, buf: &mut [u8]) -> usize {
+        let take = (self.end - self.start).min(buf.len());
+        buf[..take].copy_from_slice(&self.buffer[self.start..self.start + take]);
+        self.start += take;
+        take
+    }
+
     async fn read_exact_primed(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
-        let from_primed = self.primed.len().min(buf.len());
-        for slot in &mut buf[..from_primed] {
-            *slot = self.primed.pop_front().expect("checked length above");
-        }
-        if from_primed < buf.len() {
-            self.inner.read_exact(&mut buf[from_primed..]).await?;
+        let mut filled = self.take_buffered(buf);
+        while filled < buf.len() {
+            if !self.read_ahead || buf.len() - filled >= READ_AHEAD {
+                // Exactly these bytes, straight into their place: nothing
+                // beyond them is taken, and a large body is not copied.
+                self.inner.read_exact(&mut buf[filled..]).await?;
+                return Ok(());
+            }
+            if self.fill().await? == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "early eof",
+                ));
+            }
+            filled += self.take_buffered(&mut buf[filled..]);
         }
         Ok(())
     }
@@ -324,8 +401,8 @@ pub fn length_encoded_bytes(bytes: &[u8]) -> Option<(Option<&[u8]>, usize)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_PAYLOAD, PacketReader, PacketWriter, length_encoded_bytes, length_encoded_integer,
-        put_length_encoded_bytes, put_length_encoded_integer,
+        MAX_PAYLOAD, PacketReader, PacketWriter, READ_AHEAD, length_encoded_bytes,
+        length_encoded_integer, put_length_encoded_bytes, put_length_encoded_integer,
     };
 
     async fn round_trip(payload: &[u8]) -> Vec<u8> {
@@ -357,13 +434,124 @@ mod tests {
         let remaining = &encoded[2..];
 
         let mut reader = PacketReader::new(remaining);
-        reader.prime(stolen);
+        reader.prime(&stolen);
         let payload = reader
             .next_payload()
             .await
             .expect("read")
             .expect("one payload");
         assert_eq!(payload, b"tail");
+    }
+
+    /// A stream that hands out at most `chunk` bytes per read and counts
+    /// the reads it was asked for.
+    struct Counted {
+        bytes: Vec<u8>,
+        at: usize,
+        chunk: usize,
+        reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl tokio::io::AsyncRead for Counted {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let take = (self.bytes.len() - self.at)
+                .min(self.chunk)
+                .min(buf.remaining());
+            buf.put_slice(&self.bytes[self.at..self.at + take]);
+            self.at += take;
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    fn framed(payloads: &[&[u8]]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for payload in payloads {
+            let length = u32::try_from(payload.len()).expect("length").to_le_bytes();
+            bytes.extend_from_slice(&[length[0], length[1], length[2], 0]);
+            bytes.extend_from_slice(payload);
+        }
+        bytes
+    }
+
+    async fn drain(bytes: Vec<u8>, chunk: usize, read_ahead: bool) -> (Vec<Vec<u8>>, usize) {
+        let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut reader = PacketReader::new(Counted {
+            bytes,
+            at: 0,
+            chunk,
+            reads: reads.clone(),
+        });
+        reader.set_read_ahead(read_ahead);
+        let mut payloads = Vec::new();
+        while reader.wait_for_packet().await.expect("wait") {
+            payloads.push(reader.next_payload().await.expect("io").expect("payload"));
+        }
+        (payloads, reads.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Read exactly, a command is three reads - the byte that proves it
+    /// arrived, the rest of the header, the body. Read ahead, a command
+    /// whose bytes are already there is one.
+    #[tokio::test]
+    async fn reading_ahead_takes_a_command_in_one_read() {
+        let command = framed(&[b"\x03SELECT 1"]);
+        let (payloads, reads) = drain(command.clone(), usize::MAX, false).await;
+        assert_eq!(payloads, [b"\x03SELECT 1".to_vec()]);
+        assert_eq!(reads, 3 + 1, "three for the command, one finds the end");
+        let (payloads, reads) = drain(command, usize::MAX, true).await;
+        assert_eq!(payloads, [b"\x03SELECT 1".to_vec()]);
+        assert_eq!(reads, 1 + 1, "one for the command, one finds the end");
+    }
+
+    /// Whatever the transport delivers per read - commands run together,
+    /// or one byte at a time - the payloads are the same.
+    #[tokio::test]
+    async fn reading_ahead_frames_payloads_however_the_bytes_arrive() {
+        let large = vec![7_u8; 3 * READ_AHEAD + 5];
+        let exact = vec![9_u8; READ_AHEAD - 4];
+        let expected: Vec<Vec<u8>> = vec![
+            b"\x03SELECT 1".to_vec(),
+            Vec::new(),
+            large.clone(),
+            b"\x0e".to_vec(),
+            exact.clone(),
+            b"\x01".to_vec(),
+        ];
+        let bytes = framed(&expected.iter().map(Vec::as_slice).collect::<Vec<_>>());
+        for chunk in [1, 2, 3, 5, 7, READ_AHEAD - 1, READ_AHEAD, usize::MAX] {
+            for read_ahead in [false, true] {
+                let (payloads, _) = drain(bytes.clone(), chunk, read_ahead).await;
+                assert_eq!(payloads, expected, "chunk {chunk}, read ahead {read_ahead}");
+            }
+        }
+        // Three commands that arrived together are one read.
+        let together = framed(&[b"\x03SELECT 1", b"\x0e", b"\x01"]);
+        let (payloads, reads) = drain(together, usize::MAX, true).await;
+        assert_eq!(payloads.len(), 3);
+        assert_eq!(reads, 1 + 1);
+    }
+
+    /// A stream that ends inside a packet is an error with or without
+    /// reading ahead; one that ends between packets is a clean close.
+    #[tokio::test]
+    async fn reading_ahead_tells_a_cut_packet_from_a_clean_close() {
+        let mut cut = framed(&[b"\x03SELECT 1"]);
+        cut.truncate(cut.len() - 2);
+        for read_ahead in [false, true] {
+            let mut reader = PacketReader::new(cut.as_slice());
+            reader.set_read_ahead(read_ahead);
+            let error = reader.next_payload().await.expect_err("cut packet");
+            assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+            let mut reader = PacketReader::new(&b""[..]);
+            reader.set_read_ahead(read_ahead);
+            assert_eq!(reader.next_payload().await.expect("io"), None);
+        }
     }
 
     #[tokio::test]

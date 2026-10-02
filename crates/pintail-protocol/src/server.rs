@@ -360,6 +360,9 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             let ok = encode_ok(OkPacket::default(), "");
             self.writer.write_payload(&ok).await?;
             self.writer.flush().await?;
+            // The stream is this connection's for good from here: no
+            // upgrade follows a login, so commands may be read ahead.
+            self.reader.set_read_ahead(true);
             return Ok(response);
         }
         // caching_sha2_password's full authentication: the fast path found
@@ -374,6 +377,9 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             let ok = encode_ok(OkPacket::default(), "");
             self.writer.write_payload(&ok).await?;
             self.writer.flush().await?;
+            // The stream is this connection's for good from here: no
+            // upgrade follows a login, so commands may be read ahead.
+            self.reader.set_read_ahead(true);
             return Ok(response);
         }
         self.writer.set_sequence(self.reader.sequence());
@@ -553,7 +559,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
                     None
                 }
                 WatchOutcome::Primed(bytes) => {
-                    self.reader.prime(bytes);
+                    self.reader.prime(&bytes);
                     Some(handler_future.await)
                 }
             },
@@ -599,6 +605,11 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         let Some(payload) = self.reader.next_payload().await? else {
             return Ok(false);
         };
+        // Bytes that arrived behind this command are proof the peer is
+        // there and has more to say, which is what the watch would find by
+        // looking at the socket had they been left in it; a command is
+        // raced against the watch only when nothing follows it.
+        let watch = watch.filter(|_| !self.reader.has_buffered());
         // Every command restarts numbering, and the reply continues from the
         // request's sequence.
         self.writer.set_sequence(self.reader.sequence());
