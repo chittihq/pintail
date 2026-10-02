@@ -1691,35 +1691,25 @@ impl Backend {
         let Ok(username_text) = std::str::from_utf8(username) else {
             return Ok(false);
         };
-        let metadata = MetaStore::open(&self.metadata_path).map_err(io_other)?;
-        let Some(database) = metadata
-            .databases()
-            .map_err(io_other)?
-            .into_iter()
-            .find(|database| database.name.eq_ignore_ascii_case(username_text))
+        let Some((database, _)) =
+            login_reads(&self.metadata_path, username_text, login_generation())?
         else {
             return Ok(false);
         };
-        let key = metadata
-            .api_keys(&database.id)
-            .map_err(io_other)?
-            .into_iter()
+        let key = database
+            .keys
+            .iter()
             .find(|key| wire_key_matches_cleartext(key, password));
         let Some(key) = key else {
             return Ok(false);
         };
         if connection_worth_recording(&key.id) {
-            metadata
+            MetaStore::open(&self.metadata_path)
+                .map_err(io_other)?
                 .touch_api_key(&key.id, &Utc::now().to_rfc3339())
                 .map_err(io_other)?;
         }
-        *self.authentication.lock().map_err(io_other)? = Some(Authenticated {
-            database_id: database.id,
-            database_name: database.name,
-            key_name: key.name,
-            local: database.kind == "local",
-            source_time_zone: source_time_zone(database.probe_json.as_deref()),
-        });
+        *self.authentication.lock().map_err(io_other)? = Some(database.authenticated(key));
         self.start_in_source_zone();
         Ok(true)
     }
@@ -5417,6 +5407,125 @@ fn source_time_zone(probe_json: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// What a wire login reads from the metadata store: the database its user
+/// name names, and that database's keys.
+struct LoginReads {
+    database_id: String,
+    database_name: String,
+    workspace_id: Option<String>,
+    local: bool,
+    source_time_zone: Option<String>,
+    keys: Vec<ApiKeyRecord>,
+}
+
+impl LoginReads {
+    fn authenticated(&self, key: &ApiKeyRecord) -> Authenticated {
+        Authenticated {
+            database_id: self.database_id.clone(),
+            database_name: self.database_name.clone(),
+            key_name: key.name.clone(),
+            local: self.local,
+            source_time_zone: self.source_time_zone.clone(),
+        }
+    }
+}
+
+/// A login's reads, and the store they were read from at which write
+/// generation.
+struct StandingLogin {
+    metadata_path: PathBuf,
+    generation: u64,
+    read_at: Instant,
+    reads: std::sync::Arc<LoginReads>,
+}
+
+/// How long a login's reads are reused before the store is read again
+/// whatever its generation says: what bounds a change made to the file by
+/// another process.
+const LOGIN_READS_LAPSE: Duration = Duration::from_secs(5);
+
+/// User names whose reads are kept before all are dropped and read again.
+const LOGIN_READS_KEPT: usize = 1024;
+
+/// The reads of recent logins, by the user name presented.
+static LOGIN_READS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, StandingLogin>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// What a login as `username` reads from the store, and whether it was
+/// answered without the store.
+///
+/// Every connection read every database's row - its probe report with it,
+/// parsed again for the source's time zone - and every key of the one it
+/// named. An application that connects per request did that per request,
+/// and it was most of what the server spent on the connection. In the
+/// only writer of the store, `generation` is the store's write generation
+/// taken by the caller before this is called, and reads made under it
+/// stand until it moves: a key created, disabled or deleted, a database
+/// renamed or removed, is a commit that moves it, so the login after one
+/// reads the store. A key's expiry is checked against the clock on every
+/// login, kept reads or not. Any other process passes `None` and reads
+/// the store every time. An unknown user name is never kept.
+fn login_reads(
+    metadata_path: &Path,
+    username: &str,
+    generation: Option<u64>,
+) -> io::Result<Option<(std::sync::Arc<LoginReads>, bool)>> {
+    if let Some(generation) = generation {
+        let kept = LOGIN_READS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(standing) = kept.get(username)
+            && standing.generation == generation
+            && standing.metadata_path == metadata_path
+            && standing.read_at.elapsed() < LOGIN_READS_LAPSE
+        {
+            return Ok(Some((std::sync::Arc::clone(&standing.reads), true)));
+        }
+    }
+    let metadata = MetaStore::open(metadata_path).map_err(io_other)?;
+    let Some(database) = metadata
+        .databases()
+        .map_err(io_other)?
+        .into_iter()
+        .find(|database| database.name.eq_ignore_ascii_case(username))
+    else {
+        return Ok(None);
+    };
+    let keys = metadata.api_keys(&database.id).map_err(io_other)?;
+    let reads = std::sync::Arc::new(LoginReads {
+        source_time_zone: source_time_zone(database.probe_json.as_deref()),
+        local: database.kind == "local",
+        database_id: database.id,
+        database_name: database.name,
+        workspace_id: database.workspace_id,
+        keys,
+    });
+    if let Some(generation) = generation {
+        let mut kept = LOGIN_READS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if kept.len() >= LOGIN_READS_KEPT {
+            kept.clear();
+        }
+        kept.insert(
+            username.to_owned(),
+            StandingLogin {
+                metadata_path: metadata_path.to_path_buf(),
+                generation,
+                read_at: Instant::now(),
+                reads: std::sync::Arc::clone(&reads),
+            },
+        );
+    }
+    Ok(Some((reads, false)))
+}
+
+/// The store's write generation where it can stand in for reading the
+/// store: in the only writer of the data directory.
+fn login_generation() -> Option<u64> {
+    pintail_store::writer_locks_retained().then(pintail_meta::write_generation)
+}
+
 /// Resolves a scrambled wire login against the keys of the database named
 /// by `username`. Free of the connection so the handshake can run it on a
 /// blocking thread: it reads the metadata store, and on the first
@@ -5432,39 +5541,30 @@ fn verify_wire_key_at(
     let Ok(username) = std::str::from_utf8(username) else {
         return Ok(None);
     };
-    let metadata = MetaStore::open(metadata_path).map_err(io_other)?;
-    let Some(database) = metadata
-        .databases()
-        .map_err(io_other)?
-        .into_iter()
-        .find(|database| database.name.eq_ignore_ascii_case(username))
-    else {
+    let Some((database, _)) = login_reads(metadata_path, username, login_generation())? else {
         return Ok(None);
     };
     if requested_database.is_some_and(|requested| {
         !requested.is_empty()
-            && !database.name.as_bytes().eq_ignore_ascii_case(requested)
+            && !database
+                .database_name
+                .as_bytes()
+                .eq_ignore_ascii_case(requested)
             && !requested.eq_ignore_ascii_case(b"information_schema")
     }) {
         return Ok(None);
     }
-    let key = metadata
-        .api_keys(&database.id)
-        .map_err(io_other)?
-        .into_iter()
+    let key = database
+        .keys
+        .iter()
         .find(|key| wire_key_is_valid(key, salt, response));
     let Some(key) = key else {
         return Ok(None);
     };
     if !connection_worth_recording(&key.id) {
-        return Ok(Some(Authenticated {
-            database_id: database.id,
-            database_name: database.name,
-            key_name: key.name,
-            local: database.kind == "local",
-            source_time_zone: source_time_zone(database.probe_json.as_deref()),
-        }));
+        return Ok(Some(database.authenticated(key)));
     }
+    let metadata = MetaStore::open(metadata_path).map_err(io_other)?;
     metadata
         .touch_api_key(&key.id, &Utc::now().to_rfc3339())
         .map_err(io_other)?;
@@ -5477,7 +5577,7 @@ fn verify_wire_key_at(
     // to the log stream, which is built for that volume.
     let now = Utc::now().to_rfc3339();
     let detail = serde_json::json!({
-        "database": database.name,
+        "database": database.database_name,
         "key": key.name,
     })
     .to_string();
@@ -5489,7 +5589,7 @@ fn verify_wire_key_at(
         actor_label: &key.name,
         action: "wire.connect",
         target_type: Some("database"),
-        target_id: Some(&database.id),
+        target_id: Some(&database.database_id),
         detail_json: Some(&detail),
         created_at: &now,
         client_ip,
@@ -5497,14 +5597,97 @@ fn verify_wire_key_at(
         // A failure to record must not refuse a valid connection.
         pintail_log::log_error!("wire audit: could not record connection: {error}");
     }
-    Ok(Some(Authenticated {
-        database_id: database.id,
-        database_name: database.name,
-        key_name: key.name,
-        local: database.kind == "local",
-        source_time_zone: source_time_zone(database.probe_json.as_deref()),
-    }))
+    Ok(Some(database.authenticated(key)))
 }
+
+#[cfg(test)]
+mod login_reads_tests {
+    use pintail_meta::{MetaStore, NewApiKey};
+
+    use super::login_reads;
+
+    const NOW: &str = "2026-10-03T00:00:00Z";
+
+    fn store_with_a_key(directory: &std::path::Path) -> std::path::PathBuf {
+        let path = directory.join("pintail-meta.db");
+        let store = MetaStore::open(&path).expect("open");
+        store
+            .upsert_database("db", "shop", b"dsn", NOW)
+            .expect("database");
+        store
+            .create_api_key(&NewApiKey {
+                id: "key",
+                database_id: "db",
+                name: "reader",
+                sha256: &[7; 32],
+                mysql_native_password_hash: None,
+                caching_sha2_password_hash: None,
+                scopes_json: "[\"query\"]",
+                expires_at: None,
+                now: NOW,
+            })
+            .expect("key");
+        path
+    }
+
+    /// Under one write generation a login's reads are made once; under the
+    /// next they are made again, and show what was committed in between.
+    #[test]
+    fn a_logins_reads_stand_for_one_write_generation() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = store_with_a_key(directory.path());
+
+        let (first, kept) = login_reads(&path, "SHOP", Some(41))
+            .expect("read")
+            .expect("the database");
+        assert!(!kept, "read from the store");
+        assert_eq!(first.database_id, "db");
+        assert!(first.keys[0].enabled);
+        let (_, kept) = login_reads(&path, "SHOP", Some(41))
+            .expect("read")
+            .expect("the database");
+        assert!(kept, "answered without the store");
+
+        MetaStore::open(&path)
+            .expect("open")
+            .set_api_key_enabled("key", false)
+            .expect("disable");
+        let (after, kept) = login_reads(&path, "SHOP", Some(42))
+            .expect("read")
+            .expect("the database");
+        assert!(!kept, "the generation moved: read from the store");
+        assert!(!after.keys[0].enabled, "and the disabled key is seen");
+    }
+
+    /// A process that is not the store's only writer keeps nothing, and a
+    /// user name that names no database is never kept.
+    #[test]
+    fn nothing_is_kept_without_a_generation_or_a_database() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = store_with_a_key(directory.path());
+        for _ in 0..2 {
+            let (_, kept) = login_reads(&path, "shop", None)
+                .expect("read")
+                .expect("the database");
+            assert!(!kept);
+        }
+        assert!(
+            login_reads(&path, "nobody", Some(41))
+                .expect("read")
+                .is_none()
+        );
+        MetaStore::open(&path)
+            .expect("open")
+            .upsert_database("other", "nobody", b"dsn", NOW)
+            .expect("database");
+        let (found, kept) = login_reads(&path, "nobody", Some(41))
+            .expect("read")
+            .expect("the database created since");
+        assert!(!kept);
+        assert_eq!(found.database_id, "other");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{QueryError, SqlRejection, error_kind};
