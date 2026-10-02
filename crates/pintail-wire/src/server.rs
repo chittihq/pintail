@@ -4429,6 +4429,16 @@ fn is_session_command(sql: &str) -> bool {
     // Normalized rather than merely lowercased, so `START   TRANSACTION` is
     // classified as the same command as `start transaction` - and therefore
     // reaches the same rejection on a local database.
+    // Every statement is asked this; one that does not open with a letter
+    // one of these commands opens with is answered without being copied.
+    if !sql
+        .trim_start()
+        .bytes()
+        .next()
+        .is_some_and(|first| matches!(first.to_ascii_lowercase(), b's' | b'b' | b'c' | b'r' | b'k'))
+    {
+        return false;
+    }
     let command = normalized_command(sql);
     [
         "set ",

@@ -40,6 +40,23 @@ fn variable(expression: Expr) -> Result<String, String> {
 /// Other statement families are left to the ordinary statement parser.
 #[must_use]
 pub fn parse_prepared_command(sql: &str) -> Option<Result<PreparedCommand, String>> {
+    // Every statement a connection sends is asked this, and all but a few
+    // are answered by their first word: a statement that opens with any
+    // other word is not one of these commands, and need not be tokenized
+    // to find that out. Text that opens with anything but a plain word - a
+    // comment, a parenthesis - is still read in full.
+    let head = sql.trim_start_matches([' ', '\t', '\r', '\n']);
+    let word = head
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        .count();
+    if word > 0
+        && !["PREPARE", "EXECUTE", "DEALLOCATE", "DROP"]
+            .iter()
+            .any(|keyword| head[..word].eq_ignore_ascii_case(keyword))
+    {
+        return None;
+    }
     let dialect = crate::PintailDialect(
         sqlparser::dialect::MySqlDialect {},
         crate::session_parse_mode(),
