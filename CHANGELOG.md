@@ -16,6 +16,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   switchable path on or off, and a `non_default` list of every setting
   that moves the process off its defaults. `GET /api/storage` returns the
   same as `optimizations`.
+- Profile-guided builds train on a workload that needs no source database
+  (`scripts/pgo-build.sh`, `benchmark/pgo-train.ts`), and the image can
+  carry a second, x86-64-v3 binary behind a launcher that picks by the
+  CPU's features (`PINTAIL_X86_64_V3=1` at build time, off by default).
+  `docs/release-builds.md` records what each build setting measured.
 
 ### Changed
 
