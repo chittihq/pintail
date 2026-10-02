@@ -15,6 +15,7 @@ failpoints = ["pintail-failpoint/failpoints"]
 pintail-catalog.workspace = true
 pintail-failpoint.workspace = true
 pintail-log.workspace = true
+pintail-simd.workspace = true
 fs2.workspace = true
 lz4_flex.workspace = true
 pintail-types.workspace = true

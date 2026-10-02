@@ -1070,7 +1070,15 @@ fn for_each_unpacked_group<E>(
 ) -> Result<(), E> {
     let whole_groups = value_count / GROUP;
     let mut buffer = [0_u64; GROUP];
-    unpack_whole_groups(width, bytes, whole_groups, &mut buffer, &mut sink)?;
+    let mut wide = WideBuffer::new();
+    unpack_whole_groups(
+        width,
+        bytes,
+        whole_groups,
+        &mut buffer,
+        &mut wide,
+        &mut sink,
+    )?;
     let rest = value_count - whole_groups * GROUP;
     if rest > 0 {
         let consumed = whole_groups * GROUP * width as usize / 8;
@@ -1090,8 +1098,12 @@ fn unpack_whole_groups<E>(
     bytes: &[u8],
     groups: usize,
     buffer: &mut [u64; GROUP],
+    wide: &mut WideBuffer,
     sink: &mut impl FnMut(&[u64]) -> Result<(), E>,
 ) -> Result<(), E> {
+    if groups > 0 && pintail_simd::unpack_level(width) != pintail_simd::Level::Baseline {
+        return unpack_groups_vectored(width, bytes, groups, buffer, wide, sink);
+    }
     macro_rules! dispatch {
         ($($width:literal)*) => {
             match width {
@@ -1112,6 +1124,62 @@ fn unpack_whole_groups<E>(
         33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61
         62 63 64
     )
+}
+
+/// Groups one call of the vector kernel decodes: enough that the call and
+/// its setup vanish against the decode, few enough that the values are
+/// still in the first-level cache when the sink reads them.
+const VECTORED_GROUPS: usize = 8;
+
+/// Where the vector kernel lands several groups at once. It is cleared
+/// when first asked for, once a payload, and not before: a decode that
+/// takes its groups one at a time - a short payload, a selection that
+/// keeps a group here and a group there - never pays for clearing it.
+struct WideBuffer(Option<[u64; GROUP * VECTORED_GROUPS]>);
+
+impl WideBuffer {
+    const fn new() -> Self {
+        Self(None)
+    }
+
+    fn values(&mut self) -> &mut [u64; GROUP * VECTORED_GROUPS] {
+        match &mut self.0 {
+            Some(values) => values,
+            empty => empty.insert([0; GROUP * VECTORED_GROUPS]),
+        }
+    }
+}
+
+/// The whole groups of a payload through the CPU's vector unpack kernel,
+/// handed to `sink` a group at a time as the per-width kernels hand them.
+/// `bytes` runs to the payload's end, so the kernel's loads stay inside it
+/// until the last few values. A lone group decodes straight into the
+/// caller's buffer.
+fn unpack_groups_vectored<E>(
+    width: u32,
+    bytes: &[u8],
+    groups: usize,
+    buffer: &mut [u64; GROUP],
+    wide: &mut WideBuffer,
+    sink: &mut impl FnMut(&[u64]) -> Result<(), E>,
+) -> Result<(), E> {
+    if groups == 1 {
+        pintail_simd::unpack_u64(width, bytes, 0, buffer);
+        return sink(buffer);
+    }
+    let group_bytes = GROUP * width as usize / 8;
+    let decoded = wide.values();
+    let mut group = 0;
+    while group < groups {
+        let batch = (groups - group).min(VECTORED_GROUPS);
+        let values = &mut decoded[..batch * GROUP];
+        pintail_simd::unpack_u64(width, &bytes[group * group_bytes..], 0, values);
+        for chunk in values.chunks_exact(GROUP) {
+            sink(chunk)?;
+        }
+        group += batch;
+    }
+    Ok(())
 }
 
 /// The whole groups of a `WIDTH`-bit payload. `words` keeps one zero word
@@ -1188,6 +1256,83 @@ fn unpack_groups<const WIDTH: usize, E>(
     Ok(())
 }
 
+/// Whether a payload of `value_count` values of `width` bits decodes
+/// through the CPU's vector unpack kernel as a whole: the kernel adds the
+/// block base itself and hands back chunks ready to append, where the
+/// group-at-a-time path pays a sink call for every sixty-four values.
+fn decodes_whole(width: u32, value_count: usize) -> bool {
+    value_count >= GROUP && pintail_simd::unpack_level(width) != pintail_simd::Level::Baseline
+}
+
+/// Values one whole-payload kernel call decodes: a multiple of a group, so
+/// each call starts on a byte, and small enough to stay in the first-level
+/// cache until it is appended.
+const WHOLE_CHUNK: usize = GROUP * VECTORED_GROUPS;
+
+/// Appends every value of a payload through the vector kernel, a chunk at
+/// a time. `CHUNK` is the values a kernel call lands before they are
+/// appended.
+fn unpack_whole_chunked<T: Copy + Default, const CHUNK: usize>(
+    width: u32,
+    bytes: &[u8],
+    value_count: usize,
+    out: &mut Vec<T>,
+    kernel: impl Fn(&[u8], &mut [T]),
+) {
+    let mut chunk = [T::default(); CHUNK];
+    let mut done = 0;
+    while done < value_count {
+        let values = &mut chunk[..(value_count - done).min(CHUNK)];
+        kernel(&bytes[done * width as usize / 8..], values);
+        out.extend_from_slice(values);
+        done += values.len();
+    }
+}
+
+/// [`unpack_whole_chunked`] with the chunk a payload of `value_count`
+/// values wants: a short payload takes a short chunk, so that clearing the
+/// chunk never costs more than decoding into it.
+fn unpack_whole<T: Copy + Default>(
+    width: u32,
+    bytes: &[u8],
+    value_count: usize,
+    out: &mut Vec<T>,
+    kernel: impl Fn(&[u8], &mut [T]),
+) {
+    if value_count >= WHOLE_CHUNK {
+        unpack_whole_chunked::<T, WHOLE_CHUNK>(width, bytes, value_count, out, kernel);
+    } else {
+        unpack_whole_chunked::<T, GROUP>(width, bytes, value_count, out, kernel);
+    }
+}
+
+/// Appends every value of a payload, each plus `base` (wrapping). The
+/// caller has proved no sum leaves the type.
+fn unpack_whole_unsigned(
+    width: u32,
+    bytes: &[u8],
+    value_count: usize,
+    base: u64,
+    out: &mut Vec<u64>,
+) {
+    unpack_whole(width, bytes, value_count, out, |bytes, values| {
+        pintail_simd::unpack_u64(width, bytes, base, values);
+    });
+}
+
+/// The signed twin of [`unpack_whole_unsigned`].
+fn unpack_whole_signed(
+    width: u32,
+    bytes: &[u8],
+    value_count: usize,
+    base: i64,
+    out: &mut Vec<i64>,
+) {
+    unpack_whole(width, bytes, value_count, out, |bytes, values| {
+        pintail_simd::unpack_i64(width, bytes, base, values);
+    });
+}
+
 /// Decodes a bit-packed payload, adds the block base, and appends signed
 /// values straight into the destination - one pass, no temporary vector.
 ///
@@ -1210,6 +1355,10 @@ pub(super) fn unpack_signed_into(
     if in_range && width < 64 {
         #[allow(clippy::cast_possible_truncation)]
         let base = base as i64;
+        if decodes_whole(width, value_count) {
+            unpack_whole_signed(width, bytes, value_count, base, out);
+            return Ok(());
+        }
         return for_each_unpacked_group(bytes, width, value_count, |group| {
             #[allow(clippy::cast_possible_wrap)]
             out.extend(group.iter().map(|value| base.wrapping_add(*value as i64)));
@@ -1350,6 +1499,10 @@ pub(super) fn unpack_unsigned_into(
     if in_range {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let base = base as u64;
+        if decodes_whole(width, value_count) {
+            unpack_whole_unsigned(width, bytes, value_count, base, out);
+            return Ok(());
+        }
         return for_each_unpacked_group(bytes, width, value_count, |group| {
             out.extend(group.iter().map(|value| base.wrapping_add(*value)));
             Ok(())
@@ -1374,6 +1527,10 @@ pub(super) fn unpack_into(
 ) -> Result<(), String> {
     let (width, bytes) = unpack_header(decoder, value_count)?;
     out.reserve(value_count);
+    if decodes_whole(width, value_count) {
+        unpack_whole_unsigned(width, bytes, value_count, 0, out);
+        return Ok(());
+    }
     for_each_unpacked_group(bytes, width, value_count, |group| {
         out.extend_from_slice(group);
         Ok::<(), String>(())
@@ -1416,6 +1573,7 @@ pub(super) fn for_each_selected_group(
     let whole_groups = value_count / GROUP;
     let group_bytes = GROUP * width as usize / 8;
     let mut buffer = [0_u64; GROUP];
+    let mut wide = WideBuffer::new();
     let mut group = 0;
     while group < whole_groups {
         if words[group] == 0 {
@@ -1433,6 +1591,7 @@ pub(super) fn for_each_selected_group(
             &bytes[first * group_bytes..],
             group - first,
             &mut buffer,
+            &mut wide,
             &mut |values: &[u64]| {
                 sink(values, words[at]);
                 at += 1;
@@ -1455,6 +1614,10 @@ pub(super) fn for_each_selected_group(
 pub(super) fn unpack(decoder: &mut Decoder<'_>, value_count: usize) -> Result<Vec<u64>, String> {
     let (width, bytes) = unpack_header(decoder, value_count)?;
     let mut values = Vec::with_capacity(value_count);
+    if decodes_whole(width, value_count) {
+        unpack_whole_unsigned(width, bytes, value_count, 0, &mut values);
+        return Ok(values);
+    }
     for_each_unpacked_group(bytes, width, value_count, |group| {
         values.extend_from_slice(group);
         Ok::<(), String>(())
@@ -1579,7 +1742,7 @@ mod bit_reader_tests {
     fn unpack_kernel_timings() {
         const BLOCK: usize = 16_384;
         const ROUNDS: usize = 400;
-        for width in [3_u8, 11, 17, 21, 32, 47] {
+        for width in [3_u8, 11, 17, 21, 25, 32, 47, 57] {
             let framed = payload(width, BLOCK, u64::from(width));
             let mut out = Vec::with_capacity(BLOCK);
             let clock = std::time::Instant::now();
@@ -1658,6 +1821,72 @@ mod bit_reader_tests {
                 }
                 Err(message) => {
                     assert_eq!(outcome.expect_err("overflow must error"), message);
+                }
+            }
+        }
+    }
+
+    /// Every width against the two-pass arithmetic, at lengths either side
+    /// of a group and of a whole-payload chunk, with bases that keep every
+    /// value in range (the unchecked decode) and bases that do not (the
+    /// checked one, which must fail with the same message).
+    #[test]
+    fn based_decodes_match_the_two_pass_arithmetic_at_every_width() {
+        let bases = [
+            0_i128,
+            1,
+            -1,
+            1_000_003,
+            -1_000_003,
+            i128::from(i64::MIN),
+            i128::from(i64::MAX) - 5,
+            i128::from(u64::MAX) - 5,
+        ];
+        for width in 0_u8..=64 {
+            for count in [1_usize, 63, 64, 65, 200, 2_047, 2_048, 2_049, 4_100] {
+                let framed = payload(width, count, u64::from(width) * 131 + count as u64);
+                let normalized = unpack_windowed(&mut Decoder::new(&framed), count);
+                for base in bases {
+                    let sums = || {
+                        normalized.iter().map(move |value| {
+                            base.checked_add(i128::from(*value))
+                                .ok_or_else(|| "bit-packed integer overflow".to_owned())
+                        })
+                    };
+                    let signed: Result<Vec<i64>, String> = sums()
+                        .map(|sum| {
+                            i64::try_from(sum?)
+                                .map_err(|_| "bit-packed signed integer overflow".to_owned())
+                        })
+                        .collect();
+                    let mut out = vec![7_i64];
+                    let outcome =
+                        unpack_signed_into(&mut Decoder::new(&framed), count, base, &mut out);
+                    match signed {
+                        Ok(values) => {
+                            outcome.expect("signed decode");
+                            assert_eq!(out[0], 7);
+                            assert_eq!(&out[1..], values, "width {width} count {count} {base}");
+                        }
+                        Err(message) => assert_eq!(outcome.expect_err("overflow"), message),
+                    }
+                    let unsigned: Result<Vec<u64>, String> = sums()
+                        .map(|sum| {
+                            u64::try_from(sum?)
+                                .map_err(|_| "bit-packed unsigned integer overflow".to_owned())
+                        })
+                        .collect();
+                    let mut out = vec![7_u64];
+                    let outcome =
+                        unpack_unsigned_into(&mut Decoder::new(&framed), count, base, &mut out);
+                    match unsigned {
+                        Ok(values) => {
+                            outcome.expect("unsigned decode");
+                            assert_eq!(out[0], 7);
+                            assert_eq!(&out[1..], values, "width {width} count {count} {base}");
+                        }
+                        Err(message) => assert_eq!(outcome.expect_err("overflow"), message),
+                    }
                 }
             }
         }
