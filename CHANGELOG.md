@@ -48,6 +48,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memory bounds - runs on the workers or once per batch. A statement's
   audit row is written after its response is sent, so a crash can lose
   that row; it never delayed or failed the statement's data.
+- A grouped COUNT with a SUM keeps each group's row count and 64-bit sum
+  in one cell, widening in place before a sum could leave 64 bits. The
+  integer-range fold checks keys as it computes slots instead of reading
+  every window's bounds first, and each worker keeps its own slots. COUNT
+  of an unsigned integer column no longer sends a dense-key aggregate to
+  the scatter. The fused join resolves keys in 64 bits.
 - A repeated statement runs from a kept plan (`PINTAIL_PLAN_CACHE=0`
   turns it off); a kept key lookup or short scan runs on its connection's
   thread when nothing else is being answered (`PINTAIL_SMALL_READS`); the
