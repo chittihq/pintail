@@ -45,7 +45,8 @@ const FORMAT_VERSION: u8 = 7;
 /// v3 permits raw block payloads when LZ4 cannot save at least 5%;
 /// v5 stores wide plain text blocks as independently compressed frames;
 /// v6 adds a footer directory of optional side-index postings sections;
-/// v7 permits dictionary blocks whose indexes are one or two bytes wide.
+/// v7 permits dictionary blocks whose indexes are one or two bytes wide
+/// and an empty null bitmap for a block with no NULL.
 /// Header bytes after the magic: format version, schema version, schema
 /// fingerprint, row count, column count and target block rows.
 const HEADER_LENGTH: usize = MAGIC.len() + 1 + 4 + 8 + 8 + 4 + 4;
@@ -63,7 +64,7 @@ const FRAMED_BLOCK_VERSION: u8 = 5;
 /// directory is valid, and older segments simply have none.
 const POSTINGS_VERSION: u8 = 6;
 /// The first version whose dictionary blocks may carry indexes narrower
-/// than four bytes.
+/// than four bytes, and whose blocks with no NULL may omit their bitmap.
 const NARROW_DICTIONARY_VERSION: u8 = 7;
 
 /// The digest a version 4 footer records over the fields no block checksum
@@ -83,6 +84,16 @@ thread_local! {
     /// published.
     static WRITTEN_FORMAT_VERSION: std::cell::Cell<u8> = const { std::cell::Cell::new(FORMAT_VERSION) };
 }
+
+/// Makes this thread write segments of an earlier format version.
+#[cfg(test)]
+pub(crate) fn write_format_version_for_test(version: u8) {
+    WRITTEN_FORMAT_VERSION.with(|written| written.set(version));
+}
+
+/// The version this build writes.
+#[cfg(test)]
+pub(crate) const CURRENT_FORMAT_VERSION: u8 = FORMAT_VERSION;
 
 #[cfg(not(test))]
 const fn written_format_version() -> u8 {
@@ -4843,7 +4854,17 @@ fn write_block(
             encoded_values.push(cell.stat_bytes()?);
         }
     }
-    block.bytes(&null_bitmap, "null bitmap")?;
+    // A block with no NULL stores no bitmap: it would be a run of zero
+    // bytes an eighth of the row count long, read and checked by every scan
+    // of the block.
+    if null_count == 0
+        && cells.len() <= NO_NULLS.len() * 8
+        && written_format_version() >= NARROW_DICTIONARY_VERSION
+    {
+        block.bytes(&[], "null bitmap")?;
+    } else {
+        block.bytes(&null_bitmap, "null bitmap")?;
+    }
     let mut encoding = select_encoding(logical_type, &non_null);
     // A text column codes its blocks against one dictionary while its
     // values stay few: a block of one repeated value, or a short one whose
@@ -5866,6 +5887,23 @@ fn covered_null_count(null_bitmap: &[u8], row_count: usize) -> usize {
     count
 }
 
+/// The bitmap of a block that has no NULL, for as many rows as a block may
+/// have and still omit its own.
+static NO_NULLS: [u8; 8192] = [0; 8192];
+
+/// A block's null bitmap as its readers index it. From format version 7 a
+/// block with no NULL stores an empty one, which stands for all rows
+/// present; anything else is returned as stored, for the length check.
+fn present_null_bitmap(stored: &[u8], row_count: usize, format_version: u8) -> &[u8] {
+    let length = row_count.div_ceil(8);
+    if stored.is_empty() && format_version >= NARROW_DICTIONARY_VERSION && length <= NO_NULLS.len()
+    {
+        &NO_NULLS[..length]
+    } else {
+        stored
+    }
+}
+
 /// One stored block, parsed and checked against its checksum; its values
 /// are still compressed.
 struct ParsedBlock<'a> {
@@ -5905,6 +5943,7 @@ fn parse_block<'a>(
     let null_bitmap = block
         .bytes()
         .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
+    let null_bitmap = present_null_bitmap(null_bitmap, row_count, format_version);
     if null_bitmap.len() != row_count.div_ceil(8) {
         return Err(corrupt(
             path,
@@ -6273,7 +6312,12 @@ fn read_file_framed_utf8_rows(
     let bitmap_length = decoder
         .u32()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
-    if bitmap_length as usize != row_count.div_ceil(8) {
+    let omitted = bitmap_length == 0
+        && row_count.div_ceil(8) <= NO_NULLS.len()
+        && decoder
+            .format_version()
+            .is_ok_and(|version| version >= NARROW_DICTIONARY_VERSION);
+    if !omitted && bitmap_length as usize != row_count.div_ceil(8) {
         return Err(corrupt_here(path, decoder, "invalid null bitmap length"));
     }
     head.extend_from_slice(&bitmap_length.to_le_bytes());
@@ -6334,7 +6378,11 @@ fn read_file_framed_utf8_rows(
             "frames do not fill their block",
         ));
     }
-    let null_bitmap = &head[bitmap_start..bitmap_start + bitmap_length as usize];
+    let null_bitmap = if omitted {
+        &NO_NULLS[..row_count.div_ceil(8)]
+    } else {
+        &head[bitmap_start..bitmap_start + bitmap_length as usize]
+    };
     let is_null = |row: usize| null_bitmap[row / 8] & (1 << (row % 8)) != 0;
     let non_null_count = (0..row_count).filter(|row| !is_null(*row)).count();
     if entries.last().map_or(0, encoding::FrameEntry::end_value) != non_null_count {
@@ -7704,6 +7752,91 @@ mod range_read_tests {
                 );
             }
         }
+    }
+
+    /// The stored null bitmap length of every block of `column_id`.
+    fn bitmap_lengths(path: &std::path::Path, column_id: u32) -> Vec<usize> {
+        let bytes = std::fs::read(path).expect("segment");
+        let columns = u32::from_le_bytes(bytes[26..30].try_into().expect("count"));
+        let mut decoder = crate::codec::Decoder::new(&bytes[super::HEADER_LENGTH..]);
+        let mut lengths = Vec::new();
+        for _ in 0..columns {
+            let id = decoder.u32().expect("id");
+            decoder.u8().expect("type");
+            for _ in 0..decoder.u32().expect("blocks") {
+                let payload = decoder.bytes().expect("payload");
+                decoder.u64().expect("checksum");
+                let mut block = crate::codec::Decoder::new(payload);
+                block.u32().expect("rows");
+                let bitmap = block.bytes().expect("bitmap");
+                if id == column_id {
+                    lengths.push(bitmap.len());
+                }
+            }
+        }
+        lengths
+    }
+
+    #[test]
+    fn a_block_with_no_null_stores_no_bitmap_and_reads_the_same() {
+        let cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&cell, usize::MAX);
+        let mut sizes = Vec::new();
+        let mut answers = Vec::new();
+        for version in [6, super::FORMAT_VERSION] {
+            let directory = tempfile::tempdir().expect("directory");
+            super::WRITTEN_FORMAT_VERSION.with(|written| written.set(version));
+            let written =
+                std::panic::catch_unwind(|| numbered_segment(directory.path(), 0..160, 0));
+            super::WRITTEN_FORMAT_VERSION.with(|written| written.set(super::FORMAT_VERSION));
+            let (schema, meta) = written.expect("write segment");
+            let path = directory.path().join(&meta.file_name);
+            // `id` and `amount` have no NULL; `label` has one in every block
+            // of sixteen rows but the last.
+            let whole = 16_usize.div_ceil(8);
+            let (none, some) = if version == 6 {
+                (whole, whole)
+            } else {
+                (0, whole)
+            };
+            assert_eq!(
+                bitmap_lengths(&path, 1),
+                vec![none; 10],
+                "version {version}"
+            );
+            assert_eq!(
+                bitmap_lengths(&path, 3),
+                vec![none; 10],
+                "version {version}"
+            );
+            assert!(
+                bitmap_lengths(&path, 2)
+                    .iter()
+                    .filter(|length| **length == some)
+                    .count()
+                    >= 9,
+                "version {version}"
+            );
+            sizes.push(std::fs::metadata(&path).expect("metadata").len());
+            let columns = read_projected_column_ranges(
+                directory.path(),
+                &meta,
+                &schema,
+                &[0, 1, 2],
+                &[3..40, 77..78, 150..160],
+                &budget,
+            )
+            .expect("read")
+            .columns
+            .into_iter()
+            .map(super::super::store::DecodedColumn::into_values)
+            .collect::<Vec<_>>();
+            let rows = super::read(directory.path(), &meta, &schema).expect("row read");
+            assert_eq!(rows.len(), 160);
+            answers.push((columns, rows));
+        }
+        assert!(sizes[1] < sizes[0], "version 7 is smaller: {sizes:?}");
+        assert_eq!(answers[0], answers[1]);
     }
 
     #[test]

@@ -156,8 +156,9 @@ header and every column descriptor, the only bytes no block or footer
 checksum covered. Version 5 adds the framed compression layout for wide plain
 UTF-8 blocks. Version 6 adds an optional directory of side-index
 postings sections, written between the last column chunk and the footer.
-Version 7 adds the narrow dictionary encoding; a binary that reads only
-version 6 refuses a version 7 segment by its version byte.
+Version 7 adds the narrow dictionary encoding and lets a block with no
+NULL store an empty null bitmap; a binary that reads only version 6 refuses
+a version 7 segment by its version byte.
 
 ### Header
 
@@ -201,7 +202,9 @@ bytes typed_max
 bytes hll_registers       # exactly 64 registers
 ```
 
-Null bits are one for null and zero for present. Payloads contain present
+Null bits are one for null and zero for present. From version 7 a block of
+at most 65,536 rows with no NULL stores a zero-length bitmap, read as all
+rows present; a non-empty bitmap must be `ceil(row_count / 8)` bytes. Payloads contain present
 values only. Min/max use logical ordering, including IEEE total order for
 floating-point values. The retained HLL sketch uses 64 registers.
 

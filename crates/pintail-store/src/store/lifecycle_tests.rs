@@ -1837,3 +1837,191 @@ fn a_key_lookup_decodes_a_block_once_and_answers_from_the_newest_version() {
         );
     }
 }
+
+/// A table directory written partly by an earlier build: version 6 segments
+/// beside version 7 ones, read together, merged together, recopied, and
+/// reopened after a version 7 write that died.
+mod mixed_segment_versions {
+    use super::*;
+    use pintail_types::Value;
+    use std::ops::Bound;
+
+    fn schema() -> TableSchema {
+        TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "state", DataType::Utf8, true),
+                Column::new(3, "amount", DataType::Int64, false),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn options() -> StoreOptions {
+        StoreOptions {
+            background_compaction: false,
+            block_rows: 256,
+            compaction_fan_in: 2,
+            ..StoreOptions::default()
+        }
+    }
+
+    fn key(id: u64) -> PrimaryKey {
+        PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap()
+    }
+
+    fn row(id: u64, generation: u64, version: u64) -> StoredRow {
+        StoredRow::new(
+            key(id),
+            vec![
+                Value::UInt64(id),
+                if id.is_multiple_of(9) && generation == 0 {
+                    Value::Null
+                } else {
+                    Value::Utf8(["open", "held", "done"][((id + generation) % 3) as usize].into())
+                },
+                Value::Int64(i64::try_from(id * 31 + generation).unwrap()),
+            ],
+            version,
+            false,
+        )
+    }
+
+    fn visible(table: &TableStore) -> Vec<StoredRow> {
+        table.snapshot().scan().unwrap()
+    }
+
+    /// The format version byte of every segment file, sorted.
+    fn versions(directory: &Path) -> Vec<u8> {
+        let mut versions = std::fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "ptseg")
+            })
+            .map(|path| std::fs::read(path).unwrap()[5])
+            .collect::<Vec<_>>();
+        versions.sort_unstable();
+        versions
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn old_and_new_segments_read_merge_recopy_and_recover_together() {
+        let current = segment::CURRENT_FORMAT_VERSION;
+        let directory = tempfile::tempdir().unwrap();
+        let mut table = TableStore::open(directory.path(), schema(), options()).unwrap();
+        // The earlier build's two flushes, the second over part of the first.
+        segment::write_format_version_for_test(6);
+        table
+            .ingest((1..=2_000).map(|id| row(id, 0, 1)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        table
+            .ingest((1_500..=2_500).map(|id| row(id, 1, 2)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        segment::write_format_version_for_test(current);
+        assert_eq!(versions(directory.path()), vec![6, 6]);
+        // This build's flush, over part of both.
+        table
+            .ingest((1_900..=3_000).map(|id| row(id, 2, 3)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        assert_eq!(versions(directory.path()), vec![6, 6, current]);
+        let generation = |id: u64| match id {
+            1_900.. => 2,
+            1_500.. => 1,
+            _ => 0,
+        };
+        let expected = |ids: std::ops::RangeInclusive<u64>| {
+            ids.map(|id| {
+                let generation = generation(id);
+                row(id, generation, generation + 1)
+            })
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(visible(&table), expected(1..=3_000), "mixed read");
+
+        // A reader that opens the mixed directory sees the same rows.
+        drop(table);
+        let mut table = TableStore::open(directory.path(), schema(), options()).unwrap();
+        assert_eq!(visible(&table), expected(1..=3_000), "mixed reopen");
+
+        // Merging old and new inputs writes the current version.
+        while table.compact().unwrap().input_segments() > 0 {}
+        table.reclaim_obsolete_segments().unwrap();
+        assert_eq!(visible(&table), expected(1..=3_000), "merged");
+        assert!(
+            versions(directory.path()).contains(&current),
+            "a merge of old and new segments wrote {:?}",
+            versions(directory.path())
+        );
+
+        // A recopy beside whatever the merge left.
+        let mut copied =
+            TableStore::open(tempfile::tempdir().unwrap().keep(), schema(), options()).unwrap();
+        segment::write_format_version_for_test(6);
+        copied
+            .bulk_ingest_snapshot_covering(
+                (1..=1_000).map(|id| row(id, 0, 0)).collect(),
+                (Bound::Unbounded, Bound::Included(key(1_000))),
+            )
+            .unwrap();
+        copied
+            .bulk_ingest_snapshot_covering(
+                (1_001..=2_000).map(|id| row(id, 0, 0)).collect(),
+                (Bound::Excluded(key(1_000)), Bound::Unbounded),
+            )
+            .unwrap();
+        segment::write_format_version_for_test(current);
+        copied
+            .bulk_ingest_snapshot_covering(
+                (1_001..=2_000).map(|id| row(id, 4, 0)).collect(),
+                (Bound::Excluded(key(1_000)), Bound::Unbounded),
+            )
+            .unwrap();
+        let recopied = (1..=2_000)
+            .map(|id| row(id, if id > 1_000 { 4 } else { 0 }, 0))
+            .collect::<Vec<_>>();
+        assert_eq!(visible(&copied), recopied, "recopy over an old chunk");
+
+        // A write of a current-version segment that died: half a temporary
+        // file, and a whole-looking file the manifest never named.
+        let directory = directory.path();
+        let newest = std::fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "ptseg")
+            })
+            .find(|path| std::fs::read(path).unwrap()[5] == current)
+            .unwrap();
+        let bytes = std::fs::read(&newest).unwrap();
+        drop(table);
+        std::fs::write(
+            directory.join(".segment-00000000000000000901.ptseg.tmp"),
+            &bytes[..bytes.len() / 2],
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("segment-00000000000000000902.ptseg"),
+            &bytes[..bytes.len() - 5],
+        )
+        .unwrap();
+        let reopened = TableStore::open(directory, schema(), options()).unwrap();
+        assert_eq!(
+            visible(&reopened),
+            expected(1..=3_000),
+            "after the dead write"
+        );
+        assert!(
+            !directory
+                .join("segment-00000000000000000902.ptseg")
+                .exists()
+        );
+    }
+}
