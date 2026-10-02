@@ -87,6 +87,10 @@ pub struct QueryAdmission {
 struct Capacity {
     general: usize,
     reserved: usize,
+    /// Queries waiting for a slot. A release wakes them only when there
+    /// are any: waking nobody is still a system call, and every query pays
+    /// its release.
+    waiting: usize,
 }
 
 /// Reserved capacity is available only to conservatively bounded queries.
@@ -126,6 +130,7 @@ impl QueryAdmission {
             available: Mutex::new(Capacity {
                 general: limit - reserved_slots(limit),
                 reserved: reserved_slots(limit),
+                waiting: 0,
             }),
             released: Condvar::new(),
             wait: DEFAULT_QUEUE_WAIT,
@@ -152,6 +157,7 @@ impl QueryAdmission {
             available: Mutex::new(Capacity {
                 general: limit - reserved,
                 reserved,
+                waiting: 0,
             }),
             released: Condvar::new(),
             wait,
@@ -187,16 +193,22 @@ impl QueryAdmission {
                 reserved: false,
             });
         }
-        let available = self
+        let mut available = self
             .available
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (mut available, _) = self
-            .released
-            .wait_timeout_while(available, self.wait, |capacity| {
-                capacity.general == 0 && (class == QueryClass::General || capacity.reserved == 0)
-            })
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let full = |capacity: &mut Capacity| {
+            capacity.general == 0 && (class == QueryClass::General || capacity.reserved == 0)
+        };
+        if full(&mut available) {
+            available.waiting += 1;
+            available = self
+                .released
+                .wait_timeout_while(available, self.wait, full)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+            available.waiting -= 1;
+        }
         let reserved = class == QueryClass::Short && available.reserved > 0;
         let slots = if reserved {
             &mut available.reserved
@@ -238,7 +250,9 @@ impl Drop for QueryPermit<'_> {
         }
         // The released pool may serve only one class. Wake both classes so a
         // general waiter cannot swallow a reserved-slot notification.
-        admission.released.notify_all();
+        if available.waiting > 0 {
+            admission.released.notify_all();
+        }
     }
 }
 
