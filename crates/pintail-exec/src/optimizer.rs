@@ -3004,14 +3004,7 @@ fn joins_two_sides(conjunct: &BoundExpr, left: &LogicalPlan, right: &LogicalPlan
 pub(crate) fn is_volatile(expr: &BoundExpr) -> bool {
     match &expr.kind {
         BoundExprKind::Scalar { function, args } => {
-            matches!(
-                function,
-                ScalarFunction::Rand
-                    | ScalarFunction::Uuid
-                    | ScalarFunction::UuidShort
-                    | ScalarFunction::UserVariableRead
-                    | ScalarFunction::UserVariableAssign
-            ) || args.iter().any(is_volatile)
+            is_volatile_function(*function) || args.iter().any(is_volatile)
         }
         BoundExprKind::PreparedIn { expr, .. }
         | BoundExprKind::Unary { expr, .. }
@@ -3023,6 +3016,19 @@ pub(crate) fn is_volatile(expr: &BoundExpr) -> bool {
         BoundExprKind::Column(_) | BoundExprKind::Literal(_) => false,
         _ => true,
     }
+}
+
+/// Whether a scalar function answers differently on two evaluations of the
+/// same arguments.
+pub(crate) const fn is_volatile_function(function: ScalarFunction) -> bool {
+    matches!(
+        function,
+        ScalarFunction::Rand
+            | ScalarFunction::Uuid
+            | ScalarFunction::UuidShort
+            | ScalarFunction::UserVariableRead
+            | ScalarFunction::UserVariableAssign
+    )
 }
 
 fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {

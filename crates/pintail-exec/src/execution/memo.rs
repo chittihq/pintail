@@ -353,8 +353,11 @@ fn expr_is_volatile(expression: &BoundExpr) -> bool {
         BoundExprKind::Binary { left, right, .. } => {
             expr_is_volatile(left) || expr_is_volatile(right)
         }
-        BoundExprKind::Scalar { args, .. } => {
-            crate::optimizer::is_volatile(expression) || args.iter().any(expr_is_volatile)
+        // The function itself, then its arguments by this walk: the
+        // optimizer's own walk reads an aggregate or window slot under a
+        // function as unknown, and `COALESCE(SUM(x), 0)` is not volatile.
+        BoundExprKind::Scalar { function, args } => {
+            crate::optimizer::is_volatile_function(*function) || args.iter().any(expr_is_volatile)
         }
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
