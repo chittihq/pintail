@@ -87,6 +87,16 @@ pub fn projected_scan_width() -> usize {
     projected_scan_pool().map_or(1, rayon::ThreadPool::current_num_threads)
 }
 
+/// The scan pool's width when `PINTAIL_SCAN_THREADS` sets one; `None`
+/// leaves it at the CPU count.
+#[must_use]
+pub fn scan_threads_setting() -> Option<usize> {
+    std::env::var("PINTAIL_SCAN_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|threads| *threads > 0)
+}
+
 fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
     PROJECTED_SCAN_POOL
         .get_or_init(|| {
@@ -113,13 +123,9 @@ fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
             // avoid: the same check failed again with the pool back at the
             // CPU count, at a different row and value, so the width is not
             // the cause (G14, e90).
-            let threads = std::env::var("PINTAIL_SCAN_THREADS")
-                .ok()
-                .and_then(|value| value.parse::<usize>().ok())
-                .filter(|threads| *threads > 0)
-                .unwrap_or_else(|| {
-                    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
-                });
+            let threads = scan_threads_setting().unwrap_or_else(|| {
+                std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+            });
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 // Matches the main thread's 8 MiB. Left at rayon's default a
@@ -199,7 +205,8 @@ pub struct StoreOptions {
 /// rows one merge reads and the rows one of its outputs holds). Read once.
 /// Small values make a modest table walk through every flush and merge
 /// shape, which is what a crash harness needs to reach them in seconds.
-fn size_overrides() -> (Option<usize>, Option<u64>, Option<u64>) {
+#[must_use]
+pub fn size_overrides() -> (Option<usize>, Option<u64>, Option<u64>) {
     static OVERRIDES: OnceLock<(Option<usize>, Option<u64>, Option<u64>)> = OnceLock::new();
     fn read(name: &str) -> Option<u64> {
         std::env::var(name)

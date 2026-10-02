@@ -22,11 +22,13 @@ mod points;
 mod small_group_fold;
 mod sort;
 mod sparse_keys;
+mod switches;
 mod two_pass;
 mod ungrouped_fold;
 mod watchdog;
 mod window;
 mod window_moments;
+pub use switches::{PathSwitch, path_switches};
 pub use watchdog::{ExecutionCancellation, cancel_query_under_memory_pressure};
 pub use window_moments::{session_window_high_precision, set_session_window_high_precision};
 
@@ -322,6 +324,17 @@ pub fn init_parallel_pool() -> Result<(), String> {
         .thread_name(|index| format!("pintail-exec-{index}"))
         .build_global()
         .map_err(|error| error.to_string())
+}
+
+/// The execute pool's width, and whether `RAYON_NUM_THREADS` set it rather
+/// than the CPU count.
+#[must_use]
+pub fn parallel_pool_threads() -> (usize, bool) {
+    let overridden = std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|threads| threads > 0);
+    (rayon::current_num_threads(), overridden)
 }
 
 /// Installs the process-wide memory budget. Called once at startup; later

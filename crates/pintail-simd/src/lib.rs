@@ -78,6 +78,14 @@ fn cap() -> String {
         .to_ascii_lowercase()
 }
 
+/// The `PINTAIL_SIMD` setting of this process, lowercased; `None` when it
+/// is unset or empty.
+#[must_use]
+pub fn setting() -> Option<String> {
+    let cap = cap();
+    (!cap.is_empty()).then_some(cap)
+}
+
 fn capped_to_baseline(cap: &str) -> bool {
     matches!(cap, "off" | "baseline" | "portable")
 }

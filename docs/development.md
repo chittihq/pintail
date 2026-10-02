@@ -123,6 +123,48 @@ for yourself. In particular, never point it at the deployed compose stack —
 `docs/limitations.md` describes the dashboard as a local control plane and not
 a multi-tenant security boundary, and that assumption is what makes it safe.
 
+## Which build and which paths a server is running
+
+At startup, after the `pintail limits:` line, the server logs two more
+lines of `key=value` pairs. `GET /api/storage` carries the same facts as
+its `optimizations` object, for an operator without access to the log.
+Every value is read from the code that decides it, not from a second copy
+of the rule.
+
+`pintail optimizations:` describes the machine and the binary:
+
+| Key | Meaning |
+|---|---|
+| `cpu_model` | The processor's model name (Linux; `unknown` elsewhere). |
+| `cpu_cores` | Logical cores available to the process. |
+| `cpu_features` | Of `sse4.2`, `avx`, `avx2`, `fma`, `bmi2`, `avx512f`, `avx512bw`, `avx512vl`, `avx512dq` (or `neon`), the ones the processor reports. |
+| `simd` | The level the vector kernels dispatch to: `baseline`, `avx2` or `avx512`. |
+| `simd_setting` | `PINTAIL_SIMD` when set, else `unset`. |
+| `build_version` | The package version. |
+| `build_target` | The instruction-set level the binary was compiled for: `generic`, `x86-64-v2`, `x86-64-v3` or `x86-64-v4`. |
+| `build_variant` | `standard`, or `pgo` / `pgo+bolt` for a profile-guided build. |
+| `debug_assertions` | `on` in a development build. |
+
+`pintail paths:` describes what runs:
+
+| Key | Meaning | Controlled by |
+|---|---|---|
+| `scan_threads`, `scan_threads_from` | Width of the scan pool, and `cores` or the variable that set it. | `PINTAIL_SCAN_THREADS` |
+| `execute_threads`, `execute_threads_from` | The same for the execute pool. | `RAYON_NUM_THREADS` |
+| `inline_statements` | Bounded statements run on the connection's task. | `PINTAIL_INLINE_STATEMENTS=0` |
+| `shared_queries` | Identical concurrent requests share one execution. | `PINTAIL_DISABLE_SHARED_QUERIES` |
+| `secondary_index` | Lookups through the side index. | `PINTAIL_SECONDARY_INDEX=0` |
+| `settled_memo` | A settled aggregate replays its answer. | `PINTAIL_DISABLE_SETTLED_MEMO` |
+| `packed_group` | Composite `GROUP BY` keys fold packed. | `PINTAIL_DISABLE_PACKED_GROUP` |
+| `grouped_fold` | Grouped aggregates fold a segment at a time. | `PINTAIL_DISABLE_GROUPED_FOLD` |
+| `argument_projection` | Computed aggregate arguments are projected once. | `PINTAIL_DISABLE_ARGUMENT_PROJECTION` |
+| `segment_format` | The segment format version this build writes. | |
+| `size_overrides` | Memtable and compaction sizes set by `PINTAIL_MEMTABLE_KB`, `PINTAIL_COMPACTION_INPUT_ROWS`, `PINTAIL_COMPACTION_OUTPUT_ROWS`. | |
+| `non_default` | Every setting that moves the process off its defaults: a path turned off, a pool resized, a size override, a tuning or diagnostic variable that is set (named without its value). | |
+
+An empty `non_default=[]` is a deployment running as shipped. The block
+cache's budget is on the `pintail limits:` line.
+
 ## Profiling a query
 
 Every `EXPLAIN ANALYZE` prints, after the plan and the spill line, a profile

@@ -2962,7 +2962,7 @@ fn fold_span(
 
 /// `PINTAIL_DISABLE_GROUPED_FOLD` puts a grouped query back on the general
 /// path, which is how the measurement gets a control arm.
-fn grouped_fold_disabled() -> bool {
+pub(super) fn grouped_fold_disabled() -> bool {
     static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *DISABLED.get_or_init(|| std::env::var_os("PINTAIL_DISABLE_GROUPED_FOLD").is_some())
 }
@@ -3434,7 +3434,7 @@ pub(super) fn build_hash_aggregate(
     }
     // Profiling escape hatch: with the memo on, every settled re-run is a
     // replay and a sampling profiler only ever sees the first execution.
-    let memo_key = if std::env::var_os("PINTAIL_DISABLE_SETTLED_MEMO").is_some() {
+    let memo_key = if super::switches::settled_memo_disabled() {
         None
     } else {
         settled_plan_key(input).and_then(|(directory, generation, scan)| {
@@ -4071,9 +4071,7 @@ fn project_computed_arguments(
                     | AggregateFunction::Maximum
             )
     };
-    if std::env::var_os("PINTAIL_DISABLE_ARGUMENT_PROJECTION").is_some()
-        || !aggregates.iter().any(computed)
-    {
+    if super::switches::argument_projection_disabled() || !aggregates.iter().any(computed) {
         return None;
     }
     let mut expressions = (0..input_width)

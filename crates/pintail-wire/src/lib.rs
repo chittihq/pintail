@@ -35,6 +35,7 @@ pub use server::{
 pub use engine::replica_cache_stats;
 pub use replica_cache::ReplicaCacheStats;
 pub use result_rows::ResultRows;
-pub use shared_query::{SharedQueryStats, shared_query_stats};
+pub use server::inline_statements;
+pub use shared_query::{SharedQueryStats, shared_queries_enabled, shared_query_stats};
 
 mod metadata_provider;

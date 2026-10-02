@@ -39,6 +39,9 @@ const MAGIC: &[u8; 5] = b"PTSEG";
 const FOOTER_MAGIC: &[u8; 5] = b"PTFTR";
 const FORMAT_VERSION: u8 = 7;
 
+/// The segment format version this build writes.
+pub const WRITTEN_SEGMENT_FORMAT: u8 = FORMAT_VERSION;
+
 /// Segment versions this reader understands: v1 stores text carriers for
 /// every Utf8-storage column; v2 additionally stores fixed-width native
 /// units (wire type Int64) for eligible Decimal/Date32/DateTime64 columns;

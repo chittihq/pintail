@@ -25,8 +25,8 @@ pub use publication::{
 pub use segment::{
     BLOCK_CACHE_SETTING, BlockCacheAccounting, BlockCacheStats, BoundDomain, ColumnBounds,
     ColumnDecode, ColumnSma, NativeUnits, SegmentSmas, SmaExtremes, SmaSum, TextAdmits,
-    TextValueFilter, block_cache_environment_limit, block_cache_stats, configure_block_cache,
-    shrink_block_cache, sync_directory,
+    TextValueFilter, WRITTEN_SEGMENT_FORMAT, block_cache_environment_limit, block_cache_stats,
+    configure_block_cache, shrink_block_cache, sync_directory,
 };
 pub use sketch::DistinctSketch;
 pub use store::GroupedFoldSpan;
@@ -36,10 +36,17 @@ pub use store::{
     IngestOutcome, PrewhereRanges, PrewhereSelect, ProjectedColumnChunk, ProjectedRow,
     ProjectedScan, ProjectedScanStream, ProjectedValueChunk, ScanStats, StorageMetrics,
     StoreOptions, TableSnapshot, TableStore, TextKeyFn, TextKeyer, ValidityIter, WalSync,
-    override_side_index, projected_scan_width, side_index_cache_default, side_index_cache_limit,
-    side_index_cache_usage, side_index_enabled, side_index_note, side_index_totals,
-    side_index_trace,
+    override_side_index, projected_scan_width, scan_threads_setting, side_index_cache_default,
+    side_index_cache_limit, side_index_cache_usage, side_index_enabled, side_index_note,
+    side_index_totals, side_index_trace, size_overrides,
 };
+
+/// The instruction set the vector kernels run at in this process, and the
+/// `PINTAIL_SIMD` setting when one is set.
+#[must_use]
+pub fn simd_dispatch() -> (&'static str, Option<String>) {
+    (pintail_simd::level().name(), pintail_simd::setting())
+}
 
 /// The stable on-disk directory for one table inside a database's `tables`
 /// root.

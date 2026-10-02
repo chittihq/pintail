@@ -26,7 +26,7 @@ for pgo_iteration in 1 2 3; do
     "$pgo_target/$pgo_host/release/examples/instruction_workload" all
 done
 "$pgo_profdata" merge --sparse "$pgo_data"/*.profraw -o "$pgo_data/merged.profdata"
-RUSTFLAGS="$pgo_flags -Cprofile-use=$pgo_data/merged.profdata" "$pgo_cargo" "${pgo_args[@]}"
+PINTAIL_BUILD_VARIANT=pgo RUSTFLAGS="$pgo_flags -Cprofile-use=$pgo_data/merged.profdata" "$pgo_cargo" "${pgo_args[@]}"
 "$pgo_target/$pgo_host/release/examples/instruction_workload" all
 mkdir -p "$pgo_target/pgo"
 cp "$pgo_target/$pgo_host/release/examples/instruction_workload" "$pgo_target/pgo/instruction_workload"

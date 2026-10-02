@@ -1144,7 +1144,8 @@ const MAX_REMEMBERED_SHAPES: usize = 1024;
 
 /// Whether bounded statements run on the connection's task
 /// (`PINTAIL_INLINE_STATEMENTS=0` sends every statement to a worker).
-fn inline_statements() -> bool {
+#[must_use]
+pub fn inline_statements() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
         !matches!(

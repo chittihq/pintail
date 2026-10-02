@@ -67,6 +67,12 @@ const WAIT_SLICE: Duration = Duration::from_millis(25);
 static DISABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var_os("PINTAIL_DISABLE_SHARED_QUERIES").is_some());
 
+/// Whether identical concurrent requests share one execution.
+#[must_use]
+pub fn shared_queries_enabled() -> bool {
+    !*DISABLED
+}
+
 /// Everything that must match before one execution can answer another
 /// request. See the module documentation for why each field is here;
 /// adding an input to execution without adding it here is the one way this

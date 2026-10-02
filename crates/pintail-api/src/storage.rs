@@ -53,6 +53,9 @@ pub(crate) struct StorageResponse {
     /// Whether the control-plane metadata file passed its last integrity
     /// check, and when it was last copied aside.
     metadata: crate::metadata_health::MetadataHealth,
+    /// Which build this is and which execution paths are on: the facts the
+    /// boot log's `pintail optimizations:` and `pintail paths:` lines carry.
+    optimizations: crate::optimizations::Optimizations,
 }
 
 /// `GET /api/storage`.
@@ -100,6 +103,7 @@ fn report(data_dir: &Path) -> StorageResponse {
         data,
         system,
         metadata: crate::metadata_health::current(),
+        optimizations: crate::optimizations::optimizations(),
     }
 }
 

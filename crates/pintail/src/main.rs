@@ -141,6 +141,9 @@ async fn run() -> Result<()> {
         pintail_store::side_index_cache_default(available);
     }
     report_effective_limits(&config);
+    for line in pintail_api::optimizations().log_lines() {
+        pintail_log::log_info!("{line}");
+    }
 
     let api_state = ApiState::new(
         config.data_dir(),

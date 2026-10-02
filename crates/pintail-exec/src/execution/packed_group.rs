@@ -147,7 +147,7 @@ impl PackedGroupPlan {
     ) -> Result<Self, String> {
         // `PINTAIL_DISABLE_PACKED_GROUP` keeps every query on the path it
         // took before, for measuring one against the other.
-        if std::env::var_os("PINTAIL_DISABLE_PACKED_GROUP").is_some() {
+        if super::switches::packed_group_disabled() {
             return Err("disabled".to_owned());
         }
         if columns.len() > MAX_KEY_COLUMNS || key_collations.len() != columns.len() {

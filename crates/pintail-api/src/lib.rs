@@ -15,6 +15,7 @@ mod keys;
 mod metadata_health;
 mod metrics;
 mod oauth;
+mod optimizations;
 mod vitals;
 mod wire_certificate;
 
@@ -58,6 +59,7 @@ use rust_embed::RustEmbed;
 use serde::Serialize;
 use tower_http::compression::CompressionLayer;
 
+pub use optimizations::{Optimizations, optimizations};
 pub use state::ApiState;
 pub use supervisor::spawn as spawn_supervisor;
 
