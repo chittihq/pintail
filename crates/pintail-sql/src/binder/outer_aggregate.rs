@@ -37,6 +37,7 @@ fn lift_query(
 ) {
     let mut replacements = Vec::new();
     let mut identities = Vec::new();
+    let mut lifted = false;
     for mut aggregate in std::mem::take(&mut query.aggregates) {
         if aggregate.declared
             && aggregate.function != AggregateFunction::AnyValue
@@ -55,12 +56,20 @@ fn lift_query(
             }
             replacements.push(BoundExprKind::Column(reference));
             outer.push(aggregate);
+            lifted = true;
         } else {
             replacements.push(BoundExprKind::Aggregate(
                 query.group_by.len() + query.aggregates.len(),
             ));
             query.aggregates.push(aggregate);
         }
+    }
+    // The set-at-a-time form was written for the subquery as it read
+    // before: it would compute the lifted aggregate over the subquery's own
+    // rows.
+    if lifted {
+        query.outer_set = None;
+        query.outer_set_refusal = Some("one of its aggregates belongs to the enclosing query");
     }
     let group_count = query.group_by.len();
     query_expressions(query, &mut |expr| {

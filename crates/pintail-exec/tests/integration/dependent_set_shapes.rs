@@ -437,7 +437,39 @@ fn an_aggregate_under_a_function_is_not_taken_for_volatile() {
     }
     // One execution for every parcel, and the one that takes the value the
     // subquery has over no rows.
-    assert!(wrapped.sets >= 1 && wrapped.per_row <= 1, "{}", wrapped.profile);
+    assert!(
+        wrapped.sets >= 1 && wrapped.per_row <= 1,
+        "{}",
+        wrapped.profile
+    );
+}
+
+#[test]
+fn an_aggregate_of_the_enclosing_query_has_no_set_form() {
+    let fixture = fixture(40);
+    // `SUM(p.weight)` is the outer query's aggregate: the subquery only
+    // decides, per group, whether its value is shown.
+    let lifted = ran(
+        &fixture,
+        "SELECT p.label, (SELECT SUM(p.weight) FROM zones z WHERE z.id = 1) \
+         FROM parcels p GROUP BY p.label ORDER BY p.label",
+    );
+    let mut sums = std::collections::BTreeMap::new();
+    for parcel in 1..=40_u64 {
+        let label = (parcel % 17 != 0).then(|| format!("L{:02}", parcel * 7 % 13));
+        *sums.entry(label).or_insert(0) += weight(parcel);
+    }
+    let expected = sums
+        .into_iter()
+        .map(|(label, sum)| vec![label.unwrap_or_else(|| "NULL".to_owned()), sum.to_string()])
+        .collect::<Vec<_>>();
+    let shown = lifted
+        .rows
+        .iter()
+        .map(|row| vec![row[0].clone(), row[1].trim_end_matches(".0").to_owned()])
+        .collect::<Vec<_>>();
+    assert_eq!(shown, expected, "{:?}", lifted.rows);
+    assert_eq!(lifted.sets, 0, "{}", lifted.profile);
 }
 
 #[test]
