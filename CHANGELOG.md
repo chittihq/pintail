@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.7-rc3] - 2026-10-03
+
+Aggregates folded on the worker that decodes the data, with CPU per query
+roughly halved on grouped and join shapes and twice the throughput under
+concurrent clients; AVX2 decoding kernels, a narrower segment format and a
+shared block cache; small statements and bounded scans answered in
+microseconds; change capture applied about twice as fast; background
+merges that converge under writes; and replication fixes for negative
+MEDIUMINT values, BINARY padding and JSON documents holding DECIMAL or
+temporal values.
+
 ### Added
 
 - The server logs which build it is and which execution paths it runs:
