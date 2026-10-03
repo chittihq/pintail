@@ -44,6 +44,7 @@ mod supervisor;
 #[cfg(test)]
 mod test_support;
 mod upstream;
+mod value_audit;
 mod workspaces;
 
 use axum::{

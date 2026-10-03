@@ -192,6 +192,12 @@ export interface SnapshotStatus {
     completed_chunks: number
     total_chunks: number
     last_error: string | null
+    /// Present when rows change capture applied under an earlier binary may
+    /// hold values decoded wrong; a resync of the table clears it.
+    resync_advised?: {
+      reason: string
+      columns: Array<{ name: string, defect: 'negative_mediumint' | 'binary_trailing_zeros' }>
+    }
   }>
 }
 

@@ -120,6 +120,12 @@ pub fn spawn(
             for database_id in first_snapshots_never_handed_off(&metadata) {
                 resume.entry(database_id).or_insert(false);
             }
+            // After the sweeps above, so a copy they re-armed is owed and
+            // not named: it replaces the table's rows anyway. Advice only;
+            // the operator decides when to resync.
+            if let Ok(data_dir) = state.data_dir() {
+                crate::value_audit::warn_at_startup(data_dir, &metadata);
+            }
         }
         for (database_id, force) in resume {
             // A database already replicating lost one table's copy, not its

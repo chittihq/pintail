@@ -78,6 +78,11 @@ struct TableSnapshotStatus {
     completed_chunks: usize,
     total_chunks: usize,
     last_error: Option<String>,
+    /// Present when rows change capture applied under an earlier binary
+    /// may hold values decoded wrong: which columns, and why. A resync of
+    /// the table clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resync_advised: Option<crate::value_audit::ResyncAdvice>,
 }
 
 pub(crate) async fn start(
@@ -450,11 +455,19 @@ pub(crate) async fn status(
         .database(&database_id)
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("database does not exist"))?;
+    let suspects = crate::value_audit::suspect_tables(state.data_dir()?, &metadata, &database)
+        .map_err(ApiError::internal)?;
     let tables = metadata
         .tables(&database_id)
         .map_err(ApiError::internal)?
         .into_iter()
-        .map(|table| table_snapshot_status(&metadata, table))
+        .map(|table| {
+            let advice = suspects
+                .iter()
+                .find(|suspect| suspect.table == table.name)
+                .map(crate::value_audit::SuspectTable::advice);
+            table_snapshot_status(&metadata, table, advice)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let job = state
         .job_holder(&database_id)
@@ -919,6 +932,7 @@ pub(crate) fn effective_mode(database: &DatabaseRecord, report: &ProbeReport) ->
 fn table_snapshot_status(
     metadata: &pintail_meta::MetaStore,
     table: TableRecord,
+    resync_advised: Option<crate::value_audit::ResyncAdvice>,
 ) -> Result<TableSnapshotStatus, ApiError> {
     let chunks = metadata
         .snapshot_chunks(&table.database_id, &table.name)
@@ -934,6 +948,7 @@ fn table_snapshot_status(
         completed_chunks,
         total_chunks: chunks.len(),
         last_error: table.last_error,
+        resync_advised,
     })
 }
 

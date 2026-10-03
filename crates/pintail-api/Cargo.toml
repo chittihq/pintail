@@ -49,6 +49,7 @@ tokio.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
+rusqlite.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
