@@ -348,6 +348,7 @@ async fn flush(config: &Config, client: &reqwest::Client, batch: &mut Vec<Event>
                     "dt": event.at.to_rfc3339(),
                     "level": match event.level {
                         pintail_log::ERROR => "error",
+                        pintail_log::WARN => "warn",
                         pintail_log::DEBUG => "debug",
                         _ => "info",
                     },

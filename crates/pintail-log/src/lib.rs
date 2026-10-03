@@ -17,6 +17,7 @@
 //! `PINTAIL_LOG` selects one of:
 //!
 //! - `error` - failures only
+//! - `warn` - adds conditions an operator should act on
 //! - `info` - the default: lifecycle transitions and request outcomes
 //! - `debug` - adds per-item detail (per table, per chunk, per cycle)
 //!
@@ -51,10 +52,13 @@ pub fn set_sink(sink: Sink) -> bool {
 
 /// Failures only.
 pub const ERROR: u8 = 0;
+/// Conditions an operator should act on that are not failures of the work
+/// in hand.
+pub const WARN: u8 = 1;
 /// Lifecycle transitions and request outcomes. The default.
-pub const INFO: u8 = 1;
+pub const INFO: u8 = 2;
 /// Per-item detail: per table, per chunk, per cycle.
-pub const DEBUG: u8 = 2;
+pub const DEBUG: u8 = 3;
 
 /// Whether a message at `level` should be written.
 ///
@@ -72,6 +76,7 @@ pub fn enabled(level: u8) -> bool {
             .as_str()
         {
             "error" | "err" => ERROR,
+            "warn" | "warning" => WARN,
             "debug" | "trace" => DEBUG,
             _ => INFO,
         }
@@ -261,6 +266,16 @@ macro_rules! log_error {
     ($($arg:tt)*) => {
         if $crate::enabled($crate::ERROR) {
             $crate::emit_at($crate::ERROR, &format!($($arg)*));
+        }
+    };
+}
+
+/// Logs a condition an operator should act on. Emitted at `warn` and below.
+#[macro_export]
+macro_rules! log_warn {
+    ($($arg:tt)*) => {
+        if $crate::enabled($crate::WARN) {
+            $crate::emit_at($crate::WARN, &format!($($arg)*));
         }
     };
 }
