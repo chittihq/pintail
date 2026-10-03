@@ -27,7 +27,19 @@ pub use control::{
     WorkspaceMemberRecord, WorkspaceRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 23;
+const CURRENT_SCHEMA_VERSION: u32 = 24;
+
+/// The change-capture decoder generation a table copy completed by this
+/// binary records (`tables.copy_generation`).
+///
+/// Raise it when a decoding fix means rows a stream applied under an
+/// earlier binary may be stored wrong while copied rows are right: every
+/// table copied before the raise then reads as a candidate for a resync
+/// until it is copied again.
+///
+/// 1: a negative signed `MEDIUMINT` keeps its sign, and a `BINARY(n)` value
+/// keeps its trailing zero bytes.
+pub const COPY_GENERATION: u32 = 1;
 
 /// Counts the commits this process's stores have made: see
 /// [`write_generation`].
@@ -1669,9 +1681,10 @@ impl MetaStore {
         let changed = self
             .connection
             .execute(
-                "UPDATE tables SET state = ?3, last_error = NULL, copy_complete = 1, copy_pending = 0 \
+                "UPDATE tables SET state = ?3, last_error = NULL, copy_complete = 1, copy_pending = 0, \
+                   copy_generation = ?4 \
                  WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
-                (database_id, table_name, state),
+                (database_id, table_name, state, COPY_GENERATION),
             )
             .with_context(|| {
                 format!("failed to finish the resnapshot of {database_id}.{table_name}")
@@ -2423,9 +2436,10 @@ impl MetaStore {
     pub fn complete_snapshot_table(&self, database_id: &str, table_name: &str) -> Result<()> {
         self.connection
             .execute(
-                "UPDATE tables SET state = 'pending', last_error = NULL, copy_complete = 1, copy_pending = 0 \
+                "UPDATE tables SET state = 'pending', last_error = NULL, copy_complete = 1, copy_pending = 0, \
+                   copy_generation = ?3 \
                  WHERE db_id = ?1 AND name = ?2",
-                (database_id, table_name),
+                (database_id, table_name, COPY_GENERATION),
             )
             .with_context(|| {
                 format!("failed to complete snapshot table {database_id}.{table_name}")
@@ -2762,7 +2776,19 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 23 {
         migration_v23(connection.transaction()?)?;
     }
+    if found < 24 {
+        migration_v24(connection.transaction()?)?;
+    }
     Ok(())
+}
+
+fn migration_v24(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/024_copy_generation.sql"))
+        .context("failed to apply metadata migration 24")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 24")
 }
 
 fn migration_v23(transaction: Transaction<'_>) -> Result<()> {

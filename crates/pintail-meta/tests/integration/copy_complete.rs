@@ -209,7 +209,7 @@ fn upgrading_a_store_backfills_the_marker_from_the_old_states() {
     drop(connection);
 
     let upgraded = MetaStore::open(&path).expect("upgrade");
-    assert_eq!(upgraded.schema_version().expect("version"), 23);
+    assert_eq!(upgraded.schema_version().expect("version"), 24);
     let marked = upgraded
         .tables("db-1")
         .expect("tables")
@@ -459,7 +459,8 @@ fn version_twenty_upgrade_preserves_only_active_copy_intent() {
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection
         .execute_batch(
-            "ALTER TABLE tables DROP COLUMN copy_pending; \
+            "ALTER TABLE tables DROP COLUMN copy_generation; \
+             ALTER TABLE tables DROP COLUMN copy_pending; \
              ALTER TABLE tables DROP COLUMN paused; \
              ALTER TABLE tables DROP COLUMN paused_skipped; \
              ALTER TABLE databases DROP COLUMN restored_backup_created_at; \
@@ -468,7 +469,7 @@ fn version_twenty_upgrade_preserves_only_active_copy_intent() {
         .unwrap();
     drop(connection);
     let store = MetaStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 23);
+    assert_eq!(store.schema_version().unwrap(), 24);
     assert!(store.table_copy_pending("db-1", "copying").unwrap());
     assert!(!store.table_copy_pending("db-1", "quarantined").unwrap());
     assert!(!store.table_copy_pending("db-1", "ready").unwrap());
@@ -506,4 +507,67 @@ fn failed_handoff_rearms_copy_but_absent_source_retires_it() {
         table_state(&store, "audit"),
         ("needs_resync".to_owned(), false)
     );
+}
+
+fn copy_generation(store: &MetaStore, name: &str) -> u32 {
+    store
+        .tables("db-1")
+        .expect("tables")
+        .into_iter()
+        .find(|table| table.name == name)
+        .expect("tracked table")
+        .copy_generation
+}
+
+#[test]
+fn a_table_copied_before_the_generation_record_upgrades_to_generation_zero() {
+    let (directory, store) = store_with_database();
+    for name in ["old_copy", "recopied", "copied_again"] {
+        store
+            .upsert_snapshot_table("db-1", name, Some("[]"), Some("[]"))
+            .unwrap();
+        store.complete_snapshot_table("db-1", name).unwrap();
+    }
+    assert_eq!(
+        copy_generation(&store, "old_copy"),
+        pintail_meta::COPY_GENERATION
+    );
+    drop(store);
+    // Set the file back to the schema before the record existed.
+    let path = directory.path().join("pintail-meta.db");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE tables DROP COLUMN copy_generation; \
+             PRAGMA user_version=23;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = MetaStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 24);
+    for name in ["old_copy", "recopied", "copied_again"] {
+        assert_eq!(copy_generation(&store, name), 0, "{name}");
+        assert_eq!(table_state(&store, name), ("pending".to_owned(), true));
+    }
+
+    // A table resync and a whole-database copy each record this binary's
+    // generation when they finish; neither is set by merely starting.
+    store.begin_table_resnapshot("db-1", "recopied").unwrap();
+    assert_eq!(copy_generation(&store, "recopied"), 0);
+    store
+        .finish_table_resnapshot("db-1", "recopied", "streaming")
+        .unwrap();
+    assert_eq!(
+        copy_generation(&store, "recopied"),
+        pintail_meta::COPY_GENERATION
+    );
+    store
+        .complete_snapshot_table("db-1", "copied_again")
+        .unwrap();
+    assert_eq!(
+        copy_generation(&store, "copied_again"),
+        pintail_meta::COPY_GENERATION
+    );
+    assert_eq!(copy_generation(&store, "old_copy"), 0);
 }

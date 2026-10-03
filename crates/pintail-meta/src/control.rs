@@ -180,6 +180,10 @@ pub struct TableRecord {
     /// Present while an operator holds the table still: its row events are
     /// passed over and polling skips it until it is resumed.
     pub paused: Option<PausedTable>,
+    /// The change-capture decoder generation recorded when the table's copy
+    /// last completed ([`crate::COPY_GENERATION`]); 0 for a copy older than
+    /// the record.
+    pub copy_generation: u32,
 }
 
 /// What a paused table has been through since it was paused.
@@ -1502,7 +1506,7 @@ impl MetaStore {
                 "SELECT db_id, name, state, pk_json, cursor_column, sort_key_json, \
                         rows_synced, last_error, last_reconcile_at, schema_version, \
                         orphaned_at, soft_delete_column, copy_complete, copy_pending, \
-                        paused, paused_skipped \
+                        paused, paused_skipped, copy_generation \
                  FROM tables WHERE db_id = ?1 ORDER BY name COLLATE NOCASE",
             )
             .context("failed to prepare table query")?;
@@ -2059,6 +2063,7 @@ fn decode_table(row: &rusqlite::Row<'_>) -> rusqlite::Result<TableRecord> {
         paused: (row.get::<_, i64>(14)? != 0).then(|| PausedTable {
             skipped_changes: row.get::<_, i64>(15).unwrap_or(0) != 0,
         }),
+        copy_generation: u32::try_from(row.get::<_, i64>(16)?).unwrap_or(0),
     })
 }
 

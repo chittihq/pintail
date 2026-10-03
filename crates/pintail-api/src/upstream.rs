@@ -596,6 +596,7 @@ mod tests {
             copy_complete: true,
             copy_pending: false,
             paused: None,
+            copy_generation: pintail_meta::COPY_GENERATION,
         }
     }
 
