@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- At startup, a warning names each replicated table that may hold values
+  change capture stored wrong before 0.1.7-rc3: a negative signed
+  `MEDIUMINT` stored 16777216 too high, or a `BINARY(n)` value missing its
+  trailing zero bytes. A table is named only when its schema has one of
+  those column types, its copy came from an older binary, and it has
+  applied streamed changes since that copy. The warning names the
+  database, table and columns and points to the table's Resync action or
+  `POST /api/databases/{id}/tables/{name}/resync`; the table's snapshot
+  status carries the same as `resync_advised`, and a resync clears it.
+  Nothing is resynced automatically. A table copied by 0.1.7-rc3 itself is
+  named once, since that release did not record which binary copied it.
+  `PINTAIL_LOG` also accepts `warn`.
+
 ## [0.1.7-rc3] - 2026-10-03
 
 Aggregates folded on the worker that decodes the data, with CPU per query
