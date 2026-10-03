@@ -5,18 +5,18 @@
   "ref": "170b1d70737be6f134448f51713cdc1ae215b420",
   "mysqlVersion": "8.4.11",
   "provenance": {
-    "sourceCommit": "e5cbf0a5ac0337190923dd5e0c058def4b97be9e",
+    "sourceCommit": "ae098ad8e785f3662c0c5b6db94ca47041abb3c5",
     "sourceDirty": false,
-    "binarySha256": "59f3089c2f3a9f24705e9d52a2a65d068ec65cc31d4aeea5c0d5a842a9c5b10e"
+    "binarySha256": "7364c7048c8beb1c2111925c2fcffe3335c9987f021398f3717ca9571a345c9b"
   },
-  "artifacts": "validate-out/mtr/runs/mupvti0t-123045",
-  "measuredAt": "2026-10-01T18:52:26.979Z",
+  "artifacts": "validate-out/mtr/runs/murolc83-222581",
+  "measuredAt": "2026-10-03T01:05:08.875Z",
   "totals": {
-    "exact": 8756,
-    "compared": 9131,
+    "exact": 8761,
+    "compared": 9132,
     "queries": 24004,
     "replayed": 30174,
-    "notCompared": 21043
+    "notCompared": 21042
   },
   "results": [
     {
@@ -5522,10 +5522,10 @@
       "file": "features",
       "statements": 75,
       "counts": {
-        "exact": 7,
+        "exact": 8,
         "mismatch": 1,
         "name-mismatch": 0,
-        "pintail-error": 5,
+        "pintail-error": 4,
         "mysql-error": 1,
         "tainted": 0,
         "setup": 27,
@@ -5539,7 +5539,6 @@
       },
       "errorClasses": {
         "Error: unsupported expression: MATCH (a, b) AGAINST (_)": 2,
-        "Error: ambiguous column a": 1,
         "Error: unsupported expression: extractValue(@xml, _)": 1,
         "Error: unsupported expression: updatexml(_, _, _)": 1,
         "DDL: Error: column option CHECK (a > _) is not supported on a local table": 1
@@ -10605,8 +10604,8 @@
       "file": "olap",
       "statements": 222,
       "counts": {
-        "exact": 60,
-        "mismatch": 4,
+        "exact": 64,
+        "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 15,
         "mysql-error": 1,

@@ -1,10 +1,10 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-10-01T18:45:06.740Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-10-03T00:57:50.590Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: e5cbf0a5ac0337190923dd5e0c058def4b97be9e; source dirty: false. Binary SHA-256: 59f3089c2f3a9f24705e9d52a2a65d068ec65cc31d4aeea5c0d5a842a9c5b10e.
+Replay mode: local. Source commit: ae098ad8e785f3662c0c5b6db94ca47041abb3c5; source dirty: false. Binary SHA-256: 7364c7048c8beb1c2111925c2fcffe3335c9987f021398f3717ca9571a345c9b.
 
-**9,268 of 9,378 compared SELECTs match MySQL byte-for-byte** (98.8%), **out of 23,119 SELECTs replayed** - 13,741 never reached a comparison, so this is a share of what could be compared and not of the suite. 110 differ in rows, 0 in column names only. 5,146 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
+**9,279 of 9,385 compared SELECTs match MySQL byte-for-byte** (98.9%), **out of 23,119 SELECTs replayed** - 13,734 never reached a comparison, so this is a share of what could be compared and not of the suite. 106 differ in rows, 0 in column names only. 5,139 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -387,7 +387,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | null | 133 | 20 | 0 | 0 | 3 | 5 | 0 | 30 | 2 | 33 | 6 | 34 |
 | odbc | 33 | 0 | 0 | 0 | 1 | 9 | 0 | 9 | 2 | 5 | 2 | 2 |
 | offline_mode_privileges | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 27 |
-| olap | 223 | 62 | 4 | 0 | 16 | 9 | 0 | 92 | 0 | 6 | 6 | 23 |
+| olap | 223 | 66 | 0 | 0 | 16 | 9 | 0 | 92 | 0 | 6 | 6 | 23 |
 | openssl_1 | 37 | 5 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 2 | 19 |
 | opt_costmodel | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 15 | 0 | 6 |
 | opt_costmodel_pfs | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -503,11 +503,11 @@ Column names are compared with rows. Row order is compared when the outer query 
 | strict_autoinc_2innodb | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 |
 | strict_autoinc_3heap | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 |
 | subplan_tokens | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 4 | 6 |
-| subquery_all | 2246 | 365 | 4 | 0 | 116 | 217 | 4 | 939 | 22 | 146 | 52 | 357 |
+| subquery_all | 2246 | 370 | 4 | 0 | 111 | 217 | 4 | 939 | 22 | 146 | 52 | 357 |
 | subquery_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | subquery_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | subquery_antijoin | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 1 |
-| subquery_bugs | 442 | 11 | 0 | 0 | 5 | 6 | 4 | 283 | 7 | 13 | 53 | 59 |
+| subquery_bugs | 442 | 12 | 0 | 0 | 4 | 6 | 4 | 283 | 7 | 13 | 53 | 59 |
 | subquery_exists | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 1 |
 | subquery_hypergraph | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 3 |
 | subquery_mat | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
@@ -593,7 +593,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | type_timestamp_explicit | 71 | 0 | 0 | 0 | 0 | 4 | 0 | 15 | 4 | 22 | 6 | 20 |
 | type_uint | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 1 | 0 |
 | type_varchar | 39 | 4 | 0 | 0 | 0 | 0 | 0 | 31 | 0 | 1 | 0 | 3 |
-| type_year | 151 | 10 | 0 | 0 | 1 | 37 | 0 | 45 | 9 | 14 | 2 | 24 |
+| type_year | 151 | 11 | 0 | 0 | 0 | 37 | 0 | 45 | 9 | 14 | 2 | 24 |
 | udf | 209 | 3 | 0 | 0 | 2 | 10 | 38 | 36 | 0 | 16 | 15 | 85 |
 | udf_services | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | udf_skip_grants | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
@@ -676,4 +676,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 48 | Error: sql parser error: Expected: joined table, found: , at Line: _, Column: _ |
 | 45 | INSERT: Error: Incorrect value _ for column _: expected a datetime |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mupvti0t-123044/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/murolc83-222580/diffs/` (not committed).

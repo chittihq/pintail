@@ -1,10 +1,10 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-10-01T18:52:26.977Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-10-03T01:05:08.874Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-Replay mode: local. Source commit: e5cbf0a5ac0337190923dd5e0c058def4b97be9e; source dirty: false. Binary SHA-256: 59f3089c2f3a9f24705e9d52a2a65d068ec65cc31d4aeea5c0d5a842a9c5b10e.
+Replay mode: local. Source commit: ae098ad8e785f3662c0c5b6db94ca47041abb3c5; source dirty: false. Binary SHA-256: 7364c7048c8beb1c2111925c2fcffe3335c9987f021398f3717ca9571a345c9b.
 
-**8,756 of 9,131 compared SELECTs match MySQL byte-for-byte** (95.9%), **out of 30,174 SELECTs replayed** - 21,043 never reached a comparison, so this is a share of what could be compared and not of the suite. 369 differ in rows, 6 in column names only. 4,363 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
+**8,761 of 9,132 compared SELECTs match MySQL byte-for-byte** (95.9%), **out of 30,174 SELECTs replayed** - 21,042 never reached a comparison, so this is a share of what could be compared and not of the suite. 365 differ in rows, 6 in column names only. 4,362 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -231,7 +231,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | explain_non_select | 118 | 5 | 0 | 0 | 0 | 0 | 0 | 59 | 3 | 7 | 2 | 42 |
 | explain_slowquerylog | 26 | 3 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 9 | 5 |
 | ext_key_noPK_6794 | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 4 | 0 | 1 |
-| features | 75 | 7 | 1 | 0 | 5 | 0 | 1 | 27 | 1 | 5 | 11 | 17 |
+| features | 75 | 8 | 1 | 0 | 4 | 0 | 1 | 27 | 1 | 5 | 11 | 17 |
 | fetch_first | 235 | 1 | 1 | 0 | 0 | 63 | 66 | 40 | 0 | 16 | 9 | 37 |
 | filesort_bad_i_s-7585 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 1 | 2 |
 | filesort_pack | 8 | 2 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 3 | 0 |
@@ -444,7 +444,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | null_aware_cardinality | 42 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 7 | 5 | 21 |
 | null_key | 164 | 15 | 0 | 0 | 0 | 20 | 0 | 42 | 0 | 33 | 2 | 42 |
 | odbc | 17 | 0 | 0 | 0 | 1 | 2 | 0 | 5 | 1 | 2 | 2 | 1 |
-| olap | 222 | 60 | 4 | 0 | 15 | 4 | 1 | 101 | 0 | 8 | 3 | 19 |
+| olap | 222 | 64 | 0 | 0 | 15 | 4 | 1 | 101 | 0 | 8 | 3 | 19 |
 | old-mode | 115 | 10 | 1 | 0 | 0 | 19 | 0 | 24 | 7 | 23 | 18 | 10 |
 | openssl_1 | 36 | 3 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 1 | 19 |
 | openssl_6975 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 6 |
@@ -747,4 +747,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 45 | Error: query engine failed: bound expression has an invalid physical type |
 | 41 | PREPARED: Error: expected a user variable |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mupvti0t-123045/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/murolc83-222581/diffs/` (not committed).

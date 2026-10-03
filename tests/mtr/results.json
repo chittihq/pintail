@@ -5,18 +5,18 @@
   "ref": "99960bf74fa919347e4f4e3ca47672f333d6e91f",
   "mysqlVersion": "8.4.11",
   "provenance": {
-    "sourceCommit": "e5cbf0a5ac0337190923dd5e0c058def4b97be9e",
+    "sourceCommit": "ae098ad8e785f3662c0c5b6db94ca47041abb3c5",
     "sourceDirty": false,
-    "binarySha256": "59f3089c2f3a9f24705e9d52a2a65d068ec65cc31d4aeea5c0d5a842a9c5b10e"
+    "binarySha256": "7364c7048c8beb1c2111925c2fcffe3335c9987f021398f3717ca9571a345c9b"
   },
-  "artifacts": "validate-out/mtr/runs/mupvti0t-123044",
-  "measuredAt": "2026-10-01T18:45:06.747Z",
+  "artifacts": "validate-out/mtr/runs/murolc83-222580",
+  "measuredAt": "2026-10-03T00:57:50.593Z",
   "totals": {
-    "exact": 9268,
-    "compared": 9378,
+    "exact": 9279,
+    "compared": 9385,
     "queries": 20617,
     "replayed": 23119,
-    "notCompared": 13741
+    "notCompared": 13734
   },
   "results": [
     {
@@ -5389,7 +5389,7 @@
         "PREPARED: Error: sql parser error: Expected: end of statement, found: by at Line: _, Column: _": 1,
         "PREPARED: Error: Unknown prepared statement handler (stmt1)": 3,
         "Error: sql parser error: Expected: an expression, found: EOF": 1,
-        "Error: unsupported table expression: (VALUES ROW(_), ROW(NULL), ROW(_)) AS v (e)": 4,
+        "Error: unsupported query body: VALUES ROW(_), ROW(NULL), ROW(_)": 4,
         "Error: unsupported expression: r_instr(_)": 2,
         "Error: unsupported expression: r_instr(NULL)": 1,
         "Error: unsupported expression: r_like(_)": 2,
@@ -6355,7 +6355,7 @@
       },
       "errorClasses": {
         "Error: unsupported expression: text collation latin1_german1_ci is unsupported; supported:": 1,
-        "Error: ambiguous column a": 2,
+        "Error: a correlated subquery in the select list is neither grouped nor aggregated": 2,
         "Error: join ON clause has no equality between the two inputs to join on": 3,
         "Error: unsupported table expression: t1__25 FORCE INDEX (t)": 1,
         "Error: unsupported expression: next_seq_value()": 1,
@@ -9425,8 +9425,8 @@
       "file": "olap",
       "statements": 223,
       "counts": {
-        "exact": 62,
-        "mismatch": 4,
+        "exact": 66,
+        "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 16,
         "mysql-error": 0,
@@ -12064,10 +12064,10 @@
       "file": "subquery_all",
       "statements": 2246,
       "counts": {
-        "exact": 365,
+        "exact": 370,
         "mismatch": 4,
         "name-mismatch": 0,
-        "pintail-error": 116,
+        "pintail-error": 111,
         "mysql-error": 4,
         "tainted": 217,
         "setup": 939,
@@ -12081,9 +12081,8 @@
       },
       "errorClasses": {
         "Error: unknown column a": 5,
-        "Error: unsupported subquery: scalar subquery must produce exactly one column": 13,
+        "Error: unsupported subquery: scalar subquery must produce exactly one column": 16,
         "Error: unsupported expression: ROW(_, _, _)": 5,
-        "Error: ambiguous column a": 6,
         "DDL: Error: Invalid default value for _": 7,
         "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 3,
         "INSERT: Error: only literal values are supported in INSERT, got _": 2,
@@ -12095,7 +12094,6 @@
         "INSERT: Error: column _ cannot be part of a primary key as Float64(Float64(_))": 2,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 2,
         "Error: unsupported expression: isnull(b.id)": 1,
-        "Error: ambiguous column id": 2,
         "PREPARED: Error: only INSERT ... VALUES is supported": 1,
         "PREPARED: Error: CREATE TABLE ... AS SELECT is not supported on a local table": 1,
         "Error: unsupported expression: MATCH (body) AGAINST (_ IN BOOLEAN MODE)": 1,
@@ -12194,10 +12192,10 @@
       "file": "subquery_bugs",
       "statements": 442,
       "counts": {
-        "exact": 11,
+        "exact": 12,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 5,
+        "pintail-error": 4,
         "mysql-error": 4,
         "tainted": 6,
         "setup": 283,
@@ -12214,7 +12212,6 @@
         "PREPARED: Error: unsupported table expression: (t1__4 AS alias1 LEFT JOIN t2__4 ON _)": 1,
         "PREPARED: Error: sql parser error: Expected: identifier, found: * at Line: _, Column: _": 1,
         "PREPARED: Error: Unknown prepared statement handler (st)": 3,
-        "Error: unsupported table expression: (SELECT _) AS table3 (f1)": 1,
         "DDL: Error: sql parser error: Expected: end of statement, found: PARTITION at Line: _, Column: ": 2,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 3,
         "Error: query engine failed: invalid physical plan: unresolved subquery reached expression ": 1,
@@ -12955,9 +12952,8 @@
       },
       "errorClasses": {
         "PREPARED: Error: unknown table mtr_subquery_table_to_derived.v2__1": 1,
-        "Error: unsupported query clause: SELECT STRAIGHT_JOIN _ AS _, (SELECT _ AS SQ1_field1 FROM": 1,
-        "Error: unsupported query body: VALUES ROW(_), ROW(_)": 4,
-        "Error: unsupported table expression: (SELECT _) t1__6 (c0)": 1,
+        "Error: unsupported query clause: SELECT STRAIGHT_JOIN _ AS field2, (SELECT _ AS SQ1_field1": 1,
+        "Error: unsupported query body: VALUES ROW(_), ROW(_)": 5,
         "PREPARED: Error: unsupported query body: VALUES ROW(_), ROW(_)": 5
       }
     },
@@ -13167,7 +13163,7 @@
         "Error: sql parser error: Expected: ), found: ROW at Line: _, Column: _": 2,
         "Error: unsupported query body: VALUES ROW(CASE _ WHEN _ THEN TIME _ END), ROW(TIME _)": 2,
         "Error: unsupported query body: VALUES ROW(NULL), ROW(TIME _)": 1,
-        "Error: unsupported table expression: (VALUES ROW(a), ROW(b), ROW(c)) AS x (col1)": 1
+        "Error: unsupported query body: VALUES ROW(a), ROW(b), ROW(c)": 1
       }
     },
     {
@@ -13202,7 +13198,7 @@
         "Error: sql parser error: Expected: ), found: ROW at Line: _, Column: _": 2,
         "Error: unsupported query body: VALUES ROW(CASE _ WHEN _ THEN TIME _ END), ROW(TIME _)": 2,
         "Error: unsupported query body: VALUES ROW(NULL), ROW(TIME _)": 1,
-        "Error: unsupported table expression: (VALUES ROW(a), ROW(b), ROW(c)) AS x (col1)": 1,
+        "Error: unsupported query body: VALUES ROW(a), ROW(b), ROW(c)": 1,
         "Error: unsupported query body: VALUES ROW(_, _), ROW(_, _), ROW(_, _), ROW(_, _), ROW(_, _": 2
       }
     },
@@ -14186,10 +14182,10 @@
       "file": "type_year",
       "statements": 151,
       "counts": {
-        "exact": 10,
+        "exact": 11,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 1,
+        "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 37,
         "setup": 45,
@@ -14207,8 +14203,7 @@
         "INSERT: Error: Incorrect value _ for column _: expected a non-negative integer": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: UNSIGNED at Line": 1,
         "INSERT: Error: Column _ cannot be null": 1,
-        "DDL: Error: column option AS (CAST(_ AS YEAR)) is not supported on a local table": 1,
-        "Error: unsupported table expression: (SELECT NULL FROM t1__14 GROUP BY t1__14.c0) AS x (x)": 1
+        "DDL: Error: column option AS (CAST(_ AS YEAR)) is not supported on a local table": 1
       }
     },
     {
@@ -15427,7 +15422,7 @@
       "errorClasses": {
         "Error: sql parser error: Expected: joined table, found: , at Line: _, Column: _": 1,
         "Error: unsupported table expression: ((C__1 AS alias2 LEFT JOIN BB__2 AS alias3 ON ((alias": 1,
-        "Error: unsupported table expression: (VALUES ROW(_), ROW(_)) AS dt (a__1)": 2
+        "Error: unsupported query body: VALUES ROW(_), ROW(_)": 2
       }
     },
     {
