@@ -749,13 +749,17 @@ function makePintailWireQuery(
 async function timed<T>(operation: () => Promise<T>): Promise<{ value: T; ms: number }> {
   const started = performance.now()
   const value = await operation()
-  return { value, ms: Math.max(1, Math.round(performance.now() - started)) }
+  return { value, ms: tenth(performance.now() - started) }
 }
+
+/// Timings are kept to 0.1 ms. Whole milliseconds put most warm answers on a
+/// floor of 1 ms, where a multiple against another engine could move by half
+/// with no change in either.
+const tenth = (value: number) => Math.max(0.1, Math.round(value * 10) / 10)
 
 function summarizeTimings(times: number[]): EngineTiming {
   const sorted = [...times].sort((a, b) => a - b)
-  const at = (index: number) =>
-    Math.max(1, Math.round(sorted[Math.min(sorted.length - 1, index)]))
+  const at = (index: number) => tenth(sorted[Math.min(sorted.length - 1, index)])
   // Spread, not just the middle. A median alone cannot distinguish a stable
   // measurement from one that happened to land there: two engines reported as
   // 40ms and 44ms are indistinguishable if either swings 15ms run to run, and

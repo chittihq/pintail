@@ -63,7 +63,8 @@ interface Artifact {
   methodology: { pintailPlacement: string; iterations: string }
 }
 
-const ms = (value: number) => `${Math.round(value).toLocaleString()} ms`
+const ms = (value: number) =>
+  `${value < 10 && !Number.isInteger(value) ? value.toFixed(1) : Math.round(value).toLocaleString()} ms`
 
 /// The mixed-workload concurrency sweep, when the artifact carries one. An
 /// artifact from before the sweep was mixed (a single query pinned to every
