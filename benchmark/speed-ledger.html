@@ -136,6 +136,7 @@ th[role=button]:hover{color:var(--ink)}
       <option value="all">All cases</option>
       <option value="slower">Pintail slower than MySQL</option>
       <option value="faster">Pintail faster than MySQL</option>
+      <option value="chslower">Pintail slower than ClickHouse</option>
       <option value="chfail">ClickHouse could not answer</option>
       <option value="chdiff">ClickHouse disagrees with MySQL</option>
       <option value="pdiff">Pintail disagrees with MySQL</option>
@@ -330,6 +331,7 @@ const ms=v=>v==null?"—":v.toLocaleString()+" ms";
     const f=filter.value;
     if(f==="slower")return c.g!=null&&c.g>0;
     if(f==="faster")return c.g!=null&&c.g<0;
+    if(f==="chslower")return c.ps==="ok"&&c.cs==="ok"&&c.p!=null&&c.c!=null&&c.p>c.c;
     if(f==="chfail")return c.cs!=="ok";
     if(f==="chdiff")return c.cp==="differs";
     if(f==="pdiff")return c.pp==="differs";
