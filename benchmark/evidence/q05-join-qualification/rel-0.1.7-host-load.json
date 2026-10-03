@@ -1,0 +1,8746 @@
+{
+ "interval_seconds": 15,
+ "host_type": "16-vCPU cloud host (AMD Ryzen 9 9950X), 31 GiB RAM, /dev/kvm present, local docker daemon; one host for every workload of this study, run one after another",
+ "scope": "Whole-host samples, including this study's own builds, seeding, snapshots, harness containers and measured work. load1 is the one-minute load average; cpu_pct is top(1) percent of one logical CPU for the four busiest processes at that instant.",
+ "other_processes": "Processes that are not part of this study (the host's own management and monitoring agents, kernel threads) are recorded as 'other'.",
+ "hosts": [
+  {
+   "role": "setup",
+   "work": "image load, checkouts, the two release builds (built in parallel)",
+   "logical_cpus": 16,
+   "ram_gib": 31,
+   "start": "2026-10-03T08:02:35Z",
+   "end": "2026-10-03T08:06:39Z",
+   "samples": 17,
+   "load1_mean": 15.7,
+   "load1_max": 25.33,
+   "containers_min_max": [
+    0,
+    0
+   ],
+   "unrelated_containers": 0,
+   "other_process_bursts_over_50pct": [
+    {
+     "at": "2026-10-03T08:03:05Z",
+     "cpu_pct": 157.1
+    },
+    {
+     "at": "2026-10-03T08:03:52Z",
+     "cpu_pct": 178.6
+    },
+    {
+     "at": "2026-10-03T08:05:08Z",
+     "cpu_pct": 193.3
+    },
+    {
+     "at": "2026-10-03T08:05:08Z",
+     "cpu_pct": 80
+    },
+    {
+     "at": "2026-10-03T08:05:23Z",
+     "cpu_pct": 161.5
+    },
+    {
+     "at": "2026-10-03T08:05:54Z",
+     "cpu_pct": 118.2
+    },
+    {
+     "at": "2026-10-03T08:05:54Z",
+     "cpu_pct": 100
+    }
+   ],
+   "samples_detail": [
+    {
+     "at": "2026-10-03T08:02:35Z",
+     "load1": 1.43,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "containerd",
+       "cpu_pct": 109.1
+      },
+      {
+       "cmd": "unpigz",
+       "cpu_pct": 81.8
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:02:50Z",
+     "load1": 1.64,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "cargo",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:03:05Z",
+     "load1": 7.83,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 157.1
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 114.3
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 85.7
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 85.7
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:03:21Z",
+     "load1": 15.67,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 71.4
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 71.4
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 71.4
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 64.3
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:03:36Z",
+     "load1": 21.28,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 81.2
+      },
+      {
+       "cmd": "cc1",
+       "cpu_pct": 75
+      },
+      {
+       "cmd": "cc1",
+       "cpu_pct": 68.8
+      },
+      {
+       "cmd": "cc1",
+       "cpu_pct": 68.8
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:03:52Z",
+     "load1": 25.14,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 178.6
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 92.9
+      },
+      {
+       "cmd": "cc1",
+       "cpu_pct": 78.6
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 78.6
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:04:07Z",
+     "load1": 25.33,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "cc1",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:04:22Z",
+     "load1": 22.76,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:04:37Z",
+     "load1": 19.62,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 91.7
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:04:53Z",
+     "load1": 16.07,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:05:08Z",
+     "load1": 18.37,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 566.7
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 546.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 193.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 80
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:05:23Z",
+     "load1": 24.3,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 600
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 500
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 161.5
+      },
+      {
+       "cmd": "tar",
+       "cpu_pct": 23.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:05:39Z",
+     "load1": 20.05,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 191.7
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 91.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 25
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 8.3
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:05:54Z",
+     "load1": 16.36,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 118.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:06:09Z",
+     "load1": 12.94,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:06:24Z",
+     "load1": 10.16,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:06:39Z",
+     "load1": 7.91,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "Q05 TPC-H SF1 retained-replica measurements",
+   "work": "seeding, baseline snapshot, four-query replays of both arms, default-spill target and repeat",
+   "logical_cpus": 16,
+   "ram_gib": 31,
+   "start": "2026-10-03T08:06:55Z",
+   "end": "2026-10-03T08:16:33Z",
+   "samples": 39,
+   "load1_mean": 1.48,
+   "load1_max": 6.3,
+   "containers_min_max": [
+    0,
+    1
+   ],
+   "unrelated_containers": 0,
+   "other_process_bursts_over_50pct": [
+    {
+     "at": "2026-10-03T08:06:55Z",
+     "cpu_pct": 100
+    },
+    {
+     "at": "2026-10-03T08:12:45Z",
+     "cpu_pct": 90
+    }
+   ],
+   "samples_detail": [
+    {
+     "at": "2026-10-03T08:06:55Z",
+     "load1": 6.3,
+     "containers": 0,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:07:10Z",
+     "load1": 5.34,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:07:25Z",
+     "load1": 4.45,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:07:40Z",
+     "load1": 3.91,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:07:56Z",
+     "load1": 3.51,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 81.8
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 81.8
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 36.4
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:08:11Z",
+     "load1": 3.02,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 70
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:08:26Z",
+     "load1": 2.65,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:08:41Z",
+     "load1": 2.28,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:08:57Z",
+     "load1": 2,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 81.8
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:09:12Z",
+     "load1": 1.78,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 70
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:09:27Z",
+     "load1": 1.67,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:09:42Z",
+     "load1": 1.52,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "docker-proxy",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:09:57Z",
+     "load1": 1.49,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:10:13Z",
+     "load1": 1.22,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:10:28Z",
+     "load1": 0.95,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:10:43Z",
+     "load1": 0.74,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:10:58Z",
+     "load1": 0.58,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:11:14Z",
+     "load1": 0.45,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:11:29Z",
+     "load1": 0.8,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:11:44Z",
+     "load1": 0.85,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 209.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:11:59Z",
+     "load1": 0.88,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 470
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:12:14Z",
+     "load1": 0.91,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:12:30Z",
+     "load1": 0.93,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:12:45Z",
+     "load1": 0.94,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:13:00Z",
+     "load1": 0.96,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:13:15Z",
+     "load1": 0.97,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:13:31Z",
+     "load1": 0.82,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:13:46Z",
+     "load1": 0.64,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:14:01Z",
+     "load1": 0.58,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:14:16Z",
+     "load1": 0.45,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:14:31Z",
+     "load1": 0.35,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:14:47Z",
+     "load1": 0.49,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 230
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:15:02Z",
+     "load1": 0.61,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:15:17Z",
+     "load1": 0.54,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:15:32Z",
+     "load1": 0.42,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:15:48Z",
+     "load1": 0.41,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:16:03Z",
+     "load1": 0.53,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:16:18Z",
+     "load1": 0.41,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:16:33Z",
+     "load1": 0.4,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 230
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "20M eight-query pair",
+   "work": "four benchmark/run.ts runs: baseline, candidate, baseline, candidate",
+   "logical_cpus": 16,
+   "ram_gib": 31,
+   "start": "2026-10-03T08:16:48Z",
+   "end": "2026-10-03T09:25:36Z",
+   "samples": 272,
+   "load1_mean": 2.56,
+   "load1_max": 13.91,
+   "containers_min_max": [
+    1,
+    4
+   ],
+   "unrelated_containers": 0,
+   "other_process_bursts_over_50pct": [
+    {
+     "at": "2026-10-03T08:17:49Z",
+     "cpu_pct": 327.3
+    },
+    {
+     "at": "2026-10-03T08:21:53Z",
+     "cpu_pct": 230
+    },
+    {
+     "at": "2026-10-03T08:22:08Z",
+     "cpu_pct": 90.9
+    },
+    {
+     "at": "2026-10-03T08:45:45Z",
+     "cpu_pct": 70
+    }
+   ],
+   "samples_detail": [
+    {
+     "at": "2026-10-03T08:16:48Z",
+     "load1": 0.45,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "containerd",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:17:04Z",
+     "load1": 0.41,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:17:19Z",
+     "load1": 0.7,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:17:34Z",
+     "load1": 0.91,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 145.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:17:49Z",
+     "load1": 1.31,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 327.3
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 109.1
+      },
+      {
+       "cmd": "tar",
+       "cpu_pct": 54.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:18:05Z",
+     "load1": 1.31,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 120
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:18:20Z",
+     "load1": 1.31,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:18:35Z",
+     "load1": 1.24,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 109.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:18:50Z",
+     "load1": 1.34,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 200
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:19:06Z",
+     "load1": 1.34,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 120
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:19:21Z",
+     "load1": 1.27,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:19:36Z",
+     "load1": 1.28,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:19:51Z",
+     "load1": 1.22,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 154.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:20:06Z",
+     "load1": 1.32,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 109.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:20:22Z",
+     "load1": 1.25,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:20:37Z",
+     "load1": 1.96,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:20:52Z",
+     "load1": 1.9,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:21:07Z",
+     "load1": 1.71,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 54.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:21:23Z",
+     "load1": 1.63,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:21:38Z",
+     "load1": 1.95,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "node",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 63.6
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 54.5
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:21:53Z",
+     "load1": 3.47,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 230
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:22:08Z",
+     "load1": 6.65,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "cc1",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "cc1",
+       "cpu_pct": 90.9
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:22:24Z",
+     "load1": 7.77,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "cc1",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:22:39Z",
+     "load1": 6.63,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:22:54Z",
+     "load1": 6.12,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:23:09Z",
+     "load1": 5.41,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:23:25Z",
+     "load1": 5.7,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 1600
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:23:40Z",
+     "load1": 6.13,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 210
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:23:55Z",
+     "load1": 5.08,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:24:10Z",
+     "load1": 4.17,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:24:26Z",
+     "load1": 3.46,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:24:41Z",
+     "load1": 2.92,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:24:56Z",
+     "load1": 2.56,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:25:11Z",
+     "load1": 2.21,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:25:27Z",
+     "load1": 1.94,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 70
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:25:42Z",
+     "load1": 1.73,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 20
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:25:57Z",
+     "load1": 2.64,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 130
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:26:12Z",
+     "load1": 2.28,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:26:27Z",
+     "load1": 1.99,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:26:43Z",
+     "load1": 1.84,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:26:58Z",
+     "load1": 1.65,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:27:13Z",
+     "load1": 1.51,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:27:28Z",
+     "load1": 1.4,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:27:44Z",
+     "load1": 1.31,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:27:59Z",
+     "load1": 1.22,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:28:14Z",
+     "load1": 1.32,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:28:29Z",
+     "load1": 1.25,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:28:45Z",
+     "load1": 1.34,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 54.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:29:00Z",
+     "load1": 1.26,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 636.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:29:15Z",
+     "load1": 1.2,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:29:30Z",
+     "load1": 1.53,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 60
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:29:45Z",
+     "load1": 1.49,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:30:01Z",
+     "load1": 1.38,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:30:16Z",
+     "load1": 1.3,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:30:31Z",
+     "load1": 1.23,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 54.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:30:46Z",
+     "load1": 1.18,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:31:02Z",
+     "load1": 1.14,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:31:17Z",
+     "load1": 1.11,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:31:32Z",
+     "load1": 1.08,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 60
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:31:47Z",
+     "load1": 1.06,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:32:03Z",
+     "load1": 1.05,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:32:18Z",
+     "load1": 1.04,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 81.8
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:32:33Z",
+     "load1": 1.03,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:32:48Z",
+     "load1": 1.02,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:33:03Z",
+     "load1": 1.16,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:33:19Z",
+     "load1": 1.13,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 63.6
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:33:34Z",
+     "load1": 1.09,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:33:49Z",
+     "load1": 1.07,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:34:04Z",
+     "load1": 1.19,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:34:20Z",
+     "load1": 1.15,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 81.8
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:34:35Z",
+     "load1": 1.67,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 580
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:34:50Z",
+     "load1": 3.08,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 618.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:35:05Z",
+     "load1": 3.22,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 490.9
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:35:21Z",
+     "load1": 3.1,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 500
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:35:36Z",
+     "load1": 4.43,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 354.5
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:35:51Z",
+     "load1": 5,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 718.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:36:06Z",
+     "load1": 4.44,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 736.4
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:36:21Z",
+     "load1": 4.73,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 727.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:36:37Z",
+     "load1": 5.58,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 827.3
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "top",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:36:52Z",
+     "load1": 4.43,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 63.6
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:37:07Z",
+     "load1": 4.44,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 400
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "docker-proxy",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:37:22Z",
+     "load1": 3.87,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 790.9
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:37:38Z",
+     "load1": 3.63,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 170
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:37:53Z",
+     "load1": 3.23,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 172.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:38:08Z",
+     "load1": 2.85,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 890
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:38:23Z",
+     "load1": 2.87,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 60
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:38:39Z",
+     "load1": 2.67,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:38:54Z",
+     "load1": 2.86,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "node",
+       "cpu_pct": 118.2
+      },
+      {
+       "cmd": "cargo",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:39:09Z",
+     "load1": 3.69,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:39:24Z",
+     "load1": 3.9,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:39:40Z",
+     "load1": 3.77,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "rustc",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:39:55Z",
+     "load1": 4.49,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 1600
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:40:10Z",
+     "load1": 5.42,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 309.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:40:25Z",
+     "load1": 4.59,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "rustc",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:40:41Z",
+     "load1": 3.79,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:40:56Z",
+     "load1": 3.25,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:41:11Z",
+     "load1": 2.9,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:41:26Z",
+     "load1": 2.48,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:41:41Z",
+     "load1": 2.29,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:41:57Z",
+     "load1": 2.15,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:42:12Z",
+     "load1": 1.9,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 620
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:42:27Z",
+     "load1": 1.7,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:42:42Z",
+     "load1": 1.54,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:42:58Z",
+     "load1": 1.42,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:43:13Z",
+     "load1": 1.33,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:43:28Z",
+     "load1": 1.25,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:43:43Z",
+     "load1": 1.27,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:43:59Z",
+     "load1": 1.21,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:44:14Z",
+     "load1": 1.16,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:44:29Z",
+     "load1": 1.11,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:44:44Z",
+     "load1": 1.09,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:44:59Z",
+     "load1": 1.07,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:45:15Z",
+     "load1": 1.05,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:45:30Z",
+     "load1": 1.04,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:45:45Z",
+     "load1": 1.43,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 70
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:46:00Z",
+     "load1": 1.33,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:46:16Z",
+     "load1": 1.63,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:46:31Z",
+     "load1": 1.49,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:46:46Z",
+     "load1": 1.38,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:47:01Z",
+     "load1": 1.29,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:47:17Z",
+     "load1": 1.23,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:47:32Z",
+     "load1": 1.18,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:47:47Z",
+     "load1": 1.14,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:48:02Z",
+     "load1": 1.11,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:48:17Z",
+     "load1": 1.08,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:48:33Z",
+     "load1": 1.06,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:48:48Z",
+     "load1": 1.05,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:49:03Z",
+     "load1": 1.04,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:49:18Z",
+     "load1": 1.43,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:49:34Z",
+     "load1": 1.33,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:49:49Z",
+     "load1": 1.26,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 600
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:50:04Z",
+     "load1": 1.54,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:50:19Z",
+     "load1": 1.39,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:50:34Z",
+     "load1": 1.3,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:50:50Z",
+     "load1": 1.23,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:51:05Z",
+     "load1": 1.47,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:51:20Z",
+     "load1": 1.37,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 81.8
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:51:35Z",
+     "load1": 1.29,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:51:51Z",
+     "load1": 1.22,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:52:06Z",
+     "load1": 1.17,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 372.7
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 18.2
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:52:21Z",
+     "load1": 1.8,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 570
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:52:36Z",
+     "load1": 3.15,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 545.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:52:52Z",
+     "load1": 3.83,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 790.9
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:53:07Z",
+     "load1": 6.45,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 960
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:53:22Z",
+     "load1": 8.96,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 800
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:53:37Z",
+     "load1": 10.6,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 845.5
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:53:53Z",
+     "load1": 12.75,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 18.2
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:54:08Z",
+     "load1": 10.29,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 360
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 20
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:54:23Z",
+     "load1": 10.3,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 754.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:54:38Z",
+     "load1": 9.87,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 790
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:54:54Z",
+     "load1": 11.36,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 772.7
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 54.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 27.3
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:55:09Z",
+     "load1": 13.91,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:55:24Z",
+     "load1": 11.05,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:55:39Z",
+     "load1": 8.27,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:55:54Z",
+     "load1": 7.02,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 81.8
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:56:10Z",
+     "load1": 5.76,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:56:25Z",
+     "load1": 4.71,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:56:40Z",
+     "load1": 3.88,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 109.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:56:55Z",
+     "load1": 3.31,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:57:11Z",
+     "load1": 2.8,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:57:26Z",
+     "load1": 2.4,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:57:41Z",
+     "load1": 2.09,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:57:56Z",
+     "load1": 1.93,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:58:12Z",
+     "load1": 1.72,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:58:27Z",
+     "load1": 1.56,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:58:42Z",
+     "load1": 1.44,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:58:57Z",
+     "load1": 1.34,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:59:12Z",
+     "load1": 1.26,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:59:28Z",
+     "load1": 1.2,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:59:43Z",
+     "load1": 1.16,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T08:59:58Z",
+     "load1": 1.12,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:00:13Z",
+     "load1": 1.1,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:00:29Z",
+     "load1": 1.07,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:00:44Z",
+     "load1": 1.06,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:00:59Z",
+     "load1": 1.04,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:01:14Z",
+     "load1": 1.17,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:01:29Z",
+     "load1": 1.13,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:01:45Z",
+     "load1": 1.1,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:02:00Z",
+     "load1": 1.15,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:02:15Z",
+     "load1": 1.11,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:02:30Z",
+     "load1": 1.09,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:02:46Z",
+     "load1": 1.07,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:03:01Z",
+     "load1": 1.05,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:03:16Z",
+     "load1": 1.04,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:03:31Z",
+     "load1": 1.03,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:03:47Z",
+     "load1": 1.02,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:04:02Z",
+     "load1": 1.02,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:04:17Z",
+     "load1": 1.01,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:04:32Z",
+     "load1": 1.38,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:04:47Z",
+     "load1": 1.36,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:05:03Z",
+     "load1": 1.28,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:05:18Z",
+     "load1": 1.29,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 580
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:05:33Z",
+     "load1": 1.23,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 81.8
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:05:48Z",
+     "load1": 1.18,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:06:04Z",
+     "load1": 1.14,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:06:19Z",
+     "load1": 1.1,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:06:34Z",
+     "load1": 1.08,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:06:49Z",
+     "load1": 1.06,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:07:05Z",
+     "load1": 1.11,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:07:20Z",
+     "load1": 1.65,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 427.3
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:07:35Z",
+     "load1": 2.58,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 636.4
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:07:50Z",
+     "load1": 3,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 590
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:08:05Z",
+     "load1": 4.02,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 590.9
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:08:21Z",
+     "load1": 3.84,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 570
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:08:36Z",
+     "load1": 4.48,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 745.5
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:08:51Z",
+     "load1": 6.24,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 781.8
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:09:06Z",
+     "load1": 7.67,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 718.2
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:09:22Z",
+     "load1": 8.63,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 930
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:09:37Z",
+     "load1": 7.75,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 63.6
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:09:52Z",
+     "load1": 6.32,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 440
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "docker",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:10:07Z",
+     "load1": 7.05,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 870
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:10:23Z",
+     "load1": 7.03,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 781.8
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:10:38Z",
+     "load1": 5.71,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 170
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:10:53Z",
+     "load1": 4.51,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:11:08Z",
+     "load1": 3.66,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 127.3
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:11:24Z",
+     "load1": 3.14,
+     "containers": 3,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 200
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:11:39Z",
+     "load1": 2.99,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:11:54Z",
+     "load1": 2.86,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:12:09Z",
+     "load1": 2.52,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:12:24Z",
+     "load1": 2.25,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:12:40Z",
+     "load1": 2.2,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:12:55Z",
+     "load1": 1.93,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 109.1
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:13:10Z",
+     "load1": 1.72,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:13:25Z",
+     "load1": 1.64,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:13:41Z",
+     "load1": 1.5,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:13:56Z",
+     "load1": 1.39,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:14:11Z",
+     "load1": 1.3,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:14:26Z",
+     "load1": 1.23,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:14:42Z",
+     "load1": 1.18,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:14:57Z",
+     "load1": 1.14,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:15:12Z",
+     "load1": 1.11,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:15:27Z",
+     "load1": 1.08,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:15:42Z",
+     "load1": 1.06,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:15:58Z",
+     "load1": 1.05,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:16:13Z",
+     "load1": 1.04,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:16:28Z",
+     "load1": 1.03,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:16:43Z",
+     "load1": 1.02,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:16:59Z",
+     "load1": 1.02,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "containerd-shim",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:17:14Z",
+     "load1": 1.01,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:17:29Z",
+     "load1": 1.01,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:17:44Z",
+     "load1": 1.08,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:18:00Z",
+     "load1": 1.06,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:18:15Z",
+     "load1": 1.04,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:18:30Z",
+     "load1": 1.03,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 54.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:18:45Z",
+     "load1": 1.32,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:19:00Z",
+     "load1": 1.47,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 36.4
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:19:16Z",
+     "load1": 1.65,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:19:31Z",
+     "load1": 1.73,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:19:46Z",
+     "load1": 1.79,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:20:01Z",
+     "load1": 1.84,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:20:17Z",
+     "load1": 1.88,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:20:32Z",
+     "load1": 2.04,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 63.6
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:20:47Z",
+     "load1": 1.81,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:21:02Z",
+     "load1": 1.63,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:21:17Z",
+     "load1": 1.49,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "containerd",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:21:33Z",
+     "load1": 1.38,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:21:48Z",
+     "load1": 1.3,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 70
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:22:03Z",
+     "load1": 1.23,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:22:18Z",
+     "load1": 1.18,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:22:34Z",
+     "load1": 1.14,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:22:49Z",
+     "load1": 2.1,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 630
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:23:04Z",
+     "load1": 2.7,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 580
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "docker-proxy",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:23:19Z",
+     "load1": 3.1,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 727.3
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:23:35Z",
+     "load1": 3.46,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 736.4
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 18.2
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:23:50Z",
+     "load1": 4.04,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 736.4
+      },
+      {
+       "cmd": "containerd-shim",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:24:05Z",
+     "load1": 4.6,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 880
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:24:20Z",
+     "load1": 3.58,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 130
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:24:36Z",
+     "load1": 3.57,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 440
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:24:51Z",
+     "load1": 3.45,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 860
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 20
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:25:06Z",
+     "load1": 3.16,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 700
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "docker-proxy",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 30
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:25:21Z",
+     "load1": 3.21,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 810
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 50
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 30
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:25:36Z",
+     "load1": 3.98,
+     "containers": 4,
+     "top": [
+      {
+       "cmd": "clickhouse-serv",
+       "cpu_pct": 800
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "supplementary TPC-H replays",
+   "work": "candidate repeat on the retained replica, refused baseline repeat, second replica and its three arms",
+   "logical_cpus": 16,
+   "ram_gib": 31,
+   "start": "2026-10-03T09:25:52Z",
+   "end": "2026-10-03T09:37:17Z",
+   "samples": 46,
+   "load1_mean": 1,
+   "load1_max": 3.1,
+   "containers_min_max": [
+    1,
+    2
+   ],
+   "unrelated_containers": 0,
+   "other_process_bursts_over_50pct": [
+    {
+     "at": "2026-10-03T09:34:45Z",
+     "cpu_pct": 70
+    }
+   ],
+   "samples_detail": [
+    {
+     "at": "2026-10-03T09:25:52Z",
+     "load1": 3.1,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:26:07Z",
+     "load1": 2.41,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:26:22Z",
+     "load1": 1.88,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:26:37Z",
+     "load1": 1.62,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:26:53Z",
+     "load1": 1.48,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 200
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:27:08Z",
+     "load1": 1.37,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:27:23Z",
+     "load1": 1.07,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:27:38Z",
+     "load1": 0.83,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:27:54Z",
+     "load1": 0.71,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:28:09Z",
+     "load1": 0.78,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:28:24Z",
+     "load1": 0.91,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:28:39Z",
+     "load1": 1,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:28:54Z",
+     "load1": 1.07,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:29:10Z",
+     "load1": 1.21,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:29:25Z",
+     "load1": 1.24,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 80
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 30
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:29:40Z",
+     "load1": 1.26,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 27.3
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:29:55Z",
+     "load1": 1.43,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 72.7
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 45.5
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:30:11Z",
+     "load1": 1.48,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:30:26Z",
+     "load1": 1.53,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 40
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:30:41Z",
+     "load1": 1.41,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:30:56Z",
+     "load1": 1.32,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "bun",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:31:12Z",
+     "load1": 1.17,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "pintail",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:31:27Z",
+     "load1": 0.91,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:31:42Z",
+     "load1": 0.71,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:31:57Z",
+     "load1": 0.55,
+     "containers": 2,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:32:12Z",
+     "load1": 0.43,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "dockerd",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:32:28Z",
+     "load1": 0.41,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:32:43Z",
+     "load1": 0.4,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 220
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:32:58Z",
+     "load1": 0.53,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:33:13Z",
+     "load1": 1.74,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 110
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:33:29Z",
+     "load1": 1.5,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:33:44Z",
+     "load1": 1.16,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:33:59Z",
+     "load1": 0.99,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 209.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:34:14Z",
+     "load1": 0.99,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:34:29Z",
+     "load1": 0.99,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 10
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:34:45Z",
+     "load1": 0.77,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 70
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:35:00Z",
+     "load1": 0.6,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:35:15Z",
+     "load1": 0.47,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:35:30Z",
+     "load1": 0.36,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:35:46Z",
+     "load1": 0.28,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 9.1
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:36:01Z",
+     "load1": 0.22,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:36:16Z",
+     "load1": 0.17,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:36:31Z",
+     "load1": 0.21,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "pintail",
+       "cpu_pct": 220
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:36:46Z",
+     "load1": 0.39,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 100
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:37:02Z",
+     "load1": 0.52,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "mysqld",
+       "cpu_pct": 90.9
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    },
+    {
+     "at": "2026-10-03T09:37:17Z",
+     "load1": 0.41,
+     "containers": 1,
+     "top": [
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      },
+      {
+       "cmd": "other",
+       "cpu_pct": 0
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

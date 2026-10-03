@@ -5,7 +5,242 @@ memoization disabled. This is a warm-cache result for the deterministic
 TPC-H-derived fixture, not a one-second promise for arbitrary joins or larger
 scale factors. The separate eight-query fixture contains 20,000,000 rows.
 
-## 0.1.6 release requalification
+## 0.1.7 release requalification
+
+This evidence was re-run for the 0.1.7 stable release. The baseline is the
+previous stable release, tag `v0.1.6` (tag object
+`2e0939feec665b49ad3bdf0714916a1b0e63adb1`, commit
+`596a934c5bfef63de4acad1e46806e152e79ecca`). The candidate is the 0.1.7
+release tree (`938dd95a1d0f8f7ae56775e098fea8950c372f97`), whose engine
+crates and benchmark harness are identical to every commit since `3d52881f`;
+the commits after it bank evidence and docs only. Both releases contain the
+Q05 join change this file first qualified, so this pair measures what every
+engine change between the two releases did to it, including the version 7
+segment format, the shared block cache, the vector decoding kernels and
+aggregation on the decoding workers. It does not isolate any single commit.
+
+Both executables are release builds from clean detached checkouts, each with
+its own target directory and the dashboard prebuilt, built with rustc 1.97.1.
+Their SHA-256 digests are `45ca6a61…` for the baseline and `1593e802…` for
+the candidate. The raw reports record them in full.
+
+### Configuration and host
+
+**These numbers are not comparable with the 0.1.6 tables below.** The 0.1.6
+study ran on 8-vCPU cloud hosts. This one ran every workload on one 16-vCPU
+cloud host (AMD Ryzen 9 9950X, 31 GiB of RAM, `/dev/kvm` present, so not a
+fallback VM) with a local docker daemon, one workload after another: the
+Pintail server as a native process and the harness MySQL 8.4 source in a
+container beside it. Compare the two arms only within each table.
+
+Both arms used a 4 GiB query-memory ceiling. `innodb_buffer_pool_size` on the
+harness MySQL was raised to 4 GiB before seeding, and every replay report
+records it at that value. The matched comparison allows 16 GiB of spill per
+query and 32 GiB in total. The one-second target uses the default spill
+limits of 1 GiB and 8 GiB.
+
+One SF1 replica (8,660,779 rows, 6,000,749 of them line items) was created
+with the baseline executable and kept. Each executable was then started on
+that replica in turn, one at a time, the baseline first, and replayed with
+`benchmark/replay-tpch.ts`. Each replay runs the query against MySQL again and
+compares the ordered answers exactly. Loading and snapshot time are excluded.
+Before every replay the harness waited until the server process had used no
+more than 0.05 s of CPU in each of three consecutive 10-second windows, so
+background merges had finished: 30 s for the baseline, **140 s for the
+candidate**, whose merges rewrote the retained replica's fact table from 61
+segments into 31 (see *Layout* below). The four-query comparison uses one
+warmup and three measured runs. The target uses two warmups and fifteen
+measured runs.
+
+The host ran nothing else of this study's while measuring. The host's own
+management agents did run: in the whole-host
+[load samples](q05-join-qualification/rel-0.1.7-host-load.json), taken every
+15 seconds, they appear in brief bursts. Around the TPC-H replays two bursts
+of about one logical CPU were sampled, both while a candidate server waited
+for its merges and none during a measured replay. During the 20M pair they
+reached about three logical CPUs while the first run built its image and
+seeded MySQL, and one burst of 0.7 of a CPU was sampled during the first
+candidate run.
+
+### Measured TPC-H results (retained replica)
+
+| Query | v0.1.6 median ms | 0.1.7 median ms | Speedup |
+|---|---:|---:|---:|
+| q01-pricing-summary | 2,985.90 | 2,838.67 | 1.05× |
+| q03-shipping-priority | 134.12 | 55.06 | 2.44× |
+| q05-local-supplier-volume | 244.69 | 125.21 | 1.95× |
+| q10-returned-item-reporting | 259.54 | 152.89 | 1.70× |
+
+Every sample in both arms matched MySQL exactly. The two arms also produced
+identical answer and SQL hashes. No query is slower in the candidate. A
+repeat of the candidate's four-query replay after the 20M pair, on the same
+replica, measured 2,778.72, 57.28, 123.69 and 149.21 ms
+([report](q05-join-qualification/rel-0.1.7-tpch-candidate-repeat.json)).
+
+With the default spill limits, the candidate's fifteen Q05 samples have a
+**122.70 ms median and a 134.64 ms p95**, and the slowest sample is 134.64
+ms. Every sample is under one second, and every answer is exact (answer
+SHA-256 `917d70a3…`, the same as the original study's). The same
+fifteen-sample target was repeated once on the same replica, as 0.1.6 did:
+**120.76 ms median, 151.16 ms p95**, also all exact. Both runs are banked;
+the first is the target of record.
+
+The `EXPLAIN ANALYZE` profiles keep the join shape of 0.1.6:
+
+| Q05 profile observation | v0.1.6 | 0.1.7 |
+|---|---:|---:|
+| Fact segments read | 61 | 31 |
+| Fact rows emitted to the intermediate join | 857,315 | 857,148 |
+| Fact storage blocks decoded | 2,526 of 2,526 | 1,564 of 3,124 |
+| Fact scan time in the profile | 30.9 ms | 8.6 ms |
+| Final joined rows | 6,869 | 6,869 |
+| Output rows | 5 | 5 |
+| Spill files | 0 | 0 |
+| Total spill bytes written | 0 | 0 |
+
+The candidate's fact scan emits 167 fewer rows to the join and skips half the
+blocks of the merged segments; the final join and the answer are the same.
+The block counts are not comparable across the two versions: on an unmerged
+copy of the same layout (below), the candidate reports 1,684 of 1,684 blocks
+for the same 61 segments the baseline reports as 2,526 of 2,526. This study
+did not establish what the two counters count differently.
+
+The raw reports are the
+[baseline](q05-join-qualification/rel-0.1.7-tpch-baseline.json),
+[candidate](q05-join-qualification/rel-0.1.7-tpch-candidate.json),
+[default-spill target](q05-join-qualification/rel-0.1.7-q05-target.json) and
+[repeated target](q05-join-qualification/rel-0.1.7-q05-target-repeat.json)
+replays, each with every sample and its profile.
+
+### Layout
+
+The retained-replica pair is not like for like in storage layout. The
+candidate's background merges rewrote the replica the baseline had built
+(61 fact segments into 31, written in segment format 7) before its replays.
+That is what an upgraded data directory does once its merges settle, but it
+also means the baseline can no longer read the replica: a baseline replay
+attempted after the candidate's runs failed with `unsupported format version`
+on the fact table, as the 0.1.7 upgrade notes say a pre-0.1.7 binary must.
+
+To separate execution from layout, a second SF1 replica was built with the
+baseline executable from a fresh MySQL source (same generator and seed) and
+copied three times before any candidate touched it. Each copy was used by one
+server process, with the matched spill limits:
+
+| Query | v0.1.6 | 0.1.7, merges off | 0.1.7, merges on |
+|---|---:|---:|---:|
+| Fact segments read by Q05 | 61 | 61 | 31 |
+| q01-pricing-summary | 3,029.00 | 2,792.74 | 2,802.66 |
+| q03-shipping-priority | 134.98 | 50.61 | 54.09 |
+| q05-local-supplier-volume | 246.90 | 106.85 | 108.60 |
+| q10-returned-item-reporting | 266.99 | 141.23 | 146.57 |
+
+Medians in ms over three measured runs; every answer exact. "Merges off" is
+`PINTAIL_COMPACTION_INPUT_ROWS=1`, which keeps the candidate from merging;
+the candidate then read the baseline's 61 segments unchanged. The speedup
+holds without the merge, so it comes from execution, not from the rewritten
+layout. The reports are the
+[baseline](q05-join-qualification/rel-0.1.7-second-replica-baseline.json),
+[merges-off candidate](q05-join-qualification/rel-0.1.7-second-replica-candidate-no-merge.json)
+and [merges-on candidate](q05-join-qualification/rel-0.1.7-second-replica-candidate.json)
+replays.
+
+### 20M paired comparison
+
+`bun run benchmark/run.ts` ran four times on the same host, alternating
+clean checkouts: baseline, candidate, baseline, candidate (host fingerprint
+`5f2a571f…`). Each checkout was reset to its commit before each run and left
+untouched during it. Each engine container was limited to eight CPUs and
+8 GiB, and Pintail's query-memory ceiling was 4 GiB. Neither tree's banked
+MySQL reference matched this host, so every run measured its own. In every
+run, all eight canonical queries and all novel-query families matched MySQL,
+the harness gate passed, and both engines reported zero concurrency errors at
+every client count. The idle MySQL source of the TPC-H replica stayed up,
+unqueried, during these runs.
+
+The table uses the memo-disabled engine track of the first pair, with
+fifteen measured samples after two warmups:
+
+| Query | v0.1.6 median ms | 0.1.7 median ms | v0.1.6 min ms | 0.1.7 min ms | Median change |
+|---|---:|---:|---:|---:|---:|
+| Q1: Full table count | 1.63 | 0.38 | 1.46 | 0.30 | −76.7% |
+| Q2: Filtered count | 27.14 | 2.82 | 26.07 | 2.66 | −89.6% |
+| Q3: Group by status | 90.69 | 12.68 | 87.15 | 11.38 | −86.0% |
+| Q4: Region × status breakdown | 103.37 | 14.97 | 101.04 | 13.98 | −85.5% |
+| Q5: Monthly revenue (2023) | 53.15 | 13.22 | 51.59 | 12.74 | −75.1% |
+| Q6: Top 10 spenders | 277.60 | 23.03 | 266.80 | 21.03 | −91.7% |
+| Q7: Regional analytics | 228.37 | 35.18 | 222.96 | 31.67 | −84.6% |
+| Q8: Join users + orders | 174.11 | 17.10 | 165.01 | 15.98 | −90.2% |
+
+Pooling the two runs of each arm, thirty samples each:
+
+| Query | v0.1.6 run medians ms | 0.1.7 run medians ms | v0.1.6 pooled median | 0.1.7 pooled median | v0.1.6 pooled min | 0.1.7 pooled min | Pooled median change | Pooled min change |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Q1: Full table count | 1.63 / 1.82 | 0.38 / 0.36 | 1.74 | 0.38 | 1.46 | 0.26 | −78.4% | −82.2% |
+| Q2: Filtered count | 27.14 / 27.77 | 2.82 / 2.97 | 27.48 | 2.91 | 25.36 | 2.66 | −89.4% | −89.5% |
+| Q3: Group by status | 90.69 / 86.50 | 12.68 / 11.92 | 89.10 | 12.41 | 84.74 | 10.64 | −86.1% | −87.4% |
+| Q4: Region × status breakdown | 103.37 / 112.63 | 14.97 / 16.96 | 105.53 | 16.03 | 101.04 | 13.98 | −84.8% | −86.2% |
+| Q5: Monthly revenue (2023) | 53.15 / 55.46 | 13.22 / 14.94 | 54.17 | 13.62 | 51.59 | 12.74 | −74.9% | −75.3% |
+| Q6: Top 10 spenders | 277.60 / 290.39 | 23.03 / 30.85 | 282.72 | 24.31 | 266.80 | 21.03 | −91.4% | −92.1% |
+| Q7: Regional analytics | 228.37 / 229.18 | 35.18 / 40.24 | 228.97 | 38.35 | 221.03 | 31.67 | −83.3% | −85.7% |
+| Q8: Join users + orders | 174.11 / 182.63 | 17.10 / 17.70 | 179.32 | 17.32 | 164.90 | 15.39 | −90.3% | −90.7% |
+
+**No query is slower in the candidate.** Every candidate run is faster than
+every baseline run on every query, by far more than the run-to-run spread
+(up to 12% between the two baseline runs and 34% between the two candidate
+runs, on Q1 and Q6 respectively). The 0.1.6 study's regressions in Q8 and Q1
+are gone on this host: Q8's pooled median fell from 179.32 to 17.32 ms. On
+the memo track, every candidate pooled median is lower (−52% to −82%). At
+16 concurrent clients on the mixed workload, Pintail completed 30.8 and 29.8
+queries per second in the baseline runs and 251.0 and 254.6 in the candidate
+runs. None of this is attributed to a particular commit.
+
+The raw reports are the
+[baseline](q05-join-qualification/rel-0.1.7-eight-query-baseline.json),
+[candidate](q05-join-qualification/rel-0.1.7-eight-query-candidate.json),
+[baseline repeat](q05-join-qualification/rel-0.1.7-eight-query-baseline-repeat.json)
+and [candidate repeat](q05-join-qualification/rel-0.1.7-eight-query-candidate-repeat.json)
+runs. The harness PASS covers exact answers and its memo-dashboard speed
+threshold. It is not a cross-revision regression gate.
+
+### Release gate
+
+The release chain banked the correctness gate separately; it was not re-run
+here. Its oracle run at `d9c6210c` passed all 2,586 cases byte-exact against
+MySQL 8.4.11, and its banked E2E ledgers record 7,061 checks passed with 0
+failed, 6 documented-gap warnings and 49 skipped against both MySQL 8.4 and
+8.0. The commits between `d9c6210c` and the candidate only bank evidence and
+docs; the engine crates and the benchmark harness are identical.
+
+### Deviations from the original procedure
+
+- The pair is release against release, not one change's parent against that
+  change.
+- Everything ran on one 16-vCPU, 31 GiB cloud host with a local docker
+  daemon, one workload after another, instead of the 8-vCPU hosts of 0.1.6.
+  The 20M benchmark still limits each engine container to eight CPUs and
+  8 GiB.
+- The retained replica was built with a copy of `benchmark/run-tpch.ts`, kept
+  outside the repository, that skipped the query suite and teardown, set the
+  MySQL buffer pool itself before seeding and let the server settle for 60 s
+  before stopping it. It uses the same schema, seed-42 generator and snapshot
+  path. The session files were kept outside the repository.
+- Each replay waited for the server's background work to finish first (see
+  *Configuration and host*); 0.1.6 did not record such a wait.
+- The candidate's merges rewrote the retained replica, so a second replica
+  and a merges-off candidate arm were added (see *Layout*), and the
+  candidate's four-query replay was repeated once after the 20M pair.
+- `benchmark/replay-tpch.ts`, `benchmark/run-tpch.ts` and `benchmark/run.ts`
+  are the same in both trees; each arm of the 20M pair ran its own tree's
+  copy, and the TPC-H replays ran the candidate tree's copy.
+- The 20M pair ran as two alternating clean pairs; no run used the dirty-tree
+  override.
+
+## Historical: 0.1.6 release requalification (superseded)
+
+This section records the requalification for the 0.1.6 release, before the
+0.1.7 requalification above. Its numbers describe those revisions and hosts
+only.
 
 This evidence was re-run for the 0.1.6 stable release. The baseline is the
 previous stable release, tag `v0.1.5` (tag object
