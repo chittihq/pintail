@@ -13,6 +13,7 @@ on:
   pull_request:
     paths:
       - scripts/install.sh
+      - scripts/test_install.py
       - .github/workflows/installer.yml
   workflow_dispatch:
     inputs:
@@ -72,6 +73,9 @@ jobs:
       COMPOSE: /opt/pintail/docker-compose.yml
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check compose generation and upgrades
+        run: python3 -m unittest discover -s scripts -p test_install.py
 
       - name: Free the default ports
         run: sudo systemctl stop mysql 2>/dev/null || true
