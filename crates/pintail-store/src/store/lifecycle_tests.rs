@@ -2073,3 +2073,42 @@ fn merging_for_fewer_files_stops_when_no_merge_would_leave_fewer() {
         (1..=40_000).collect::<Vec<u64>>()
     );
 }
+
+#[test]
+fn files_at_rest_tell_a_copied_table_from_one_that_applied_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        ..StoreOptions::default()
+    };
+    // Never created: nothing applied.
+    assert!(!changes_applied_at_rest(&directory.path().join("absent")).unwrap());
+
+    let mut table = TableStore::open(directory.path(), keyed_schema(), options).unwrap();
+    table
+        .bulk_ingest_snapshot(vec![keyed_row(1, 0, false), keyed_row(2, 0, false)])
+        .unwrap();
+    assert!(
+        !changes_applied_at_rest(directory.path()).unwrap(),
+        "a copy alone is version zero and writes no log record"
+    );
+
+    // A streamed change sits in the log until a flush...
+    table
+        .ingest_cdc_in_order(vec![keyed_row(1, 7, false)])
+        .unwrap();
+    assert!(changes_applied_at_rest(directory.path()).unwrap());
+    // ...and in the manifest's versions after one, while the table is open.
+    table.flush().unwrap();
+    assert!(changes_applied_at_rest(directory.path()).unwrap());
+    drop(table);
+    assert!(changes_applied_at_rest(directory.path()).unwrap());
+
+    // A recopy starts the table over.
+    let mut table = TableStore::open(directory.path(), keyed_schema(), options).unwrap();
+    table.reset_for_resnapshot().unwrap();
+    table
+        .bulk_ingest_snapshot(vec![keyed_row(1, 0, false)])
+        .unwrap();
+    assert!(!changes_applied_at_rest(directory.path()).unwrap());
+}

@@ -199,6 +199,28 @@ pub struct StoreOptions {
     pub transactional: bool,
 }
 
+/// Whether a replicated table's files hold a change applied after its copy,
+/// read without opening the table.
+///
+/// A copy stores every row at version zero and writes no log record; a
+/// change the table applies afterwards carries a version above zero and
+/// passes through the log until a flush moves it into a segment. So a
+/// published manifest recording any version above zero, or a log holding
+/// any record, means a change was applied; neither means the table is still
+/// exactly its copy. A recopy resets both. Only the manifest is decoded and
+/// only the log's length read, so a caller can ask it of many tables while
+/// they are open elsewhere.
+///
+/// # Errors
+///
+/// Returns an error when the manifest is corrupt or a file cannot be read.
+pub fn changes_applied_at_rest(directory: &Path) -> Result<bool, StoreError> {
+    if crate::manifest::highest_version_at_rest(directory)?.is_some_and(|version| version > 0) {
+        return Ok(true);
+    }
+    crate::wal::holds_records(&directory.join(WAL_FILE))
+}
+
 /// The sizes an operator may override for every table of the process:
 /// `PINTAIL_MEMTABLE_KB` (memtable bytes that request a flush),
 /// `PINTAIL_COMPACTION_INPUT_ROWS` and `PINTAIL_COMPACTION_OUTPUT_ROWS` (the

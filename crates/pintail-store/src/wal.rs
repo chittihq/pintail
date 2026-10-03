@@ -260,6 +260,19 @@ impl Wal {
     }
 }
 
+/// Whether the log at `path` holds anything past its header. A torn tail
+/// counts: something was written.
+pub(crate) fn holds_records(path: &Path) -> Result<bool, StoreError> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.len() > HEADER_LENGTH as u64),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(StoreError::io(
+            format!("inspect WAL {}", path.display()),
+            error,
+        )),
+    }
+}
+
 pub(crate) fn recover_read_only(path: &Path) -> Result<Recovery, StoreError> {
     let mut file = match File::open(path) {
         Ok(file) => file,

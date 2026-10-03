@@ -42,9 +42,9 @@ pub use store::{
     IngestOutcome, PrewhereRanges, PrewhereSelect, ProjectedColumnChunk, ProjectedRow,
     ProjectedScan, ProjectedScanStream, ProjectedValueChunk, ScanStats, StorageMetrics,
     StoreOptions, TableSnapshot, TableStore, TextKeyFn, TextKeyer, ValidityIter, WalSync,
-    override_side_index, projected_scan_width, scan_threads_setting, side_index_cache_default,
-    side_index_cache_limit, side_index_cache_usage, side_index_enabled, side_index_note,
-    side_index_totals, side_index_trace, size_overrides,
+    changes_applied_at_rest, override_side_index, projected_scan_width, scan_threads_setting,
+    side_index_cache_default, side_index_cache_limit, side_index_cache_usage, side_index_enabled,
+    side_index_note, side_index_totals, side_index_trace, size_overrides,
 };
 
 /// The instruction set the vector kernels run at in this process, and the

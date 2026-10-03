@@ -58,13 +58,55 @@ impl Manifest {
     }
 }
 
-#[allow(clippy::too_many_lines)]
 pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, StoreError> {
+    let Some(manifest) = read(directory)? else {
+        return Ok(Manifest::empty(schema));
+    };
+    if manifest.schema_version > schema.version() {
+        return Err(StoreError::SchemaMismatch {
+            expected_version: schema.version(),
+            actual_version: manifest.schema_version,
+        });
+    }
+    let expected_fingerprint = schema_fingerprint(schema);
+    if manifest.schema_version == schema.version()
+        && manifest.schema_fingerprint != expected_fingerprint
+    {
+        return Err(StoreError::SchemaFingerprintMismatch {
+            expected: expected_fingerprint,
+            actual: manifest.schema_fingerprint,
+        });
+    }
+    if manifest.key_mode != schema.key_mode() {
+        return Err(StoreError::IncompatibleSchema(
+            "table key mode cannot change after data is created".into(),
+        ));
+    }
+    Ok(manifest)
+}
+
+/// The highest row version a table's published manifest records - its
+/// committed version or any segment's newest row - without the schema a
+/// full open checks it against. `None` when the table has no manifest.
+pub(crate) fn highest_version_at_rest(directory: &Path) -> Result<Option<u64>, StoreError> {
+    Ok(read(directory)?.map(|manifest| {
+        manifest
+            .segments
+            .iter()
+            .map(|segment| segment.max_version)
+            .fold(manifest.committed_version, u64::max)
+    }))
+}
+
+/// Decodes the published manifest, checking its own integrity but not that
+/// it fits any schema. `None` when there is none.
+#[allow(clippy::too_many_lines)]
+fn read(directory: &Path) -> Result<Option<Manifest>, StoreError> {
     let path = directory.join(FILE_NAME);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Manifest::empty(schema));
+            return Ok(None);
         }
         Err(error) => {
             return Err(StoreError::io(
@@ -203,24 +245,6 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
         .finish()
         .map_err(|reason| StoreError::corrupt_manifest(checksum_offset, reason))?;
 
-    if schema_version > schema.version() {
-        return Err(StoreError::SchemaMismatch {
-            expected_version: schema.version(),
-            actual_version: schema_version,
-        });
-    }
-    let expected_fingerprint = schema_fingerprint(schema);
-    if schema_version == schema.version() && stored_fingerprint != expected_fingerprint {
-        return Err(StoreError::SchemaFingerprintMismatch {
-            expected: expected_fingerprint,
-            actual: stored_fingerprint,
-        });
-    }
-    if key_mode != schema.key_mode() {
-        return Err(StoreError::IncompatibleSchema(
-            "table key mode cannot change after data is created".into(),
-        ));
-    }
     if next_segment_id == 0 || segments.iter().any(|segment| segment.id >= next_segment_id) {
         return Err(StoreError::corrupt_manifest(
             0,
@@ -228,7 +252,7 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
         ));
     }
 
-    Ok(Manifest {
+    Ok(Some(Manifest {
         generation,
         schema_version,
         schema_fingerprint: stored_fingerprint,
@@ -239,7 +263,7 @@ pub(crate) fn load(directory: &Path, schema: &TableSchema) -> Result<Manifest, S
         committed_version,
         segments,
         layer_index: crate::store::LayerIndexSlot::default(),
-    })
+    }))
 }
 
 pub(crate) fn publish(directory: &Path, manifest: &Manifest) -> Result<(), StoreError> {
