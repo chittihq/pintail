@@ -178,12 +178,8 @@ fn a_parallel_aggregate_keeps_several_cores_busy() {
         busy >= 3,
         "a parallel scan and aggregate should occupy several threads; {busy} did work",
     );
-    // The bar is that the work overlaps at all, not a ratio: a fold that
-    // spends less CPU for the same wall lowers this figure while being
-    // strictly better, and it fell from about 2 to about 1.3 that way.
-    assert!(
-        parallelism > 1.1,
-        "CPU time should exceed wall time when the work runs in parallel; \
-         {cpu:.2}s CPU over {wall:.2}s wall",
-    );
+    // CPU over wall is printed, not asserted: a fold that spends less CPU
+    // for the same wall lowers it while being strictly better, and a busy
+    // host moves it either way. That rounds overlap is asserted without
+    // timing in `fused_fold_interrupts`.
 }

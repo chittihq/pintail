@@ -103,6 +103,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   subquery in an outer join's ON condition that reads the join's left side.
   `EXISTS` over an aggregate with no GROUP BY is answered without running
   it, as its HAVING condition where it has one.
+- An aggregate over a scan folds each slice on the worker that decoded it
+  (grouped, a join's probe side, ungrouped, `COUNT(*)`), instead of handing
+  decoded batches to a second pool. CPU per query roughly halves on grouped
+  and join shapes, and throughput at 8-16 clients rises 73-127%.
+  `PINTAIL_DISABLE_FUSED_FOLD` turns it off; the startup report shows it as
+  `fused_fold`.
 - A statement's profile (`PINTAIL_PROFILE`, `EXPLAIN ANALYZE`) lists what its
   correlated subqueries did - set-at-a-time executions, hash indexes built,
   per-row executions - and the reason each one left to the per-row path was
@@ -134,6 +140,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `COALESCE(SUM(x), 0)`, was classified as volatile and executed once per
   outer row with no sharing between rows. It is now memoized and batched
   like the bare aggregate.
+- A `BINARY(n)` value written after the initial copy lost its trailing zero
+  bytes, so equality, keys and joins on the column missed it.
+- A JSON document holding a DECIMAL, date/time or binary value made its
+  table resync. Such documents now replicate and print as MySQL prints
+  them, with the DECIMAL's scale kept (`1.50`).
+- CHAR values copied from a source running `PAD_CHAR_TO_FULL_LENGTH` kept
+  their pad spaces.
+- `GROUP BY ... WITH ROLLUP` blanked constants and still-grouped expression
+  keys in subtotal rows, rolled up every item over an aliased key's column,
+  and lost the names of `GROUPING()` columns.
+- An unqualified outer column whose name also exists in the table of a
+  select-list subquery was refused as ambiguous.
+- Metadata writes could fail with "database is locked" while replication
+  was writing: a transaction now takes the write lock when it begins.
 
 ## [0.1.7-rc2] - 2026-10-02
 
