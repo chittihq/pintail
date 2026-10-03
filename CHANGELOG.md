@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-03
+
+Everything in 0.1.7-rc1 through rc3, plus the startup resync advice below,
+gated with the full stable chain: fmt, typecheck, unit, parser corpus,
+oracle, MTR, MTR replayed through change capture, E2E on MySQL 8.4 and 8.0,
+migrations, browser, compose, BI clients, the 20M-row benchmark, TPC-H and
+acceptance, then freshness and acceptance again on the banked tree; and a
+100-cycle crash and restart run under live writes with no parity failures.
+
+Benchmark, TPC-H and acceptance evidence for this release was measured on
+16-vCPU hosts (the harness caps each engine at 8 CPUs and 8 GB).
+
+**Upgrading:** a data directory this release writes to holds segment format
+7, which earlier releases cannot open; take a backup before upgrading if a
+rollback may be needed. Tables with a signed `MEDIUMINT` or `BINARY(n)`
+column that applied streamed changes under an earlier release are named at
+startup and should be resynced.
+
 ### Added
 
 - At startup, a warning names each replicated table that may hold values
