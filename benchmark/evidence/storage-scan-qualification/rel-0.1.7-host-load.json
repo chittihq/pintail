@@ -1,0 +1,2665 @@
+{
+ "interval_seconds": 15,
+ "busy_cpus": "logical CPUs busy since the previous sample, from /proc/stat",
+ "top": "three processes by ps lifetime-average CPU%; host-agent = the cloud host's own management and disk-restore agents",
+ "samples": [
+  {
+   "t": "2026-10-03T07:52:11Z",
+   "busy_cpus": 13.86,
+   "load1": 14.97,
+   "top": "rustc:643,rustc:550,host-agent:184"
+  },
+  {
+   "t": "2026-10-03T07:52:26Z",
+   "busy_cpus": 2.79,
+   "load1": 12.17,
+   "top": "rustc:520,rustc:445,host-agent:49.2"
+  },
+  {
+   "t": "2026-10-03T07:52:42Z",
+   "busy_cpus": 3.44,
+   "load1": 10.55,
+   "top": "rustc:100,rustc:100,rustc:99.6"
+  },
+  {
+   "t": "2026-10-03T07:52:57Z",
+   "busy_cpus": 6.04,
+   "load1": 9.84,
+   "top": "rustc:100,rustc:100,rustc:100"
+  },
+  {
+   "t": "2026-10-03T07:53:12Z",
+   "busy_cpus": 9.39,
+   "load1": 10.45,
+   "top": "host-agent:279,rustc:221,rustc:220"
+  },
+  {
+   "t": "2026-10-03T07:53:27Z",
+   "busy_cpus": 6.27,
+   "load1": 9.24,
+   "top": "rustc:100,rustc:100,rustc:100"
+  },
+  {
+   "t": "2026-10-03T07:53:42Z",
+   "busy_cpus": 10.07,
+   "load1": 9.49,
+   "top": "cc1:200,cc1:105,cc1:100"
+  },
+  {
+   "t": "2026-10-03T07:53:57Z",
+   "busy_cpus": 5.98,
+   "load1": 8.64,
+   "top": "rustc:100,rustc:100,rustc:100"
+  },
+  {
+   "t": "2026-10-03T07:54:12Z",
+   "busy_cpus": 6.92,
+   "load1": 8.02,
+   "top": "rustc:602,host-agent:294,rustc:100"
+  },
+  {
+   "t": "2026-10-03T07:54:27Z",
+   "busy_cpus": 5.29,
+   "load1": 7.35,
+   "top": "rustc:418,rustc:100,rustc:100"
+  },
+  {
+   "t": "2026-10-03T07:54:42Z",
+   "busy_cpus": 3.2,
+   "load1": 6.38,
+   "top": "rustc:303,rustc:293,host-agent:37.2"
+  },
+  {
+   "t": "2026-10-03T07:54:57Z",
+   "busy_cpus": 5.58,
+   "load1": 6.27,
+   "top": "rustc:466,host-agent:36.2,containerd:8.1"
+  },
+  {
+   "t": "2026-10-03T07:55:12Z",
+   "busy_cpus": 2.29,
+   "load1": 5.39,
+   "top": "rustc:347,host-agent:71.5,host-agent:35.4"
+  },
+  {
+   "t": "2026-10-03T07:55:27Z",
+   "busy_cpus": 0.97,
+   "load1": 4.42,
+   "top": "host-agent:34.5,containerd:7.6,host-agent:3.3"
+  },
+  {
+   "t": "2026-10-03T07:55:42Z",
+   "busy_cpus": 0.03,
+   "load1": 3.44,
+   "top": "host-agent:33.6,containerd:7.4,host-agent:3.3"
+  },
+  {
+   "t": "2026-10-03T07:55:57Z",
+   "busy_cpus": 0.02,
+   "load1": 2.68,
+   "top": "host-agent:32.8,containerd:7.2,host-agent:3.2"
+  },
+  {
+   "t": "2026-10-03T07:56:12Z",
+   "busy_cpus": 0.11,
+   "load1": 2.08,
+   "top": "host-agent:32.1,host-agent:18.3,containerd:7.0"
+  },
+  {
+   "t": "2026-10-03T07:56:27Z",
+   "busy_cpus": 0.02,
+   "load1": 1.62,
+   "top": "host-agent:31.3,containerd:6.8,host-agent:3.2"
+  },
+  {
+   "t": "2026-10-03T07:56:42Z",
+   "busy_cpus": 0.04,
+   "load1": 1.26,
+   "top": "host-agent:30.6,containerd:6.6,host-agent:3.1"
+  },
+  {
+   "t": "2026-10-03T07:56:57Z",
+   "busy_cpus": 0.02,
+   "load1": 0.98,
+   "top": "host-agent:30.0,containerd:6.4,host-agent:3.1"
+  },
+  {
+   "t": "2026-10-03T07:57:12Z",
+   "busy_cpus": 0.09,
+   "load1": 0.76,
+   "top": "host-agent:29.4,containerd:6.3,host-agent:3.0"
+  },
+  {
+   "t": "2026-10-03T07:57:27Z",
+   "busy_cpus": 0.02,
+   "load1": 0.59,
+   "top": "host-agent:28.7,containerd:6.1,host-agent:3.0"
+  },
+  {
+   "t": "2026-10-03T07:57:42Z",
+   "busy_cpus": 0.04,
+   "load1": 0.46,
+   "top": "host-agent:28.2,containerd:6.0,host-agent:3.0"
+  },
+  {
+   "t": "2026-10-03T07:57:57Z",
+   "busy_cpus": 0.03,
+   "load1": 0.36,
+   "top": "host-agent:27.6,containerd:5.8,host-agent:2.9"
+  },
+  {
+   "t": "2026-10-03T07:58:12Z",
+   "busy_cpus": 0.06,
+   "load1": 0.28,
+   "top": "host-agent:27.0,containerd:5.7,host-agent:2.9"
+  },
+  {
+   "t": "2026-10-03T07:58:27Z",
+   "busy_cpus": 0.02,
+   "load1": 0.22,
+   "top": "host-agent:26.5,containerd:5.6,host-agent:2.9"
+  },
+  {
+   "t": "2026-10-03T07:58:42Z",
+   "busy_cpus": 0.05,
+   "load1": 0.17,
+   "top": "host-agent:26.0,containerd:5.5,host-agent:2.8"
+  },
+  {
+   "t": "2026-10-03T07:58:57Z",
+   "busy_cpus": 0.04,
+   "load1": 0.13,
+   "top": "host-agent:25.5,containerd:5.4,host-agent:2.8"
+  },
+  {
+   "t": "2026-10-03T07:59:12Z",
+   "busy_cpus": 0.11,
+   "load1": 0.1,
+   "top": "host-agent:25.1,containerd:5.2,host-agent:2.8"
+  },
+  {
+   "t": "2026-10-03T07:59:27Z",
+   "busy_cpus": 0.02,
+   "load1": 0.08,
+   "top": "host-agent:24.7,containerd:5.1,host-agent:2.7"
+  },
+  {
+   "t": "2026-10-03T07:59:42Z",
+   "busy_cpus": 0.02,
+   "load1": 0.06,
+   "top": "host-agent:24.2,containerd:5.0,host-agent:2.7"
+  },
+  {
+   "t": "2026-10-03T07:59:57Z",
+   "busy_cpus": 0.28,
+   "load1": 0.13,
+   "top": "host-agent-recl:97.1,host-agent:23.8,containerd:4.9"
+  },
+  {
+   "t": "2026-10-03T08:00:12Z",
+   "busy_cpus": 0.18,
+   "load1": 0.1,
+   "top": "host-agent:23.4,containerd:4.8,host-agent:2.6"
+  },
+  {
+   "t": "2026-10-03T08:00:27Z",
+   "busy_cpus": 0.02,
+   "load1": 0.08,
+   "top": "host-agent:23.0,containerd:4.7,host-agent:2.6"
+  },
+  {
+   "t": "2026-10-03T08:00:42Z",
+   "busy_cpus": 0.02,
+   "load1": 0.06,
+   "top": "host-agent:22.6,containerd:4.7,host-agent:2.6"
+  },
+  {
+   "t": "2026-10-03T08:00:57Z",
+   "busy_cpus": 0.04,
+   "load1": 0.04,
+   "top": "host-agent:22.3,containerd:4.6,host-agent:2.6"
+  },
+  {
+   "t": "2026-10-03T08:01:12Z",
+   "busy_cpus": 0.11,
+   "load1": 0.03,
+   "top": "host-agent:22.0,containerd:4.5,host-agent:2.5"
+  },
+  {
+   "t": "2026-10-03T08:01:27Z",
+   "busy_cpus": 0.02,
+   "load1": 0.03,
+   "top": "host-agent:21.6,containerd:4.4,host-agent:2.5"
+  },
+  {
+   "t": "2026-10-03T08:01:42Z",
+   "busy_cpus": 0.02,
+   "load1": 0.02,
+   "top": "host-agent:21.3,containerd:4.3,host-agent:2.5"
+  },
+  {
+   "t": "2026-10-03T08:01:57Z",
+   "busy_cpus": 0.03,
+   "load1": 0.01,
+   "top": "host-agent:21.0,containerd:4.3,host-agent:2.5"
+  },
+  {
+   "t": "2026-10-03T08:02:12Z",
+   "busy_cpus": 0.07,
+   "load1": 0.15,
+   "top": "host-agent:20.7,containerd:4.2,host-agent:2.4"
+  },
+  {
+   "t": "2026-10-03T08:02:27Z",
+   "busy_cpus": 0.03,
+   "load1": 0.11,
+   "top": "host-agent:20.3,containerd:4.1,host-agent:2.4"
+  },
+  {
+   "t": "2026-10-03T08:02:42Z",
+   "busy_cpus": 0.02,
+   "load1": 0.09,
+   "top": "host-agent:20.0,containerd:4.1,host-agent:2.4"
+  },
+  {
+   "t": "2026-10-03T08:02:57Z",
+   "busy_cpus": 0.02,
+   "load1": 0.07,
+   "top": "host-agent:19.8,containerd:4.0,host-agent:2.4"
+  },
+  {
+   "t": "2026-10-03T08:03:12Z",
+   "busy_cpus": 0.14,
+   "load1": 0.05,
+   "top": "host-agent:19.5,containerd:3.9,host-agent:2.3"
+  },
+  {
+   "t": "2026-10-03T08:03:27Z",
+   "busy_cpus": 0.26,
+   "load1": 0.12,
+   "top": "host-agent:63.9,containerd:3.9,host-agent:2.3"
+  },
+  {
+   "t": "2026-10-03T08:03:42Z",
+   "busy_cpus": 1.81,
+   "load1": 0.33,
+   "top": "storage_adversa:90.7,host-agent:61.3,containerd:3.8"
+  },
+  {
+   "t": "2026-10-03T08:03:57Z",
+   "busy_cpus": 2.82,
+   "load1": 0.99,
+   "top": "storage_adversa:86.7,host-agent:69.9,host-agent:13.9"
+  },
+  {
+   "t": "2026-10-03T08:04:12Z",
+   "busy_cpus": 5.06,
+   "load1": 1.82,
+   "top": "storage_adversa:100,host-agent:73.9,host-agent:39.0"
+  },
+  {
+   "t": "2026-10-03T08:04:27Z",
+   "busy_cpus": 4.1,
+   "load1": 2.12,
+   "top": "host-agent:126,host-agent:76.5,storage_scan_pr:73.0"
+  },
+  {
+   "t": "2026-10-03T08:04:42Z",
+   "busy_cpus": 2.25,
+   "load1": 2.09,
+   "top": "storage_scan_pr:84.7,host-agent:70.6,host-agent:68.4"
+  },
+  {
+   "t": "2026-10-03T08:04:57Z",
+   "busy_cpus": 1.07,
+   "load1": 1.84,
+   "top": "storage_scan_pr:89.6,host-agent:59.7,host-agent:3.6"
+  },
+  {
+   "t": "2026-10-03T08:05:12Z",
+   "busy_cpus": 1.26,
+   "load1": 1.66,
+   "top": "storage_scan_pr:100,host-agent:94.0,host-agent:51.5"
+  },
+  {
+   "t": "2026-10-03T08:05:27Z",
+   "busy_cpus": 1.63,
+   "load1": 1.51,
+   "top": "storage_query_p:258,host-agent:45.3,host-agent:3.5"
+  },
+  {
+   "t": "2026-10-03T08:05:42Z",
+   "busy_cpus": 1.88,
+   "load1": 1.4,
+   "top": "storage_query_p:205,host-agent:40.4,host-agent:3.5"
+  },
+  {
+   "t": "2026-10-03T08:05:57Z",
+   "busy_cpus": 1.86,
+   "load1": 1.31,
+   "top": "storage_query_p:196,host-agent:36.5,host-agent:3.4"
+  },
+  {
+   "t": "2026-10-03T08:06:12Z",
+   "busy_cpus": 1.95,
+   "load1": 1.32,
+   "top": "storage_query_p:193,host-agent:33.5,host-agent:3.4"
+  },
+  {
+   "t": "2026-10-03T08:06:27Z",
+   "busy_cpus": 1.86,
+   "load1": 1.25,
+   "top": "storage_query_p:191,host-agent:30.8,host-agent:3.4"
+  },
+  {
+   "t": "2026-10-03T08:06:42Z",
+   "busy_cpus": 1.85,
+   "load1": 1.19,
+   "top": "storage_query_p:189,host-agent:28.5,host-agent:3.4"
+  },
+  {
+   "t": "2026-10-03T08:06:57Z",
+   "busy_cpus": 1.83,
+   "load1": 1.15,
+   "top": "storage_query_p:188,host-agent:26.5,host-agent:3.3"
+  },
+  {
+   "t": "2026-10-03T08:07:12Z",
+   "busy_cpus": 1.92,
+   "load1": 1.2,
+   "top": "storage_query_p:187,host-agent:25.1,host-agent:3.3"
+  },
+  {
+   "t": "2026-10-03T08:07:27Z",
+   "busy_cpus": 1.37,
+   "load1": 1.15,
+   "top": "storage_scan_pr:99.8,host-agent:23.6,host-agent:3.3"
+  },
+  {
+   "t": "2026-10-03T08:07:42Z",
+   "busy_cpus": 1.58,
+   "load1": 1.12,
+   "top": "storage_query_p:177,host-agent:22.2,host-agent:3.2"
+  },
+  {
+   "t": "2026-10-03T08:07:57Z",
+   "busy_cpus": 1.67,
+   "load1": 2.04,
+   "top": "storage_query_p:171,host-agent:21.0,host-agent:3.2"
+  },
+  {
+   "t": "2026-10-03T08:08:12Z",
+   "busy_cpus": 1.76,
+   "load1": 1.81,
+   "top": "storage_query_p:171,host-agent:19.9,host-agent:3.2"
+  },
+  {
+   "t": "2026-10-03T08:08:27Z",
+   "busy_cpus": 1.69,
+   "load1": 2.04,
+   "top": "storage_query_p:170,host-agent:18.9,host-agent:3.2"
+  },
+  {
+   "t": "2026-10-03T08:08:42Z",
+   "busy_cpus": 1.75,
+   "load1": 1.81,
+   "top": "storage_query_p:170,host-agent:18.0,host-agent:3.1"
+  },
+  {
+   "t": "2026-10-03T08:08:57Z",
+   "busy_cpus": 0.69,
+   "load1": 1.47,
+   "top": "host-agent:17.2,host-agent:3.1,host-agent:3.0"
+  },
+  {
+   "t": "2026-10-03T08:09:12Z",
+   "busy_cpus": 0.09,
+   "load1": 1.15,
+   "top": "host-agent:16.6,host-agent:3.1,host-agent:3.0"
+  },
+  {
+   "t": "2026-10-03T08:09:27Z",
+   "busy_cpus": 0.03,
+   "load1": 0.89,
+   "top": "host-agent:15.9,host-agent:3.1,host-agent:3.0"
+  },
+  {
+   "t": "2026-10-03T08:09:42Z",
+   "busy_cpus": 0.04,
+   "load1": 0.69,
+   "top": "host-agent:15.3,host-agent:3.0,host-agent:3.0"
+  },
+  {
+   "t": "2026-10-03T08:09:57Z",
+   "busy_cpus": 0.04,
+   "load1": 0.7,
+   "top": "host-agent:14.7,host-agent:3.0,host-agent:3.0"
+  },
+  {
+   "t": "2026-10-03T08:10:12Z",
+   "busy_cpus": 0.06,
+   "load1": 0.62,
+   "top": "host-agent:14.2,host-agent:3.0,host-agent:2.9"
+  },
+  {
+   "t": "2026-10-03T08:10:27Z",
+   "busy_cpus": 0.03,
+   "load1": 0.62,
+   "top": "host-agent:13.7,host-agent:3.0,host-agent:2.9"
+  },
+  {
+   "t": "2026-10-03T08:10:42Z",
+   "busy_cpus": 0.03,
+   "load1": 0.48,
+   "top": "host-agent:13.2,host-agent:3.0,host-agent:2.9"
+  },
+  {
+   "t": "2026-10-03T08:10:57Z",
+   "busy_cpus": 0.03,
+   "load1": 0.38,
+   "top": "host-agent:12.8,host-agent:2.9,host-agent:2.9"
+  },
+  {
+   "t": "2026-10-03T08:11:12Z",
+   "busy_cpus": 0.11,
+   "load1": 0.45,
+   "top": "host-agent:12.5,host-agent:2.9,host-agent:2.8"
+  },
+  {
+   "t": "2026-10-03T08:11:27Z",
+   "busy_cpus": 0.04,
+   "load1": 0.35,
+   "top": "host-agent:12.1,host-agent:2.9,host-agent:2.8"
+  },
+  {
+   "t": "2026-10-03T08:11:42Z",
+   "busy_cpus": 0.06,
+   "load1": 0.27,
+   "top": "host-agent:11.7,host-agent:2.9,host-agent:2.8"
+  },
+  {
+   "t": "2026-10-03T08:11:58Z",
+   "busy_cpus": 0.75,
+   "load1": 0.37,
+   "top": "mysqld:47.0,bun:18.1,host-agent:11.4"
+  },
+  {
+   "t": "2026-10-03T08:12:13Z",
+   "busy_cpus": 1.56,
+   "load1": 0.73,
+   "top": "host-agent:111,mysqld:64.6,bun:26.3"
+  },
+  {
+   "t": "2026-10-03T08:12:28Z",
+   "busy_cpus": 1.11,
+   "load1": 1.25,
+   "top": "mysqld:69.5,bun:27.0,host-agent:10.7"
+  },
+  {
+   "t": "2026-10-03T08:12:43Z",
+   "busy_cpus": 1.13,
+   "load1": 1.72,
+   "top": "mysqld:72.1,bun:27.5,host-agent:10.5"
+  },
+  {
+   "t": "2026-10-03T08:12:58Z",
+   "busy_cpus": 1.14,
+   "load1": 2.0,
+   "top": "mysqld:73.8,bun:28.2,host-agent:10.2"
+  },
+  {
+   "t": "2026-10-03T08:13:13Z",
+   "busy_cpus": 1.64,
+   "load1": 2.71,
+   "top": "host-agent:216,mysqld:75.0,bun:28.5"
+  },
+  {
+   "t": "2026-10-03T08:13:28Z",
+   "busy_cpus": 1.31,
+   "load1": 3.21,
+   "top": "mysqld:76.5,bun:28.8,host-agent:9.8"
+  },
+  {
+   "t": "2026-10-03T08:13:43Z",
+   "busy_cpus": 1.21,
+   "load1": 3.07,
+   "top": "mysqld:77.6,bun:29.1,host-agent:9.5"
+  },
+  {
+   "t": "2026-10-03T08:13:58Z",
+   "busy_cpus": 1.12,
+   "load1": 2.98,
+   "top": "pintail:82.0,mysqld:75.0,bun:27.7"
+  },
+  {
+   "t": "2026-10-03T08:14:13Z",
+   "busy_cpus": 1.49,
+   "load1": 2.54,
+   "top": "host-agent:176,pintail:88.5,mysqld:68.4"
+  },
+  {
+   "t": "2026-10-03T08:14:28Z",
+   "busy_cpus": 1.23,
+   "load1": 2.2,
+   "top": "pintail:83.3,mysqld:65.2,host-agent:38.1"
+  },
+  {
+   "t": "2026-10-03T08:14:43Z",
+   "busy_cpus": 0.58,
+   "load1": 1.94,
+   "top": "host-agent:8.7,host-agent:2.8,host-agent:2.7"
+  },
+  {
+   "t": "2026-10-03T08:14:58Z",
+   "busy_cpus": 1.11,
+   "load1": 2.16,
+   "top": "mysqld:56.9,bun:22.9,host-agent:8.5"
+  },
+  {
+   "t": "2026-10-03T08:15:13Z",
+   "busy_cpus": 1.49,
+   "load1": 2.21,
+   "top": "host-agent:105,mysqld:67.8,bun:27.8"
+  },
+  {
+   "t": "2026-10-03T08:15:28Z",
+   "busy_cpus": 1.2,
+   "load1": 2.36,
+   "top": "mysqld:72.4,bun:29.0,host-agent:8.2"
+  },
+  {
+   "t": "2026-10-03T08:15:43Z",
+   "busy_cpus": 1.08,
+   "load1": 2.2,
+   "top": "mysqld:73.0,bun:29.1,host-agent:8.0"
+  },
+  {
+   "t": "2026-10-03T08:15:58Z",
+   "busy_cpus": 1.15,
+   "load1": 2.0,
+   "top": "mysqld:74.2,bun:29.3,host-agent:7.9"
+  },
+  {
+   "t": "2026-10-03T08:16:13Z",
+   "busy_cpus": 1.48,
+   "load1": 1.85,
+   "top": "host-agent:329,mysqld:75.5,tar:40.7"
+  },
+  {
+   "t": "2026-10-03T08:16:28Z",
+   "busy_cpus": 1.41,
+   "load1": 1.89,
+   "top": "mysqld:76.6,fwupd:31.9,bun:29.4"
+  },
+  {
+   "t": "2026-10-03T08:16:43Z",
+   "busy_cpus": 1.65,
+   "load1": 2.02,
+   "top": "mysqld:77.4,host-agent:47.6,bun:29.5"
+  },
+  {
+   "t": "2026-10-03T08:16:58Z",
+   "busy_cpus": 1.73,
+   "load1": 1.99,
+   "top": "mysqld:77.8,host-agent:38.4,bun:29.4"
+  },
+  {
+   "t": "2026-10-03T08:17:13Z",
+   "busy_cpus": 1.78,
+   "load1": 1.92,
+   "top": "pintail:75.8,mysqld:71.6,host-agent:41.7"
+  },
+  {
+   "t": "2026-10-03T08:17:28Z",
+   "busy_cpus": 5.51,
+   "load1": 2.38,
+   "top": "pintail:75.1,host-agent:70.6,mysqld:66.3"
+  },
+  {
+   "t": "2026-10-03T08:17:43Z",
+   "busy_cpus": 3.69,
+   "load1": 2.51,
+   "top": "pintail:77.7,mysqld:63.8,host-agent:59.6"
+  },
+  {
+   "t": "2026-10-03T08:17:58Z",
+   "busy_cpus": 2.4,
+   "load1": 2.55,
+   "top": "mysqld:66.6,host-agent:62.8,host-agent:30.1"
+  },
+  {
+   "t": "2026-10-03T08:18:13Z",
+   "busy_cpus": 3.73,
+   "load1": 2.9,
+   "top": "host-agent:62.5,host-agent:54.5,mysqld:43.0"
+  },
+  {
+   "t": "2026-10-03T08:18:28Z",
+   "busy_cpus": 1.6,
+   "load1": 2.83,
+   "top": "mysqld:60.1,bun:25.9,ibus-extension-:7.7"
+  },
+  {
+   "t": "2026-10-03T08:18:43Z",
+   "busy_cpus": 1.14,
+   "load1": 2.42,
+   "top": "mysqld:66.1,bun:27.7,host-agent:4.0"
+  },
+  {
+   "t": "2026-10-03T08:18:58Z",
+   "busy_cpus": 1.19,
+   "load1": 2.11,
+   "top": "mysqld:70.6,bun:28.6,host-agent:4.0"
+  },
+  {
+   "t": "2026-10-03T08:19:13Z",
+   "busy_cpus": 1.92,
+   "load1": 2.17,
+   "top": "host-agent:156,mysqld:74.6,bun:29.4"
+  },
+  {
+   "t": "2026-10-03T08:19:28Z",
+   "busy_cpus": 2.55,
+   "load1": 3.0,
+   "top": "host-agent:199,mysqld:69.7,bun:27.3"
+  },
+  {
+   "t": "2026-10-03T08:19:43Z",
+   "busy_cpus": 1.95,
+   "load1": 3.47,
+   "top": "host-agent:93.2,mysqld:69.0,bun:26.9"
+  },
+  {
+   "t": "2026-10-03T08:19:58Z",
+   "busy_cpus": 2.16,
+   "load1": 3.37,
+   "top": "host-agent:89.0,mysqld:70.3,bun:27.3"
+  },
+  {
+   "t": "2026-10-03T08:20:13Z",
+   "busy_cpus": 2.34,
+   "load1": 2.92,
+   "top": "host-agent:180,host-agent:79.7,mysqld:71.4"
+  },
+  {
+   "t": "2026-10-03T08:20:28Z",
+   "busy_cpus": 1.9,
+   "load1": 2.88,
+   "top": "host-agent:74.8,mysqld:72.2,host-agent:33.9"
+  },
+  {
+   "t": "2026-10-03T08:20:43Z",
+   "busy_cpus": 1.96,
+   "load1": 2.46,
+   "top": "mysqld:73.3,host-agent:71.6,bun:27.9"
+  },
+  {
+   "t": "2026-10-03T08:20:58Z",
+   "busy_cpus": 1.7,
+   "load1": 2.64,
+   "top": "pintail:88.6,mysqld:68.7,host-agent:67.0"
+  },
+  {
+   "t": "2026-10-03T08:21:13Z",
+   "busy_cpus": 2.25,
+   "load1": 2.28,
+   "top": "host-agent:291,pintail:91.9,host-agent:65.0"
+  },
+  {
+   "t": "2026-10-03T08:21:28Z",
+   "busy_cpus": 1.7,
+   "load1": 2.07,
+   "top": "host-agent:61.6,host-agent:39.1,tar:8.6"
+  },
+  {
+   "t": "2026-10-03T08:21:43Z",
+   "busy_cpus": 0.88,
+   "load1": 2.0,
+   "top": "host-agent:58.6,mysqld:32.1,host-agent:23.0"
+  },
+  {
+   "t": "2026-10-03T08:21:58Z",
+   "busy_cpus": 1.88,
+   "load1": 2.01,
+   "top": "mysqld:60.0,host-agent:58.3,bun:28.3"
+  },
+  {
+   "t": "2026-10-03T08:22:13Z",
+   "busy_cpus": 1.93,
+   "load1": 2.18,
+   "top": "mysqld:62.8,host-agent:59.6,bun:29.2"
+  },
+  {
+   "t": "2026-10-03T08:22:28Z",
+   "busy_cpus": 2.11,
+   "load1": 2.21,
+   "top": "mysqld:65.5,host-agent:59.2,bun:30.1"
+  },
+  {
+   "t": "2026-10-03T08:22:43Z",
+   "busy_cpus": 1.69,
+   "load1": 2.08,
+   "top": "mysqld:68.9,host-agent:57.9,bun:30.9"
+  },
+  {
+   "t": "2026-10-03T08:22:58Z",
+   "busy_cpus": 1.65,
+   "load1": 1.91,
+   "top": "mysqld:71.3,host-agent:56.7,bun:31.3"
+  },
+  {
+   "t": "2026-10-03T08:23:13Z",
+   "busy_cpus": 1.57,
+   "load1": 1.78,
+   "top": "mysqld:72.8,host-agent:55.4,bun:31.6"
+  },
+  {
+   "t": "2026-10-03T08:23:28Z",
+   "busy_cpus": 2.5,
+   "load1": 2.2,
+   "top": "mysqld:73.6,host-agent:57.5,host-agent:35.7"
+  },
+  {
+   "t": "2026-10-03T08:23:43Z",
+   "busy_cpus": 1.89,
+   "load1": 2.54,
+   "top": "mysqld:74.8,host-agent:57.4,bun:31.3"
+  },
+  {
+   "t": "2026-10-03T08:23:58Z",
+   "busy_cpus": 2.1,
+   "load1": 2.36,
+   "top": "mysqld:75.7,host-agent:58.2,bun:31.3"
+  },
+  {
+   "t": "2026-10-03T08:24:13Z",
+   "busy_cpus": 2.01,
+   "load1": 2.33,
+   "top": "host-agent:311,mysqld:76.7,host-agent:57.6"
+  },
+  {
+   "t": "2026-10-03T08:24:28Z",
+   "busy_cpus": 2.07,
+   "load1": 2.76,
+   "top": "pintail:85.9,mysqld:74.2,host-agent:57.2"
+  },
+  {
+   "t": "2026-10-03T08:24:43Z",
+   "busy_cpus": 1.76,
+   "load1": 2.37,
+   "top": "pintail:88.1,mysqld:69.3,host-agent:57.2"
+  },
+  {
+   "t": "2026-10-03T08:24:58Z",
+   "busy_cpus": 1.35,
+   "load1": 2.21,
+   "top": "pintail:80.9,mysqld:66.6,host-agent:55.6"
+  },
+  {
+   "t": "2026-10-03T08:25:13Z",
+   "busy_cpus": 0.88,
+   "load1": 1.94,
+   "top": "host-agent:54.0,host-agent:3.8,host-agent:3.7"
+  },
+  {
+   "t": "2026-10-03T08:25:28Z",
+   "busy_cpus": 3.27,
+   "load1": 3.44,
+   "top": "host-agent:207,host-agent:146,mysqld:54.6"
+  },
+  {
+   "t": "2026-10-03T08:25:43Z",
+   "busy_cpus": 1.42,
+   "load1": 3.11,
+   "top": "host-agent:73.4,mysqld:66.8,host-agent:45.5"
+  },
+  {
+   "t": "2026-10-03T08:25:58Z",
+   "busy_cpus": 1.39,
+   "load1": 3.14,
+   "top": "mysqld:72.0,bun:29.9,host-agent:3.8"
+  },
+  {
+   "t": "2026-10-03T08:26:13Z",
+   "busy_cpus": 1.96,
+   "load1": 2.66,
+   "top": "host-agent:136,mysqld:74.9,bun:30.4"
+  },
+  {
+   "t": "2026-10-03T08:26:28Z",
+   "busy_cpus": 1.21,
+   "load1": 2.52,
+   "top": "mysqld:76.9,bun:30.4,host-agent:3.8"
+  },
+  {
+   "t": "2026-10-03T08:26:43Z",
+   "busy_cpus": 1.27,
+   "load1": 2.33,
+   "top": "mysqld:79.2,bun:30.8,host-agent:3.8"
+  },
+  {
+   "t": "2026-10-03T08:26:58Z",
+   "busy_cpus": 1.28,
+   "load1": 2.03,
+   "top": "mysqld:80.9,bun:31.0,host-agent:3.8"
+  },
+  {
+   "t": "2026-10-03T08:27:13Z",
+   "busy_cpus": 1.83,
+   "load1": 1.8,
+   "top": "host-agent:184,mysqld:82.6,bun:31.2"
+  },
+  {
+   "t": "2026-10-03T08:27:28Z",
+   "busy_cpus": 1.29,
+   "load1": 1.62,
+   "top": "pintail:88.6,mysqld:78.9,bun:29.4"
+  },
+  {
+   "t": "2026-10-03T08:27:43Z",
+   "busy_cpus": 1.12,
+   "load1": 1.48,
+   "top": "pintail:93.2,mysqld:72.2,bun:26.6"
+  },
+  {
+   "t": "2026-10-03T08:27:58Z",
+   "busy_cpus": 1.18,
+   "load1": 1.38,
+   "top": "pintail:88.0,mysqld:68.8,bun:24.3"
+  },
+  {
+   "t": "2026-10-03T08:28:13Z",
+   "busy_cpus": 0.98,
+   "load1": 1.46,
+   "top": "host-agent:171,mysqld:15.4,bun:8.6"
+  },
+  {
+   "t": "2026-10-03T08:28:28Z",
+   "busy_cpus": 1.27,
+   "load1": 1.43,
+   "top": "mysqld:60.7,host-agent:35.4,bun:27.0"
+  },
+  {
+   "t": "2026-10-03T08:28:43Z",
+   "busy_cpus": 1.26,
+   "load1": 1.47,
+   "top": "mysqld:70.4,bun:30.0,host-agent:21.8"
+  },
+  {
+   "t": "2026-10-03T08:28:58Z",
+   "busy_cpus": 1.26,
+   "load1": 1.58,
+   "top": "mysqld:74.5,bun:30.8,host-agent:3.7"
+  },
+  {
+   "t": "2026-10-03T08:29:13Z",
+   "busy_cpus": 1.5,
+   "load1": 1.89,
+   "top": "host-agent:115,mysqld:77.3,bun:30.8"
+  },
+  {
+   "t": "2026-10-03T08:29:28Z",
+   "busy_cpus": 1.2,
+   "load1": 2.15,
+   "top": "mysqld:78.8,bun:30.4,host-agent:3.7"
+  },
+  {
+   "t": "2026-10-03T08:29:43Z",
+   "busy_cpus": 1.25,
+   "load1": 2.28,
+   "top": "mysqld:80.7,bun:30.6,host-agent:3.7"
+  },
+  {
+   "t": "2026-10-03T08:29:58Z",
+   "busy_cpus": 1.25,
+   "load1": 2.51,
+   "top": "mysqld:82.0,bun:30.7,host-agent:3.7"
+  },
+  {
+   "t": "2026-10-03T08:30:13Z",
+   "busy_cpus": 1.61,
+   "load1": 2.32,
+   "top": "host-agent:348,mysqld:79.5,pintail:78.0"
+  },
+  {
+   "t": "2026-10-03T08:30:28Z",
+   "busy_cpus": 1.24,
+   "load1": 2.03,
+   "top": "pintail:91.6,mysqld:72.5,host-agent:47.6"
+  },
+  {
+   "t": "2026-10-03T08:30:43Z",
+   "busy_cpus": 1.22,
+   "load1": 1.96,
+   "top": "pintail:88.2,mysqld:68.7,bun:23.8"
+  },
+  {
+   "t": "2026-10-03T08:30:58Z",
+   "busy_cpus": 0.53,
+   "load1": 1.9,
+   "top": "clickhouse-serv:10.6,host-agent:3.6,host-agent:3.5"
+  },
+  {
+   "t": "2026-10-03T08:31:13Z",
+   "busy_cpus": 1.67,
+   "load1": 2.06,
+   "top": "host-agent:261,mysqld:82.6,tar:35.9"
+  },
+  {
+   "t": "2026-10-03T08:31:28Z",
+   "busy_cpus": 1.8,
+   "load1": 2.38,
+   "top": "mysqld:97.5,host-agent:57.1,clickhouse-serv:4.0"
+  },
+  {
+   "t": "2026-10-03T08:31:43Z",
+   "busy_cpus": 1.29,
+   "load1": 2.07,
+   "top": "mysqld:103,clickhouse-serv:4.1,host-agent:3.6"
+  },
+  {
+   "t": "2026-10-03T08:31:58Z",
+   "busy_cpus": 1.29,
+   "load1": 1.83,
+   "top": "mysqld:107,clickhouse-serv:3.7,host-agent:3.6"
+  },
+  {
+   "t": "2026-10-03T08:32:13Z",
+   "busy_cpus": 1.8,
+   "load1": 1.72,
+   "top": "host-agent:181,mysqld:110,host-agent:3.6"
+  },
+  {
+   "t": "2026-10-03T08:32:28Z",
+   "busy_cpus": 1.39,
+   "load1": 1.79,
+   "top": "mysqld:111,host-agent:3.6,clickhouse-serv:3.6"
+  },
+  {
+   "t": "2026-10-03T08:32:43Z",
+   "busy_cpus": 1.32,
+   "load1": 1.7,
+   "top": "mysqld:113,host-agent:3.6,host-agent:3.5"
+  },
+  {
+   "t": "2026-10-03T08:32:58Z",
+   "busy_cpus": 1.35,
+   "load1": 1.69,
+   "top": "mysqld:115,host-agent:3.6,host-agent:3.5"
+  },
+  {
+   "t": "2026-10-03T08:33:13Z",
+   "busy_cpus": 2.01,
+   "load1": 1.54,
+   "top": "host-agent:218,mysqld:116,host-agent:3.6"
+  },
+  {
+   "t": "2026-10-03T08:33:28Z",
+   "busy_cpus": 1.56,
+   "load1": 1.5,
+   "top": "mysqld:118,host-agent:3.6,host-agent:3.5"
+  },
+  {
+   "t": "2026-10-03T08:33:43Z",
+   "busy_cpus": 1.47,
+   "load1": 1.46,
+   "top": "mysqld:119,host-agent:3.6,clickhouse-serv:3.5"
+  },
+  {
+   "t": "2026-10-03T08:33:58Z",
+   "busy_cpus": 1.41,
+   "load1": 2.02,
+   "top": "mysqld:120,host-agent:3.6,clickhouse-serv:3.5"
+  },
+  {
+   "t": "2026-10-03T08:34:14Z",
+   "busy_cpus": 2.09,
+   "load1": 1.96,
+   "top": "host-agent:302,mysqld:120,tar:38.0"
+  },
+  {
+   "t": "2026-10-03T08:34:29Z",
+   "busy_cpus": 1.97,
+   "load1": 2.17,
+   "top": "mysqld:121,host-agent:79.7,clickhouse-serv:3.9"
+  },
+  {
+   "t": "2026-10-03T08:34:44Z",
+   "busy_cpus": 1.37,
+   "load1": 2.51,
+   "top": "mysqld:121,clickhouse-serv:3.9,host-agent:3.6"
+  },
+  {
+   "t": "2026-10-03T08:34:59Z",
+   "busy_cpus": 1.6,
+   "load1": 2.39,
+   "top": "mysqld:123,clickhouse-serv:4.0,host-agent:3.6"
+  },
+  {
+   "t": "2026-10-03T08:35:14Z",
+   "busy_cpus": 2.01,
+   "load1": 2.7,
+   "top": "host-agent:319,mysqld:122,tar:37.9"
+  },
+  {
+   "t": "2026-10-03T08:35:29Z",
+   "busy_cpus": 1.11,
+   "load1": 2.47,
+   "top": "host-agent:83.3,mysqld:51.0,clickhouse-serv:5.4"
+  },
+  {
+   "t": "2026-10-03T08:35:44Z",
+   "busy_cpus": 1.59,
+   "load1": 2.36,
+   "top": "mysqld:46.0,clickhouse-serv:10.9,host-agent:3.6"
+  },
+  {
+   "t": "2026-10-03T08:35:59Z",
+   "busy_cpus": 1.73,
+   "load1": 2.06,
+   "top": "bun:228,store:81.9,mysqld:40.4"
+  },
+  {
+   "t": "2026-10-03T08:36:14Z",
+   "busy_cpus": 9.01,
+   "load1": 4.27,
+   "top": "host-agent:465,tar:52.2,cargo:30.5"
+  },
+  {
+   "t": "2026-10-03T08:36:29Z",
+   "busy_cpus": 11.55,
+   "load1": 6.78,
+   "top": "host-agent:156,rustc:100,cc1:100"
+  },
+  {
+   "t": "2026-10-03T08:36:44Z",
+   "busy_cpus": 14.54,
+   "load1": 8.67,
+   "top": "host-agent:113,rustc:97.6,rustc:97.5"
+  },
+  {
+   "t": "2026-10-03T08:36:59Z",
+   "busy_cpus": 5.01,
+   "load1": 7.87,
+   "top": "rustc:100,as:87.5,mysqld:15.1"
+  },
+  {
+   "t": "2026-10-03T08:37:14Z",
+   "busy_cpus": 3.8,
+   "load1": 6.89,
+   "top": "rustc:100,rustc:100,rustc:100"
+  },
+  {
+   "t": "2026-10-03T08:37:29Z",
+   "busy_cpus": 4.21,
+   "load1": 6.25,
+   "top": "rustc:100,rustc:100,rustc:100"
+  },
+  {
+   "t": "2026-10-03T08:37:44Z",
+   "busy_cpus": 2.52,
+   "load1": 5.52,
+   "top": "rustc:100,clickhouse-serv:12.4,mysqld:10.3"
+  },
+  {
+   "t": "2026-10-03T08:37:59Z",
+   "busy_cpus": 10.25,
+   "load1": 6.97,
+   "top": "rustc:1023,clickhouse-serv:12.1,mysqld:9.3"
+  },
+  {
+   "t": "2026-10-03T08:38:14Z",
+   "busy_cpus": 3.15,
+   "load1": 6.22,
+   "top": "rustc:663,clickhouse-serv:11.8,mysqld:8.5"
+  },
+  {
+   "t": "2026-10-03T08:38:29Z",
+   "busy_cpus": 1.05,
+   "load1": 5.06,
+   "top": "rustc:475,clickhouse-serv:11.5,mysqld:7.8"
+  },
+  {
+   "t": "2026-10-03T08:38:44Z",
+   "busy_cpus": 1.0,
+   "load1": 4.16,
+   "top": "pintail:55.3,clickhouse-serv:11.3,mysqld:7.9"
+  },
+  {
+   "t": "2026-10-03T08:38:59Z",
+   "busy_cpus": 1.07,
+   "load1": 3.46,
+   "top": "pintail:82.3,clickhouse-serv:11.0,mysqld:7.9"
+  },
+  {
+   "t": "2026-10-03T08:39:14Z",
+   "busy_cpus": 1.23,
+   "load1": 2.99,
+   "top": "pintail:87.5,clickhouse-serv:10.7,mysqld:7.8"
+  },
+  {
+   "t": "2026-10-03T08:39:29Z",
+   "busy_cpus": 1.11,
+   "load1": 2.62,
+   "top": "pintail:90.0,clickhouse-serv:10.5,mysqld:7.9"
+  },
+  {
+   "t": "2026-10-03T08:39:44Z",
+   "busy_cpus": 1.02,
+   "load1": 2.26,
+   "top": "pintail:89.8,clickhouse-serv:10.3,mysqld:8.0"
+  },
+  {
+   "t": "2026-10-03T08:39:59Z",
+   "busy_cpus": 1.0,
+   "load1": 2.13,
+   "top": "pintail:88.5,clickhouse-serv:10.2,mysqld:8.1"
+  },
+  {
+   "t": "2026-10-03T08:40:14Z",
+   "busy_cpus": 1.16,
+   "load1": 1.88,
+   "top": "pintail:75.1,host-agent:41.2,mysqld:12.2"
+  },
+  {
+   "t": "2026-10-03T08:40:29Z",
+   "busy_cpus": 2.05,
+   "load1": 1.68,
+   "top": "pintail:66.3,mysqld:15.4,clickhouse-serv:13.0"
+  },
+  {
+   "t": "2026-10-03T08:40:44Z",
+   "busy_cpus": 0.56,
+   "load1": 2.02,
+   "top": "pintail:59.1,mysqld:16.9,clickhouse-serv:13.4"
+  },
+  {
+   "t": "2026-10-03T08:40:59Z",
+   "busy_cpus": 0.26,
+   "load1": 1.79,
+   "top": "pintail:52.8,mysqld:18.4,clickhouse-serv:13.2"
+  },
+  {
+   "t": "2026-10-03T08:41:14Z",
+   "busy_cpus": 0.31,
+   "load1": 1.62,
+   "top": "pintail:47.8,mysqld:19.7,clickhouse-serv:12.9"
+  },
+  {
+   "t": "2026-10-03T08:41:29Z",
+   "busy_cpus": 0.27,
+   "load1": 1.48,
+   "top": "pintail:43.7,mysqld:21.0,clickhouse-serv:12.7"
+  },
+  {
+   "t": "2026-10-03T08:41:44Z",
+   "busy_cpus": 0.27,
+   "load1": 1.37,
+   "top": "pintail:40.2,mysqld:22.1,clickhouse-serv:12.5"
+  },
+  {
+   "t": "2026-10-03T08:41:59Z",
+   "busy_cpus": 0.28,
+   "load1": 1.29,
+   "top": "pintail:37.2,mysqld:23.2,clickhouse-serv:12.3"
+  },
+  {
+   "t": "2026-10-03T08:42:14Z",
+   "busy_cpus": 0.32,
+   "load1": 1.22,
+   "top": "pintail:34.6,mysqld:24.2,clickhouse-serv:12.1"
+  },
+  {
+   "t": "2026-10-03T08:42:29Z",
+   "busy_cpus": 0.29,
+   "load1": 1.17,
+   "top": "pintail:32.4,mysqld:25.1,clickhouse-serv:11.9"
+  },
+  {
+   "t": "2026-10-03T08:42:44Z",
+   "busy_cpus": 0.28,
+   "load1": 1.13,
+   "top": "pintail:30.4,mysqld:25.9,clickhouse-serv:11.7"
+  },
+  {
+   "t": "2026-10-03T08:42:59Z",
+   "busy_cpus": 1.28,
+   "load1": 1.1,
+   "top": "pintail:30.5,mysqld:26.4,clickhouse-serv:13.0"
+  },
+  {
+   "t": "2026-10-03T08:43:14Z",
+   "busy_cpus": 0.94,
+   "load1": 1.08,
+   "top": "pintail:28.8,mysqld:28.2,clickhouse-serv:12.8"
+  },
+  {
+   "t": "2026-10-03T08:43:29Z",
+   "busy_cpus": 1.23,
+   "load1": 1.06,
+   "top": "mysqld:29.2,pintail:27.8,clickhouse-serv:13.8"
+  },
+  {
+   "t": "2026-10-03T08:43:44Z",
+   "busy_cpus": 0.39,
+   "load1": 1.05,
+   "top": "mysqld:30.0,pintail:26.5,clickhouse-serv:13.6"
+  },
+  {
+   "t": "2026-10-03T08:43:59Z",
+   "busy_cpus": 0.37,
+   "load1": 1.04,
+   "top": "mysqld:30.8,pintail:25.3,clickhouse-serv:13.4"
+  },
+  {
+   "t": "2026-10-03T08:44:14Z",
+   "busy_cpus": 0.41,
+   "load1": 1.03,
+   "top": "mysqld:31.4,pintail:24.1,clickhouse-serv:13.2"
+  },
+  {
+   "t": "2026-10-03T08:44:29Z",
+   "busy_cpus": 0.4,
+   "load1": 1.02,
+   "top": "mysqld:32.1,pintail:23.1,clickhouse-serv:13.1"
+  },
+  {
+   "t": "2026-10-03T08:44:44Z",
+   "busy_cpus": 0.38,
+   "load1": 1.02,
+   "top": "mysqld:32.7,pintail:22.2,clickhouse-serv:12.9"
+  },
+  {
+   "t": "2026-10-03T08:44:59Z",
+   "busy_cpus": 0.39,
+   "load1": 1.01,
+   "top": "mysqld:33.3,pintail:21.3,clickhouse-serv:12.7"
+  },
+  {
+   "t": "2026-10-03T08:45:14Z",
+   "busy_cpus": 0.43,
+   "load1": 1.01,
+   "top": "mysqld:33.9,pintail:20.5,clickhouse-serv:12.5"
+  },
+  {
+   "t": "2026-10-03T08:45:29Z",
+   "busy_cpus": 1.82,
+   "load1": 1.01,
+   "top": "mysqld:34.6,pintail:20.2,clickhouse-serv:14.3"
+  },
+  {
+   "t": "2026-10-03T08:45:44Z",
+   "busy_cpus": 0.95,
+   "load1": 1.0,
+   "top": "mysqld:35.9,pintail:19.5,clickhouse-serv:14.1"
+  },
+  {
+   "t": "2026-10-03T08:45:59Z",
+   "busy_cpus": 1.26,
+   "load1": 1.4,
+   "top": "mysqld:37.1,pintail:19.6,clickhouse-serv:14.2"
+  },
+  {
+   "t": "2026-10-03T08:46:14Z",
+   "busy_cpus": 1.19,
+   "load1": 1.55,
+   "top": "mysqld:38.1,pintail:19.7,clickhouse-serv:14.1"
+  },
+  {
+   "t": "2026-10-03T08:46:29Z",
+   "busy_cpus": 0.87,
+   "load1": 1.51,
+   "top": "mysqld:39.1,pintail:19.1,clickhouse-serv:13.9"
+  },
+  {
+   "t": "2026-10-03T08:46:44Z",
+   "busy_cpus": 0.88,
+   "load1": 1.4,
+   "top": "mysqld:40.2,pintail:18.5,clickhouse-serv:13.8"
+  },
+  {
+   "t": "2026-10-03T08:46:59Z",
+   "busy_cpus": 0.9,
+   "load1": 1.58,
+   "top": "mysqld:41.2,pintail:17.9,clickhouse-serv:13.6"
+  },
+  {
+   "t": "2026-10-03T08:47:14Z",
+   "busy_cpus": 0.94,
+   "load1": 1.45,
+   "top": "mysqld:42.1,pintail:17.4,clickhouse-serv:13.4"
+  },
+  {
+   "t": "2026-10-03T08:47:29Z",
+   "busy_cpus": 0.92,
+   "load1": 1.35,
+   "top": "mysqld:43.1,pintail:16.9,clickhouse-serv:13.3"
+  },
+  {
+   "t": "2026-10-03T08:47:44Z",
+   "busy_cpus": 0.88,
+   "load1": 1.27,
+   "top": "mysqld:43.9,pintail:16.5,clickhouse-serv:13.1"
+  },
+  {
+   "t": "2026-10-03T08:47:59Z",
+   "busy_cpus": 1.55,
+   "load1": 1.21,
+   "top": "mysqld:44.6,pintail:17.7,clickhouse-serv:13.2"
+  },
+  {
+   "t": "2026-10-03T08:48:14Z",
+   "busy_cpus": 6.32,
+   "load1": 2.65,
+   "top": "pintail:463,mysqld:43.7,clickhouse-serv:15.4"
+  },
+  {
+   "t": "2026-10-03T08:48:29Z",
+   "busy_cpus": 6.12,
+   "load1": 3.32,
+   "top": "pintail:473,mysqld:42.9,clickhouse-serv:16.9"
+  },
+  {
+   "t": "2026-10-03T08:48:44Z",
+   "busy_cpus": 5.84,
+   "load1": 3.51,
+   "top": "pintail:455,mysqld:42.1,clickhouse-serv:18.8"
+  },
+  {
+   "t": "2026-10-03T08:48:59Z",
+   "busy_cpus": 6.04,
+   "load1": 3.4,
+   "top": "pintail:474,mysqld:41.3,clickhouse-serv:19.5"
+  },
+  {
+   "t": "2026-10-03T08:49:14Z",
+   "busy_cpus": 6.76,
+   "load1": 4.21,
+   "top": "pintail:443,mysqld:40.6,clickhouse-serv:23.9"
+  },
+  {
+   "t": "2026-10-03T08:49:29Z",
+   "busy_cpus": 8.19,
+   "load1": 7.56,
+   "top": "pintail:413,mysqld:39.9,clickhouse-serv:30.9"
+  },
+  {
+   "t": "2026-10-03T08:49:44Z",
+   "busy_cpus": 8.17,
+   "load1": 9.14,
+   "top": "pintail:428,mysqld:39.2,clickhouse-serv:34.3"
+  },
+  {
+   "t": "2026-10-03T08:49:59Z",
+   "busy_cpus": 8.17,
+   "load1": 10.52,
+   "top": "pintail:441,mysqld:38.5,clickhouse-serv:37.5"
+  },
+  {
+   "t": "2026-10-03T08:50:14Z",
+   "busy_cpus": 6.71,
+   "load1": 11.05,
+   "top": "pintail:397,clickhouse-serv:44.7,mysqld:37.9"
+  },
+  {
+   "t": "2026-10-03T08:50:29Z",
+   "busy_cpus": 2.86,
+   "load1": 8.83,
+   "top": "pintail:360,clickhouse-serv:47.2,mysqld:37.2"
+  },
+  {
+   "t": "2026-10-03T08:50:44Z",
+   "busy_cpus": 3.47,
+   "load1": 8.68,
+   "top": "pintail:336,clickhouse-serv:49.5,mysqld:36.6"
+  },
+  {
+   "t": "2026-10-03T08:50:59Z",
+   "busy_cpus": 4.87,
+   "load1": 8.35,
+   "top": "pintail:315,clickhouse-serv:53.4,mysqld:36.1"
+  },
+  {
+   "t": "2026-10-03T08:51:14Z",
+   "busy_cpus": 6.45,
+   "load1": 6.94,
+   "top": "pintail:295,clickhouse-serv:59.4,mysqld:35.5"
+  },
+  {
+   "t": "2026-10-03T08:51:29Z",
+   "busy_cpus": 5.52,
+   "load1": 5.54,
+   "top": "pintail:279,clickhouse-serv:64.0,mysqld:34.9"
+  },
+  {
+   "t": "2026-10-03T08:51:44Z",
+   "busy_cpus": 1.73,
+   "load1": 4.74,
+   "top": "clickhouse-serv:67.1,mysqld:45.9,host-agent:3.1"
+  },
+  {
+   "t": "2026-10-03T08:51:59Z",
+   "busy_cpus": 1.52,
+   "load1": 3.99,
+   "top": "clickhouse-serv:100,mysqld:44.1,host-agent:3.1"
+  },
+  {
+   "t": "2026-10-03T08:52:14Z",
+   "busy_cpus": 2.55,
+   "load1": 3.87,
+   "top": "host-agent:489,clickhouse-serv:99.6,node:82.4"
+  },
+  {
+   "t": "2026-10-03T08:52:29Z",
+   "busy_cpus": 4.44,
+   "load1": 4.35,
+   "top": "rustc:100,rustc:100,rustc:100"
+  },
+  {
+   "t": "2026-10-03T08:52:44Z",
+   "busy_cpus": 4.99,
+   "load1": 4.42,
+   "top": "rustc:100,rustc:100,rustc:100"
+  },
+  {
+   "t": "2026-10-03T08:52:59Z",
+   "busy_cpus": 3.53,
+   "load1": 4.17,
+   "top": "rustc:100,rustc:100,rustc:100"
+  },
+  {
+   "t": "2026-10-03T08:53:14Z",
+   "busy_cpus": 4.49,
+   "load1": 4.67,
+   "top": "rustc:610,clickhouse-serv:38.8,mysqld:15.2"
+  },
+  {
+   "t": "2026-10-03T08:53:29Z",
+   "busy_cpus": 10.93,
+   "load1": 5.56,
+   "top": "rustc:919,clickhouse-serv:34.1,mysqld:13.2"
+  },
+  {
+   "t": "2026-10-03T08:53:44Z",
+   "busy_cpus": 2.27,
+   "load1": 4.69,
+   "top": "rustc:642,clickhouse-serv:30.6,mysqld:11.7"
+  },
+  {
+   "t": "2026-10-03T08:53:59Z",
+   "busy_cpus": 1.06,
+   "load1": 3.87,
+   "top": "rustc:488,clickhouse-serv:27.6,mysqld:10.4"
+  },
+  {
+   "t": "2026-10-03T08:54:14Z",
+   "busy_cpus": 1.29,
+   "load1": 3.65,
+   "top": "pintail:60.6,clickhouse-serv:25.2,mysqld:10.3"
+  },
+  {
+   "t": "2026-10-03T08:54:29Z",
+   "busy_cpus": 1.13,
+   "load1": 3.06,
+   "top": "pintail:86.7,clickhouse-serv:23.4,mysqld:10.5"
+  },
+  {
+   "t": "2026-10-03T08:54:44Z",
+   "busy_cpus": 1.02,
+   "load1": 2.68,
+   "top": "pintail:86.4,clickhouse-serv:21.7,mysqld:10.6"
+  },
+  {
+   "t": "2026-10-03T08:54:59Z",
+   "busy_cpus": 1.12,
+   "load1": 2.46,
+   "top": "pintail:88.8,clickhouse-serv:20.4,mysqld:10.7"
+  },
+  {
+   "t": "2026-10-03T08:55:14Z",
+   "busy_cpus": 1.39,
+   "load1": 2.28,
+   "top": "pintail:82.0,host-agent:51.7,clickhouse-serv:20.0"
+  },
+  {
+   "t": "2026-10-03T08:55:29Z",
+   "busy_cpus": 1.52,
+   "load1": 1.99,
+   "top": "pintail:70.7,clickhouse-serv:21.4,mysqld:17.8"
+  },
+  {
+   "t": "2026-10-03T08:55:44Z",
+   "busy_cpus": 1.86,
+   "load1": 2.18,
+   "top": "pintail:63.2,clickhouse-serv:26.7,mysqld:20.8"
+  },
+  {
+   "t": "2026-10-03T08:56:00Z",
+   "busy_cpus": 0.45,
+   "load1": 2.46,
+   "top": "pintail:57.5,clickhouse-serv:25.3,mysqld:22.4"
+  },
+  {
+   "t": "2026-10-03T08:56:15Z",
+   "busy_cpus": 0.51,
+   "load1": 2.14,
+   "top": "pintail:53.0,clickhouse-serv:24.1,mysqld:23.7"
+  },
+  {
+   "t": "2026-10-03T08:56:30Z",
+   "busy_cpus": 0.43,
+   "load1": 1.88,
+   "top": "pintail:49.6,mysqld:25.0,clickhouse-serv:23.0"
+  },
+  {
+   "t": "2026-10-03T08:56:45Z",
+   "busy_cpus": 0.42,
+   "load1": 1.69,
+   "top": "pintail:46.7,mysqld:26.2,clickhouse-serv:22.0"
+  },
+  {
+   "t": "2026-10-03T08:57:00Z",
+   "busy_cpus": 0.44,
+   "load1": 1.53,
+   "top": "pintail:44.5,mysqld:27.3,clickhouse-serv:21.1"
+  },
+  {
+   "t": "2026-10-03T08:57:15Z",
+   "busy_cpus": 0.49,
+   "load1": 1.41,
+   "top": "pintail:42.5,mysqld:28.2,clickhouse-serv:20.3"
+  },
+  {
+   "t": "2026-10-03T08:57:30Z",
+   "busy_cpus": 0.46,
+   "load1": 1.32,
+   "top": "pintail:40.9,mysqld:29.0,clickhouse-serv:19.6"
+  },
+  {
+   "t": "2026-10-03T08:57:45Z",
+   "busy_cpus": 0.42,
+   "load1": 1.25,
+   "top": "pintail:39.5,mysqld:29.9,clickhouse-serv:18.9"
+  },
+  {
+   "t": "2026-10-03T08:58:00Z",
+   "busy_cpus": 0.43,
+   "load1": 1.19,
+   "top": "pintail:38.3,mysqld:30.6,clickhouse-serv:18.2"
+  },
+  {
+   "t": "2026-10-03T08:58:15Z",
+   "busy_cpus": 0.51,
+   "load1": 1.15,
+   "top": "pintail:37.2,mysqld:31.3,clickhouse-serv:17.7"
+  },
+  {
+   "t": "2026-10-03T08:58:30Z",
+   "busy_cpus": 0.99,
+   "load1": 1.68,
+   "top": "pintail:36.5,mysqld:31.8,clickhouse-serv:19.1"
+  },
+  {
+   "t": "2026-10-03T08:58:45Z",
+   "busy_cpus": 1.21,
+   "load1": 1.53,
+   "top": "pintail:35.6,mysqld:33.4,clickhouse-serv:19.2"
+  },
+  {
+   "t": "2026-10-03T08:59:00Z",
+   "busy_cpus": 1.41,
+   "load1": 1.85,
+   "top": "pintail:34.9,mysqld:34.3,clickhouse-serv:20.8"
+  },
+  {
+   "t": "2026-10-03T08:59:15Z",
+   "busy_cpus": 0.51,
+   "load1": 1.74,
+   "top": "mysqld:34.9,pintail:34.2,clickhouse-serv:20.1"
+  },
+  {
+   "t": "2026-10-03T08:59:30Z",
+   "busy_cpus": 0.49,
+   "load1": 1.58,
+   "top": "mysqld:35.4,pintail:33.6,clickhouse-serv:19.6"
+  },
+  {
+   "t": "2026-10-03T08:59:45Z",
+   "busy_cpus": 0.45,
+   "load1": 1.45,
+   "top": "mysqld:35.9,pintail:33.0,clickhouse-serv:19.1"
+  },
+  {
+   "t": "2026-10-03T09:00:00Z",
+   "busy_cpus": 0.48,
+   "load1": 1.35,
+   "top": "mysqld:36.3,pintail:32.5,clickhouse-serv:18.6"
+  },
+  {
+   "t": "2026-10-03T09:00:15Z",
+   "busy_cpus": 0.53,
+   "load1": 1.27,
+   "top": "mysqld:36.8,pintail:32.0,clickhouse-serv:18.2"
+  },
+  {
+   "t": "2026-10-03T09:00:30Z",
+   "busy_cpus": 0.36,
+   "load1": 1.21,
+   "top": "mysqld:37.1,pintail:31.0,clickhouse-serv:17.7"
+  },
+  {
+   "t": "2026-10-03T09:00:45Z",
+   "busy_cpus": 0.34,
+   "load1": 1.16,
+   "top": "mysqld:37.4,pintail:29.8,clickhouse-serv:17.4"
+  },
+  {
+   "t": "2026-10-03T09:01:00Z",
+   "busy_cpus": 0.28,
+   "load1": 1.13,
+   "top": "mysqld:37.7,pintail:28.7,clickhouse-serv:17.0"
+  },
+  {
+   "t": "2026-10-03T09:01:15Z",
+   "busy_cpus": 0.33,
+   "load1": 1.18,
+   "top": "mysqld:37.9,pintail:27.7,clickhouse-serv:16.7"
+  },
+  {
+   "t": "2026-10-03T09:01:30Z",
+   "busy_cpus": 0.26,
+   "load1": 1.14,
+   "top": "mysqld:38.2,pintail:26.8,clickhouse-serv:16.3"
+  },
+  {
+   "t": "2026-10-03T09:01:45Z",
+   "busy_cpus": 1.32,
+   "load1": 1.59,
+   "top": "mysqld:38.2,pintail:26.0,clickhouse-serv:18.6"
+  },
+  {
+   "t": "2026-10-03T09:02:00Z",
+   "busy_cpus": 1.11,
+   "load1": 1.46,
+   "top": "mysqld:39.6,pintail:25.3,clickhouse-serv:18.4"
+  },
+  {
+   "t": "2026-10-03T09:02:15Z",
+   "busy_cpus": 1.05,
+   "load1": 1.36,
+   "top": "mysqld:41.0,pintail:24.5,clickhouse-serv:18.1"
+  },
+  {
+   "t": "2026-10-03T09:02:30Z",
+   "busy_cpus": 1.12,
+   "load1": 1.28,
+   "top": "mysqld:42.1,pintail:23.9,clickhouse-serv:18.1"
+  },
+  {
+   "t": "2026-10-03T09:02:45Z",
+   "busy_cpus": 0.99,
+   "load1": 1.21,
+   "top": "mysqld:43.0,pintail:23.4,clickhouse-serv:17.9"
+  },
+  {
+   "t": "2026-10-03T09:03:00Z",
+   "busy_cpus": 0.84,
+   "load1": 1.17,
+   "top": "mysqld:43.9,pintail:22.7,clickhouse-serv:17.6"
+  },
+  {
+   "t": "2026-10-03T09:03:15Z",
+   "busy_cpus": 0.93,
+   "load1": 1.13,
+   "top": "mysqld:44.8,pintail:22.1,clickhouse-serv:17.3"
+  },
+  {
+   "t": "2026-10-03T09:03:30Z",
+   "busy_cpus": 0.87,
+   "load1": 1.1,
+   "top": "mysqld:45.6,pintail:21.5,clickhouse-serv:17.0"
+  },
+  {
+   "t": "2026-10-03T09:03:45Z",
+   "busy_cpus": 0.88,
+   "load1": 1.08,
+   "top": "mysqld:46.4,pintail:21.0,clickhouse-serv:16.7"
+  },
+  {
+   "t": "2026-10-03T09:04:00Z",
+   "busy_cpus": 0.87,
+   "load1": 1.06,
+   "top": "mysqld:47.2,pintail:20.4,clickhouse-serv:16.4"
+  },
+  {
+   "t": "2026-10-03T09:04:15Z",
+   "busy_cpus": 0.89,
+   "load1": 1.05,
+   "top": "mysqld:47.9,pintail:19.9,clickhouse-serv:16.1"
+  },
+  {
+   "t": "2026-10-03T09:04:30Z",
+   "busy_cpus": 2.63,
+   "load1": 1.8,
+   "top": "pintail:132,mysqld:48.0,clickhouse-serv:18.9"
+  },
+  {
+   "t": "2026-10-03T09:04:45Z",
+   "busy_cpus": 5.85,
+   "load1": 2.03,
+   "top": "pintail:233,mysqld:47.1,clickhouse-serv:24.4"
+  },
+  {
+   "t": "2026-10-03T09:05:00Z",
+   "busy_cpus": 5.76,
+   "load1": 2.57,
+   "top": "pintail:247,mysqld:46.2,clickhouse-serv:29.6"
+  },
+  {
+   "t": "2026-10-03T09:05:15Z",
+   "busy_cpus": 8.13,
+   "load1": 3.77,
+   "top": "pintail:333,mysqld:45.4,clickhouse-serv:33.6"
+  },
+  {
+   "t": "2026-10-03T09:05:30Z",
+   "busy_cpus": 8.29,
+   "load1": 4.8,
+   "top": "pintail:353,mysqld:44.6,clickhouse-serv:39.9"
+  },
+  {
+   "t": "2026-10-03T09:05:45Z",
+   "busy_cpus": 8.24,
+   "load1": 4.38,
+   "top": "pintail:332,clickhouse-serv:49.2,mysqld:43.8"
+  },
+  {
+   "t": "2026-10-03T09:06:00Z",
+   "busy_cpus": 8.3,
+   "load1": 3.81,
+   "top": "pintail:344,clickhouse-serv:55.2,mysqld:43.0"
+  },
+  {
+   "t": "2026-10-03T09:06:15Z",
+   "busy_cpus": 3.67,
+   "load1": 3.18,
+   "top": "pintail:308,clickhouse-serv:58.4,mysqld:42.3"
+  },
+  {
+   "t": "2026-10-03T09:06:30Z",
+   "busy_cpus": 4.56,
+   "load1": 3.39,
+   "top": "pintail:289,clickhouse-serv:61.8,mysqld:41.6"
+  },
+  {
+   "t": "2026-10-03T09:06:45Z",
+   "busy_cpus": 7.45,
+   "load1": 3.2,
+   "top": "pintail:273,clickhouse-serv:69.7,mysqld:40.9"
+  },
+  {
+   "t": "2026-10-03T09:07:00Z",
+   "busy_cpus": 8.47,
+   "load1": 3.37,
+   "top": "pintail:285,clickhouse-serv:74.0,mysqld:40.2"
+  },
+  {
+   "t": "2026-10-03T09:07:15Z",
+   "busy_cpus": 9.57,
+   "load1": 4.17,
+   "top": "pintail:307,clickhouse-serv:77.1,mysqld:39.6"
+  },
+  {
+   "t": "2026-10-03T09:07:30Z",
+   "busy_cpus": 5.23,
+   "load1": 3.56,
+   "top": "host-agent:2.8,host-agent:2.6,host-agent:2.5"
+  },
+  {
+   "t": "2026-10-03T09:07:45Z",
+   "busy_cpus": 1.19,
+   "load1": 3.14,
+   "top": "clickhouse-serv:93.5,mysqld:45.7,host-agent:2.8"
+  },
+  {
+   "t": "2026-10-03T09:08:00Z",
+   "busy_cpus": 1.51,
+   "load1": 2.88,
+   "top": "clickhouse-serv:102,mysqld:43.6,host-agent:2.7"
+  },
+  {
+   "t": "2026-10-03T09:08:15Z",
+   "busy_cpus": 1.54,
+   "load1": 2.54,
+   "top": "host-agent:207,clickhouse-serv:82.8,pintail:77.8"
+  },
+  {
+   "t": "2026-10-03T09:08:30Z",
+   "busy_cpus": 2.26,
+   "load1": 2.6,
+   "top": "host-agent:108,pintail:89.6,clickhouse-serv:62.2"
+  },
+  {
+   "t": "2026-10-03T09:08:45Z",
+   "busy_cpus": 1.27,
+   "load1": 2.31,
+   "top": "pintail:92.4,clickhouse-serv:49.9,mysqld:27.5"
+  },
+  {
+   "t": "2026-10-03T09:09:00Z",
+   "busy_cpus": 1.15,
+   "load1": 2.1,
+   "top": "pintail:93.7,clickhouse-serv:42.0,mysqld:25.0"
+  },
+  {
+   "t": "2026-10-03T09:09:15Z",
+   "busy_cpus": 1.38,
+   "load1": 2.68,
+   "top": "pintail:79.8,host-agent:42.2,clickhouse-serv:38.0"
+  },
+  {
+   "t": "2026-10-03T09:09:30Z",
+   "busy_cpus": 2.25,
+   "load1": 2.31,
+   "top": "pintail:70.0,clickhouse-serv:48.3,mysqld:38.3"
+  },
+  {
+   "t": "2026-10-03T09:09:45Z",
+   "busy_cpus": 0.79,
+   "load1": 2.02,
+   "top": "pintail:62.5,clickhouse-serv:46.0,mysqld:40.2"
+  },
+  {
+   "t": "2026-10-03T09:10:00Z",
+   "busy_cpus": 0.43,
+   "load1": 1.79,
+   "top": "pintail:57.1,clickhouse-serv:41.6,mysqld:41.1"
+  },
+  {
+   "t": "2026-10-03T09:10:15Z",
+   "busy_cpus": 0.52,
+   "load1": 1.62,
+   "top": "pintail:52.7,mysqld:41.8,clickhouse-serv:38.1"
+  },
+  {
+   "t": "2026-10-03T09:10:30Z",
+   "busy_cpus": 0.48,
+   "load1": 1.48,
+   "top": "pintail:49.6,mysqld:42.2,clickhouse-serv:35.1"
+  },
+  {
+   "t": "2026-10-03T09:10:45Z",
+   "busy_cpus": 0.43,
+   "load1": 1.37,
+   "top": "pintail:46.7,mysqld:42.6,clickhouse-serv:32.6"
+  },
+  {
+   "t": "2026-10-03T09:11:00Z",
+   "busy_cpus": 0.46,
+   "load1": 1.29,
+   "top": "pintail:44.6,mysqld:43.1,clickhouse-serv:30.5"
+  },
+  {
+   "t": "2026-10-03T09:11:15Z",
+   "busy_cpus": 0.48,
+   "load1": 1.22,
+   "top": "mysqld:43.3,pintail:42.5,clickhouse-serv:28.6"
+  },
+  {
+   "t": "2026-10-03T09:11:30Z",
+   "busy_cpus": 0.45,
+   "load1": 1.17,
+   "top": "mysqld:43.6,pintail:41.0,clickhouse-serv:27.0"
+  },
+  {
+   "t": "2026-10-03T09:11:45Z",
+   "busy_cpus": 0.43,
+   "load1": 1.2,
+   "top": "mysqld:43.9,pintail:39.5,clickhouse-serv:25.6"
+  },
+  {
+   "t": "2026-10-03T09:12:00Z",
+   "busy_cpus": 0.44,
+   "load1": 1.16,
+   "top": "mysqld:44.2,pintail:38.4,clickhouse-serv:24.3"
+  },
+  {
+   "t": "2026-10-03T09:12:15Z",
+   "busy_cpus": 0.5,
+   "load1": 1.12,
+   "top": "mysqld:44.4,pintail:37.2,clickhouse-serv:23.2"
+  },
+  {
+   "t": "2026-10-03T09:12:30Z",
+   "busy_cpus": 1.48,
+   "load1": 1.54,
+   "top": "mysqld:44.8,pintail:36.7,clickhouse-serv:26.1"
+  },
+  {
+   "t": "2026-10-03T09:12:45Z",
+   "busy_cpus": 0.99,
+   "load1": 1.48,
+   "top": "mysqld:46.3,pintail:35.7,clickhouse-serv:25.0"
+  },
+  {
+   "t": "2026-10-03T09:13:00Z",
+   "busy_cpus": 1.26,
+   "load1": 1.78,
+   "top": "mysqld:46.6,pintail:35.1,clickhouse-serv:27.0"
+  },
+  {
+   "t": "2026-10-03T09:13:15Z",
+   "busy_cpus": 0.51,
+   "load1": 1.61,
+   "top": "mysqld:46.8,pintail:34.3,clickhouse-serv:25.9"
+  },
+  {
+   "t": "2026-10-03T09:13:30Z",
+   "busy_cpus": 0.53,
+   "load1": 1.47,
+   "top": "mysqld:46.9,pintail:33.8,clickhouse-serv:25.0"
+  },
+  {
+   "t": "2026-10-03T09:13:45Z",
+   "busy_cpus": 0.43,
+   "load1": 1.45,
+   "top": "mysqld:47.0,pintail:33.1,clickhouse-serv:24.1"
+  },
+  {
+   "t": "2026-10-03T09:14:00Z",
+   "busy_cpus": 0.5,
+   "load1": 1.42,
+   "top": "mysqld:47.1,pintail:32.6,clickhouse-serv:23.3"
+  },
+  {
+   "t": "2026-10-03T09:14:15Z",
+   "busy_cpus": 0.51,
+   "load1": 1.4,
+   "top": "mysqld:47.2,pintail:32.1,clickhouse-serv:22.5"
+  },
+  {
+   "t": "2026-10-03T09:14:30Z",
+   "busy_cpus": 0.25,
+   "load1": 1.31,
+   "top": "mysqld:47.3,pintail:30.8,clickhouse-serv:21.8"
+  },
+  {
+   "t": "2026-10-03T09:14:45Z",
+   "busy_cpus": 0.26,
+   "load1": 1.24,
+   "top": "mysqld:47.5,pintail:29.7,clickhouse-serv:21.2"
+  },
+  {
+   "t": "2026-10-03T09:15:00Z",
+   "busy_cpus": 0.27,
+   "load1": 1.19,
+   "top": "mysqld:47.6,pintail:28.6,clickhouse-serv:20.6"
+  },
+  {
+   "t": "2026-10-03T09:15:15Z",
+   "busy_cpus": 0.32,
+   "load1": 1.14,
+   "top": "mysqld:47.7,pintail:27.6,clickhouse-serv:20.0"
+  },
+  {
+   "t": "2026-10-03T09:15:30Z",
+   "busy_cpus": 1.43,
+   "load1": 1.11,
+   "top": "mysqld:47.8,pintail:26.7,clickhouse-serv:22.8"
+  },
+  {
+   "t": "2026-10-03T09:15:45Z",
+   "busy_cpus": 1.1,
+   "load1": 1.17,
+   "top": "mysqld:49.3,pintail:26.0,clickhouse-serv:22.4"
+  },
+  {
+   "t": "2026-10-03T09:16:00Z",
+   "busy_cpus": 1.17,
+   "load1": 1.13,
+   "top": "mysqld:50.6,pintail:25.3,clickhouse-serv:22.4"
+  },
+  {
+   "t": "2026-10-03T09:16:15Z",
+   "busy_cpus": 1.09,
+   "load1": 1.5,
+   "top": "mysqld:51.8,pintail:24.7,clickhouse-serv:22.0"
+  },
+  {
+   "t": "2026-10-03T09:16:30Z",
+   "busy_cpus": 0.87,
+   "load1": 1.39,
+   "top": "mysqld:52.7,pintail:24.0,clickhouse-serv:21.5"
+  },
+  {
+   "t": "2026-10-03T09:16:45Z",
+   "busy_cpus": 0.86,
+   "load1": 1.3,
+   "top": "mysqld:53.6,pintail:23.3,clickhouse-serv:21.0"
+  },
+  {
+   "t": "2026-10-03T09:17:00Z",
+   "busy_cpus": 0.86,
+   "load1": 1.23,
+   "top": "mysqld:54.4,pintail:22.7,clickhouse-serv:20.5"
+  },
+  {
+   "t": "2026-10-03T09:17:15Z",
+   "busy_cpus": 0.93,
+   "load1": 1.18,
+   "top": "mysqld:55.2,pintail:22.1,clickhouse-serv:20.0"
+  },
+  {
+   "t": "2026-10-03T09:17:30Z",
+   "busy_cpus": 0.87,
+   "load1": 1.14,
+   "top": "mysqld:55.9,pintail:21.5,clickhouse-serv:19.6"
+  },
+  {
+   "t": "2026-10-03T09:17:45Z",
+   "busy_cpus": 0.89,
+   "load1": 1.11,
+   "top": "mysqld:56.6,pintail:20.9,clickhouse-serv:19.2"
+  },
+  {
+   "t": "2026-10-03T09:18:00Z",
+   "busy_cpus": 0.86,
+   "load1": 1.08,
+   "top": "mysqld:57.3,pintail:20.4,clickhouse-serv:18.8"
+  },
+  {
+   "t": "2026-10-03T09:18:15Z",
+   "busy_cpus": 4.5,
+   "load1": 2.54,
+   "top": "pintail:175,mysqld:56.4,clickhouse-serv:25.0"
+  },
+  {
+   "t": "2026-10-03T09:18:30Z",
+   "busy_cpus": 5.87,
+   "load1": 2.72,
+   "top": "pintail:304,mysqld:55.2,clickhouse-serv:28.5"
+  },
+  {
+   "t": "2026-10-03T09:18:46Z",
+   "busy_cpus": 6.76,
+   "load1": 3.86,
+   "top": "pintail:281,mysqld:53.9,clickhouse-serv:37.2"
+  },
+  {
+   "t": "2026-10-03T09:19:01Z",
+   "busy_cpus": 8.24,
+   "load1": 6.55,
+   "top": "pintail:301,mysqld:52.8,clickhouse-serv:46.3"
+  },
+  {
+   "t": "2026-10-03T09:19:16Z",
+   "busy_cpus": 8.41,
+   "load1": 8.09,
+   "top": "pintail:351,mysqld:51.7,clickhouse-serv:51.1"
+  },
+  {
+   "t": "2026-10-03T09:19:31Z",
+   "busy_cpus": 8.26,
+   "load1": 9.6,
+   "top": "pintail:363,clickhouse-serv:58.1,mysqld:50.6"
+  },
+  {
+   "t": "2026-10-03T09:19:46Z",
+   "busy_cpus": 7.44,
+   "load1": 12.3,
+   "top": "pintail:328,clickhouse-serv:68.9,mysqld:49.6"
+  },
+  {
+   "t": "2026-10-03T09:20:01Z",
+   "busy_cpus": 2.97,
+   "load1": 9.79,
+   "top": "pintail:294,clickhouse-serv:71.5,mysqld:48.6"
+  },
+  {
+   "t": "2026-10-03T09:20:16Z",
+   "busy_cpus": 5.08,
+   "load1": 9.93,
+   "top": "pintail:288,clickhouse-serv:73.9,mysqld:47.6"
+  },
+  {
+   "t": "2026-10-03T09:20:31Z",
+   "busy_cpus": 8.38,
+   "load1": 9.94,
+   "top": "pintail:289,clickhouse-serv:81.0,mysqld:46.7"
+  },
+  {
+   "t": "2026-10-03T09:20:46Z",
+   "busy_cpus": 8.57,
+   "load1": 12.1,
+   "top": "pintail:285,clickhouse-serv:89.6,mysqld:45.8"
+  },
+  {
+   "t": "2026-10-03T09:21:01Z",
+   "busy_cpus": 9.27,
+   "load1": 15.78,
+   "top": "pintail:298,clickhouse-serv:94.8,mysqld:45.0"
+  },
+  {
+   "t": "2026-10-03T09:21:16Z",
+   "busy_cpus": 3.32,
+   "load1": 12.66,
+   "top": "host-agent:318,mysqld:38.8,clickhouse-serv:29.4"
+  },
+  {
+   "t": "2026-10-03T09:21:31Z",
+   "busy_cpus": 1.68,
+   "load1": 10.36,
+   "top": "clickhouse-serv:97.7,host-agent:78.8,mysqld:46.7"
+  },
+  {
+   "t": "2026-10-03T09:21:46Z",
+   "busy_cpus": 1.55,
+   "load1": 8.51,
+   "top": "clickhouse-serv:104,mysqld:43.9,host-agent:2.6"
+  },
+  {
+   "t": "2026-10-03T09:22:01Z",
+   "busy_cpus": 1.12,
+   "load1": 6.98,
+   "top": "pintail:84.3,clickhouse-serv:77.5,mysqld:35.3"
+  },
+  {
+   "t": "2026-10-03T09:22:16Z",
+   "busy_cpus": 1.56,
+   "load1": 5.72,
+   "top": "host-agent:125,pintail:92.3,clickhouse-serv:59.4"
+  },
+  {
+   "t": "2026-10-03T09:22:31Z",
+   "busy_cpus": 1.14,
+   "load1": 4.74,
+   "top": "pintail:94.2,clickhouse-serv:48.2,mysqld:25.0"
+  },
+  {
+   "t": "2026-10-03T09:22:46Z",
+   "busy_cpus": 1.12,
+   "load1": 3.99,
+   "top": "pintail:95.3,clickhouse-serv:40.9,mysqld:22.4"
+  },
+  {
+   "t": "2026-10-03T09:23:01Z",
+   "busy_cpus": 1.12,
+   "load1": 3.4,
+   "top": "pintail:95.9,clickhouse-serv:35.5,mysqld:20.5"
+  },
+  {
+   "t": "2026-10-03T09:23:16Z",
+   "busy_cpus": 1.21,
+   "load1": 2.87,
+   "top": "pintail:83.1,host-agent:33.0,clickhouse-serv:32.9"
+  },
+  {
+   "t": "2026-10-03T09:23:31Z",
+   "busy_cpus": 1.96,
+   "load1": 2.93,
+   "top": "pintail:72.2,clickhouse-serv:40.8,mysqld:32.3"
+  },
+  {
+   "t": "2026-10-03T09:23:46Z",
+   "busy_cpus": 0.76,
+   "load1": 2.5,
+   "top": "pintail:63.5,clickhouse-serv:40.5,mysqld:34.6"
+  },
+  {
+   "t": "2026-10-03T09:24:01Z",
+   "busy_cpus": 0.22,
+   "load1": 2.17,
+   "top": "pintail:56.2,clickhouse-serv:37.1,mysqld:36.0"
+  },
+  {
+   "t": "2026-10-03T09:24:16Z",
+   "busy_cpus": 0.26,
+   "load1": 1.91,
+   "top": "pintail:50.4,mysqld:37.2,clickhouse-serv:34.3"
+  },
+  {
+   "t": "2026-10-03T09:24:31Z",
+   "busy_cpus": 0.21,
+   "load1": 1.71,
+   "top": "pintail:45.7,mysqld:38.1,clickhouse-serv:31.8"
+  },
+  {
+   "t": "2026-10-03T09:24:46Z",
+   "busy_cpus": 0.22,
+   "load1": 1.55,
+   "top": "pintail:41.8,mysqld:38.9,clickhouse-serv:29.8"
+  },
+  {
+   "t": "2026-10-03T09:25:01Z",
+   "busy_cpus": 0.22,
+   "load1": 1.43,
+   "top": "mysqld:39.6,pintail:38.6,clickhouse-serv:28.0"
+  },
+  {
+   "t": "2026-10-03T09:25:16Z",
+   "busy_cpus": 0.28,
+   "load1": 1.33,
+   "top": "mysqld:40.3,pintail:35.7,clickhouse-serv:26.5"
+  },
+  {
+   "t": "2026-10-03T09:25:31Z",
+   "busy_cpus": 0.21,
+   "load1": 1.26,
+   "top": "mysqld:40.8,pintail:33.3,clickhouse-serv:25.1"
+  },
+  {
+   "t": "2026-10-03T09:25:46Z",
+   "busy_cpus": 0.21,
+   "load1": 1.2,
+   "top": "mysqld:41.3,pintail:31.2,clickhouse-serv:23.9"
+  },
+  {
+   "t": "2026-10-03T09:26:01Z",
+   "busy_cpus": 0.23,
+   "load1": 1.16,
+   "top": "mysqld:41.7,pintail:29.3,clickhouse-serv:22.8"
+  },
+  {
+   "t": "2026-10-03T09:26:16Z",
+   "busy_cpus": 0.55,
+   "load1": 1.12,
+   "top": "mysqld:41.8,pintail:29.3,clickhouse-serv:21.8"
+  },
+  {
+   "t": "2026-10-03T09:26:31Z",
+   "busy_cpus": 1.53,
+   "load1": 1.09,
+   "top": "mysqld:43.4,pintail:27.8,clickhouse-serv:24.3"
+  },
+  {
+   "t": "2026-10-03T09:26:46Z",
+   "busy_cpus": 1.35,
+   "load1": 1.59,
+   "top": "mysqld:44.2,pintail:26.9,clickhouse-serv:26.4"
+  },
+  {
+   "t": "2026-10-03T09:27:01Z",
+   "busy_cpus": 0.28,
+   "load1": 1.46,
+   "top": "mysqld:44.5,pintail:25.6,clickhouse-serv:25.3"
+  },
+  {
+   "t": "2026-10-03T09:27:16Z",
+   "busy_cpus": 0.35,
+   "load1": 1.36,
+   "top": "mysqld:44.7,pintail:24.5,clickhouse-serv:24.5"
+  },
+  {
+   "t": "2026-10-03T09:27:31Z",
+   "busy_cpus": 0.3,
+   "load1": 1.28,
+   "top": "mysqld:44.9,clickhouse-serv:23.6,pintail:23.4"
+  },
+  {
+   "t": "2026-10-03T09:27:46Z",
+   "busy_cpus": 0.28,
+   "load1": 1.21,
+   "top": "mysqld:45.1,clickhouse-serv:22.8,pintail:22.4"
+  },
+  {
+   "t": "2026-10-03T09:28:01Z",
+   "busy_cpus": 0.25,
+   "load1": 1.17,
+   "top": "mysqld:45.3,clickhouse-serv:22.1,pintail:21.5"
+  },
+  {
+   "t": "2026-10-03T09:28:16Z",
+   "busy_cpus": 0.33,
+   "load1": 1.13,
+   "top": "mysqld:45.4,clickhouse-serv:21.4,pintail:20.7"
+  },
+  {
+   "t": "2026-10-03T09:28:31Z",
+   "busy_cpus": 0.26,
+   "load1": 1.1,
+   "top": "mysqld:45.6,clickhouse-serv:20.8,pintail:19.9"
+  },
+  {
+   "t": "2026-10-03T09:28:46Z",
+   "busy_cpus": 0.27,
+   "load1": 1.08,
+   "top": "mysqld:45.6,clickhouse-serv:20.2,pintail:19.2"
+  },
+  {
+   "t": "2026-10-03T09:29:01Z",
+   "busy_cpus": 0.27,
+   "load1": 1.06,
+   "top": "mysqld:45.8,clickhouse-serv:19.6,pintail:18.5"
+  },
+  {
+   "t": "2026-10-03T09:29:16Z",
+   "busy_cpus": 0.31,
+   "load1": 1.05,
+   "top": "mysqld:46.0,clickhouse-serv:19.1,pintail:17.9"
+  },
+  {
+   "t": "2026-10-03T09:29:31Z",
+   "busy_cpus": 1.65,
+   "load1": 1.8,
+   "top": "mysqld:46.2,clickhouse-serv:21.9,pintail:17.8"
+  },
+  {
+   "t": "2026-10-03T09:29:46Z",
+   "busy_cpus": 1.02,
+   "load1": 1.63,
+   "top": "mysqld:47.7,clickhouse-serv:21.4,pintail:17.2"
+  },
+  {
+   "t": "2026-10-03T09:30:01Z",
+   "busy_cpus": 1.3,
+   "load1": 1.49,
+   "top": "mysqld:49.0,clickhouse-serv:21.3,pintail:17.3"
+  },
+  {
+   "t": "2026-10-03T09:30:16Z",
+   "busy_cpus": 1.22,
+   "load1": 1.78,
+   "top": "mysqld:50.1,clickhouse-serv:21.0,pintail:17.5"
+  },
+  {
+   "t": "2026-10-03T09:30:31Z",
+   "busy_cpus": 0.85,
+   "load1": 1.61,
+   "top": "mysqld:51.0,clickhouse-serv:20.5,pintail:17.0"
+  },
+  {
+   "t": "2026-10-03T09:30:46Z",
+   "busy_cpus": 0.87,
+   "load1": 1.47,
+   "top": "mysqld:51.9,clickhouse-serv:20.0,pintail:16.5"
+  },
+  {
+   "t": "2026-10-03T09:31:01Z",
+   "busy_cpus": 0.88,
+   "load1": 1.37,
+   "top": "mysqld:52.7,clickhouse-serv:19.6,pintail:16.0"
+  },
+  {
+   "t": "2026-10-03T09:31:16Z",
+   "busy_cpus": 0.9,
+   "load1": 1.28,
+   "top": "mysqld:53.5,clickhouse-serv:19.2,pintail:15.6"
+  },
+  {
+   "t": "2026-10-03T09:31:31Z",
+   "busy_cpus": 0.91,
+   "load1": 1.22,
+   "top": "mysqld:54.3,clickhouse-serv:18.8,pintail:15.2"
+  },
+  {
+   "t": "2026-10-03T09:31:46Z",
+   "busy_cpus": 0.87,
+   "load1": 1.25,
+   "top": "mysqld:55.0,clickhouse-serv:18.4,pintail:14.8"
+  },
+  {
+   "t": "2026-10-03T09:32:01Z",
+   "busy_cpus": 0.86,
+   "load1": 1.2,
+   "top": "mysqld:55.7,clickhouse-serv:18.1,pintail:14.5"
+  },
+  {
+   "t": "2026-10-03T09:32:16Z",
+   "busy_cpus": 5.23,
+   "load1": 2.27,
+   "top": "pintail:424,mysqld:54.8,clickhouse-serv:21.0"
+  },
+  {
+   "t": "2026-10-03T09:32:31Z",
+   "busy_cpus": 5.9,
+   "load1": 2.59,
+   "top": "pintail:461,mysqld:53.6,clickhouse-serv:22.7"
+  },
+  {
+   "t": "2026-10-03T09:32:46Z",
+   "busy_cpus": 5.98,
+   "load1": 3.27,
+   "top": "pintail:444,mysqld:52.5,clickhouse-serv:26.0"
+  },
+  {
+   "t": "2026-10-03T09:33:01Z",
+   "busy_cpus": 5.93,
+   "load1": 3.45,
+   "top": "pintail:467,mysqld:51.4,clickhouse-serv:26.6"
+  },
+  {
+   "t": "2026-10-03T09:33:16Z",
+   "busy_cpus": 5.93,
+   "load1": 3.76,
+   "top": "pintail:410,mysqld:50.3,clickhouse-serv:33.9"
+  },
+  {
+   "t": "2026-10-03T09:33:31Z",
+   "busy_cpus": 8.17,
+   "load1": 5.35,
+   "top": "pintail:433,mysqld:49.3,clickhouse-serv:38.6"
+  },
+  {
+   "t": "2026-10-03T09:33:46Z",
+   "busy_cpus": 8.18,
+   "load1": 8.41,
+   "top": "pintail:445,mysqld:48.3,clickhouse-serv:43.6"
+  },
+  {
+   "t": "2026-10-03T09:34:01Z",
+   "busy_cpus": 8.21,
+   "load1": 11.25,
+   "top": "pintail:420,clickhouse-serv:53.7,mysqld:47.4"
+  },
+  {
+   "t": "2026-10-03T09:34:16Z",
+   "busy_cpus": 8.25,
+   "load1": 14.0,
+   "top": "pintail:411,clickhouse-serv:61.5,mysqld:46.5"
+  },
+  {
+   "t": "2026-10-03T09:34:31Z",
+   "busy_cpus": 2.66,
+   "load1": 11.26,
+   "top": "pintail:373,clickhouse-serv:64.1,mysqld:45.6"
+  },
+  {
+   "t": "2026-10-03T09:34:46Z",
+   "busy_cpus": 3.06,
+   "load1": 9.48,
+   "top": "pintail:345,clickhouse-serv:66.8,mysqld:44.8"
+  },
+  {
+   "t": "2026-10-03T09:35:01Z",
+   "busy_cpus": 6.26,
+   "load1": 9.58,
+   "top": "pintail:320,clickhouse-serv:75.4,mysqld:44.0"
+  },
+  {
+   "t": "2026-10-03T09:35:16Z",
+   "busy_cpus": 5.4,
+   "load1": 10.42,
+   "top": "pintail:300,clickhouse-serv:81.5,mysqld:43.2"
+  },
+  {
+   "t": "2026-10-03T09:35:31Z",
+   "busy_cpus": 4.0,
+   "load1": 10.81,
+   "top": "pintail:285,clickhouse-serv:84.8,mysqld:42.4"
+  },
+  {
+   "t": "2026-10-03T09:35:46Z",
+   "busy_cpus": 4.24,
+   "load1": 10.58,
+   "top": "host-agent:2.4,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:36:01Z",
+   "busy_cpus": 0.5,
+   "load1": 8.39,
+   "top": "storage_adversa:91.0,host-agent:2.4,host-agent:2.3"
+  },
+  {
+   "t": "2026-10-03T09:36:16Z",
+   "busy_cpus": 1.54,
+   "load1": 6.75,
+   "top": "host-agent:162,storage_adversa:91.6,host-agent:2.4"
+  },
+  {
+   "t": "2026-10-03T09:36:31Z",
+   "busy_cpus": 1.14,
+   "load1": 5.48,
+   "top": "storage_scan_pr:99.5,host-agent:49.8,host-agent:2.4"
+  },
+  {
+   "t": "2026-10-03T09:36:46Z",
+   "busy_cpus": 1.03,
+   "load1": 4.49,
+   "top": "storage_scan_pr:99.4,host-agent:2.4,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:37:01Z",
+   "busy_cpus": 0.99,
+   "load1": 3.71,
+   "top": "storage_scan_pr:99.8,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:37:16Z",
+   "busy_cpus": 1.89,
+   "load1": 3.11,
+   "top": "storage_query_p:174,host-agent:89.5,host-agent:2.3"
+  },
+  {
+   "t": "2026-10-03T09:37:31Z",
+   "busy_cpus": 1.76,
+   "load1": 2.64,
+   "top": "storage_query_p:170,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:37:46Z",
+   "busy_cpus": 1.63,
+   "load1": 2.62,
+   "top": "storage_query_p:167,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:38:01Z",
+   "busy_cpus": 1.63,
+   "load1": 2.26,
+   "top": "storage_query_p:165,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:38:16Z",
+   "busy_cpus": 1.71,
+   "load1": 1.98,
+   "top": "storage_query_p:165,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:38:31Z",
+   "busy_cpus": 1.32,
+   "load1": 1.68,
+   "top": "host-agent:2.3,host-agent:2.2,host-agent:2.1"
+  },
+  {
+   "t": "2026-10-03T09:38:46Z",
+   "busy_cpus": 0.55,
+   "load1": 1.46,
+   "top": "storage_scan_pr:96.6,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:39:01Z",
+   "busy_cpus": 1.49,
+   "load1": 1.36,
+   "top": "storage_query_p:274,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:39:16Z",
+   "busy_cpus": 1.94,
+   "load1": 1.35,
+   "top": "storage_query_p:207,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:39:31Z",
+   "busy_cpus": 1.96,
+   "load1": 1.27,
+   "top": "storage_query_p:201,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:39:46Z",
+   "busy_cpus": 1.92,
+   "load1": 1.21,
+   "top": "storage_query_p:198,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:40:01Z",
+   "busy_cpus": 1.92,
+   "load1": 1.16,
+   "top": "storage_query_p:196,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:40:16Z",
+   "busy_cpus": 1.92,
+   "load1": 1.13,
+   "top": "storage_query_p:194,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:40:31Z",
+   "busy_cpus": 1.93,
+   "load1": 1.1,
+   "top": "storage_query_p:194,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:40:46Z",
+   "busy_cpus": 1.92,
+   "load1": 1.08,
+   "top": "storage_query_p:193,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:41:01Z",
+   "busy_cpus": 1.4,
+   "load1": 1.06,
+   "top": "storage_scan_pr:99.8,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:41:17Z",
+   "busy_cpus": 1.65,
+   "load1": 1.05,
+   "top": "storage_query_p:187,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:41:32Z",
+   "busy_cpus": 1.73,
+   "load1": 1.03,
+   "top": "storage_query_p:177,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:41:47Z",
+   "busy_cpus": 1.71,
+   "load1": 1.03,
+   "top": "storage_query_p:174,host-agent:2.3,host-agent:2.2"
+  },
+  {
+   "t": "2026-10-03T09:42:02Z",
+   "busy_cpus": 1.72,
+   "load1": 1.02,
+   "top": "storage_query_p:173,host-agent:2.3,host-agent:2.1"
+  },
+  {
+   "t": "2026-10-03T09:42:17Z",
+   "busy_cpus": 1.74,
+   "load1": 1.02,
+   "top": "storage_query_p:172,host-agent:2.2,host-agent:2.1"
+  },
+  {
+   "t": "2026-10-03T09:42:32Z",
+   "busy_cpus": 0.81,
+   "load1": 0.86,
+   "top": "host-agent:2.2,host-agent:2.1,host-agent:2.0"
+  },
+  {
+   "t": "2026-10-03T09:42:47Z",
+   "busy_cpus": 0.03,
+   "load1": 0.67,
+   "top": "host-agent:2.2,host-agent:2.1,host-agent:2.0"
+  }
+ ]
+}

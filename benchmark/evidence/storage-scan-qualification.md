@@ -6,7 +6,282 @@ no on-disk format. How much it helps depends on the scan shape. Wide
 arithmetic is not expected to get faster from avoiding a small amount of
 storage work.
 
-## 0.1.6 release requalification
+## 0.1.7 release requalification
+
+This evidence was re-run for the 0.1.7 stable release. The baseline is the
+previous stable release, tag `v0.1.6` (tag object
+`2e0939feec665b49ad3bdf0714916a1b0e63adb1`, commit
+`596a934c5bfef63de4acad1e46806e152e79ecca`). The candidate is the 0.1.7
+release tree (`938dd95a1d0f8f7ae56775e098fea8950c372f97`). Both releases
+contain this change, so the pair measures what every other engine change
+between the two releases did to it. That includes the 0.1.7 storage work:
+segment format 7 (narrower dictionary indexes, no null bitmap for a block
+without NULLs), positioned block reads behind one block cache, vector
+decoding kernels, and a filter column that is also projected now being
+decoded once.
+
+**These numbers are not comparable with the 0.1.6 tables below**, which came
+from 8-vCPU hosts. Every workload here ran on one 16-vCPU cloud host (AMD
+Ryzen 9 9950X, 31 GiB of RAM, `/dev/kvm` present, so not a fallback VM) with
+a local docker daemon, one workload after another: the probes, then the
+TPC-H passes, then the 20M pair, then the format-7 supplement and the probe
+repeat. Pintail and the probes ran natively; the harness MySQL, and in the
+20M pair every engine, ran in containers. Compare the two arms only within
+each table.
+
+The executables are release builds from clean detached checkouts, built on
+this host, each with its own target directory. Pintail digests are
+`32438504…` (baseline) and `4d977aae…` (candidate); the probe digests are in
+the [JSON](storage-scan-qualification.json). They are not the builds of the
+[Q05 requalification](q05-join-qualification.md#017-release-requalification),
+which ran on its own host. No other work of this study ran during a
+measurement. The host did not start idle: it was still streaming its
+restored disk in while the first probes ran, and its own management agents
+kept between one and four logical CPUs busy at times during the baseline
+adversarial and scan probes. The uniform probes were therefore repeated on
+the quiet host at the end, both arms again; the repeat is the table of
+record. The whole-host [load samples](storage-scan-qualification/rel-0.1.7-host-load.json),
+taken every 15 seconds, show both periods. A first TPC-H attempt failed
+before measuring anything because the docker daemon still wrote through the
+retired disk mount; the daemon was restarted and the pass started again.
+
+### Row preservation: 20 million adversarial rows
+
+The fixture was seeded once by the `v0.1.6` probe and then opened by both
+executables, baseline first. Both checked every returned value, and its
+order, against independently generated expected rows, including a check that
+no trailing rows were missing. The four answer files match byte for byte
+(`cmp`), and their SHA-256 digests are identical to the original study's,
+0.1.5's and 0.1.6's.
+
+The fixture has the shape described in the 0.1.5 section: 39 segments of at
+most 524,288 rows, a partial final segment, and 1,511,607,179 bytes in its
+directory including the manifest and WAL. That is 2,439,848 bytes more than
+the 0.1.6 study's copy, which `v0.1.5` seeded in segment format 4; `v0.1.6`
+writes format 6, which adds the persisted side-index postings. Opening it
+with the candidate changed nothing on disk: the file list and every file
+size, the manifest's included, are identical before and after
+([listing](storage-scan-qualification/rel-0.1.7-fixture-files.txt)), and the
+baseline's repeat probes later read the uniform fixture again after the
+candidate had opened it. The storage probes open the table directly and
+start no background merge, so no segment was rewritten into format 7; the
+candidate read the format-6 segments as they were. (A server is different:
+the Q05 study saw the candidate merge a baseline-built replica into format 7
+after start. The TPC-H and 20M runs here gave each arm its own replica.)
+
+| Selection / projection | Returned rows | v0.1.6 decoded | 0.1.7 decoded | v0.1.6 pruned | 0.1.7 pruned |
+|---|---:|---:|---:|---:|---:|
+| Clustered text, predicate-only output | 632,501 | 1,221 | 1,221 | 3,648 | 3,648 |
+| Clustered text, reordered mixed output | 632,501 | 1,529 | **1,452** | 22,816 | **18,024** |
+| Null predicate, reordered mixed output | 822,359 | 6,105 | **4,884** | 18,240 | **14,592** |
+| No matches | 0 | 1,221 | 1,221 | 23,124 | **18,255** |
+
+The baseline reports exactly the counters of every earlier study. The
+candidate's differ in the three cases whose output also contains the
+predicate column, and that is the intended effect of a 0.1.7 change: a
+filter column that is also projected is now taken from the predicate fetch,
+compacted to the kept rows, instead of being decoded a second time. In the
+clustered case the 77 output blocks of that column are no longer decoded
+(1,529 − 77 = 1,452); in the null-predicate case all 1,221 of them are not
+(6,105 − 1,221 = 4,884). The pruned counter no longer counts that column's
+exclusions either, which removes 4,792, 3,648 and 4,869 from the three cases.
+The answers do not change. Raw output:
+[baseline](storage-scan-qualification/rel-0.1.7-adversarial-baseline.txt),
+[candidate](storage-scan-qualification/rel-0.1.7-adversarial-candidate.txt),
+[answer digests](storage-scan-qualification/rel-0.1.7-adversarial-answers.sha256).
+Both arms used the example sources in their own trees, which are identical
+between the two releases.
+
+### Uniform 20-million-row probes
+
+Both executables read the same fixture, which the `v0.1.6` probe seeded (20
+segments, format 6). Each probe runs two warmups and seven measured
+iterations, with SQL settled-result memoization disabled, and checks every
+expected result. This is warm-cache evidence. In each round all baseline
+probes ran before any candidate probe. The table is the repeat on the quiet
+host:
+
+| Probe | Case | v0.1.6 median ms | 0.1.7 median ms | v0.1.6 min ms | 0.1.7 min ms | Speedup | Decoded blocks, v0.1.6 → 0.1.7 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| scan | narrow-last | 37.873 | 11.255 | 37.808 | 11.192 | 3.37× | 1,221 → 1,221 |
+| scan | wide | 1,343.769 | 698.305 | 1,332.461 | 694.542 | 1.92× | 29,304 → 29,304 |
+| scan | text-all | 23.136 | 10.166 | 23.007 | 9.968 | 2.28× | 1,221 → 1,221 |
+| scan | text-selective | 22.963 | 10.325 | 22.920 | 10.107 | 2.22× | 1,221 → 1,221 |
+| scan | mixed-selective | 119.280 | 62.896 | 118.620 | 62.473 | 1.90× | 3,663 → 2,442 |
+| query | numeric-filter | 20.228 | 2.356 | 19.184 | 2.318 | 8.59× | — |
+| query | text-filter | 18.346 | 1.619 | 17.747 | 1.489 | 11.33× | — |
+| query | text-all | 25.000 | 1.849 | 24.781 | 1.758 | 13.52× | — |
+| query | wide-expression | 12,863.205 | 8,506.138 | 12,802.667 | 8,456.330 | 1.51× | — |
+
+Every result value is identical in both arms. The candidate is faster in
+every case, on the median and the minimum. mixed-selective decodes one
+column fewer for the reason given above. The dense text scans that 0.1.6
+made about 23% slower are now 2.2–2.3× faster than `v0.1.6`. The three
+count queries fall from about 20 ms to about 2 ms. This study did not
+attribute any of it to a commit.
+
+The first round, run while the host was still restoring its disk, agrees on
+the candidate (every scan within 4% of the repeat, every query within 3%
+except numeric-filter, 1.99 against 2.36 ms) but not on the baseline: its
+wide scan took 1,598 ms against 1,344 ms in the repeat, narrow-last 42.8
+against 37.9 ms, and text-all 25.4 against 23.1 ms. On those first-round
+numbers the speedups are larger (wide 2.29×, narrow-last 3.68×) and are not
+claimed. Raw output:
+[scan baseline](storage-scan-qualification/rel-0.1.7-uniform-scan-baseline-repeat.txt),
+[scan candidate](storage-scan-qualification/rel-0.1.7-uniform-scan-candidate-repeat.txt),
+[query baseline](storage-scan-qualification/rel-0.1.7-uniform-query-baseline-repeat.txt),
+[query candidate](storage-scan-qualification/rel-0.1.7-uniform-query-candidate-repeat.txt);
+first round without the `-repeat` suffix.
+
+### Segment format 7
+
+The fixtures above were written by `v0.1.6`, so the candidate read format 6.
+A supplement had the candidate seed both fixtures itself, in format 7, and
+run its own probes on them.
+
+- **Row preservation.** The candidate-seeded adversarial fixture returns the
+  same four answer files: identical SHA-256 digests, and the same counters as
+  the candidate's row above. It is 1,501,693,860 bytes, 0.66% smaller than
+  the format-6 copy: its bulk is 64-byte opaque payloads, which the narrower
+  format does not shrink. The uniform fixture shrinks from 153,845,369 to
+  86,117,771 bytes (−44.0%).
+- **Downgrade.** `v0.1.6` refuses a copy of the candidate-written fixture at
+  open: the candidate also writes manifest version 4, and `v0.1.6` stops
+  there (`CorruptManifest … unsupported format version`), as the 0.1.7
+  upgrade notes say a downgrade will. The copy was deleted afterwards.
+- **Speed.** Reading format 7 is slower than reading format 6 for the wide
+  projections. With the candidate binary, two runs on each fixture (format
+  6: the repeat plus a further scan run, and the first round plus the repeat
+  for the queries):
+
+| Case | Format 6 median ms | Format 7 median ms | Change |
+|---|---:|---:|---:|
+| scan wide | 698.305 / 730.385 | 832.081 / 781.918 | **+7% to +19%** |
+| scan text-all | 10.166 / 9.956 | 10.469 / 10.372 | +2% to +5% |
+| scan mixed-selective | 62.896 / 62.688 | 62.946 / 63.305 | −1% to +1% |
+| scan narrow-last | 11.255 / 11.893 | 11.576 / 11.611 | within noise |
+| query text-all | 1.798 / 1.849 | 2.102 / 2.141 | **+14% to +19%** (about 0.3 ms) |
+| query wide-expression | 8,523.288 / 8,506.138 | 9,066.196 / 9,234.082 | **+6% to +9%** |
+
+This study did not establish why the wide decode is slower on format 7. Even on format 7 the candidate's wide scan
+is 1.6–1.7× faster than `v0.1.6` on format 6, and wide arithmetic 1.39–1.42×.
+Raw: `storage-scan-qualification/rel-0.1.7-format7-*`.
+
+### TPC-H SF1
+
+The two binaries alternated for three passes each, baseline first, each
+with its own tree's harness (the harness sources are identical between the
+releases). Every pass loaded a fresh replica of 8,660,779 rows across eight
+tables (6,000,749 line items). Each of the four supported queries ran once
+per replica, in a fixed order, with settled-result memoization disabled. All
+**24 comparisons were byte-exact against MySQL 8.4.11**. This is the
+repository's four-query workload, not the full 22-query suite. Both arms used
+a 16 GiB per-query and 32 GiB process spill allowance and a 4 GiB
+query-memory ceiling. A watcher outside the repository raised the harness
+MySQL's buffer pool to 4 GiB in every pass as soon as the final server
+answered over TCP, while it counted no line-item rows, and read it back at
+4 GiB until the container was removed after the queries
+([watcher log](storage-scan-qualification/rel-0.1.7-tpch-buffer-pool.txt)).
+
+| Query | v0.1.6 median ms | 0.1.7 median ms | Speedup | v0.1.6 samples ms | 0.1.7 samples ms |
+|---|---:|---:|---:|---|---|
+| q01-pricing-summary | 2,993 | 3,016 | **0.99×** | 2,950 / 3,103 / 2,993 | 3,016 / 3,366 / 2,781 |
+| q03-shipping-priority | 136 | 64 | 2.13× | 131 / 153 / 136 | 75 / 64 / 62 |
+| q05-local-supplier-volume | 238 | 131 | 1.82× | 215 / 291 / 238 | 148 / 131 / 115 |
+| q10-returned-item-reporting | 272 | 184 | 1.48× | 244 / 289 / 272 | 184 / 187 / 155 |
+
+q01 is unchanged: its candidate median is 0.8% above the baseline's, inside
+both arms' spread (2,781–3,366 ms in the candidate), and its fastest sample
+is the candidate's. The three join queries are 1.5–2.1× faster. Raw pass
+reports are `storage-scan-qualification/rel-0.1.7-tpch-{baseline,candidate}-{1,2,3}.json`.
+The command is the one in the 0.1.5 section below.
+
+### Canonical eight-query benchmark
+
+`bun run benchmark/run.ts` ran four times on this host from clean
+checkouts, in the order baseline, candidate, candidate, baseline (host
+fingerprint `4b800c7c…`). Each checkout was reset to its commit before each
+run and left untouched during it. Each engine container was limited to 8 CPUs
+and 8 GiB, Pintail's query ceiling was 4 GiB, and each query ran two warmups
+followed by 15 measured iterations. Neither tree's banked MySQL reference
+matched this host, so every run measured its own. All four gates passed with
+exact answers, and both engines reported zero concurrency errors at every
+client count. This pair is separate from the Q05 study's, which ran on
+another host of the same type and measured the same direction and size.
+
+Memo-disabled engine track, pooling both runs of each arm (30 samples each):
+
+| Query | v0.1.6 run medians ms | 0.1.7 run medians ms | v0.1.6 pooled median | 0.1.7 pooled median | v0.1.6 pooled min | 0.1.7 pooled min | Pooled median change |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Q1: Full table count | 1.49 / 1.68 | 0.33 / 0.36 | 1.55 | 0.36 | 1.41 | 0.28 | −76.8% |
+| Q2: Filtered count | 28.48 / 25.86 | 2.88 / 2.67 | 26.87 | 2.73 | 24.80 | 2.54 | −89.8% |
+| Q3: Group by status | 85.60 / 86.63 | 10.37 / 11.17 | 85.73 | 10.73 | 82.37 | 9.43 | −87.5% |
+| Q4: Region × status breakdown | 101.96 / 102.06 | 14.11 / 13.35 | 101.97 | 13.52 | 98.11 | 12.64 | −86.7% |
+| Q5: Monthly revenue (2023) | 54.10 / 54.89 | 13.07 / 12.58 | 54.67 | 12.73 | 51.98 | 12.16 | −76.7% |
+| Q6: Top 10 spenders | 279.98 / 281.51 | 21.48 / 23.35 | 280.11 | 22.55 | 268.90 | 18.99 | −92.0% |
+| Q7: Regional analytics | 222.03 / 232.61 | 35.03 / 38.59 | 224.82 | 36.44 | 213.50 | 29.72 | −83.8% |
+| Q8: Join users + orders | 163.16 / 161.34 | 16.24 / 15.48 | 163.09 | 16.04 | 155.23 | 14.68 | −90.2% |
+
+**No query is slower in the candidate.** Every candidate run is faster than
+every baseline run on every query, far beyond the run-to-run spread of the
+same build (up to 11.3% between the two baseline runs and 9.2% between the
+two candidate runs). The Q8 and Q1 regressions the 0.1.6 study reported are
+gone. On the memo track every candidate pooled median is lower, by 64% to
+81%. At 16 clients on the mixed Q2–Q8 workload, Pintail completed 30.2 and
+30.5 queries per second in the baseline runs and 217.0 and 262.6 in the
+candidate runs. The raw reports are the
+[baseline](storage-scan-qualification/rel-0.1.7-eight-query-baseline.json),
+[candidate](storage-scan-qualification/rel-0.1.7-eight-query-candidate.json),
+[candidate repeat](storage-scan-qualification/rel-0.1.7-eight-query-candidate-repeat.json)
+and [baseline repeat](storage-scan-qualification/rel-0.1.7-eight-query-baseline-repeat.json)
+runs. The harness PASS covers exact answers and its memo-dashboard speed
+threshold. It is not a cross-revision regression gate.
+
+### Release gate
+
+The release chain banked the correctness gate separately; it was not re-run
+here. Its fixed MySQL oracle corpus passed at `d9c6210c` (2,586 cases against
+MySQL 8.4.11), and the banked E2E ledgers record 7,061 checks passed with 0
+failed, 6 documented-gap warnings and 49 skipped on both MySQL 8.4 and 8.0.
+The commits after `d9c6210c` up to the candidate change no engine crate and
+no benchmark harness source.
+
+### Deviations from the original procedure
+
+- The pair compares the previous stable release with this release, not this
+  change with its parent.
+- Every workload ran on one 16-vCPU, 31 GiB cloud host with a local docker
+  daemon, not on the 8-vCPU hosts of 0.1.6.
+- The uniform probes ran twice; the first round's baseline was slowed by the
+  host's disk restore, and the quiet repeat is the table of record.
+- The candidate's counters differ from every earlier study's in three
+  adversarial cases, by design of a 0.1.7 change; the answers are identical.
+- A format-7 supplement was added, because 0.1.7 changes the segment format
+  and the release-to-release fixture is format 6.
+- The 20M pair ran baseline, candidate, candidate, baseline, every run from a
+  clean checkout; none shared a MySQL reference.
+- A watcher outside the repository set the TPC-H buffer pool; it was
+  confirmed on every pass. One attempt that failed before measuring, on a
+  docker daemon error, was discarded.
+
+## Skip condition
+
+The directory records each block's half-open physical row interval. The
+interval comes from the on-disk block row counts and is checked against the
+segment row count. The reader validates that the requested ranges are
+ordered and do not overlap. It skips ranges that end before a block, and
+decodes the block exactly when the next range intersects it. If that range
+starts at or beyond the block's end, every later range starts even farther
+along and cannot intersect the block either. Predicate evaluation supplies
+the selected ranges before any projected block is considered. The
+adversarial comparisons in each requalification test that whole path, including ranges that
+cross scan boundaries and partial blocks.
+
+## Historical: 0.1.6 release requalification (superseded)
+
+This section records the requalification for the 0.1.6 release, before the
+0.1.7 requalification above. Its numbers describe those revisions and hosts
+only.
 
 This evidence was re-run for the 0.1.6 stable release. The baseline is the
 previous stable release, tag `v0.1.5` (commit
@@ -27,7 +302,7 @@ docker host. Compare the two arms only within each table.
 The executables are release builds from clean detached checkouts, built on
 the probe host itself: Pintail digests `51a35a88…` (baseline) and `f572fbb4…`
 (candidate). They are not the byte-identical builds of the
-[Q05 requalification](q05-join-qualification.md#016-release-requalification),
+[Q05 requalification](q05-join-qualification.md#historical-016-release-requalification-superseded),
 which were built on its own host from the same commits. No other work of this
 study ran on the probe host while it measured. The host's own management
 agents did: the whole-host
@@ -128,7 +403,7 @@ The command is the one in the 0.1.5 section below.
 ### Canonical eight-query benchmark
 
 This is the same paired 20M run as in the
-[Q05 requalification](q05-join-qualification.md#20m-paired-comparison), with
+[Q05 requalification](q05-join-qualification.md#20m-paired-comparison-1), with
 the same caveats: one 8-vCPU host with a local docker daemon, and four runs
 in the order baseline, first candidate (sharing the baseline's MySQL
 reference through the dirty-tree override), clean candidate, baseline repeat.
@@ -187,19 +462,6 @@ candidate only bank evidence.
   described above.
 - The 20M pair was run four times rather than twice; the first candidate run
   used the dirty-tree override to share the baseline's MySQL reference.
-
-## Skip condition
-
-The directory records each block's half-open physical row interval. The
-interval comes from the on-disk block row counts and is checked against the
-segment row count. The reader validates that the requested ranges are
-ordered and do not overlap. It skips ranges that end before a block, and
-decodes the block exactly when the next range intersects it. If that range
-starts at or beyond the block's end, every later range starts even farther
-along and cannot intersect the block either. Predicate evaluation supplies
-the selected ranges before any projected block is considered. The
-adversarial comparisons in each requalification test that whole path, including ranges that
-cross scan boundaries and partial blocks.
 
 ## Historical: 0.1.5 release requalification (superseded)
 
@@ -344,7 +606,7 @@ before the measured queries.
 ### Canonical eight-query benchmark
 
 This is the same paired 20M run as in the
-[Q05 requalification](q05-join-qualification.md#20m-paired-comparison-1), with
+[Q05 requalification](q05-join-qualification.md#20m-paired-comparison-2), with
 the same caveats: a shared docker host and one discarded out-of-disk
 candidate attempt. Both runs used 20 million synthetic rows on the same
 docker host (fingerprint `2c89ea59…`). Each database container was limited to
@@ -450,17 +712,20 @@ PINTAIL_DISABLE_SETTLED_MEMO=1 baseline-query UNIFORM 20000000
 ## Banked evidence and scope
 
 The [machine-readable comparison](storage-scan-qualification.json) keeps the
-0.1.5 requalification under `previous_requalifications` and the original
-study under `historical`. The raw runs for this requalification carry the
-`rel-0.1.6-` prefix in [the raw directory](storage-scan-qualification/), and
-the earlier files remain. The freshness registry tracks this qualification
-against the engine crates and the benchmark harness inputs.
+0.1.6 and 0.1.5 requalifications under `previous_requalifications` and the
+original study under `historical`. The raw runs for this requalification
+carry the `rel-0.1.7-` prefix in [the raw directory](storage-scan-qualification/),
+including the 20M reports, and the earlier files remain. The freshness
+registry tracks this qualification against the engine crates and the
+benchmark harness inputs.
 
 The supported claim is narrow. Dense text-predicate scans decode half as many
-blocks as before this change, and still do in 0.1.6. The sparse, nullable
-fixture returns identical answers while skipping most projected blocks. 0.1.6
-answers every TPC-H and 20M benchmark query exactly, and is faster than
-`v0.1.5` on three of the four TPC-H queries, with q01 unchanged. It is slower
-than `v0.1.5` on the dense text scan probes (about 23%) and on the 20M Q8 join
-(about 17%), with Q1 and Q5 also slower; these are regressions and are
-reported here as ones.
+blocks as before this change, and still do in 0.1.7. The sparse, nullable
+fixture returns identical answers while skipping most projected blocks,
+whether `v0.1.6` or 0.1.7 wrote it. 0.1.7 answers every TPC-H and 20M
+benchmark query exactly. Against `v0.1.6` it is faster on every uniform probe
+(1.9–13.5×), on every 20M engine-track query (4–12× pooled median), and on
+three of the four TPC-H queries, with q01 unchanged. The 0.1.6 regressions in
+the dense text scans and the 20M Q8 and Q1 queries are gone. One cost is
+reported as such: reading its own format 7, the candidate's wide scan is
+7–19% slower and wide arithmetic 6–9% slower than reading format 6.

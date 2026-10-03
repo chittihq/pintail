@@ -1,0 +1,4 @@
+case=0 fixture_rows=20000000 selected=632501 decoded=1221 pruned=3648
+case=1 fixture_rows=20000000 selected=632501 decoded=1529 pruned=22816
+case=2 fixture_rows=20000000 selected=822359 decoded=6105 pruned=18240
+case=3 fixture_rows=20000000 selected=0 decoded=1221 pruned=23124

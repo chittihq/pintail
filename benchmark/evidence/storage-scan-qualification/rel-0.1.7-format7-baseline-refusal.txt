@@ -1,0 +1,5 @@
+
+thread main panicked at crates/pintail-store/examples/storage_adversarial_probe.rs:75:6:
+open: CorruptManifest { offset: 6, reason: "unsupported format version" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+exit=101

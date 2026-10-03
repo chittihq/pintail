@@ -1,0 +1,24 @@
+== baseline pass 1
+container_seen 2026-10-03T08:11:46Z
+set 2026-10-03T08:11:50Z lineitem_rows=0 version=8.4.11
+readback 2026-10-03T08:14:31Z 4294967296
+== baseline pass 2
+container_seen 2026-10-03T08:17:56Z
+set 2026-10-03T08:18:01Z lineitem_rows=0 version=8.4.11
+readback 2026-10-03T08:21:26Z 4294967296
+== baseline pass 3
+container_seen 2026-10-03T08:25:11Z
+set 2026-10-03T08:25:15Z lineitem_rows=absent version=8.4.11
+readback 2026-10-03T08:28:00Z 4294967296
+== candidate pass 1
+container_seen 2026-10-03T08:14:40Z
+set 2026-10-03T08:14:44Z lineitem_rows=0 version=8.4.11
+readback 2026-10-03T08:17:44Z 4294967296
+== candidate pass 2
+container_seen 2026-10-03T08:21:36Z
+set 2026-10-03T08:21:40Z lineitem_rows=0 version=8.4.11
+readback 2026-10-03T08:25:02Z 4294967296
+== candidate pass 3
+container_seen 2026-10-03T08:28:08Z
+set 2026-10-03T08:28:13Z lineitem_rows=0 version=8.4.11
+readback 2026-10-03T08:30:43Z 4294967296

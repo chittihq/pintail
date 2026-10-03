@@ -1,0 +1,6 @@
+fixture_rows=20000000 segments=20
+narrow-last: median_ms=37.873 min_ms=37.808 blocks_decoded=1221
+wide: median_ms=1343.769 min_ms=1332.461 blocks_decoded=29304
+text-all: median_ms=23.136 min_ms=23.007 blocks_decoded=1221
+text-selective: median_ms=22.963 min_ms=22.920 blocks_decoded=1221
+mixed-selective: median_ms=119.280 min_ms=118.620 blocks_decoded=3663
