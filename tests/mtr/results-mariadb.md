@@ -1,8 +1,8 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-10-03T01:05:08.874Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-10-03T06:56:12.934Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-Replay mode: local. Source commit: ae098ad8e785f3662c0c5b6db94ca47041abb3c5; source dirty: false. Binary SHA-256: 7364c7048c8beb1c2111925c2fcffe3335c9987f021398f3717ca9571a345c9b.
+Replay mode: local. Source commit: 35e620c721a1b08b614aaf4ab945835324106f9d; source dirty: false. Binary SHA-256: 37be0b786ce7b17252b437605780091ee2ed4e7332bb443dbd67da22a86ce1df.
 
 **8,761 of 9,132 compared SELECTs match MySQL byte-for-byte** (95.9%), **out of 30,174 SELECTs replayed** - 21,042 never reached a comparison, so this is a share of what could be compared and not of the suite. 365 differ in rows, 6 in column names only. 4,362 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
 
@@ -747,4 +747,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 45 | Error: query engine failed: bound expression has an invalid physical type |
 | 41 | PREPARED: Error: expected a user variable |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/murolc83-222581/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mus0v70d-108560/diffs/` (not committed).
