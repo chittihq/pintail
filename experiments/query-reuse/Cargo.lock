@@ -756,8 +756,10 @@ dependencies = [
  "pintail-catalog",
  "pintail-failpoint",
  "pintail-log",
+ "pintail-simd",
  "pintail-types",
  "rayon",
+ "rustix",
  "xxhash-rust",
  "zstd",
 ]

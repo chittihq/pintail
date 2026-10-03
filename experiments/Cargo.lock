@@ -445,10 +445,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "e61-compressed-exec-breakeven"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "rayon",
+]
+
+[[package]]
 name = "e62-operator-fission"
 version = "0.1.0"
 dependencies = [
  "common",
+]
+
+[[package]]
+name = "e62-speed-of-light"
+version = "0.1.0"
+dependencies = [
+ "common",
+ "rayon",
 ]
 
 [[package]]
