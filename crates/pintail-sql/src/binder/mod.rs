@@ -3118,7 +3118,23 @@ fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<
     if is_numeric(left) && is_numeric(right) && (is_float(left) || is_float(right)) {
         return Some(Some(DataType::Float64));
     }
-    None
+    // Calendar values keep the finer of the two precisions, and a DATE
+    // beside a DATETIME becomes one at midnight, as MySQL types the union.
+    match (left, right) {
+        (DataType::DateTime64 { fsp: left }, DataType::DateTime64 { fsp: right }) => {
+            Some(Some(DataType::DateTime64 {
+                fsp: left.max(right),
+            }))
+        }
+        (DataType::Date32, datetime @ DataType::DateTime64 { .. })
+        | (datetime @ DataType::DateTime64 { .. }, DataType::Date32) => Some(Some(datetime)),
+        (DataType::Time64 { fsp: left }, DataType::Time64 { fsp: right }) => {
+            Some(Some(DataType::Time64 {
+                fsp: left.max(right),
+            }))
+        }
+        _ => None,
+    }
 }
 
 fn bind_join_operator(
