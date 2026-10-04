@@ -26,7 +26,7 @@ pub use control::{
     InviteRecord, NewApiKey, NewAuditEvent, NewInvite, SyncRunRecord, TableRecord, UserRecord,
     WorkspaceMemberRecord, WorkspaceRecord,
 };
-pub use maintenance::AuditPrune;
+pub use maintenance::AgePrune;
 
 const CURRENT_SCHEMA_VERSION: u32 = 25;
 

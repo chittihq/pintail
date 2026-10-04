@@ -221,7 +221,7 @@ fn audit_pruning_removes_only_rows_before_the_bound() {
         .expect("prune");
     assert_eq!(
         outcome,
-        pintail_meta::AuditPrune {
+        pintail_meta::AgePrune {
             removed: 2,
             batches: 1
         }
@@ -255,7 +255,7 @@ fn audit_pruning_runs_in_bounded_batches() {
         .expect("prune");
     assert_eq!(
         outcome,
-        pintail_meta::AuditPrune {
+        pintail_meta::AgePrune {
             removed: 25,
             batches: 3
         }
@@ -283,7 +283,7 @@ fn audit_pruning_runs_in_bounded_batches() {
         .expect("prune");
     assert_eq!(
         outcome,
-        pintail_meta::AuditPrune {
+        pintail_meta::AgePrune {
             removed: 10,
             batches: 2
         }

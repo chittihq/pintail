@@ -131,7 +131,7 @@ pub(crate) fn prune_audit_log(
     days: u32,
     batch_rows: u64,
     between: impl FnMut(u64),
-) -> Option<anyhow::Result<pintail_meta::AuditPrune>> {
+) -> Option<anyhow::Result<pintail_meta::AgePrune>> {
     let cutoff = audit_cutoff(now, days)?;
     Some(metadata.prune_audit_log(&cutoff, batch_rows, between))
 }

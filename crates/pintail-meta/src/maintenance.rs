@@ -14,7 +14,8 @@
 //!   database and never shrinks. `prune_sync_runs` bounds it while keeping
 //!   the rows that explain a copy. `prune_audit_log` does the same for
 //!   the audit trail, which gains a row per query, by age alone and a
-//!   bounded batch per transaction.
+//!   bounded batch per transaction; `prune_dead_letters` does it for the
+//!   dead-letter queue, which gains a row per event that cannot be decoded.
 
 use std::path::Path;
 
@@ -193,24 +194,68 @@ impl MetaStore {
         &self,
         before: &str,
         batch_rows: u64,
+        between: impl FnMut(u64),
+    ) -> Result<AgePrune> {
+        self.prune_by_age(AgedTable::AuditLog, before, batch_rows, between)
+            .context("failed to prune the audit log")
+    }
+
+    /// Deletes dead letters recorded before `before`, at most `batch_rows`
+    /// per transaction, until none is left, and reports what went.
+    ///
+    /// Batches, `between` and the form of `before` are as for
+    /// [`Self::prune_audit_log`]. Unlike it, each batch is an ordinary
+    /// commit that moves the write generation, as recording or discarding a
+    /// dead letter does. A dead letter carries no state of its own: the
+    /// list, its counts and the exported gauge are all read from these
+    /// rows, so a pruned letter leaves them all at once.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a batch cannot be deleted; batches committed
+    /// before it stay deleted.
+    pub fn prune_dead_letters(
+        &self,
+        before: &str,
+        batch_rows: u64,
+        between: impl FnMut(u64),
+    ) -> Result<AgePrune> {
+        self.prune_by_age(AgedTable::DeadLetters, before, batch_rows, between)
+            .context("failed to prune the dead-letter queue")
+    }
+
+    fn prune_by_age(
+        &self,
+        table: AgedTable,
+        before: &str,
+        batch_rows: u64,
         mut between: impl FnMut(u64),
-    ) -> Result<AuditPrune> {
+    ) -> Result<AgePrune> {
         let limit = i64::try_from(batch_rows.max(1)).unwrap_or(i64::MAX);
-        let mut outcome = AuditPrune::default();
+        let statement = match table {
+            AgedTable::AuditLog => {
+                "DELETE FROM audit_log WHERE rowid IN (\
+                   SELECT rowid FROM audit_log WHERE created_at < ?1 \
+                   ORDER BY created_at LIMIT ?2)"
+            }
+            AgedTable::DeadLetters => {
+                "DELETE FROM dlq WHERE rowid IN (\
+                   SELECT rowid FROM dlq WHERE created_at < ?1 \
+                   ORDER BY created_at LIMIT ?2)"
+            }
+        };
+        let batch = |connection: &rusqlite::Connection| -> rusqlite::Result<usize> {
+            let transaction = connection.unchecked_transaction()?;
+            let removed = transaction.execute(statement, params![before, limit])?;
+            transaction.commit()?;
+            Ok(removed)
+        };
+        let mut outcome = AgePrune::default();
         loop {
-            let removed = self
-                .journal_write(|connection| {
-                    let transaction = connection.unchecked_transaction()?;
-                    let removed = transaction.execute(
-                        "DELETE FROM audit_log WHERE rowid IN (\
-                           SELECT rowid FROM audit_log WHERE created_at < ?1 \
-                           ORDER BY created_at LIMIT ?2)",
-                        params![before, limit],
-                    )?;
-                    transaction.commit()?;
-                    Ok(removed)
-                })
-                .context("failed to prune the audit log")?;
+            let removed = match table {
+                AgedTable::AuditLog => self.journal_write(batch)?,
+                AgedTable::DeadLetters => batch(&self.connection)?,
+            };
             let removed = u64::try_from(removed).unwrap_or(u64::MAX);
             outcome.batches += 1;
             outcome.removed = outcome.removed.saturating_add(removed);
@@ -222,10 +267,18 @@ impl MetaStore {
     }
 }
 
-/// What one pass of [`MetaStore::prune_audit_log`] did.
+/// The tables pruned by age alone.
+#[derive(Clone, Copy)]
+enum AgedTable {
+    AuditLog,
+    DeadLetters,
+}
+
+/// What one pass of [`MetaStore::prune_audit_log`] or
+/// [`MetaStore::prune_dead_letters`] did.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct AuditPrune {
-    /// Audit events deleted.
+pub struct AgePrune {
+    /// Rows deleted.
     pub removed: u64,
     /// Transactions it took, the last of which found fewer than a batch.
     pub batches: u64,
