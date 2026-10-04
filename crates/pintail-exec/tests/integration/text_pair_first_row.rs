@@ -385,3 +385,150 @@ fn text_keys_that_outgrow_the_table_by_class_keep_their_groups() {
         "{notes}"
     );
 }
+
+/// Spellings of the classes a later table's groups are made of.
+const CLASSES: [[&str; 3]; 6] = [
+    ["alpha", "Alpha", "ALPHA"],
+    ["beta", "Beta", "BETA"],
+    ["gamma", "Gamma", "GAMMA"],
+    ["delta", "Delta", "DELTA"],
+    ["omega", "Omega", "OMEGA"],
+    ["sigma", "Sigma", "SIGMA"],
+];
+const SEGMENT_ROWS: u64 = 512;
+const SEGMENTS: u64 = 96;
+
+/// `(state, kind)` of one row of a table whose first segment spells every
+/// class it will hold, each beside a key no later row has, and whose later
+/// segments then meet the groups in no order a worker would choose: each
+/// segment holds a few of them, in a spelling of its own.
+fn scattered(id: u64) -> (String, String) {
+    let at = usize::try_from(id).expect("small");
+    if id < SEGMENT_ROWS {
+        let spelling = CLASSES[at % 6][(at / 6) % 3];
+        return if at % 2 == 0 {
+            (spelling.to_owned(), "seed".to_owned())
+        } else {
+            ("seed".to_owned(), spelling.to_owned())
+        };
+    }
+    let segment = id / SEGMENT_ROWS;
+    let group = (segment.wrapping_mul(0x9E37_79B9) >> 7) as usize % 36 + at % 3;
+    let variant = usize::try_from(segment).expect("small") % 3;
+    (
+        CLASSES[group % 6][variant].to_owned(),
+        CLASSES[(group / 6) % 6][(variant + 1) % 3].to_owned(),
+    )
+}
+
+/// The workers of a round fold its slices in no order, each into a copy of
+/// the table of its own kept across rounds: a worker that folds a later
+/// slice first must still give a group the spellings of an earlier one.
+#[test]
+#[allow(clippy::too_many_lines)] // the table, the expected groups, then the runs
+fn a_group_first_met_mid_round_shows_its_first_rows_spellings() {
+    let directory = tempfile::tempdir().expect("directory");
+    let options = StoreOptions {
+        background_compaction: false,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("table");
+    for segment in 0..SEGMENTS {
+        let rows = (segment * SEGMENT_ROWS..(segment + 1) * SEGMENT_ROWS)
+            .map(|id| {
+                let (state, kind) = scattered(id);
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                    vec![
+                        Value::UInt64(id),
+                        Value::Utf8(state),
+                        Value::Utf8(kind),
+                        Value::Utf8("x".to_owned()),
+                        Value::Int64(1),
+                    ],
+                    id + 1,
+                    false,
+                )
+            })
+            .collect();
+        table.ingest(rows).expect("rows");
+        table.flush().expect("flush");
+    }
+    let mut groups = BTreeMap::new();
+    for id in 0..SEGMENTS * SEGMENT_ROWS {
+        let (state, kind) = scattered(id);
+        groups
+            .entry((state.to_lowercase(), kind.to_lowercase()))
+            .or_insert((state, kind, 0_u64))
+            .2 += 1;
+    }
+    let expected = sorted(
+        groups
+            .into_values()
+            .map(|(state, kind, count)| vec![state, kind, count.to_string()])
+            .collect(),
+    );
+    let entry = TableEntry::new(
+        TableId::new(1),
+        "tickets",
+        schema(),
+        TableStatistics::with_row_count(SEGMENTS * SEGMENT_ROWS),
+    )
+    .expect("entry")
+    .with_key_columns([1])
+    .expect("key");
+    let catalog = CatalogSnapshot::new([
+        DatabaseEntry::new(DatabaseId::new(1), "app", [entry]).expect("database")
+    ])
+    .expect("catalog");
+    let snapshot = table.snapshot();
+    let provider = SnapshotScanProvider::new([(DatabaseId::new(1), TableId::new(1), &snapshot)])
+        .expect("provider");
+    // One run: a repeat is answered from the settled result, not folded
+    // again. Which worker reaches which slice changes from run to run, so
+    // this guards the path; the unit tests beside the fold pin each order.
+    {
+        let sql = "SELECT state, kind, COUNT(*) FROM tickets GROUP BY state, kind";
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&parse_statement(sql).expect("parse"))
+            .expect("bind");
+        let physical = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("plan");
+        let mut execution =
+            Execution::start_profiled(physical, &provider, 1 << 30, None, Collation::default())
+                .expect("start");
+        let mut rows = Vec::new();
+        while let Some(batch) = execution.next_batch().expect("batch") {
+            for row in batch.selection().selected_rows() {
+                rows.push(
+                    (0..batch.columns().len())
+                        .map(|column| {
+                            render(
+                                batch
+                                    .column(column)
+                                    .and_then(|column| column.value(row))
+                                    .expect("value"),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+        }
+        let notes = execution
+            .profile()
+            .expect("profile")
+            .operators
+            .iter()
+            .filter_map(|operator| operator.note.clone())
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(
+            notes.contains("folded in place") && notes.contains("rows folded by text class"),
+            "{notes}"
+        );
+        assert_eq!(sorted(rows), expected, "{notes}");
+    }
+}

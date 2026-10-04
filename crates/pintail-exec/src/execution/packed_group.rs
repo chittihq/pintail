@@ -886,26 +886,41 @@ fn fold_dense_rows(
         };
         *hit += 1;
     }
-    // The first row to reach an empty slot gives the group its key and
-    // spellings. Rows arrive in scan order, so within this morsel that is
-    // the earliest; the search ends once every new group has its row.
+    // A group shows the key and spellings of its earliest row. Rows reach
+    // this morsel in scan order, so a slot's first row here is its earliest
+    // here, and it gives the group its spellings when the slot is empty or
+    // holds a later row: a worker's table that folded a later batch of the
+    // scan first. A slot whose row is earlier than this morsel's first is
+    // not looked at, so a fold in scan order searches only for new groups,
+    // and the search ends once every slot that may move has met its row.
+    let earliest = if slots.is_empty() {
+        u64::MAX
+    } else {
+        first_ordinal + picked.row(0) as u64 + 1
+    };
+    let movable = |ordinal: u64| ordinal == 0 || ordinal > earliest;
     let mut unplaced = hits
         .iter()
         .zip(words.chunks_exact(stride))
-        .filter(|(hit, group)| **hit > 0 && group[0] == 0)
+        .filter(|(hit, group)| **hit > 0 && movable(group[0]))
         .count();
+    let mut met = vec![false; if unplaced == 0 { 0 } else { table_slots }];
     for (at, slot) in slots.iter().enumerate() {
         if unplaced == 0 {
             break;
         }
         let from = *slot as usize * stride;
         let group = &mut words[from..from + stride];
-        if group[0] != 0 {
+        if !movable(group[0]) || std::mem::replace(&mut met[*slot as usize], true) {
             continue;
         }
         unplaced -= 1;
         let row = picked.row(at);
-        group[0] = first_ordinal + row as u64 + 1;
+        let ordinal = first_ordinal + row as u64 + 1;
+        if group[0] != 0 && group[0] < ordinal {
+            continue;
+        }
+        group[0] = ordinal;
         for (index, (codes, validity, ids)) in columns.iter().enumerate() {
             if validity.is_valid(row) {
                 let interned = ids[codes[row] as usize];
@@ -1286,9 +1301,88 @@ struct PackedGroupFold<'a> {
     dense: Option<DenseGroups>,
     /// Rows the dense table folded, for the profile.
     dense_rows: u64,
-    /// The ordinal the first fused round's rows were numbered from: every
-    /// row the windows folded before it has a smaller one.
-    fused_base: Option<u64>,
+    /// The first place in the input no fused round has handed over: the
+    /// next call's rounds number their batches from it, after every row
+    /// numbered so far.
+    fused_floor: u64,
+    /// The groups the dense table moved to the hashed tables after fused
+    /// rounds, by key: the ordinal of each one's first row and where it
+    /// went. A batch a round left may hold an earlier row of one of them.
+    poured: HashMap<Vec<u64>, PouredGroup>,
+}
+
+/// Where a group the dense table moved to the hashed tables went, and the
+/// ordinal of its first row plus one.
+struct PouredGroup {
+    ordinal: u64,
+    partition: usize,
+    group: usize,
+}
+
+/// Gives each group the dense table moved to the hashed tables the
+/// spellings of `held`'s rows that come before its first row. `held` is a
+/// batch a fused round left, numbered from `first_ordinal`; the rows of
+/// such batches reach the hashed tables in order, but after the rounds
+/// folded later rows into the groups that moved.
+fn claim_poured(
+    plan: &PackedGroupPlan,
+    poured: &mut HashMap<Vec<u64>, PouredGroup>,
+    tables: &mut [Table],
+    held: &Prepared,
+    first_ordinal: u64,
+) -> Result<(), ExecError> {
+    const LOST: &str = "packed group key lost its text cells";
+    let keys = plan.keys();
+    let mut columns = Vec::with_capacity(keys);
+    for (index, column) in plan.columns.iter().enumerate() {
+        let Some((TypedValues::Utf8(strings), validity)) = held
+            .batch
+            .column(*column)
+            .and_then(crate::ColumnVector::typed)
+        else {
+            return Err(ExecError::InvalidBatch(LOST));
+        };
+        columns.push((
+            strings.dictionary().map(|(codes, _)| codes),
+            validity,
+            &held.text[index],
+        ));
+    }
+    let mut key = vec![0_u64; 1 + keys];
+    let mut spellings = vec![0_u64; keys];
+    for row in held.batch.selection().selected_rows() {
+        key.fill(0);
+        for (index, (codes, validity, cells)) in columns.iter().enumerate() {
+            if !validity.is_valid(row) {
+                key[0] |= 1 << index;
+                continue;
+            }
+            let packed = match (cells, codes) {
+                (TextCells::Codes(ids), Some(codes)) => ids.get(codes[row] as usize).copied(),
+                (TextCells::Rows(ids), _) => ids.get(row).copied(),
+                (TextCells::Codes(_), None) => None,
+            }
+            .ok_or(ExecError::InvalidBatch(LOST))?;
+            key[1 + index] = packed >> 32;
+            spellings[index] = packed & KEY_NULLS;
+        }
+        let ordinal = first_ordinal + row as u64 + 1;
+        let Some(moved) = poured.get_mut(&key) else {
+            continue;
+        };
+        if moved.ordinal <= ordinal {
+            continue;
+        }
+        moved.ordinal = ordinal;
+        let at = moved.group * plan.group_stride + 1 + keys;
+        let words = &mut tables[moved.partition].words;
+        for (index, spelling) in spellings.iter().enumerate() {
+            if key[0] & (1 << index) == 0 {
+                words[at + index] = *spelling;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A fused round numbers a batch's rows from its place in the input: the
@@ -1344,7 +1438,12 @@ impl PackedGroupFold<'_> {
         if memory.reserve(bytes).is_err() {
             return Ok(InPlace::Off);
         }
-        let base = *self.fused_base.get_or_insert(dense.rows);
+        // Rows the windows numbered - before the rounds, between them while
+        // the query was past half its ceiling, and the batches the last
+        // call's rounds left - all come before this call's rounds' rows.
+        let base = dense.rows;
+        let floor = self.fused_floor;
+        let next_floor = std::sync::atomic::AtomicU64::new(floor);
         let mut seats: Vec<std::sync::Mutex<Vec<u64>>> = Vec::new();
         seats.resize_with(workers + 1, || std::sync::Mutex::new(Vec::new()));
         let poisoned = || ExecError::InvalidBatch("dense group seat poisoned");
@@ -1357,8 +1456,9 @@ impl PackedGroupFold<'_> {
         let last_ordinal = std::sync::atomic::AtomicU64::new(0);
         let relaxed = std::sync::atomic::Ordering::Relaxed;
         let ordinal_of = |order: u64| {
-            (order.leading_zeros() > FUSED_ROW_BITS)
-                .then(|| base.checked_add(order << FUSED_ROW_BITS))
+            let since = order.checked_sub(floor)?;
+            (since.leading_zeros() > FUSED_ROW_BITS)
+                .then(|| base.checked_add(since << FUSED_ROW_BITS))
                 .flatten()
         };
         let interns = self.interns.as_slice();
@@ -1366,6 +1466,7 @@ impl PackedGroupFold<'_> {
         while memory.used() <= memory.limit() / 2 {
             let taken = std::sync::atomic::AtomicUsize::new(0);
             let round = input.fold_round(memory, usize::MAX, &|batch, order| {
+                next_floor.fetch_max(order.saturating_add(1), relaxed);
                 let leave = |batch: RecordBatch| {
                     left.lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1427,6 +1528,9 @@ impl PackedGroupFold<'_> {
             let mut left = left
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (order, _) in &returned {
+                next_floor.fetch_max(order.saturating_add(1), relaxed);
+            }
             left.extend(returned);
             if !left.is_empty() {
                 let mut left = std::mem::take(&mut *left);
@@ -1470,6 +1574,7 @@ impl PackedGroupFold<'_> {
             Ok(())
         })();
         self.dense_rows += folded_rows.into_inner();
+        self.fused_floor = next_floor.into_inner();
         memory.release(bytes);
         merged?;
         outcome
@@ -1490,11 +1595,17 @@ impl PackedGroupFold<'_> {
         ))?;
         let len = slots * stride;
         let window = &self.window;
+        // A batch a fused round left keeps its own ordinal, and the rows
+        // after it - in this window and the next - are numbered past it.
         let mut first_ordinals = Vec::with_capacity(window.len());
         let mut ordinal = dense.rows;
+        let mut rows = 0_u64;
         for held in window {
-            first_ordinals.push(held.ordinal.unwrap_or(ordinal));
-            ordinal += held.batch.row_count() as u64;
+            let first = held.ordinal.unwrap_or(ordinal);
+            first_ordinals.push(first);
+            let count = held.batch.row_count() as u64;
+            ordinal = ordinal.max(first.saturating_add(count));
+            rows += count;
         }
         let pieces = morsel_plan(
             window.iter().map(|held| held.batch.row_count()),
@@ -1519,7 +1630,7 @@ impl PackedGroupFold<'_> {
             })
             .try_reduce(Vec::new, |into, from| merge_dense(plan, into, from))?;
         absorb_dense(plan, dense, &folded, len, self.memory)?;
-        self.dense_rows += ordinal - dense.rows;
+        self.dense_rows += rows;
         dense.rows = ordinal;
         Ok(())
     }
@@ -1534,13 +1645,28 @@ impl PackedGroupFold<'_> {
         let words = std::mem::take(&mut dense.words);
         self.memory.release(dense.reserved);
         dense.reserved = 0;
+        // After fused rounds, batches they left may still come, each with
+        // rows earlier than ones the rounds folded into these groups.
+        let remember = self.fused_floor > 0;
         for slot in words.chunks_exact(1 + plan.group_stride) {
             if slot[0] == 0 {
                 continue;
             }
             let group = &slot[1..];
             let hash = key_hash(group[0], &group[1..=plan.keys()]);
-            self.tables[partition_of(hash)].adopt(plan, group, self.memory)?;
+            let partition = partition_of(hash);
+            let table = &mut self.tables[partition];
+            table.adopt(plan, group, self.memory)?;
+            if remember {
+                self.poured.insert(
+                    group[..=plan.keys()].to_vec(),
+                    PouredGroup {
+                        ordinal: slot[0],
+                        partition,
+                        group: table.groups - 1,
+                    },
+                );
+            }
         }
         Ok(())
     }
@@ -1673,6 +1799,8 @@ impl PackedGroupFold<'_> {
         let stride = self.plan.group_stride;
         let totals_at = 1 + keys + self.plan.texts();
         let mut groups = HashMap::with_capacity(self.tables.iter().map(|table| table.groups).sum());
+        // The tables are drained, so the groups that moved have no place.
+        self.poured = HashMap::new();
         let tables = std::mem::take(&mut self.tables);
         let output = self.key_output();
         for table in tables {
@@ -1782,6 +1910,19 @@ impl PackedGroupFold<'_> {
             self.memory.release(self.window_reserved);
             self.window_reserved = 0;
             return Ok(());
+        }
+        if !self.poured.is_empty() {
+            for held in &self.window {
+                if let Some(first_ordinal) = held.ordinal {
+                    claim_poured(
+                        self.plan,
+                        &mut self.poured,
+                        &mut self.tables,
+                        held,
+                        first_ordinal,
+                    )?;
+                }
+            }
         }
         let physical: usize = self.window.iter().map(|held| held.batch.row_count()).sum();
         let pieces = morsel_plan(
@@ -2033,7 +2174,8 @@ pub(super) fn build_packed_group_aggregate(
             reserved: 0,
         }),
         dense_rows: 0,
-        fused_base: None,
+        fused_floor: 0,
+        poured: HashMap::new(),
     };
     let debug = std::env::var_os("PINTAIL_AGG_DEBUG").is_some();
     let started = std::time::Instant::now();
@@ -2117,4 +2259,270 @@ pub(super) fn build_packed_group_aggregate(
         ));
     }
     fold.finish()
+}
+
+#[cfg(test)]
+mod first_row_tests {
+    //! A group of two text keys shows the spellings of its earliest row in
+    //! scan order, whatever order its rows are folded in.
+
+    use super::*;
+    use crate::ColumnVector;
+    use crate::array::{StrColumn, ValidityMask};
+
+    fn collation() -> Collation {
+        Collation::from_mysql_name("utf8mb4_0900_ai_ci").expect("collation")
+    }
+
+    fn coded(values: &[&str]) -> ColumnVector {
+        let mut distinct: Vec<&str> = Vec::new();
+        let codes = values
+            .iter()
+            .map(|text| {
+                let code = distinct
+                    .iter()
+                    .position(|held| held == text)
+                    .unwrap_or_else(|| {
+                        distinct.push(text);
+                        distinct.len() - 1
+                    });
+                u32::try_from(code).expect("small")
+            })
+            .collect::<Vec<_>>();
+        let mut heap = Vec::new();
+        let mut offsets = vec![0];
+        for text in &distinct {
+            heap.extend_from_slice(text.as_bytes());
+            offsets.push(heap.len());
+        }
+        let validity = ValidityMask::from_bools(&vec![true; values.len()]);
+        let column = StrColumn::from_dictionary(&heap, &offsets, codes, validity.clone());
+        ColumnVector::from_typed(DataType::Utf8, TypedValues::Utf8(column), validity)
+    }
+
+    fn plain(values: &[&str]) -> ColumnVector {
+        ColumnVector::new(
+            DataType::Utf8,
+            values
+                .iter()
+                .map(|text| Value::Utf8((*text).to_owned()))
+                .collect(),
+        )
+        .expect("column")
+    }
+
+    fn batch(pairs: &[(&str, &str)], code: bool) -> RecordBatch {
+        let (first, second): (Vec<&str>, Vec<&str>) = pairs.iter().copied().unzip();
+        let column = if code { coded } else { plain };
+        RecordBatch::new(pairs.len(), vec![column(&first), column(&second)]).expect("batch")
+    }
+
+    fn count_star() -> CompiledAggregate {
+        CompiledAggregate {
+            function: AggregateFunction::Count,
+            expr: None,
+            input_type: None,
+            binary_width: None,
+            distinct: false,
+            data_type: Some(DataType::Int64),
+            sum_carrier: None,
+            separator: ",".to_owned(),
+            order_within: Vec::new(),
+            collation: Collation::default(),
+        }
+    }
+
+    /// The plan, and interns that hold every spelling the tests use: the
+    /// class of `Open` first met as `Open`, of `a` as `a`.
+    fn setup(
+        aggregates: &[CompiledAggregate],
+        memory: &MemoryTracker,
+    ) -> (PackedGroupPlan, Vec<TextIntern>) {
+        let collations = [collation(), collation()];
+        let plan = PackedGroupPlan::of(
+            &[0, 1],
+            aggregates,
+            &batch(&[("Open", "a")], true),
+            &collations,
+        )
+        .expect("plan");
+        let mut interns = vec![TextIntern::new(collation()), TextIntern::new(collation())];
+        for text in ["Open", "OPEN"] {
+            interns[0].intern(text, memory).expect("intern");
+        }
+        for text in ["a", "A"] {
+            interns[1].intern(text, memory).expect("intern");
+        }
+        (plan, interns)
+    }
+
+    fn prepared(
+        plan: &PackedGroupPlan,
+        interns: &[TextIntern],
+        pairs: &[(&str, &str)],
+        ordinal: Option<u64>,
+    ) -> Prepared {
+        let batch = batch(pairs, true);
+        let text = known_text(plan, interns, &batch)
+            .expect("text")
+            .expect("known");
+        Prepared {
+            batch,
+            text,
+            ordinal,
+        }
+    }
+
+    /// The one group a dense table holds: its ordinal word, its spellings
+    /// and its count.
+    fn only_group(
+        plan: &PackedGroupPlan,
+        interns: &[TextIntern],
+        words: &[u64],
+    ) -> (u64, String, String, u64) {
+        let keys = plan.keys();
+        let mut groups = words
+            .chunks_exact(1 + plan.group_stride)
+            .filter(|group| group[0] != 0);
+        let group = groups.next().expect("a group");
+        assert!(groups.next().is_none(), "one group");
+        let spelling = |index: usize| {
+            interns[index].spellings[slot_start(group[2 + keys + index], usize::MAX)].clone()
+        };
+        let totals_at = 2 + keys + plan.texts();
+        (group[0], spelling(0), spelling(1), group[totals_at])
+    }
+
+    /// A worker's seat folds the batches it is handed in whatever order the
+    /// round hands them: a later batch first, then an earlier one. The
+    /// group keeps the earlier batch's spellings and both batches' rows.
+    #[test]
+    fn a_seat_takes_an_earlier_batchs_spellings_after_a_later_one() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let aggregates = [count_star()];
+        let (plan, interns) = setup(&aggregates, &memory);
+        let dims = [2, 2];
+        let mut words = vec![0_u64; 4 * (1 + plan.group_stride)];
+        let later = prepared(&plan, &interns, &[("OPEN", "A")], None);
+        let earlier = prepared(&plan, &interns, &[("Open", "a")], None);
+        fold_dense_rows(&plan, &later, 0..1, 100, &dims, &mut words).expect("later");
+        fold_dense_rows(&plan, &earlier, 0..1, 10, &dims, &mut words).expect("earlier");
+        assert_eq!(
+            only_group(&plan, &interns, &words),
+            (11, "Open".to_owned(), "a".to_owned(), 2)
+        );
+        // The other way round, the earlier batch's spellings stay.
+        let mut words = vec![0_u64; 4 * (1 + plan.group_stride)];
+        fold_dense_rows(&plan, &earlier, 0..1, 10, &dims, &mut words).expect("earlier");
+        fold_dense_rows(&plan, &later, 0..1, 100, &dims, &mut words).expect("later");
+        assert_eq!(
+            only_group(&plan, &interns, &words),
+            (11, "Open".to_owned(), "a".to_owned(), 2)
+        );
+    }
+
+    fn fold<'a>(
+        plan: &'a PackedGroupPlan,
+        interns: Vec<TextIntern>,
+        aggregates: &'a [CompiledAggregate],
+        collations: &'a [Collation],
+        memory: &'a MemoryTracker,
+    ) -> PackedGroupFold<'a> {
+        PackedGroupFold {
+            plan,
+            aggregates,
+            key_collations: collations,
+            memory,
+            tables: (0..PARTITIONS).map(|_| Table::default()).collect(),
+            interns,
+            labels: vec![None; plan.texts()],
+            members: vec![None; plan.texts()],
+            window: Vec::new(),
+            window_rows: 0,
+            window_reserved: 0,
+            by_row: HashMap::new(),
+            by_row_reserved: 0,
+            by_row_batches: 0,
+            spill_runs: Vec::new(),
+            dense: Some(DenseGroups {
+                dims: vec![2, 2],
+                words: Vec::new(),
+                rows: 1,
+                reserved: 0,
+            }),
+            dense_rows: 0,
+            fused_floor: 0,
+            poured: HashMap::new(),
+        }
+    }
+
+    /// A batch a fused round left carries its own ordinal, past the rows
+    /// the windows numbered. Once its window is folded, a batch pulled
+    /// after it is numbered after it too, and cannot take its group.
+    #[test]
+    fn a_pulled_batch_is_numbered_after_a_left_batch() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let aggregates = [count_star()];
+        let collations = [collation(), collation()];
+        let (plan, interns) = setup(&aggregates, &memory);
+        let left = prepared(&plan, &interns, &[("Open", "a")], Some(1 << 42));
+        let pulled = prepared(&plan, &interns, &[("OPEN", "A")], None);
+        let mut fold = fold(&plan, interns, &aggregates, &collations, &memory);
+        fold.window.push(left);
+        fold.flush_dense().expect("left");
+        fold.window.clear();
+        assert!(
+            fold.dense.as_ref().expect("dense").rows > 1 << 42,
+            "the cursor passes the left batch's rows"
+        );
+        fold.window.push(pulled);
+        fold.flush_dense().expect("pulled");
+        let dense = fold.dense.as_ref().expect("dense");
+        let (_, first, second, count) = only_group(&plan, &fold.interns, &dense.words);
+        assert_eq!((first.as_str(), second.as_str(), count), ("Open", "a", 2));
+    }
+
+    /// A batch a fused round left that decodes without dictionary codes
+    /// moves the dense table's groups to the hashed tables. Its rows are
+    /// earlier than rows the rounds already folded into those groups, so
+    /// the group takes its spellings.
+    #[test]
+    fn a_left_batch_that_ends_the_dense_table_keeps_its_earlier_spellings() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let aggregates = [count_star()];
+        let collations = [collation(), collation()];
+        let (plan, interns) = setup(&aggregates, &memory);
+        let folded = prepared(&plan, &interns, &[("OPEN", "A")], Some(1 << 40));
+        let mut fold = fold(&plan, interns, &aggregates, &collations, &memory);
+        // As after a fused round handed over its first place.
+        fold.fused_floor = 1;
+        fold.window.push(folded);
+        fold.flush_dense().expect("folded");
+        fold.window.clear();
+        fold.take(batch(&[("Open", "a")], false), Some(1 << 30))
+            .expect("take");
+        fold.flush().expect("flush");
+        assert!(fold.dense.is_none(), "the hashed tables hold the groups");
+        let output = fold.key_output();
+        let groups = fold
+            .tables
+            .iter()
+            .flat_map(|table| table.words.chunks_exact(plan.group_stride))
+            .map(|group| {
+                (
+                    output.value(0, group),
+                    output.value(1, group),
+                    group[1 + plan.keys() + plan.texts()],
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            groups,
+            vec![(
+                Value::Utf8("Open".to_owned()),
+                Value::Utf8("a".to_owned()),
+                2
+            )]
+        );
+    }
 }
