@@ -170,23 +170,31 @@ stays readable as a list of things to fix.
   `TIME_TRUNCATE_FRACTIONAL` does not switch them to truncation.
 
 - A stored date a calendar rejects, such as February 30th from a source
-  running `ALLOW_INVALID_DATES`, groups and takes part in `MIN`/`MAX` as the
-  date it is written as. `MySQL` rewrites such a date as `0000-00-00` when it
-  copies it into a grouping, deduplication, union or window result under a
-  mode that rejects it (a day past its month's end unless
-  `ALLOW_INVALID_DATES`, a zero month or day under `NO_ZERO_IN_DATE`), and
-  answers `NULL` for a `MAX` over them. Rows ingested before these dates were
-  preserved hold `NULL` until they are re-ingested.
-- In a session zone with daylight saving, the two instants of the hour the
-  zone repeats group as one `TIMESTAMP` value under `NO_ZERO_DATE`,
-  `NO_ZERO_IN_DATE` or `ALLOW_INVALID_DATES` (the default mode included),
-  as `MySQL` groups a column it reads without an index. When `MySQL` reads
-  the column through an index it keeps the two instants apart, which Pintail
-  does not model. Under modes without those flags, a top-level `UNION` and
-  `GROUP_CONCAT(DISTINCT ...)` over such a column still merge the two
-  instants, and a join or `IN` subquery comparing two `TIMESTAMP` columns
-  can match their wall clocks where `MySQL` matches instants (seen with
-  whole-second columns and with columns of different precision).
+  running `ALLOW_INVALID_DATES`, takes part in `MIN`/`MAX` as the date it is
+  written as, where `MySQL` answers `NULL` for a `MAX` over them. Window
+  functions partition and order such a date as written; under
+  `NO_ZERO_IN_DATE` `MySQL` partitions and ranks every such date as one
+  value, apart from the real zero date. Grouping, deduplication and unions follow `MySQL`'s
+  rewrite, except where `MySQL` reads the column through a source index from
+  a derived table or CTE it merges, which Pintail still rewrites. Rows
+  ingested before these dates were preserved hold `NULL` until they are
+  re-ingested.
+- How `MySQL` groups and compares a `TIMESTAMP` in the hour a daylight-saving
+  zone repeats depends on its plan. Pintail follows the plans observed: an
+  intermediate copy by wall clock under `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` or
+  `ALLOW_INVALID_DATES` and by instant otherwise; instants when a single
+  unfiltered table is read through a covering source index the column leads;
+  wall-clock hash joins, and instant lookups when either joined column leads
+  a source index. Still different: `GROUP_CONCAT(DISTINCT ...)` under modes
+  without those flags merges the two instants; a derived table or CTE
+  `MySQL` merges into an index read keeps the copy rule; and under those
+  flags `MySQL` rewrites a value it materializes for a subquery, an `IN` or
+  `NOT IN` list or an index lookup key to the first of the two instants,
+  which Pintail does not, so such joins and memberships can match
+  differently there.
+- With `ONLY_FULL_GROUP_BY` off, a column that is neither grouped nor
+  aggregated reads the first non-NULL value of its group; `MySQL` reads the
+  first row's, NULL included.
 - Replicas created before zero-date preservation keep their previous
   normalized values until the affected rows are re-ingested.
 
