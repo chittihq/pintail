@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The query audit queue is bounded at 32 MiB. When the metadata store falls
+  behind, HTTP queries wait for room instead of the server buffering every
+  statement's text without limit. A batch refused because the store is
+  locked is retried whole a few times and then reported lost, instead of
+  each event waiting out its own five-second busy timeout.
+- A statement that reads no table and uses LIKE, JSON_SEARCH or a function
+  whose result can be many times its input (REPLACE, HEX, QUOTE,
+  TO_BASE64, JSON_QUOTE) runs on a worker thread, so it no longer stalls
+  the other connections on the thread it arrived on. KILL QUERY stops a
+  long LIKE match partway through.
+
 ## [0.1.7] - 2026-10-03
 
 Everything in 0.1.7-rc1 through rc3, plus the startup resync advice below,
