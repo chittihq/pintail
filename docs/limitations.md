@@ -171,9 +171,22 @@ stays readable as a list of things to fix.
 
 - A stored date a calendar rejects, such as February 30th from a source
   running `ALLOW_INVALID_DATES`, groups and takes part in `MIN`/`MAX` as the
-  date it is written as. `MySQL` folds such dates into `0000-00-00` when
-  grouping and answers `NULL` for a `MAX` over them. Rows ingested before
-  these dates were preserved hold `NULL` until they are re-ingested.
+  date it is written as. `MySQL` rewrites such a date as `0000-00-00` when it
+  copies it into a grouping, deduplication, union or window result under a
+  mode that rejects it (a day past its month's end unless
+  `ALLOW_INVALID_DATES`, a zero month or day under `NO_ZERO_IN_DATE`), and
+  answers `NULL` for a `MAX` over them. Rows ingested before these dates were
+  preserved hold `NULL` until they are re-ingested.
+- In a session zone with daylight saving, the two instants of the hour the
+  zone repeats group as one `TIMESTAMP` value under `NO_ZERO_DATE`,
+  `NO_ZERO_IN_DATE` or `ALLOW_INVALID_DATES` (the default mode included),
+  as `MySQL` groups a column it reads without an index. When `MySQL` reads
+  the column through an index it keeps the two instants apart, which Pintail
+  does not model. Under modes without those flags, a top-level `UNION` and
+  `GROUP_CONCAT(DISTINCT ...)` over such a column still merge the two
+  instants, and a join or `IN` subquery comparing two `TIMESTAMP` columns
+  can match their wall clocks where `MySQL` matches instants (seen with
+  whole-second columns and with columns of different precision).
 - Replicas created before zero-date preservation keep their previous
   normalized values until the affected rows are re-ingested.
 
