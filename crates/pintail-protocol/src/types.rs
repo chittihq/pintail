@@ -325,6 +325,8 @@ pub enum ErrorKind {
     ErLatitudeOutOfRange = 3617,
     /// 3726: a function is only defined for geographic SRSs.
     ErOnlyDefinedForGeographic = 3726,
+    /// 1621: a `SET` named a session variable that is read-only.
+    ErVariableIsReadonly = 1621,
 }
 
 impl ErrorKind {
@@ -366,6 +368,7 @@ impl ErrorKind {
             Self::ErConCountError => b"08004",
             Self::ErQueryInterrupted => b"70100",
             Self::ErWrongArguments
+            | Self::ErVariableIsReadonly
             | Self::ErUnknownStmtHandler
             | Self::ErUnknownError
             | Self::ErInvalidGroupFuncUse

@@ -136,6 +136,8 @@ thread_local! {
         const { std::cell::Cell::new(0) };
     static SESSION_CTE_MAX_RECURSION_DEPTH: std::cell::Cell<u64> =
         const { std::cell::Cell::new(DEFAULT_CTE_MAX_RECURSION_DEPTH) };
+    static SESSION_MAX_ALLOWED_PACKET: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(DEFAULT_MAX_ALLOWED_PACKET) };
     /// Steps left before a long loop inside one value's evaluation next
     /// asks whether its statement should stop; shared by every such loop
     /// on the thread, so many medium values are counted like one long one.
@@ -230,6 +232,23 @@ impl Drop for InterruptCounter {
             STEPS_UNTIL_INTERRUPT_CHECK.set(self.until_check);
         }
     }
+}
+
+/// Installs the current connection's `max_allowed_packet` on this
+/// synchronous execution thread. `None` restores the default.
+///
+/// A string function whose result would be longer answers NULL with
+/// warning 1301. The session value is read-only in `MySQL` and Pintail
+/// keeps no global to change, so every session holds the default and a
+/// pool thread, which reads the default, agrees with the statement's own.
+pub fn set_session_max_allowed_packet(limit: Option<usize>) {
+    SESSION_MAX_ALLOWED_PACKET.set(limit.unwrap_or(DEFAULT_MAX_ALLOWED_PACKET));
+}
+
+/// The `max_allowed_packet` this thread's string functions observe.
+#[must_use]
+pub fn session_max_allowed_packet() -> usize {
+    SESSION_MAX_ALLOWED_PACKET.get()
 }
 
 /// Runs synchronous query setup/execution with a cancellation handle that is

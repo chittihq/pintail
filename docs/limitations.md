@@ -209,8 +209,10 @@ stays readable as a list of things to fix.
   table is re-snapshotted.
 
 - `UUID_SHORT` identifiers are not coordinated across servers or restarts within the same second.
-- `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses en_US grouping only (no locale argument).
-- `CAST(x AS BINARY(n))` is NULL for an `n` above 64 MiB, matching what MySQL answers at the default `max_allowed_packet`. A server whose limit was raised builds wider values than this does.
+- `FORMAT` uses en_US grouping only (no locale argument).
+- `max_allowed_packet` is always its 64 MiB default: `SET GLOBAL max_allowed_packet` is accepted and changes nothing, so string functions answer NULL with warning 1301 past 64 MiB even where a MySQL server whose limit was raised builds the value.
+- A JSON constructor or modifier (`JSON_ARRAY`, `JSON_OBJECT`, `JSON_SET` and the rest) whose text passes `max_allowed_packet` is NULL wherever it is used. MySQL applies the limit only when the document is read as text, so a JSON function reading it as a document (`JSON_LENGTH(JSON_ARRAY(...))`) still answers there.
+- `REGEXP_REPLACE` builds its result at any length. MySQL refuses a result with replacements whose UTF-16 form is longer than `max_allowed_packet` with error 3684, and cuts short some results just under that length.
 
 ### Planning and execution
 

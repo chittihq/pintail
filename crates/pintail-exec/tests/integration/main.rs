@@ -130,6 +130,7 @@ mod sparse_join_keys;
 mod spatial_parity;
 mod star_join_fold;
 mod statement_warnings;
+mod string_packet_limit;
 mod subquery_scaling;
 mod temporal_predicate_rewrite;
 mod text_extreme_folds;

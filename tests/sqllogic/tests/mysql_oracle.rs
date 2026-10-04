@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2746;
+const EXPECTED_CASES: usize = 2749;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1852,6 +1852,11 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered("exists over an aggregate", "SELECT id FROM orders o WHERE NOT EXISTS (SELECT COUNT(*) FROM orders i WHERE i.user_id = o.user_id HAVING 1) ORDER BY id"),
         ordered("exists over an aggregate", "SELECT id FROM orders o WHERE EXISTS (SELECT COUNT(*) FROM users u WHERE u.id = o.user_id HAVING o.total > 20) ORDER BY id"),
         ordered("exists over an aggregate", "SELECT id FROM orders o WHERE EXISTS (SELECT COUNT(*) AS total FROM users u WHERE u.id = o.user_id AND u.id > 2 HAVING total > 0 AND COUNT(*) >= 0) ORDER BY id"),
+        // A string result longer than max_allowed_packet (64 MiB) is NULL,
+        // and one under it is built whole, past the old 4 KiB cap.
+        ordered("string results past the packet", "SELECT REPEAT('a', 67108865) IS NULL, REPEAT('ab', 33554433) IS NULL, SPACE(67108865) IS NULL, REPEAT('a', 18446744073709551615) IS NULL, REPEAT('', 100000000) = '', LENGTH(REPEAT('ab', 3000)), LENGTH(SPACE(5000))"),
+        ordered("string results past the packet", "SELECT LPAD('x', 16777217, 'y') IS NULL, RPAD('x', 16777217, 'y') IS NULL, LPAD('abc', 67108865, '') IS NULL, LPAD(CAST('x' AS BINARY), 67108865, 'y') IS NULL, LPAD('abcdef', 3, 'x'), LENGTH(LPAD('x', 5000, 'yz')), LENGTH(RPAD('x', 5000, 'yz'))"),
+        ordered("string results past the packet", "SELECT CONCAT(REPEAT('a', 67108865), 'b') IS NULL, CONCAT_WS(',', 'a', SPACE(67108865)), LENGTH(CONCAT_WS(',', REPEAT('a', 3000), SPACE(3000))), LENGTH(CONCAT(REPEAT('a', 3000), REPEAT('b', 3000)))"),
         // A JSON branch beside a number, a decimal or a date in a
         // conditional: the answer is the text of whichever branch the row
         // took, never the document read as a number.

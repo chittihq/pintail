@@ -38,11 +38,11 @@ pub use execution::{
 pub use execution::{FoldedRound, ScanBatchFold, ScanBatchPlace};
 pub use execution::{
     MemoryBudget, MemoryScope, init_block_cache, init_parallel_pool, init_shared_memory_budget,
-    session_cte_max_recursion_depth, session_group_concat_max_len, session_warning_counts,
-    session_window_high_precision, set_session_cte_max_recursion_depth,
-    set_session_group_concat_max_len, set_session_window_high_precision, shared_memory_budget,
-    take_session_conversion_warnings, take_session_division_warnings,
-    take_session_group_concat_warnings,
+    session_cte_max_recursion_depth, session_group_concat_max_len, session_max_allowed_packet,
+    session_warning_counts, session_window_high_precision, set_session_cte_max_recursion_depth,
+    set_session_group_concat_max_len, set_session_max_allowed_packet,
+    set_session_window_high_precision, shared_memory_budget, take_session_conversion_warnings,
+    take_session_division_warnings, take_session_group_concat_warnings,
 };
 pub use execution::{PathSwitch, parallel_pool_threads, path_switches};
 pub use execution::{

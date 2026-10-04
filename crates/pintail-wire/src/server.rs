@@ -898,6 +898,10 @@ struct Session {
     /// the charset's default - so column metadata must echo it.
     charset_byte: u16,
     group_concat_max_len: usize,
+    /// `max_allowed_packet`, the longest string a function builds. Read-only
+    /// in a session, as in `MySQL`, where a session copies the global when it
+    /// connects; Pintail keeps no global to change, so it is the default.
+    max_allowed_packet: usize,
     window_high_precision: bool,
     /// The connection's default collation, from the handshake charset byte:
     /// literal-only comparisons follow it, as they do in `MySQL`. `mysql2`
@@ -979,6 +983,7 @@ impl Default for Session {
             tracked_system_variables: "time_zone,autocommit,character_set_client,character_set_results,character_set_connection".to_owned(),
             charset_byte: 255,
             group_concat_max_len: 1024,
+            max_allowed_packet: pintail_exec::DEFAULT_MAX_ALLOWED_PACKET,
             window_high_precision: true,
             collation_connection: "utf8mb4_0900_ai_ci",
             conditions: Vec::new(),
@@ -1321,6 +1326,7 @@ impl SessionInstalls {
         pintail_sql::set_session_select_limit(session.sql_select_limit);
         pintail_exec::set_session_window_high_precision(Some(session.window_high_precision));
         pintail_exec::set_session_group_concat_max_len(Some(session.group_concat_max_len));
+        pintail_exec::set_session_max_allowed_packet(Some(session.max_allowed_packet));
         pintail_exec::set_session_cte_max_recursion_depth(Some(session.cte_max_recursion_depth));
         Self
     }
@@ -1330,6 +1336,7 @@ impl Drop for SessionInstalls {
     fn drop(&mut self) {
         pintail_exec::set_session_window_high_precision(None);
         pintail_exec::set_session_group_concat_max_len(None);
+        pintail_exec::set_session_max_allowed_packet(None);
         pintail_exec::set_session_cte_max_recursion_depth(None);
         pintail_sql::set_session_default_collation(None);
         pintail_sql::set_session_binary_literals(false);
@@ -2542,6 +2549,11 @@ impl Backend {
                 session.tracked_system_variables = value.to_ascii_lowercase();
                 Ok(())
             }
+            // A session holds the packet limit the server gave it.
+            "max_allowed_packet" => Err(
+                "SESSION variable 'max_allowed_packet' is read-only. Use SET GLOBAL to assign the value"
+                    .to_owned(),
+            ),
             "group_concat_max_len" => {
                 let limit = value
                     .parse::<u64>()
@@ -3006,7 +3018,7 @@ impl Handler for Backend {
                     return Response::Error(ErrorKind::ErSyntaxError, rejection.to_owned());
                 }
                 if let Err(error) = self.apply_session_command(&statement) {
-                    return Response::Error(ErrorKind::ErWrongArguments, error);
+                    return Response::Error(session_command_error_kind(&error), error);
                 }
             }
             if let Ok(mut session) = self.session.lock() {
@@ -3027,7 +3039,7 @@ impl Handler for Backend {
                     }
                     Response::Ok(OkPacket::default(), String::new())
                 }
-                Err(error) => Response::Error(ErrorKind::ErWrongArguments, error),
+                Err(error) => Response::Error(session_command_error_kind(&error), error),
             };
         }
         self.text_answer(sql, None, sql).await
@@ -4557,7 +4569,7 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
     } else if normalized == "select @@max_allowed_packet" {
         (
             "@@max_allowed_packet",
-            Value::UInt64(pintail_exec::DEFAULT_MAX_ALLOWED_PACKET as u64),
+            Value::UInt64(session.max_allowed_packet as u64),
         )
     } else if normalized == "select @@lower_case_table_names" {
         // Catalog names retain their source spelling but resolve
@@ -4832,6 +4844,16 @@ fn normalized_command(sql: &str) -> String {
         command.push_str(&word.to_ascii_lowercase());
     }
     command
+}
+
+/// The code a refused session command answers with: a read-only variable
+/// has its own, every other refusal the wrong-arguments one.
+fn session_command_error_kind(message: &str) -> ErrorKind {
+    if message.ends_with("is read-only. Use SET GLOBAL to assign the value") {
+        ErrorKind::ErVariableIsReadonly
+    } else {
+        ErrorKind::ErWrongArguments
+    }
 }
 
 fn is_session_command(sql: &str) -> bool {
@@ -6583,6 +6605,46 @@ mod result_ceiling_tests {
         assert_eq!(
             super::expanded_sql_mode("ANSI"),
             "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"
+        );
+    }
+
+    #[test]
+    fn max_allowed_packet_is_read_only_in_a_session() {
+        let directory = tempfile::tempdir().unwrap();
+        let backend = super::Backend::new(
+            directory.path(),
+            &directory.path().join("meta.db"),
+            1024,
+            super::WireLimits::default(),
+        );
+        for statement in [
+            "SET max_allowed_packet = 1024",
+            "SET SESSION max_allowed_packet = 1024",
+            "SET @@session.max_allowed_packet = 1024",
+            "SET @@max_allowed_packet = 1024",
+        ] {
+            let error = backend.apply_session_command(statement).unwrap_err();
+            assert_eq!(
+                error,
+                "SESSION variable 'max_allowed_packet' is read-only. Use SET GLOBAL to assign the value",
+                "{statement}"
+            );
+            assert_eq!(super::session_command_error_kind(&error).code(), 1621);
+        }
+        assert_eq!(
+            super::session_command_error_kind("Unknown or incorrect time zone: 'x'").code(),
+            1210
+        );
+        let session = backend.session.lock().unwrap().clone();
+        let output = super::compatibility_query(
+            "SELECT @@max_allowed_packet, @@session.max_allowed_packet",
+            "local",
+            &session,
+        )
+        .unwrap();
+        assert_eq!(
+            output.rows[0],
+            vec![pintail_types::Value::UInt64(67_108_864); 2]
         );
     }
 

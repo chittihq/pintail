@@ -1301,11 +1301,11 @@ pub enum ScalarFunction {
     ConcatWs,
     /// `REVERSE(str)` by characters.
     Reverse,
-    /// `REPEAT(str, count)`; results are capped at 4096 bytes.
+    /// `REPEAT(str, count)`; NULL past `max_allowed_packet`.
     Repeat,
     /// `INSERT(str, pos, len, newstr)` by characters.
     Insert,
-    /// `SPACE(n)`; capped like `REPEAT`.
+    /// `SPACE(n)`; NULL past `max_allowed_packet` like `REPEAT`.
     Space,
     /// `LPAD(str, len, pad)`; capped like `REPEAT`.
     Lpad,

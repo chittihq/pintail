@@ -1628,11 +1628,11 @@ impl CompiledExpr {
                 function,
                 args,
                 data_type: _,
-                argument_types: _,
+                argument_types,
                 variables: _,
                 session_zone: _,
                 literal_regex,
-                collation: _,
+                collation,
                 overflow: _,
             } => {
                 let string_arguments = args
@@ -1717,7 +1717,8 @@ impl CompiledExpr {
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Soundex => first.saturating_add(4),
                     ScalarFunction::Locate | ScalarFunction::Instr => string_arguments.saturating_mul(32).saturating_add(8),
-                    ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
+                    ScalarFunction::Replace => replace_upper_bound(first, &args[1], string(2)),
+                    ScalarFunction::RegexpReplace => {
                         first.saturating_add(first.saturating_add(1).saturating_mul(string(2)))
                     }
                     ScalarFunction::If => string(1).max(string(2)),
@@ -1836,7 +1837,13 @@ impl CompiledExpr {
                     | ScalarFunction::Insert
                     | ScalarFunction::Space
                     | ScalarFunction::Lpad
-                    | ScalarFunction::Rpad => STRING_BUILD_CAP,
+                    | ScalarFunction::Rpad => built_text_upper_bound(
+                        *function,
+                        args,
+                        pad_width_of(argument_types, *collation),
+                        batch,
+                        row,
+                    ),
                     ScalarFunction::Md5 => 32,
                     ScalarFunction::Sha1 => 40,
                     // The widest SHA-2 answer (512 bits) in hex.
@@ -1847,6 +1854,7 @@ impl CompiledExpr {
                         first.saturating_mul(2).saturating_add(24)
                     }
                 };
+                let output = within_packet_bound(*function, output);
                 let dynamic_regex_memory = if is_regex_function(*function) {
                     literal_regex
                         .as_ref()
@@ -1895,7 +1903,15 @@ impl CompiledExpr {
             Self::Binary { left, right, .. } => {
                 left.reads_uniform(batch) && right.reads_uniform(batch)
             }
-            Self::Scalar { args, .. } => args.iter().all(|argument| argument.reads_uniform(batch)),
+            Self::Scalar { function, args, .. } => {
+                // A count read from a row sizes the bound by its value,
+                // which differs between rows even where the bounds of what
+                // it reads do not.
+                count_argument_index(*function)
+                    .and_then(|index| args.get(index))
+                    .is_none_or(|count| matches!(count, Self::Literal(_)))
+                    && args.iter().all(|argument| argument.reads_uniform(batch))
+            }
         }
     }
 
@@ -1928,6 +1944,8 @@ impl CompiledExpr {
                 function,
                 args,
                 variables,
+                argument_types,
+                collation,
                 ..
             } => {
                 let bound = |index: usize| {
@@ -1935,7 +1953,7 @@ impl CompiledExpr {
                         .map_or(0, |argument| argument.string_value_upper_bound(batch, row))
                 };
                 let first = bound(0);
-                match function {
+                let text = match function {
                     ScalarFunction::UserVariableRead => {
                         let stored = match (variables, args.first()) {
                             (Some(variables), Some(Self::Literal(Value::Utf8(name)))) => variables.with_value(name, scalar_string_upper_bound).unwrap_or(0),
@@ -2000,7 +2018,8 @@ impl CompiledExpr {
                     ScalarFunction::JsonType => 16,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Soundex => first.saturating_add(4),
-                    ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
+                    ScalarFunction::Replace => replace_upper_bound(first, &args[1], bound(2)),
+                    ScalarFunction::RegexpReplace => {
                         first.saturating_add(first.saturating_add(1).saturating_mul(bound(2)))
                     }
                     ScalarFunction::If => bound(1).max(bound(2)),
@@ -2119,7 +2138,13 @@ impl CompiledExpr {
                     | ScalarFunction::Insert
                     | ScalarFunction::Space
                     | ScalarFunction::Lpad
-                    | ScalarFunction::Rpad => STRING_BUILD_CAP,
+                    | ScalarFunction::Rpad => built_text_upper_bound(
+                        *function,
+                        args,
+                        pad_width_of(argument_types, *collation),
+                        batch,
+                        row,
+                    ),
                     ScalarFunction::Md5 => 32,
                     ScalarFunction::Sha1 => 40,
                     // The widest SHA-2 answer (512 bits) in hex.
@@ -2129,9 +2154,155 @@ impl CompiledExpr {
                     ScalarFunction::Hex | ScalarFunction::ToBase64 => {
                         first.saturating_mul(2).saturating_add(24)
                     }
-                }
+                };
+                within_packet_bound(*function, text)
             }
         }
+    }
+
+    /// The count a `REPEAT`, `SPACE` or pad reads at `row`: a literal, an
+    /// integer column's cell, or an expression evaluated quietly - one that
+    /// warns, fails or touches a user variable is not known.
+    fn known_count(&self, batch: &RecordBatch, row: usize) -> Option<i64> {
+        let cell = match self {
+            Self::Literal(value) => value.clone(),
+            Self::Column(index) => batch.column(*index)?.value_owned(row)?,
+            _ if self.has_variable_effects() => return None,
+            _ => crate::execution::without_new_warnings(|| self.evaluate(batch, row).ok())??,
+        };
+        match cell {
+            Value::Null => Some(0),
+            Value::Int64(count) => Some(count),
+            Value::UInt64(count) => Some(i64::try_from(count).unwrap_or(i64::MAX)),
+            _ => None,
+        }
+    }
+}
+
+/// The argument that sizes a `REPEAT`, `SPACE` or pad result, when the
+/// function is one of them.
+const fn count_argument_index(function: ScalarFunction) -> Option<usize> {
+    match function {
+        ScalarFunction::Space => Some(0),
+        ScalarFunction::Repeat | ScalarFunction::Lpad | ScalarFunction::Rpad => Some(1),
+        _ => None,
+    }
+}
+
+/// Functions whose result is NULL rather than longer than
+/// `max_allowed_packet`, so the packet bounds what they keep.
+const fn bounded_by_packet(function: ScalarFunction) -> bool {
+    matches!(
+        function,
+        ScalarFunction::Concat
+            | ScalarFunction::ConcatWs
+            | ScalarFunction::Replace
+            | ScalarFunction::Insert
+            | ScalarFunction::ToBase64
+            | ScalarFunction::JsonObject
+            | ScalarFunction::JsonArray
+            | ScalarFunction::JsonModify { .. }
+            | ScalarFunction::JsonMergePatch
+            | ScalarFunction::JsonPretty
+    )
+}
+
+/// `bound` for `function`'s result, no more than the packet where the
+/// function answers NULL past it.
+fn within_packet_bound(function: ScalarFunction, bound: usize) -> usize {
+    if bounded_by_packet(function) {
+        bound.min(packet_limit())
+    } else {
+        bound
+    }
+}
+
+/// Upper bound on `REPLACE(text, search, replacement)`: with a literal
+/// search of `s` bytes, at most `text / s` matches each grow the text by
+/// the replacement's excess; any other search is at least one byte long.
+fn replace_upper_bound(text: usize, search: &CompiledExpr, replacement: usize) -> usize {
+    let search = match search {
+        CompiledExpr::Literal(Value::Utf8(search)) => search.len().max(1),
+        CompiledExpr::Literal(Value::Binary(search)) => search.len().max(1),
+        _ => 1,
+    };
+    text.saturating_add((text / search).saturating_mul(replacement.saturating_sub(search)))
+}
+
+/// Upper bound on the text `REPEAT`, `SPACE`, `INSERT` and the pads build.
+///
+/// Each answers NULL past the packet, and the count that sizes it is read
+/// where it is known - a literal, or an integer column's cell - so a
+/// literal past the packet keeps nothing and `LPAD(name, 10, '0')` keeps
+/// ten characters, not the packet.
+fn built_text_upper_bound(
+    function: ScalarFunction,
+    args: &[CompiledExpr],
+    pad_width: usize,
+    batch: &RecordBatch,
+    row: usize,
+) -> usize {
+    let packet = packet_limit();
+    let text = |index: usize| {
+        args.get(index)
+            .map_or(0, |argument| argument.string_value_upper_bound(batch, row))
+    };
+    let count = |index: usize| {
+        args.get(index)
+            .and_then(|argument| argument.known_count(batch, row))
+    };
+    match function {
+        ScalarFunction::Repeat => {
+            let first = text(0);
+            match count(1) {
+                Some(count) if count <= 0 => 0,
+                Some(count) => {
+                    let bytes = first.saturating_mul(usize::try_from(count).unwrap_or(usize::MAX));
+                    // A literal subject is its own size, so a result past
+                    // the packet is NULL and keeps nothing.
+                    if bytes > packet && matches!(args.first(), Some(CompiledExpr::Literal(_))) {
+                        0
+                    } else {
+                        bytes.min(packet)
+                    }
+                }
+                None if first == 0 => 0,
+                None => packet,
+            }
+        }
+        ScalarFunction::Space => match count(0) {
+            Some(count) if count <= 0 => 0,
+            Some(count) => {
+                let count = usize::try_from(count).unwrap_or(usize::MAX);
+                if count > packet { 0 } else { count }
+            }
+            None => packet,
+        },
+        ScalarFunction::Lpad | ScalarFunction::Rpad => {
+            let first = text(0);
+            match count(1) {
+                Some(target) if target < 0 => 0,
+                // A target the packet cannot hold at the subject's widest
+                // character leaves the subject cut short, or NULL.
+                Some(target)
+                    if usize::try_from(target)
+                        .unwrap_or(usize::MAX)
+                        .saturating_mul(pad_width)
+                        > packet =>
+                {
+                    first
+                }
+                // A character is at most four bytes.
+                Some(target) => usize::try_from(target)
+                    .unwrap_or(usize::MAX)
+                    .saturating_mul(4)
+                    .min(packet)
+                    .max(first),
+                None => packet.max(first),
+            }
+        }
+        ScalarFunction::Insert => text(0).saturating_add(text(3)).min(packet),
+        _ => packet,
     }
 }
 
@@ -2580,16 +2751,25 @@ fn evaluate_eager_scalar_inner(
                 } else {
                     output.extend_from_slice(scalar_string(value)?.as_bytes());
                 }
+                if output.len() > packet_limit() {
+                    return Ok(packet_overflow("concat"));
+                }
             }
             Ok(Value::Binary(output))
         }
-        ScalarFunction::Concat => Ok(Value::Utf8(
-            values
+        ScalarFunction::Concat => {
+            let parts = values
                 .iter()
                 .map(scalar_string)
-                .collect::<Result<Vec<_>, _>>()?
-                .concat(),
-        )),
+                .collect::<Result<Vec<_>, _>>()?;
+            let length = parts
+                .iter()
+                .map(String::len)
+                .fold(0_usize, usize::saturating_add);
+            Ok(within_packet("concat", length, || {
+                Value::Utf8(parts.concat())
+            }))
+        }
         ScalarFunction::Substring => {
             let start = saturating_argument(&values[1])?;
             let length = values
@@ -2753,7 +2933,12 @@ fn evaluate_eager_scalar_inner(
                 let new_value = sql_value_to_json(&pair[1]);
                 json_modify_in_place(&mut document, &steps, new_value, insert, replace);
             }
-            Ok(Value::Utf8(mysql_json_text(&document)))
+            let function = match (insert, replace) {
+                (true, true) => "json_set",
+                (true, false) => "json_insert",
+                _ => "json_replace",
+            };
+            Ok(json_text_result(function, mysql_json_text(&document)))
         }
         ScalarFunction::JsonRemove => {
             let mut document = parse_json_argument(&values[0])?;
@@ -2774,7 +2959,10 @@ fn evaluate_eager_scalar_inner(
                 let patch = parse_json_argument(patch)?;
                 merged = json_merge_patch(merged, patch);
             }
-            Ok(Value::Utf8(mysql_json_text(&merged)))
+            Ok(json_text_result(
+                "json_merge_patch",
+                mysql_json_text(&merged),
+            ))
         }
         ScalarFunction::JsonDepth => {
             let parsed = parse_json_argument(&values[0])?;
@@ -2785,7 +2973,7 @@ fn evaluate_eager_scalar_inner(
         )))),
         ScalarFunction::JsonPretty => {
             let parsed = parse_json_argument(&values[0])?;
-            Ok(Value::Utf8(json_pretty(&parsed, 0)))
+            Ok(json_text_result("json_pretty", json_pretty(&parsed, 0)))
         }
         ScalarFunction::JsonOverlaps => {
             let left = parse_json_argument(&values[0])?;
@@ -2862,6 +3050,30 @@ fn evaluate_eager_scalar_inner(
             let text = string(&values[0])?;
             let search = string(&values[1])?;
             let replacement = string(&values[2])?;
+            if !search.is_empty() && replacement.len() > search.len() {
+                // Each match adds the difference, so the result's size is
+                // the matches counted before anything is built - counted
+                // only when even a match at every position could pass the
+                // packet, which keeps the common case at one pass.
+                let growth = replacement.len() - search.len();
+                let widest = (text.len() / search.len()).saturating_mul(growth);
+                if text.len().saturating_add(widest) > packet_limit() {
+                    let size = |text: &str| {
+                        if binary {
+                            text.chars().count()
+                        } else {
+                            text.len()
+                        }
+                    };
+                    let matches = text.matches(search.as_str()).count();
+                    let length = size(&text).saturating_add(
+                        matches.saturating_mul(size(&replacement).saturating_sub(size(&search))),
+                    );
+                    if length > packet_limit() {
+                        return Ok(packet_overflow("replace"));
+                    }
+                }
+            }
             let result = if search.is_empty() {
                 text
             } else {
@@ -3075,14 +3287,8 @@ fn evaluate_eager_scalar_inner(
             // built. Without the check, CAST(x AS BINARY(2000000000))
             // allocated two gigabytes for every row it touched.
             if let (Some(bytes), Value::Binary(data)) = (characters, &mut value) {
-                let limit = crate::DEFAULT_MAX_ALLOWED_PACKET;
-                if bytes as usize > limit {
-                    crate::execution::record_statement_warning(crate::ConversionWarning {
-                        code: 1301,
-                        sql_state: b"HY000",
-                        message: format!("Result of cast_as_binary() was larger than max_allowed_packet ({limit}) - truncated"),
-                    });
-                    return Ok(Value::Null);
+                if bytes as usize > packet_limit() {
+                    return Ok(packet_overflow("cast_as_binary"));
                 }
                 data.resize(bytes as usize, 0);
             }
@@ -3329,6 +3535,31 @@ fn evaluate_eager_scalar_inner(
                 .filter(|value| !matches!(value, Value::Null))
                 .map(text)
                 .collect::<Result<Vec<_>, _>>()?;
+            // MySQL measures each join before making it: the first part
+            // with a separator after it, then each part with the separator
+            // before it. The result is the last of those, except a single
+            // part, which is refused when it and one separator would not fit.
+            let size = |text: &str| {
+                if binary {
+                    text.chars().count()
+                } else {
+                    text.len()
+                }
+            };
+            let separator_size = size(&separator);
+            let joined_size = parts
+                .iter()
+                .map(|part| size(part))
+                .fold(0_usize, usize::saturating_add)
+                .saturating_add(separator_size.saturating_mul(parts.len().saturating_sub(1)));
+            let measured = if parts.len() == 1 {
+                joined_size.saturating_add(separator_size)
+            } else {
+                joined_size
+            };
+            if measured > packet_limit() {
+                return Ok(packet_overflow("concat_ws"));
+            }
             let joined = parts.join(&separator);
             Ok(if binary {
                 Value::Binary(chars_as_bytes(&joined))
@@ -3341,11 +3572,7 @@ fn evaluate_eager_scalar_inner(
         )),
         ScalarFunction::Repeat => {
             let text = scalar_string(&values[0])?;
-            let count = mysql_i64(&values[1])?;
-            if count <= 0 {
-                return Ok(Value::Utf8(String::new()));
-            }
-            repeat_capped(&text, count)
+            Ok(mysql_repeat("repeat", &text, count_argument(&values[1])?))
         }
         ScalarFunction::Insert => {
             // The subject determines the charset. The initial position check
@@ -3385,18 +3612,34 @@ fn evaluate_eager_scalar_inner(
                 usize::try_from(start).map_err(|_| ExecError::NumericOverflow)?,
                 usize::try_from(end).map_err(|_| ExecError::NumericOverflow)?,
             );
+            // A binary string's characters are its bytes.
+            let size = |characters: &[char]| -> usize {
+                if binary {
+                    characters.len()
+                } else {
+                    characters
+                        .iter()
+                        .map(|character| character.len_utf8())
+                        .sum()
+                }
+            };
+            let replaced = if binary {
+                replacement.chars().count()
+            } else {
+                replacement.len()
+            };
+            let length = size(&characters[..start])
+                .saturating_add(replaced)
+                .saturating_add(size(&characters[end..]));
+            if length > packet_limit() {
+                return Ok(packet_overflow("insert"));
+            }
             let mut result: String = characters[..start].iter().collect();
             result.push_str(&replacement);
             result.extend(&characters[end..]);
             Ok(result_value(result))
         }
-        ScalarFunction::Space => {
-            let count = mysql_i64(&values[0])?;
-            if count <= 0 {
-                return Ok(Value::Utf8(String::new()));
-            }
-            repeat_capped(" ", count)
-        }
+        ScalarFunction::Space => Ok(mysql_repeat("space", " ", count_argument(&values[0])?)),
         ScalarFunction::Lpad | ScalarFunction::Rpad => {
             // The subject determines whether lengths count bytes or characters.
             let binary = matches!(values[0], Value::Binary(_));
@@ -3404,10 +3647,11 @@ fn evaluate_eager_scalar_inner(
                 if binary { byte_text } else { scalar_string };
             let padded = mysql_pad(
                 &text(&values[0])?,
-                mysql_i64(&values[1])?,
+                count_argument(&values[1])?,
                 &text(&values[2])?,
                 matches!(function, ScalarFunction::Lpad),
-            )?;
+                pad_character_width(&values[0], collation),
+            );
             Ok(match padded {
                 Value::Utf8(padded) if binary => Value::Binary(chars_as_bytes(&padded)),
                 padded => padded,
@@ -3525,16 +3769,29 @@ fn evaluate_eager_scalar_inner(
             };
             Ok(Value::UInt64(u64::from(crc32fast::hash(&input))))
         }
-        ScalarFunction::UserVariableRead | ScalarFunction::UserVariableAssign => unreachable!("variables evaluate with statement state"),
+        ScalarFunction::UserVariableRead | ScalarFunction::UserVariableAssign => {
+            unreachable!("variables evaluate with statement state")
+        }
         ScalarFunction::UuidShort => {
-            use std::sync::{OnceLock, atomic::{AtomicU64, Ordering as AtomicOrdering}};
+            use std::sync::{
+                OnceLock,
+                atomic::{AtomicU64, Ordering as AtomicOrdering},
+            };
             static NEXT: OnceLock<AtomicU64> = OnceLock::new();
             let sequence = NEXT.get_or_init(|| {
-                let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
+                let seconds = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |elapsed| elapsed.as_secs());
                 AtomicU64::new((1_u64 << 56) | ((seconds & 0xffff_ffff) << 24))
             });
-            sequence.fetch_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |current| current.checked_add(1))
-                .map(Value::UInt64).map_err(|_| ExecError::NumericOverflow)
+            sequence
+                .fetch_update(
+                    AtomicOrdering::Relaxed,
+                    AtomicOrdering::Relaxed,
+                    |current| current.checked_add(1),
+                )
+                .map(Value::UInt64)
+                .map_err(|_| ExecError::NumericOverflow)
         }
         ScalarFunction::Uuid => {
             // Version-4 layout from the same generator RAND uses. MySQL
@@ -3670,7 +3927,13 @@ fn evaluate_eager_scalar_inner(
                 value => scalar_string(value)?.into_bytes(),
             };
             // MySQL breaks the encoding every 76 characters, so a 58-byte
-            // subject encodes to 81 characters rather than 80.
+            // subject encodes to 81 characters rather than 80. The length,
+            // breaks included, is known before encoding.
+            let characters = bytes.len().div_ceil(3).saturating_mul(4);
+            let length = characters.saturating_add(characters.saturating_sub(1) / 76);
+            if length > packet_limit() {
+                return Ok(packet_overflow("to_base64"));
+            }
             let encoded = base64_encode(&bytes);
             let mut wrapped = String::with_capacity(encoded.len() + encoded.len() / 76);
             for (index, chunk) in encoded.as_bytes().chunks(76).enumerate() {
@@ -3841,13 +4104,21 @@ fn evaluate_eager_scalar_inner(
             {
                 let fields = |value: NaiveDateTime, written: Option<[u32; 7]>| {
                     let [year, month, day] = written.map_or(
-                        [u32::try_from(value.year()).unwrap_or(0), value.month(), value.day()],
+                        [
+                            u32::try_from(value.year()).unwrap_or(0),
+                            value.month(),
+                            value.day(),
+                        ],
                         |[year, month, day, ..]| [year, month, day],
                     );
                     (i64::from(year) * 12 + i64::from(month), day, value.time())
                 };
                 let (from, to) = (fields(from, from_fields), fields(to, to_fields));
-                let (early, late, sign) = if to >= from { (from, to, 1) } else { (to, from, -1) };
+                let (early, late, sign) = if to >= from {
+                    (from, to, 1)
+                } else {
+                    (to, from, -1)
+                };
                 let months =
                     sign * (late.0 - early.0 - i64::from((late.1, late.2) < (early.1, early.2)));
                 return Ok(Value::Int64(if unit == IntervalUnit::Year {
@@ -3885,7 +4156,8 @@ fn evaluate_eager_scalar_inner(
             ) {
                 return Ok(value);
             }
-            if let Some(value) = cast_partial_calendar(&values[0], DataType::Date32, values.get(1)) {
+            if let Some(value) = cast_partial_calendar(&values[0], DataType::Date32, values.get(1))
+            {
                 return Ok(value);
             }
             let text = scalar_string(&values[0])?;
@@ -3908,13 +4180,15 @@ fn evaluate_eager_scalar_inner(
             ) {
                 return Ok(value);
             }
-            let fsp = match data_type { Some(DataType::Time64 { fsp }) => fsp, _ => 0 };
+            let fsp = match data_type {
+                Some(DataType::Time64 { fsp }) => fsp,
+                _ => 0,
+            };
             Ok(cast_text_time(&scalar_string(&values[0])?, fsp).map_or(Value::Null, Value::Utf8))
         }
 
         ScalarFunction::DatePart(part) => {
-            let lenient =
-                stored_temporal(argument_types, 0) || allows_invalid_dates(values.get(1));
+            let lenient = stored_temporal(argument_types, 0) || allows_invalid_dates(values.get(1));
             if lenient
                 && let Value::Utf8(text) = &values[0]
                 && let Some((date, _)) = canonical_temporal_parts_policy(text, true, true)
@@ -4061,8 +4335,10 @@ fn evaluate_eager_scalar_inner(
             } else {
                 crate::calendar_locale::locale(0)
             };
-            Ok(temporal::mysql_date_format_calendar(fields, &format, locale)
-                .map_or(Value::Null, Value::Utf8))
+            Ok(
+                temporal::mysql_date_format_calendar(fields, &format, locale)
+                    .map_or(Value::Null, Value::Utf8),
+            )
         }
         ScalarFunction::TimeFormat => {
             // The time as TIME() reads the argument: the clock of a date or
@@ -4082,8 +4358,10 @@ fn evaluate_eager_scalar_inner(
             };
             let parsed = parse_temporal_micros(&time).ok_or(ExecError::InvalidDateTime)?;
             let format = scalar_string(&values[1])?;
-            Ok(temporal::mysql_time_format(parsed.micros, &format)
-                .map_or(Value::Null, Value::Utf8))
+            Ok(
+                temporal::mysql_time_format(parsed.micros, &format)
+                    .map_or(Value::Null, Value::Utf8),
+            )
         }
         ScalarFunction::DateInterval { unit, subtract } => {
             let input = scalar_string(&values[0])?;
@@ -4099,7 +4377,9 @@ fn evaluate_eager_scalar_inner(
                 };
                 let amount = if unit == IntervalUnit::Second {
                     interval_second_micros(&values[1])?
-                } else { i128::from(mysql_i64(&values[1])?) * seconds * 1_000_000 };
+                } else {
+                    i128::from(mysql_i64(&values[1])?) * seconds * 1_000_000
+                };
                 let total = time.micros + if subtract { -amount } else { amount };
                 // Interval arithmetic rejects an out-of-range TIME; ADDTIME
                 // uses the same duration carrier but clamps its result.
@@ -4116,8 +4396,7 @@ fn evaluate_eager_scalar_inner(
                 values.get(2),
             )
             .map_or(Ok(input), |value| scalar_string(&value))?;
-            let lenient =
-                stored_temporal(argument_types, 0) || allows_invalid_dates(values.get(2));
+            let lenient = stored_temporal(argument_types, 0) || allows_invalid_dates(values.get(2));
             let by_month = matches!(unit, IntervalUnit::Year | IntervalUnit::Month);
             let date_only = input.len() <= 10
                 && matches!(
@@ -4233,7 +4512,10 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::DayName => {
             let text = scalar_string(&values[0])?;
             let value = if stored_temporal(argument_types, 0)
-                || values.iter().skip(1).any(|extra| allows_invalid_dates(Some(extra)))
+                || values
+                    .iter()
+                    .skip(1)
+                    .any(|extra| allows_invalid_dates(Some(extra)))
             {
                 stored_datetime(&text)?
             } else {
@@ -4251,14 +4533,18 @@ fn evaluate_eager_scalar_inner(
                 &text,
                 true,
                 stored_temporal(argument_types, 0)
-                    || values.iter().skip(1).any(|extra| allows_invalid_dates(Some(extra))),
+                    || values
+                        .iter()
+                        .skip(1)
+                        .any(|extra| allows_invalid_dates(Some(extra))),
             ) {
                 date[5..7]
                     .parse::<usize>()
                     .map_err(|_| ExecError::InvalidDateTime)?
-            } else if let Some([_, month, ..]) = matches!(values[0], Value::Int64(_) | Value::UInt64(_))
-                .then(|| temporal::numeric_calendar(text.parse().ok()?))
-                .flatten()
+            } else if let Some([_, month, ..]) =
+                matches!(values[0], Value::Int64(_) | Value::UInt64(_))
+                    .then(|| temporal::numeric_calendar(text.parse().ok()?))
+                    .flatten()
             {
                 // A packed number keeps a zero day: 20240200 is February.
                 month as usize
@@ -4301,13 +4587,9 @@ fn evaluate_eager_scalar_inner(
                     Some(Value::Int64(policy)) => u64::try_from(*policy).unwrap_or(0),
                     _ => 0,
                 };
-                let [year, month, ..] = partial_calendar(
-                    &text,
-                    false,
-                    matches!(values[0], Value::Utf8(_)),
-                    policy,
-                )
-                .ok_or(ExecError::InvalidDateTime)?;
+                let [year, month, ..] =
+                    partial_calendar(&text, false, matches!(values[0], Value::Utf8(_)), policy)
+                        .ok_or(ExecError::InvalidDateTime)?;
                 (year, month)
             };
             let days = mysql_month_days(year, month).ok_or(ExecError::InvalidDateTime)?;
@@ -4401,13 +4683,11 @@ fn evaluate_eager_scalar_inner(
             ))
         }
         ScalarFunction::AddTime | ScalarFunction::SubTime => {
-            let left = match temporal_argument(
-                &values[0],
-                argument_types.first().copied().flatten(),
-            )? {
-                Some(left) => Some(left),
-                None => partial_datetime_micros(&values[0], argument_types),
-            };
+            let left =
+                match temporal_argument(&values[0], argument_types.first().copied().flatten())? {
+                    Some(left) => Some(left),
+                    None => partial_datetime_micros(&values[0], argument_types),
+                };
             let (Some(left), Some(right)) = (
                 left,
                 temporal_argument(&values[1], argument_types.get(1).copied().flatten())?,
@@ -4432,7 +4712,9 @@ fn evaluate_eager_scalar_inner(
             };
             let fsp = if matches!(
                 argument_types.first(),
-                Some(Some(DataType::Time64 { .. } | DataType::Date32 | DataType::DateTime64 { .. }))
+                Some(Some(
+                    DataType::Time64 { .. } | DataType::Date32 | DataType::DateTime64 { .. }
+                ))
             ) {
                 left.fsp.max(right.fsp)
             } else {
@@ -4551,10 +4833,16 @@ fn evaluate_eager_scalar_inner(
                 .to_string(),
         )),
         ScalarFunction::UtcDate => Ok(Value::Utf8(
-            chrono::Utc::now().naive_utc().format("%Y-%m-%d").to_string(),
+            chrono::Utc::now()
+                .naive_utc()
+                .format("%Y-%m-%d")
+                .to_string(),
         )),
         ScalarFunction::UtcTime => Ok(Value::Utf8(
-            chrono::Utc::now().naive_utc().format("%H:%M:%S").to_string(),
+            chrono::Utc::now()
+                .naive_utc()
+                .format("%H:%M:%S")
+                .to_string(),
         )),
         ScalarFunction::StrToDate => {
             let text = scalar_string(&values[0])?;
@@ -4687,7 +4975,9 @@ fn evaluate_eager_scalar_inner(
                 &mut crate::execution::InterruptCounter::checked(),
             )?;
             if matches!(function, ScalarFunction::RegexpSubstr) {
-                return Ok(found.map_or(Value::Null, |found| Value::Utf8(found.as_str().to_owned())));
+                return Ok(
+                    found.map_or(Value::Null, |found| Value::Utf8(found.as_str().to_owned()))
+                );
             }
             let after = match values.get(4).map(mysql_i64).transpose()? {
                 None | Some(0) => false,
@@ -4773,8 +5063,14 @@ fn evaluate_eager_scalar_inner(
             let hour = mysql_i64(&values[0])?;
             let minute = mysql_i64(&values[1])?;
             let truncate = matches!(values.get(3), Some(Value::Boolean(true)));
-            Ok(make_time(hour, minute, &values[2], argument_types.get(2).copied().flatten(), truncate)
-                .map_or(Value::Null, Value::Utf8))
+            Ok(make_time(
+                hour,
+                minute,
+                &values[2],
+                argument_types.get(2).copied().flatten(),
+                truncate,
+            )
+            .map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::JsonValue => {
             // JSON_VALUE extracts and unquotes; a RETURNING type is lowered
@@ -4948,17 +5244,23 @@ fn evaluate_eager_scalar_inner(
                     members.push((key, entry));
                 }
             }
-            Ok(Value::Utf8(mysql_json_object_text(&members)))
+            Ok(json_text_result(
+                "json_object",
+                mysql_json_object_text(&members),
+            ))
         }
-        ScalarFunction::JsonArray => Ok(Value::Utf8(mysql_json_array_text(
-            &values
-                .iter()
-                .enumerate()
-                .map(|(index, value)| {
-                    json_value_of_typed(value, argument_types.get(index).copied().flatten())
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        ))),
+        ScalarFunction::JsonArray => Ok(json_text_result(
+            "json_array",
+            mysql_json_array_text(
+                &values
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        json_value_of_typed(value, argument_types.get(index).copied().flatten())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+        )),
         ScalarFunction::JsonUnquote => {
             let text = scalar_string(&values[0])?;
             match serde_json::from_str::<serde_json::Value>(&text) {
@@ -4973,13 +5275,11 @@ fn evaluate_eager_scalar_inner(
             } else {
                 let text = scalar_string(&values[0])?;
                 // A seventh fractional digit rounds the microsecond.
-                let rounds_up = text
-                    .rsplit_once('.')
-                    .is_some_and(|(_, fraction)| {
-                        fraction.len() > 6
-                            && fraction.bytes().all(|byte| byte.is_ascii_digit())
-                            && fraction.as_bytes()[6] >= b'5'
-                    });
+                let rounds_up = text.rsplit_once('.').is_some_and(|(_, fraction)| {
+                    fraction.len() > 6
+                        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+                        && fraction.as_bytes()[6] >= b'5'
+                });
                 parse_mysql_datetime(&text)
                     .ok()
                     .and_then(|value| {
@@ -7154,46 +7454,133 @@ fn decimal_units_of(value: &Value) -> Option<(i128, u8)> {
     }
 }
 
-/// `REPEAT`/`SPACE`/pad results are capped at 4096 bytes
-/// (`docs/limitations.md`); `MySQL`'s cap is `max_allowed_packet`.
-const STRING_BUILD_CAP: usize = 4096;
-
-fn repeat_capped(text: &str, count: i64) -> Result<Value, ExecError> {
-    let count = usize::try_from(count).unwrap_or(usize::MAX);
-    let bytes = text.len().saturating_mul(count);
-    if bytes > STRING_BUILD_CAP {
-        return Err(ExecError::NumericOverflow);
-    }
-    Ok(Value::Utf8(text.repeat(count)))
+/// The longest string a function may build: the session's
+/// `max_allowed_packet`.
+fn packet_limit() -> usize {
+    crate::execution::session_max_allowed_packet()
 }
 
-fn mysql_pad(text: &str, target: i64, pad: &str, left: bool) -> Result<Value, ExecError> {
+/// What a string function answers when its result would be longer than
+/// `max_allowed_packet`: NULL, with warning 1301 naming it.
+fn packet_overflow(function: &str) -> Value {
+    let limit = packet_limit();
+    crate::execution::record_statement_warning(crate::ConversionWarning {
+        code: 1301,
+        sql_state: b"HY000",
+        message: format!(
+            "Result of {function}() was larger than max_allowed_packet ({limit}) - truncated"
+        ),
+    });
+    Value::Null
+}
+
+/// A text result of `bytes` bytes, or NULL with the packet warning when it
+/// is longer than the packet allows.
+fn within_packet(function: &str, bytes: usize, build: impl FnOnce() -> Value) -> Value {
+    if bytes > packet_limit() {
+        packet_overflow(function)
+    } else {
+        build()
+    }
+}
+
+/// A JSON function's document as text, or NULL with the packet warning
+/// when the text is longer than the packet allows. The document is no
+/// larger than its arguments put together, so it is measured once built.
+fn json_text_result(function: &str, text: String) -> Value {
+    if text.len() > packet_limit() {
+        packet_overflow(function)
+    } else {
+        Value::Utf8(text)
+    }
+}
+
+/// A count argument as `REPEAT`, `SPACE` and the pads read it: an unsigned
+/// value past the signed range is a very large count, not an error.
+fn count_argument(value: &Value) -> Result<i64, ExecError> {
+    match value {
+        Value::UInt64(count) => Ok(i64::try_from(*count).unwrap_or(i64::MAX)),
+        other => mysql_i64(other),
+    }
+}
+
+/// `REPEAT(text, count)`: its size is known before anything is built, so a
+/// result past the packet is refused without allocating it.
+fn mysql_repeat(function: &str, text: &str, count: i64) -> Value {
+    if count <= 0 || text.is_empty() {
+        return Value::Utf8(String::new());
+    }
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    within_packet(function, text.len().saturating_mul(count), || {
+        Value::Utf8(text.repeat(count))
+    })
+}
+
+/// The most bytes one character of a pad's result can take: `MySQL` sizes
+/// the result as the target length times this before padding, so a target
+/// that could not fit is refused even where the actual text would.
+fn pad_character_width(subject: &Value, collation: Collation) -> usize {
+    if matches!(subject, Value::Binary(_)) || single_byte_collation(collation) {
+        1
+    } else {
+        4
+    }
+}
+
+/// [`pad_character_width`] as far as the plan knows it, for sizing a result
+/// before it is built: four bytes only for a subject typed as text in a
+/// multi-byte collation, one otherwise, which can only make a bound larger.
+fn pad_width_of(argument_types: &[Option<DataType>], collation: Collation) -> usize {
+    if argument_types.first().copied().flatten() == Some(DataType::Utf8)
+        && !single_byte_collation(collation)
+    {
+        4
+    } else {
+        1
+    }
+}
+
+const fn single_byte_collation(collation: Collation) -> bool {
+    matches!(
+        collation,
+        Collation::Latin1SwedishCi
+            | Collation::Latin1Bin
+            | Collation::Latin2GeneralCi
+            | Collation::Latin2Bin
+            | Collation::Tis620ThaiCi
+            | Collation::Tis620Bin
+            | Collation::Koi8RGeneralCi
+            | Collation::Koi8RBin
+    )
+}
+
+fn mysql_pad(text: &str, target: i64, pad: &str, left: bool, character_width: usize) -> Value {
     if target < 0 {
-        return Ok(Value::Null);
+        return Value::Null;
     }
     let target = usize::try_from(target).unwrap_or(usize::MAX);
-    if target > STRING_BUILD_CAP {
-        return Err(ExecError::NumericOverflow);
-    }
     let length = text.chars().count();
     if target <= length {
-        return Ok(Value::Utf8(text.chars().take(target).collect()));
+        return Value::Utf8(text.chars().take(target).collect());
+    }
+    if target.saturating_mul(character_width) > packet_limit() {
+        return packet_overflow(if left { "lpad" } else { "rpad" });
     }
     if pad.is_empty() {
         // Padding is required and there is nothing to pad with: MySQL 8.4
         // answers an empty string (measured), not NULL.
-        return Ok(Value::Utf8(String::new()));
+        return Value::Utf8(String::new());
     }
     let filler = pad
         .chars()
         .cycle()
         .take(target - length)
         .collect::<String>();
-    Ok(Value::Utf8(if left {
+    Value::Utf8(if left {
         format!("{filler}{text}")
     } else {
         format!("{text}{filler}")
-    }))
+    })
 }
 
 fn hex_upper(bytes: &[u8]) -> String {
