@@ -17,6 +17,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keys on tables read with unique-key visibility (polling replicas, and
   change-capture tables with a secondary UNIQUE key that need
   reconciliation). Introduced in 0.1.7.
+- The block cache no longer releases the memory charge of blocks running
+  scans still hold, so memory pressure cannot report as free memory that is
+  still in use. Deleting segment files no longer leaves stale keys in the
+  cache's eviction queue, which grew without bound on a long-running
+  server.
+- The sparse-index cache counts the text and binary bytes of primary keys,
+  so tables with long text keys stay within its 16 MiB bound.
+- GROUP BY on date parts no longer folds in parallel with per-worker totals
+  that were never charged to the query's memory limit; when they do not
+  fit, the query takes the ordinary aggregation path.
+- A batched IN/EXISTS subquery that fails part-way gives back what its
+  discarded results were charged, so the per-row fallback no longer fails
+  with a spurious memory-limit error.
 - The query audit queue is bounded at 32 MiB. When the metadata store falls
   behind, HTTP queries wait for room instead of the server buffering every
   statement's text without limit. A batch refused because the store is
