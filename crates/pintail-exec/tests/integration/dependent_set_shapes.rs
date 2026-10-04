@@ -737,3 +737,44 @@ fn a_derived_table_names_its_columns_in_its_alias() {
         "one name for two columns"
     );
 }
+
+#[test]
+fn non_null_row_membership_skips_the_undecided_index() {
+    let fixture = fixture(3_000);
+    let listed = ran(
+        &fixture,
+        "SELECT p.id, (p.id, p.id) IN \
+           (SELECT q.id, q.id FROM parcels q WHERE q.id <= 20), \
+           (p.id, p.id) NOT IN \
+           (SELECT q.id, q.id FROM parcels q WHERE q.id <= 20) \
+         FROM parcels p ORDER BY p.id",
+    );
+    assert_eq!(listed.rows.len(), 3_000);
+    for row in &listed.rows {
+        let id: u64 = row[0].parse().expect("id");
+        assert_eq!(
+            row[1..],
+            [
+                membership(id <= 20, false, false),
+                membership(id <= 20, false, true)
+            ]
+        );
+    }
+    assert_eq!(listed.indexes, 2, "{}", listed.profile);
+    // The two uncorrelated, false EXISTS queries run once each, besides
+    // the 32 warmup executions of each matching index.
+    assert!(listed.per_row <= 66, "{}", listed.profile);
+
+    // A NOT NULL declaration is nullable after an outer join. Those rows
+    // still need the undecided check, even though the members have no NULL.
+    let extended = ran(
+        &fixture,
+        "SELECT p.id, (z.id, z.id) IN (SELECT q.id, q.id FROM zones q WHERE q.open = 1) \
+         FROM parcels p LEFT JOIN zones z ON z.id = p.id ORDER BY p.id",
+    );
+    assert_eq!(extended.rows.len(), 3_000);
+    for row in &extended.rows {
+        let id: u64 = row[0].parse().expect("id");
+        assert_eq!(row[1], membership(id == 1 || id == 3, id > 4, false));
+    }
+}

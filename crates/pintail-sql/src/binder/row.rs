@@ -352,3 +352,46 @@ pub(super) fn in_subquery(
         membership
     }))
 }
+
+/// A conjunction of equalities between non-NULL plain integer or text
+/// values cannot be undecided. In particular the second EXISTS of row IN
+/// need not search for an unknown equality when neither row has NULLs.
+/// Keep conversions and computed expressions: their declared nullability
+/// alone does not prove that evaluating them cannot fail or yield NULL.
+pub(super) fn non_null_equality(expr: &crate::BoundExpr) -> bool {
+    use crate::{BinaryOp, BoundExprKind};
+    use pintail_types::DataType;
+    let BoundExprKind::Binary { op, left, right } = &expr.kind else {
+        return false;
+    };
+    if *op == BinaryOp::And {
+        return non_null_equality(left) && non_null_equality(right);
+    }
+    let plain = |side: &crate::BoundExpr| {
+        !side.nullable
+            && matches!(
+                side.kind,
+                BoundExprKind::Column(_) | BoundExprKind::Literal(_)
+            )
+    };
+    let integer = |kind: Option<DataType>| {
+        matches!(
+            kind,
+            Some(
+                DataType::Int8
+                    | DataType::Int16
+                    | DataType::Int32
+                    | DataType::Int64
+                    | DataType::UInt8
+                    | DataType::UInt16
+                    | DataType::UInt32
+                    | DataType::UInt64
+            )
+        )
+    };
+    *op == BinaryOp::Equal
+        && plain(left)
+        && plain(right)
+        && ((integer(left.data_type) && integer(right.data_type))
+            || (left.data_type == Some(DataType::Utf8) && right.data_type == Some(DataType::Utf8)))
+}

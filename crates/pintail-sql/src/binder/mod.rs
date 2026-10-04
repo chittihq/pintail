@@ -5721,6 +5721,13 @@ fn bind_is_null(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let expr = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
+    if row::non_null_equality(&expr) {
+        return Ok(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Boolean(negated)),
+            data_type: Some(DataType::Boolean),
+            nullable: false,
+        });
+    }
     Ok(BoundExpr {
         kind: BoundExprKind::IsNull {
             expr: Box::new(expr),
