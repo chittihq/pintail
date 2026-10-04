@@ -8919,6 +8919,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let execute = |limit| {
+            let before = super::dependent_subquery_executions();
             let provider = StaticProvider {
                 batches: Mutex::new(batches.clone()),
             };
@@ -8937,13 +8938,21 @@ mod tests {
                     );
                 }
             }
-            (rows, execution.spill_metrics())
+            (
+                rows,
+                execution.spill_metrics(),
+                super::dependent_subquery_executions() - before,
+            )
         };
-        let (wide, _) = execute(64 * 1024 * 1024);
-        let (tight, spill) = execute(256 * 1024);
+        let (wide, _, _) = execute(64 * 1024 * 1024);
+        let (tight, spill, subqueries) = execute(256 * 1024);
         assert_eq!(tight, wide);
         assert_eq!(tight.len(), 512);
         assert!(spill.files > 0);
+        assert!(
+            subqueries <= 1024,
+            "unequal replayed keys must not resolve subqueries: {subqueries}"
+        );
     }
 
     /// The same question as the test above with an INNER join, which hoists

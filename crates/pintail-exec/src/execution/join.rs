@@ -4593,6 +4593,13 @@ pub(super) fn execute_nested_loop_join(
         }
         _ => None,
     };
+    // A spilled side has no buckets, but the equalities still reject
+    // nonmatching pairs before their dependent subqueries are resolved.
+    let replay_filter = if right_rows.run.is_some() && loop_keys.is_some() {
+        loop_key_filter(keys, &columns, collation)?
+    } else {
+        None
+    };
     let mut output = LoopRows::new();
     // A condition with no subquery reads only the pair's own values, so it
     // compiles once. Cloning, resolving and compiling it for every
@@ -4686,7 +4693,13 @@ pub(super) fn execute_nested_loop_join(
                 memory.reserve(candidate_batch_bytes)?;
                 let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
                 let batch = RecordBatch::new(1, vectors)?;
-                let accepted = if let Some(fixed) = &fixed {
+                let possible = match &replay_filter {
+                    Some(filter) => predicate_truth(&filter.evaluate(&batch, 0)?)?,
+                    None => true,
+                };
+                let accepted = if !possible {
+                    false
+                } else if let Some(fixed) = &fixed {
                     predicate_truth(&fixed.evaluate(&batch, 0)?)?
                 } else {
                     let mut predicate = condition.clone();
@@ -4773,6 +4786,30 @@ pub(super) fn execute_nested_loop_join(
     drop(right_rows);
     memory.release(retained.saturating_add(keys_reserved));
     output.finish(memory, collation)
+}
+
+/// The bucket equalities as a predicate over a replayed pair. A spill
+/// gives up the in-memory index, not the fact that unequal keys cannot
+/// match. Compile once, with the original comparison types and collations.
+fn loop_key_filter(
+    keys: &[(BoundExpr, BoundExpr)],
+    columns: &[BoundColumn],
+    collation: Collation,
+) -> Result<Option<CompiledExpr>, ExecError> {
+    let binary = |op, left: BoundExpr, right: BoundExpr| BoundExpr {
+        nullable: left.nullable || right.nullable,
+        data_type: Some(DataType::Boolean),
+        kind: pintail_sql::BoundExprKind::Binary {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    };
+    keys.iter()
+        .map(|(left, right)| binary(pintail_sql::BinaryOp::Equal, left.clone(), right.clone()))
+        .reduce(|left, right| binary(pintail_sql::BinaryOp::And, left, right))
+        .map(|expression| CompiledExpr::compile(&expression, columns, collation))
+        .transpose()
 }
 
 /// The compiled equality keys a dependent join buckets its right input by,
