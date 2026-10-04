@@ -318,3 +318,37 @@ fn repeated_constant_conversion_warnings_keep_their_multiplicity() {
         false,
     );
 }
+
+#[test]
+fn constant_temporal_subtrees_keep_arithmetic_vectorized() {
+    let inputs = [
+        Some("0000-00-00"),
+        Some("2024-02-29"),
+        Some("2024-03-01"),
+        None,
+    ];
+    for sql in [
+        "TO_DAYS(v) - TO_DAYS('2024-03-01')",
+        "TO_SECONDS(v) - TO_SECONDS('2024-03-01')",
+    ] {
+        check(DataType::Date32, &inputs, sql, true);
+    }
+}
+
+#[test]
+fn warning_constants_decline_without_leaking_diagnostics() {
+    let source = DataType::Date32;
+    let batch = RecordBatch::new(
+        2,
+        vec![ColumnVector::new(source, vec![Value::Utf8("0000-00-00".into()); 2]).expect("column")],
+    )
+    .expect("batch");
+    let (expression, declared) = compile(source, "TO_DAYS(v) - TO_DAYS('0000-00-00')");
+    let _ = warnings();
+    assert!(expression.evaluate_column(&batch, Some(declared)).is_none());
+    assert_eq!(warnings().1, 0);
+    for row in 0..2 {
+        assert_eq!(expression.evaluate(&batch, row).expect("row"), Value::Null);
+    }
+    assert_eq!(warnings().1, 4);
+}

@@ -124,7 +124,7 @@ pub(super) fn scalar_column(
         .map(|argument| operand(batch, argument, effects))
         .collect::<Option<Vec<_>>>()?;
     if !operands.iter().any(Operand::varies) {
-        return None;
+        return super::temporal::repeated_column(batch, call, &operands, effects);
     }
     if let Some(packed) = packed(batch, call, &operands, declared) {
         return Some(packed);

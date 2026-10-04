@@ -75,7 +75,9 @@ pub(in super::super) fn repeated_column(
                 None
             }
         });
-    let (position, source) = varying.next()?;
+    let Some((position, source)) = varying.next() else {
+        return constant_column(batch, call, operands);
+    };
     if varying.next().is_some()
         || !matches!(
             source.data_type(),
@@ -130,6 +132,47 @@ pub(in super::super) fn repeated_column(
         counters.temporal_values_evaluated = counters
             .temporal_values_evaluated
             .saturating_add(u64::try_from(representatives.len()).unwrap_or(u64::MAX));
+    });
+    Some(column)
+}
+
+/// A constant temporal subtree can keep an enclosing arithmetic expression
+/// off the row path too. For example, `TO_DAYS` of the statement's captured
+/// date remains a scalar node even though its argument is a literal.
+/// Warning-producing constants decline: those diagnostics belong to each
+/// row at its position among the surrounding expression's other warnings.
+fn constant_column(
+    batch: &RecordBatch,
+    call: &Call<'_>,
+    operands: &[Operand<'_>],
+) -> Option<ColumnVector> {
+    let codes = (0..batch.row_count())
+        .map(|row| u32::from(batch.selection().is_selected(row)))
+        .collect::<Vec<_>>();
+    if !codes.contains(&1) {
+        return gather(call.data_type?, &codes, &[Value::Null]);
+    }
+    let arguments = operands
+        .iter()
+        .map(|operand| match operand {
+            Operand::Constant(value) => Some((*value).clone()),
+            Operand::Column(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let answer = crate::execution::without_new_warnings(|| {
+        evaluate_eager_scalar_typed(
+            call.function,
+            &arguments,
+            call.argument_types,
+            call.literal_regex,
+            call.data_type,
+            call.collation,
+        )
+        .ok()
+    })??;
+    let column = gather(call.data_type?, &codes, &[Value::Null, answer])?;
+    crate::counters::count(|counters| {
+        counters.temporal_values_evaluated = counters.temporal_values_evaluated.saturating_add(1);
     });
     Some(column)
 }
