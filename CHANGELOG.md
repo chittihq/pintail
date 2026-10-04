@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Temporal functions over a column with few distinct values (DATE_FORMAT,
+  the week and day functions, DATE_ADD/DATE_SUB and interval arithmetic,
+  EXTRACT and the date parts, TIME formatting) are evaluated once per
+  distinct value instead of once per row, and a constant temporal
+  subexpression no longer drops the expression around it to the row path.
+  The calendar families of the differential corpus run 4.4-20x faster, all
+  within 1.5x of MySQL; invalid and zero dates, fractional seconds and the
+  order of warnings are unchanged.
+
 ### Fixed
 
 - `EXISTS` / `NOT EXISTS` over an ungrouped aggregate whose `HAVING`
