@@ -24,6 +24,11 @@
 //! use; decoded blocks are admitted at once. When the server charges the
 //! cache to its memory budget, a query that finds that budget full takes
 //! memory back from here before it is refused ([`shrink`]).
+//!
+//! A block a reader still holds is not pushed out: dropping the cache's
+//! copy would free nothing while the reader keeps the allocation, yet hand
+//! its bytes back to the budget. It stays, charged, until the reader is
+//! done and a later pass finds it free.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -122,6 +127,18 @@ enum Held {
     Decoded(Arc<DecodedColumn>),
 }
 
+impl Held {
+    /// Whether a reader holds the block too. Only a lookup under the
+    /// shard's lock hands out another holder, so a block seen free there
+    /// stays free until it is removed.
+    fn pinned(&self) -> bool {
+        match self {
+            Self::Payload(payload) => Arc::strong_count(payload) > 1,
+            Self::Decoded(column) => Arc::strong_count(column) > 1,
+        }
+    }
+}
+
 struct Entry {
     held: Held,
     bytes: usize,
@@ -198,17 +215,7 @@ pub fn environment_limit() -> Option<usize> {
 
 fn cache() -> &'static Cache {
     static CACHE: OnceLock<Cache> = OnceLock::new();
-    CACHE.get_or_init(|| Cache {
-        shards: (0..SHARDS).map(|_| Mutex::new(Shard::default())).collect(),
-        limit: AtomicUsize::new(environment_limit().unwrap_or(DEFAULT_LIMIT_BYTES)),
-        held: AtomicUsize::new(0),
-        accounting: Mutex::new(None),
-        segments: Mutex::new(Segments::default()),
-        hits: AtomicU64::new(0),
-        misses: AtomicU64::new(0),
-        inserted: AtomicU64::new(0),
-        evicted: AtomicU64::new(0),
-    })
+    CACHE.get_or_init(|| Cache::new(environment_limit().unwrap_or(DEFAULT_LIMIT_BYTES)))
 }
 
 /// A segment's place in the cache: every block of one file as it exists on
@@ -242,6 +249,20 @@ pub(super) fn segment_slot(key: &VerifiedKey) -> Option<SegmentSlot> {
 }
 
 impl Cache {
+    fn new(limit: usize) -> Self {
+        Self {
+            shards: (0..SHARDS).map(|_| Mutex::new(Shard::default())).collect(),
+            limit: AtomicUsize::new(limit),
+            held: AtomicUsize::new(0),
+            accounting: Mutex::new(None),
+            segments: Mutex::new(Segments::default()),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            inserted: AtomicU64::new(0),
+            evicted: AtomicU64::new(0),
+        }
+    }
+
     fn shard(&self, key: &Key) -> (&Mutex<Shard>, u64) {
         let mut hasher = KeyHasher::default();
         key.hash(&mut hasher);
@@ -343,8 +364,15 @@ impl Cache {
     }
 
     /// Drops entries until `wanted` bytes are freed or nothing is left,
-    /// or only those `keep` refuses when it is given. Returns bytes freed.
-    fn release_entries(&self, wanted: usize, doomed: Option<&dyn Fn(&Key) -> bool>) -> usize {
+    /// or only those `doomed` names when it is given. A block a reader
+    /// still holds is kept unless `force`: its bytes would not be freed.
+    /// Returns bytes freed.
+    fn release_entries(
+        &self,
+        wanted: usize,
+        doomed: Option<&dyn Fn(&Key) -> bool>,
+        force: bool,
+    ) -> usize {
         let accounting = *self
             .accounting
             .lock()
@@ -364,17 +392,48 @@ impl Cache {
                     .copied()
                     .collect::<Vec<_>>();
                 for key in keys {
+                    // A block a reader holds is unreachable once its file is
+                    // forgotten, and ages out when the reader lets go.
+                    if !force
+                        && shard
+                            .entries
+                            .get(&key)
+                            .is_some_and(|entry| entry.held.pinned())
+                    {
+                        continue;
+                    }
                     if let Some(entry) = shard.entries.remove(&key) {
                         freed_here += entry.bytes;
                         self.evicted.fetch_add(1, Ordering::Relaxed);
                     }
                 }
+                // The removed keys are still queued. Nothing else would ever
+                // pass them while the shard stays under its budget, so the
+                // queue is cut back here, at most every few removals.
+                if shard.entries.is_empty() {
+                    shard.order.clear();
+                } else if shard.order.len() > 2 * shard.entries.len() + 64 {
+                    let Shard { entries, order, .. } = &mut *shard;
+                    order.retain(|key| entries.contains_key(key));
+                }
             } else {
-                while freed + freed_here < wanted {
+                // Each queued key is looked at once at most: one a reader
+                // holds goes to the back.
+                let mut unseen = shard.order.len();
+                while freed + freed_here < wanted && unseen > 0 {
+                    unseen -= 1;
                     // Under pressure use buys nothing: take the oldest.
                     let Some(key) = shard.order.pop_front() else {
                         break;
                     };
+                    match shard.entries.get(&key) {
+                        None => continue,
+                        Some(entry) if !force && entry.held.pinned() => {
+                            shard.order.push_back(key);
+                            continue;
+                        }
+                        Some(_) => {}
+                    }
                     if let Some(entry) = shard.entries.remove(&key) {
                         freed_here += entry.bytes;
                         self.evicted.fetch_add(1, Ordering::Relaxed);
@@ -395,17 +454,25 @@ impl Cache {
     }
 }
 
-/// Removes the entry longest held without a use since its last pass.
-/// Returns its bytes, or `None` when the shard is empty.
+/// Removes the entry longest held without a use since its last pass and
+/// not held by a reader. Returns its bytes, or `None` when the shard has
+/// none to give.
 fn evict_one(shard: &mut Shard) -> Option<usize> {
+    // Every pass spends a chance or finds a reader holding the entry; past
+    // this many, each entry has had its chances and is held.
+    let mut passes = shard
+        .order
+        .len()
+        .saturating_mul(usize::from(MAX_CHANCES) + 1);
     loop {
         let key = shard.order.pop_front()?;
         let Some(entry) = shard.entries.get_mut(&key) else {
             continue;
         };
-        if entry.chances > 0 {
-            entry.chances -= 1;
+        if entry.chances > 0 || entry.held.pinned() {
+            entry.chances = entry.chances.saturating_sub(1);
             shard.order.push_back(key);
+            passes = passes.checked_sub(1)?;
             continue;
         }
         let bytes = entry.bytes;
@@ -505,7 +572,11 @@ pub(crate) fn forget_file(path: &Path) {
         doomed
     };
     if !doomed.is_empty() && cache.held.load(Ordering::Relaxed) > 0 {
-        cache.release_entries(usize::MAX, Some(&|key| doomed.contains(&key.segment)));
+        cache.release_entries(
+            usize::MAX,
+            Some(&|key| doomed.contains(&key.segment)),
+            false,
+        );
     }
 }
 
@@ -514,7 +585,9 @@ pub(crate) fn forget_file(path: &Path) {
 /// was charged to.
 pub fn configure_block_cache(limit_bytes: usize, accounting: Option<BlockCacheAccounting>) {
     let cache = cache();
-    cache.release_entries(usize::MAX, None);
+    // Whatever a reader still holds is given back too: the accounting it
+    // was charged to is being replaced.
+    cache.release_entries(usize::MAX, None, true);
     *cache
         .accounting
         .lock()
@@ -530,7 +603,7 @@ pub fn shrink_block_cache(bytes: usize) -> usize {
     if cache.held.load(Ordering::Relaxed) == 0 {
         return 0;
     }
-    cache.release_entries(bytes, None)
+    cache.release_entries(bytes, None, false)
 }
 
 /// The cache's budget, what it holds and what it has done.
@@ -544,5 +617,189 @@ pub fn block_cache_stats() -> BlockCacheStats {
         misses: cache.misses.load(Ordering::Relaxed),
         inserted: cache.inserted.load(Ordering::Relaxed),
         evicted: cache.evicted.load(Ordering::Relaxed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cache of its own, so the process-wide one other tests read is
+    /// left alone.
+    fn isolated(limit: usize, accounting: Option<BlockCacheAccounting>) -> Cache {
+        let cache = Cache::new(limit);
+        *cache
+            .accounting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = accounting;
+        cache
+    }
+
+    fn payload_of(length: usize) -> (Held, usize) {
+        let payload = CachedPayload {
+            row_count: length,
+            null_bitmap: Vec::new(),
+            null_count: 0,
+            encoding: Encoding::Plain,
+            bytes: vec![7; length],
+        };
+        let bytes = payload.retained_bytes();
+        (Held::Payload(Arc::new(payload)), bytes)
+    }
+
+    const fn payload_key(segment: u64, first_row: usize) -> Key {
+        Key {
+            segment,
+            column: 1,
+            first_row,
+            form: Form::Payload,
+        }
+    }
+
+    /// A key of `segment` that lands in the same shard as `beside`.
+    fn key_beside(cache: &Cache, beside: &Key, segment: u64) -> Key {
+        let (shard, _) = cache.shard(beside);
+        (0..1 << 20)
+            .map(|first_row| payload_key(segment, first_row))
+            .find(|key| std::ptr::eq(cache.shard(key).0, shard))
+            .expect("some key shares the shard")
+    }
+
+    /// Memory pressure asking for everything.
+    fn shrink_all(cache: &Cache) -> usize {
+        cache.release_entries(usize::MAX, None, false)
+    }
+
+    /// The file of `segment` deleted.
+    fn forget(cache: &Cache, segment: u64) -> usize {
+        cache.release_entries(usize::MAX, Some(&|key| key.segment == segment), false)
+    }
+
+    fn queued(cache: &Cache) -> usize {
+        cache
+            .shards
+            .iter()
+            .map(|shard| {
+                shard
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .order
+                    .len()
+            })
+            .sum()
+    }
+
+    static PINNED_CHARGED: AtomicUsize = AtomicUsize::new(0);
+
+    fn charge_pinned(bytes: usize) -> bool {
+        PINNED_CHARGED.fetch_add(bytes, Ordering::Relaxed);
+        true
+    }
+
+    fn release_pinned(bytes: usize) {
+        PINNED_CHARGED.fetch_sub(bytes, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn a_block_a_reader_holds_stays_charged_until_the_reader_lets_go() {
+        let (held, bytes) = payload_of(64 * 1024);
+        let cache = isolated(
+            32 * 1024 * 1024,
+            Some(BlockCacheAccounting {
+                charge: charge_pinned,
+                release: release_pinned,
+            }),
+        );
+        let first = payload_key(1, 0);
+        cache.insert(first, held, bytes);
+        assert_eq!(PINNED_CHARGED.load(Ordering::Relaxed), bytes);
+        // A scan takes the payload, as a projected read does.
+        let Some(Held::Payload(read)) = cache.get(&first) else {
+            panic!("the payload is held");
+        };
+        let weak = Arc::downgrade(&read);
+
+        // Pressure frees nothing: the reader keeps the allocation.
+        assert_eq!(shrink_all(&cache), 0);
+        // Nor forgetting the file while the reader is at it.
+        assert_eq!(forget(&cache, 1), 0);
+        assert!(weak.upgrade().is_some());
+        assert_eq!(PINNED_CHARGED.load(Ordering::Relaxed), bytes);
+        assert_eq!(cache.held.load(Ordering::Relaxed), bytes);
+
+        // Once the reader is done, the bytes come back with the block.
+        drop(read);
+        assert_eq!(shrink_all(&cache), bytes);
+        assert!(weak.upgrade().is_none());
+        assert_eq!(PINNED_CHARGED.load(Ordering::Relaxed), 0);
+        assert_eq!(cache.held.load(Ordering::Relaxed), 0);
+    }
+
+    /// Three blocks of `bytes` in one shard with room for two and a half;
+    /// the oldest is held by a reader when `pinned`. Returns whether each
+    /// is cached after the third arrives.
+    fn third_block_arrives(pinned: bool) -> [bool; 3] {
+        let (first_block, bytes) = payload_of(64 * 1024);
+        let cache = isolated(SHARDS * bytes * 5 / 2, None);
+        let first = payload_key(1, 0);
+        // The reader's copy is taken before the cache has the block, so no
+        // lookup has bought it another pass.
+        let reader = pinned.then(|| first_block.clone());
+        cache.insert(first, first_block, bytes);
+        let keys = [
+            first,
+            key_beside(&cache, &first, 2),
+            key_beside(&cache, &first, 3),
+        ];
+        for key in &keys[1..] {
+            let (block, bytes) = payload_of(64 * 1024);
+            cache.insert(*key, block, bytes);
+        }
+        assert_eq!(cache.held.load(Ordering::Relaxed), 2 * bytes);
+        let cached = keys.map(|key| {
+            let (shard, _) = cache.shard(&key);
+            shard
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entries
+                .contains_key(&key)
+        });
+        drop(reader);
+        cached
+    }
+
+    #[test]
+    fn a_newcomer_takes_the_room_of_a_block_no_reader_holds() {
+        assert_eq!(third_block_arrives(false), [false, true, true]);
+        assert_eq!(third_block_arrives(true), [true, false, true]);
+    }
+
+    #[test]
+    fn forgetting_files_leaves_no_keys_queued() {
+        let cache = isolated(32 * 1024 * 1024, None);
+        for segment in 1..=10_000_u64 {
+            let (held, bytes) = payload_of(64);
+            cache.insert(payload_key(segment, 0), held, bytes);
+            forget(&cache, segment);
+        }
+        assert_eq!(cache.held.load(Ordering::Relaxed), 0);
+        assert_eq!(queued(&cache), 0);
+
+        // With blocks of other files staying, the queue stays near them.
+        let staying = 64_usize;
+        for first_row in 0..staying {
+            let (held, bytes) = payload_of(64);
+            cache.insert(payload_key(0, first_row), held, bytes);
+        }
+        for segment in 10_001..=20_000_u64 {
+            let (held, bytes) = payload_of(64);
+            cache.insert(payload_key(segment, 0), held, bytes);
+            forget(&cache, segment);
+        }
+        assert!(
+            queued(&cache) <= 3 * staying + SHARDS * 65,
+            "{} keys queued for {staying} blocks",
+            queued(&cache)
+        );
     }
 }
