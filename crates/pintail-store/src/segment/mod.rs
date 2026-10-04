@@ -3556,15 +3556,6 @@ impl Validity {
         self.len() == 0
     }
 
-    /// Rows the backing store could hold without growing. All-valid keeps no
-    /// per-row store, so it reports what it has.
-    fn capacity(&self) -> usize {
-        match self {
-            Self::AllValid(count) => *count,
-            Self::Bits(bits) => bits.capacity(),
-        }
-    }
-
     fn iter(&self) -> Box<dyn Iterator<Item = bool> + '_> {
         match self {
             Self::AllValid(count) => Box::new(std::iter::repeat_n(true, *count)),
@@ -3755,8 +3746,13 @@ impl ColumnBuilder {
             if !validity.is_empty() || !heap.is_empty() {
                 return None;
             }
-            let capacity = validity.capacity();
-            let _ = (heap, offsets);
+            // The rows the builder was sized for are its offsets' capacity,
+            // less the leading zero; the validity starts empty, so sizing
+            // the codes from it left them to grow by reallocation, copying
+            // the column several times over at addresses that varied
+            // from run to run.
+            let capacity = offsets.capacity().saturating_sub(1);
+            let _ = heap;
             *self = Self::DictUtf8 {
                 dict_heap: Vec::new(),
                 dict_offsets: vec![0],
