@@ -2858,6 +2858,28 @@ fn reject_duplicate_relation(tables: &[BoundTable], table: &BoundTable) -> Resul
     }
 }
 
+/// Marks an explicit calendar CAST of a TIMESTAMP column in its policy
+/// (bit 4): `MySQL` reads that column's zero as no date under
+/// `NO_ZERO_DATE`, where a zero DATE or DATETIME casts to itself.
+fn refuse_cast_timestamp_zero(mut cast: BoundExpr) -> BoundExpr {
+    if let BoundExprKind::Scalar {
+        function:
+            ScalarFunction::Cast(DataType::Date32 | DataType::DateTime64 { .. })
+            | ScalarFunction::DeclaredCast {
+                target: DataType::Date32 | DataType::DateTime64 { .. },
+                ..
+            },
+        args,
+    } = &mut cast.kind
+        && let [source, policy] = args.as_mut_slice()
+        && source.is_source_timestamp()
+        && let BoundExprKind::Literal(Value::UInt64(policy)) = &mut policy.kind
+    {
+        *policy |= 0b1_0000;
+    }
+    cast
+}
+
 fn unify_union_layout(left: &mut BoundQuery, right: &mut BoundQuery) -> Result<(), BindError> {
     if left.projection.len() != right.projection.len() {
         return Err(BindError::IncompatibleSetOperation(
@@ -4078,7 +4100,8 @@ fn bind_expr_inner(
             data_type,
             array: false,
             format: None,
-        } => bind_cast(expr, data_type, tables, aggregates, windows, subqueries),
+        } => bind_cast(expr, data_type, tables, aggregates, windows, subqueries)
+            .map(refuse_cast_timestamp_zero),
         // DATE '...', TIME '...', TIMESTAMP '...': the literal cast to its type.
         Expr::TypedString(typed) => {
             let inner = Expr::Value(typed.value.clone());

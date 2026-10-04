@@ -2990,6 +2990,9 @@ fn evaluate_eager_scalar_inner(
             {
                 return Ok(cast_text_time(text, fsp).map_or(Value::Null, Value::Utf8));
             }
+            if let Some(value) = typed_calendar_cast(values, argument_types, target) {
+                return Ok(value);
+            }
             if let Some(value) = cast_partial_calendar(&values[0], target, values.get(1)) {
                 return Ok(value);
             }
@@ -3032,6 +3035,9 @@ fn evaluate_eager_scalar_inner(
                 && !matches!(values[0], Value::Null)
             {
                 return cast_decimal_integer(&values[0], target);
+            }
+            if let Some(value) = typed_calendar_cast(values, argument_types, target) {
+                return Ok(value);
             }
             if let Some(value) = cast_partial_calendar(&values[0], target, values.get(1)) {
                 return Ok(value);
@@ -5537,6 +5543,37 @@ fn cast_partial_calendar(value: &Value, target: DataType, policy: Option<&Value>
     }
 }
 
+/// A DATE or DATETIME value cast to a calendar type, which keeps what it
+/// holds - a zero date, a zero month or day, a day past its month's end -
+/// in every mode: `MySQL` validates text it parses, not a value that is
+/// already a date. The one exception is a `TIMESTAMP` column's zero
+/// (policy bit 4), which reads as no date at all under `NO_ZERO_DATE`.
+/// `None` for any other source, and for a civil date, which takes the
+/// ordinary rounding path.
+fn typed_calendar_cast(
+    values: &[Value],
+    argument_types: &[Option<DataType>],
+    target: DataType,
+) -> Option<Value> {
+    if !matches!(target, DataType::Date32 | DataType::DateTime64 { .. }) {
+        return None;
+    }
+    let source = argument_types.first().copied().flatten();
+    if !matches!(source, Some(DataType::Date32 | DataType::DateTime64 { .. })) {
+        return None;
+    }
+    let value = values.first()?;
+    if let Some(Value::UInt64(policy)) = values.get(1)
+        && policy & 0b1_0001 == 0b1_0001
+        && let Value::Utf8(text) = value
+        && text.starts_with("0000-00-00")
+        && !text.bytes().any(|byte| (b'1'..=b'9').contains(&byte))
+    {
+        return Some(Value::Null);
+    }
+    cast_temporal_carrier(value, source, target, None)
+}
+
 /// Stored and typed temporal values already passed their producer's validity
 /// rules. A cast must preserve their zero components rather than parse them
 /// again as untyped strings under civil-calendar rules.
@@ -5951,6 +5988,14 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
             if let Some((date, _)) = canonical_temporal(&text) {
                 return Ok(Value::Utf8(date.to_owned()));
             }
+            // A value this coerces is already a date: the branch of a
+            // COALESCE, IF or GREATEST over calendar columns, whose zero or
+            // partial date MySQL passes through unchanged.
+            if let Some(kept) =
+                cast_temporal_carrier(value, Some(DataType::Date32), DataType::Date32, None)
+            {
+                return Ok(kept);
+            }
             return Ok(temporal::parse_calendar_cast(&text).map_or_else(
                 |_| unreadable_datetime(&text),
                 |parsed| Value::Utf8(parsed.date().format("%Y-%m-%d").to_string()),
@@ -5960,6 +6005,14 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
             let text = scalar_string(value)?;
             if let Some(widened) = canonical_datetime_at(&text, fsp) {
                 return Ok(Value::Utf8(widened));
+            }
+            if let Some(kept) = cast_temporal_carrier(
+                value,
+                Some(DataType::DateTime64 { fsp: 6 }),
+                DataType::DateTime64 { fsp },
+                None,
+            ) {
+                return Ok(kept);
             }
             return Ok(temporal::parse_calendar_cast(&text).map_or_else(
                 |_| unreadable_datetime(&text),
@@ -10790,6 +10843,57 @@ mod tests {
         }
         assert!(super::json_path_steps("$.a[0].b").is_ok());
         assert!(super::json_path_steps("$**.b").is_ok());
+    }
+
+    #[test]
+    fn calendar_values_keep_zero_and_partial_dates_through_conversion() {
+        use pintail_types::{DataType, Value};
+        let text = |value: &str| Value::Utf8(value.to_owned());
+        let datetime = |fsp| Some(DataType::DateTime64 { fsp });
+        // The answer of a COALESCE or IF over calendar columns.
+        for (stored, target, expected) in [
+            (
+                "0000-00-00 00:00:00",
+                datetime(6),
+                "0000-00-00 00:00:00.000000",
+            ),
+            ("2024-00-15 10:00:00", datetime(0), "2024-00-15 10:00:00"),
+            (
+                "2024-02-30 10:00:00.250",
+                datetime(3),
+                "2024-02-30 10:00:00.250",
+            ),
+            ("0000-00-00", Some(DataType::Date32), "0000-00-00"),
+        ] {
+            assert_eq!(
+                super::cast_scalar(&text(stored), target).expect("conversion"),
+                text(expected),
+                "{stored}"
+            );
+        }
+        // An explicit CAST of a DATETIME keeps its zero under NO_ZERO_DATE;
+        // the same CAST of a TIMESTAMP column (policy bit 4) does not.
+        let zero = text("0000-00-00 00:00:00");
+        let source = [Some(DataType::DateTime64 { fsp: 0 })];
+        let cast = |policy: u64| {
+            super::typed_calendar_cast(
+                &[zero.clone(), Value::UInt64(policy)],
+                &source,
+                DataType::DateTime64 { fsp: 0 },
+            )
+        };
+        assert_eq!(cast(0b0_0011), Some(zero.clone()));
+        assert_eq!(cast(0b1_0011), Some(Value::Null));
+        assert_eq!(cast(0b1_0000), Some(zero.clone()));
+        assert_eq!(
+            super::typed_calendar_cast(
+                &[zero, Value::UInt64(0b1_0011)],
+                &[Some(DataType::Utf8)],
+                DataType::DateTime64 { fsp: 0 },
+            ),
+            None,
+            "text is parsed under the mode elsewhere"
+        );
     }
 
     #[test]
