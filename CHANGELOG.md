@@ -76,6 +76,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A GROUP BY or DISTINCT over two case-insensitive text columns could show
+  a group with the spelling of a later row instead of its first row in
+  primary-key order, when the table was folded in parallel, when the query
+  paused near its memory ceiling, or when the groups moved to the hashed
+  fold partway through. Counts and totals were always correct. Introduced
+  in 0.1.7.
+- A parallel fold that cut an oversized slice smaller placed the rest of
+  that slice after later slices; anything that depends on scan order now
+  sees the rows in key order. Introduced in 0.1.7.
 - String functions that build more than they read (REPEAT, SPACE,
   LPAD/RPAD, INSERT, CONCAT, CONCAT_WS, REPLACE, TO_BASE64, and the JSON
   constructors and modifiers) answer NULL with warning 1301 once the result
