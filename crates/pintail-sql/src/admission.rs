@@ -50,7 +50,9 @@ pub fn has_bounded_planning_shape(statement: &Statement) -> bool {
 /// enough for its work to be bounded by its own text: no `FROM`, no common
 /// table expression, no subquery, and at most a few dozen expressions. Its
 /// functions take what the text spells out and return values of capped
-/// size, so nothing in it can grow with stored data.
+/// size, so nothing in it can grow with stored data; pattern matching and
+/// the functions whose result can be a multiple of their operands are
+/// left out, since neither is bounded by the text.
 #[must_use]
 pub fn has_bounded_table_less_shape(statement: &Statement) -> bool {
     let Statement::Query(query) = statement else {
@@ -69,22 +71,46 @@ pub fn has_bounded_table_less_shape(statement: &Statement) -> bool {
     let mut count = 0;
     visit_expressions(statement, |expr| {
         count += 1;
-        // Two things here have a cost the length of the text does not
-        // bound: matching a pattern, and a function whose purpose is to
-        // take time or to wait - for a clock, a lock, a replication
-        // position, a file. None of the waiting ones is implemented, and
-        // they are named so that implementing one cannot put a wait on a
-        // thread that serves other connections.
+        // Three things here have a cost the length of the text does not
+        // bound. Matching a pattern: a LIKE wildcard retries from every
+        // position, so its work is the product of its operands' lengths,
+        // and an operand can be a user variable as long as a packet or a
+        // value built from the text many times over. A function whose
+        // result can be a multiple of its operands - REPLACE writes its
+        // replacement once per match, HEX and QUOTE can double their input,
+        // TO_BASE64 and JSON_QUOTE grow it too - so that nesting one
+        // multiplies: ten nested HEX calls turn a 4096-byte REPEAT into
+        // four megabytes. (REPEAT, SPACE and the pads are capped.) And
+        // a function whose purpose is to take time or to wait - for a
+        // clock, a lock, a replication position, a file. None of the
+        // waiting ones is implemented, and they are named so that
+        // implementing one cannot put a wait on a thread that serves other
+        // connections.
         let pattern = match expr {
-            Expr::RLike { .. } | Expr::SimilarTo { .. } => true,
+            Expr::Like { .. }
+            | Expr::ILike { .. }
+            | Expr::RLike { .. }
+            | Expr::SimilarTo { .. } => true,
             Expr::Function(function) => {
                 let name = function.name.to_string().to_ascii_lowercase();
                 let name = name.trim_matches('`');
                 name.contains("regexp")
                     || name.contains("rlike")
+                    || name.contains("like")
                     || name.contains("lock")
                     || name.contains("wait")
-                    || matches!(name, "sleep" | "benchmark" | "load_file")
+                    || matches!(
+                        name,
+                        "sleep"
+                            | "benchmark"
+                            | "load_file"
+                            | "json_search"
+                            | "replace"
+                            | "hex"
+                            | "quote"
+                            | "to_base64"
+                            | "json_quote"
+                    )
             }
             _ => false,
         };
@@ -217,6 +243,13 @@ mod tests {
             "SELECT 1 UNION SELECT 2",
             "SELECT 'aaa' REGEXP '(a+)+$'",
             "SELECT REGEXP_REPLACE('abc', 'b', 'x')",
+            "SELECT REPEAT('a', 4096) LIKE CONCAT('%', REPEAT('a', 2048), 'b')",
+            "SELECT @payload NOT LIKE '%b'",
+            "SELECT 'a' LIKE 'a' ESCAPE '!'",
+            "SELECT JSON_SEARCH('[\"a\"]', 'one', 'a%')",
+            "SELECT REPLACE(REPLACE(REPEAT('a', 1024), 'a', REPEAT('a', 1024)), 'a', 'aa')",
+            "SELECT HEX(HEX(HEX(REPEAT('a', 4096))))",
+            "SELECT QUOTE(QUOTE(''''))",
             "SELECT SLEEP(5)",
             "SELECT 1 + sleep(0.5)",
             "SELECT BENCHMARK(100000000, MD5('a'))",
