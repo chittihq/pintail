@@ -193,6 +193,16 @@ release binary; `docker-compose.dev.yml` builds plain unless
 `PINTAIL_PGO=1` is set, and the compose gate builds the image as it ships
 and fails unless the container reports `build_variant=pgo`.
 
+The binary taken out of an image built this way was checked against the
+one from a `PINTAIL_PGO=0` image on the 20M-row replica, on the same
+machine, interleaved as above (6 rounds of 15 cycles, a third arm running
+the plain binary again as the floor): -6.5% across Q1-Q8 (floor -1.8%),
+-5.5% CPU over Q2-Q8 (floor -2.1%), Q7 -17.5%, and -11.4% on a key lookup
+over one connection (floor -4.0%), with every answer equal to MySQL's. It
+passed the end-to-end gate (7,061 checks, the same six documented-gap
+warnings) and both upstream regression suites with the banked counts
+(9,279 and 8,761 exact).
+
 The release workflow passes `PINTAIL_PGO=1` explicitly and, on each
 architecture's own runner, starts the image it just pushed and fails the
 job unless the startup line says `build_target=generic build_variant=pgo`.
