@@ -44,6 +44,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   transitions instead of the general conversion per row. Comparisons with
   a constant run about twelve times faster, and the corpus family for a
   named zone is level with MySQL.
+- Row constructor `IN`/`NOT IN` against an uncorrelated subquery of up to
+  64 rows reads the members once and compares each row with them in a
+  batch, instead of answering a subquery per row; NULL answers are
+  unchanged (the corpus family runs about 4-5x faster). Correlated
+  subqueries answered row by row no longer copy each subquery's bound tree
+  per outer row (the batched dependent-subquery family runs 2.5x faster).
 - A row membership test over values that cannot be NULL drops its
   undecided-row bookkeeping, and a replayed join rejects unequal keys
   before resolving its subqueries. A filtered count reading only its
