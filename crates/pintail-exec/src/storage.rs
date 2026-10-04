@@ -709,8 +709,14 @@ impl ScanProvider for SnapshotScanProvider<'_> {
         if scan.predicates.is_empty()
             && let Some(limit) = scan.limit
         {
+            // The rows are in key order. A limit from the end keeps the
+            // last ones, as the stream would hand them out first.
             let limit = usize::try_from(limit).unwrap_or(usize::MAX);
-            rows.truncate(limit);
+            if scan.from_end {
+                rows.drain(..rows.len().saturating_sub(limit));
+            } else {
+                rows.truncate(limit);
+            }
             rows.shrink_to_fit();
         }
         let rows = rows
@@ -4888,6 +4894,90 @@ mod tests {
             execute_values("SELECT id FROM collisions ORDER BY id", &catalog, &provider),
             [Value::UInt64(2)]
         );
+    }
+
+    /// A descending limit by the key tells the scan to keep the last rows
+    /// in key order. Unique-key visibility reads the range as a row set,
+    /// and that path has to keep the same end the stream would.
+    #[test]
+    fn unique_visibility_keeps_the_last_rows_for_a_descending_key_limit() {
+        let directory = tempfile::tempdir().expect("temporary table");
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "token", DataType::Int64, false),
+            ],
+        )
+        .expect("token schema");
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open token table");
+        table
+            .ingest(
+                (1..=5_u64)
+                    .map(|id| {
+                        StoredRow::new(
+                            PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("token key"),
+                            vec![Value::UInt64(id), Value::Int64(100 + id.cast_signed())],
+                            id,
+                            false,
+                        )
+                    })
+                    .collect(),
+            )
+            .expect("ingest tokens");
+        let snapshot = table.snapshot();
+        let database_id = DatabaseId::new(15);
+        let table_id = TableId::new(18);
+        let entry = TableEntry::new(
+            table_id,
+            "tokens",
+            schema,
+            TableStatistics::with_row_count(5),
+        )
+        .expect("token catalog table")
+        .with_key_columns([1])
+        .expect("key columns");
+        let database = DatabaseEntry::new(database_id, "app", [entry]).expect("token database");
+        let catalog = CatalogSnapshot::new([database]).expect("token catalog");
+        let mut provider =
+            SnapshotScanProvider::new([(database_id, table_id, &snapshot)]).expect("provider");
+        provider
+            .enable_unique_visibility_policy(database_id, table_id, vec![vec![2]])
+            .expect("enable unique visibility");
+
+        let ids = |values: &[u64]| {
+            values
+                .iter()
+                .map(|id| Value::UInt64(*id))
+                .collect::<Vec<_>>()
+        };
+        for (sql, expected) in [
+            ("SELECT id FROM tokens ORDER BY id DESC LIMIT 1", ids(&[5])),
+            (
+                "SELECT id FROM tokens ORDER BY id DESC LIMIT 2",
+                ids(&[5, 4]),
+            ),
+            (
+                "SELECT id FROM tokens ORDER BY id DESC LIMIT 1 OFFSET 1",
+                ids(&[4]),
+            ),
+            (
+                "SELECT id FROM tokens ORDER BY id DESC LIMIT 2 OFFSET 3",
+                ids(&[2, 1]),
+            ),
+            (
+                "SELECT id FROM tokens ORDER BY id DESC LIMIT 9",
+                ids(&[5, 4, 3, 2, 1]),
+            ),
+            (
+                "SELECT id FROM tokens WHERE token > 101 ORDER BY id DESC LIMIT 2",
+                ids(&[5, 4]),
+            ),
+            ("SELECT id FROM tokens ORDER BY id LIMIT 2", ids(&[1, 2])),
+        ] {
+            assert_eq!(execute_values(sql, &catalog, &provider), expected, "{sql}");
+        }
     }
 
     #[test]
