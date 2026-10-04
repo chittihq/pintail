@@ -14,7 +14,8 @@ use super::{Operand, truth_column};
 use crate::array::{StrColumn, ValidityMask};
 use crate::batch::{ColumnVector, TypedValues};
 use crate::collation::Collation;
-use crate::expression::like_matches;
+use crate::execution::InterruptCounter;
+use crate::expression::like_search;
 
 /// A text column's buffer: plain text, or an ENUM or SET's labels.
 fn text_of(column: &ColumnVector) -> Option<(&StrColumn, &ValidityMask)> {
@@ -130,9 +131,27 @@ pub(super) fn packed_text(
         (ScalarFunction::Like { negated, escape }, [Operand::Constant(Value::Utf8(pattern))])
             if declared == DataType::Boolean =>
         {
+            // The rows share one step count, so a batch of long matches is
+            // checked as often as one; once the statement is to stop, the
+            // rest are skipped and the row path, which raises the
+            // interruption, takes over.
+            let mut steps = InterruptCounter::checked();
+            let mut interrupted = false;
             let matched = each_text(column, |text| {
-                like_matches(text, pattern, escape, false, collation) != negated
+                if interrupted {
+                    return false;
+                }
+                like_search(text, pattern, escape, false, collation, &mut steps).map_or_else(
+                    |_| {
+                        interrupted = true;
+                        false
+                    },
+                    |matched| matched != negated,
+                )
             })?;
+            if interrupted {
+                return None;
+            }
             truth_column(matched.into_iter())
         }
         _ => None,
@@ -248,6 +267,47 @@ mod tests {
                 .collect(),
         )
         .expect("text")
+    }
+
+    /// A column of long wildcard matches: the kernel answers, and once the
+    /// statement is cancelled or out of time it gives the batch back to the
+    /// row path, which ends with the interruption.
+    #[test]
+    fn a_long_like_kernel_stops_when_its_statement_is_interrupted() {
+        let long = "a".repeat(4096);
+        let batch = batch_of(vec![texts(&[Some(long.as_str()); 5])]);
+        let call = scalar(
+            ScalarFunction::Like {
+                negated: false,
+                escape: None,
+            },
+            vec![
+                CompiledExpr::Column(0),
+                CompiledExpr::Literal(Value::Utf8(format!("%{}b", "a".repeat(2048)))),
+            ],
+            DataType::Boolean,
+        );
+        assert!(agrees_with_rows(&call, &batch, DataType::Boolean));
+        let cancelled = crate::ExecutionCancellation::new();
+        cancelled.cancel();
+        let late = crate::ExecutionCancellation::new();
+        late.limit_to(std::time::Instant::now());
+        for (scope, expected) in [
+            (cancelled, crate::ExecError::QueryCancelled),
+            (late, crate::ExecError::QueryTimedOut),
+        ] {
+            crate::with_execution_cancellation(scope, || {
+                assert!(
+                    call.evaluate_column(&batch, Some(DataType::Boolean))
+                        .is_none()
+                );
+                let error = call.evaluate(&batch, 0).expect_err("interrupted");
+                assert_eq!(
+                    std::mem::discriminant(&error),
+                    std::mem::discriminant(&expected)
+                );
+            });
+        }
     }
 
     /// An ENUM column reads as its labels.

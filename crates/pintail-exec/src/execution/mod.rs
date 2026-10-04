@@ -136,19 +136,100 @@ thread_local! {
         const { std::cell::Cell::new(0) };
     static SESSION_CTE_MAX_RECURSION_DEPTH: std::cell::Cell<u64> =
         const { std::cell::Cell::new(DEFAULT_CTE_MAX_RECURSION_DEPTH) };
+    /// Steps left before a long loop inside one value's evaluation next
+    /// asks whether its statement should stop; shared by every such loop
+    /// on the thread, so many medium values are counted like one long one.
+    static STEPS_UNTIL_INTERRUPT_CHECK: std::cell::Cell<u32> =
+        const { std::cell::Cell::new(INTERRUPT_CHECK_STEPS) };
     static EXECUTION_CANCELLATION: std::cell::RefCell<Option<ExecutionCancellation>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// Whether the statement running on this thread has been cancelled, for a
-/// loop inside one value's evaluation that has no tracker to ask.
-pub(crate) fn execution_cancelled() -> bool {
+/// Steps of a data-driven loop between two looks at whether the statement
+/// should stop.
+pub(crate) const INTERRUPT_CHECK_STEPS: u32 = 1 << 16;
+
+/// Why the statement running on this thread should stop, for a loop inside
+/// one value's evaluation that has no tracker to ask: it was cancelled, or
+/// its deadline passed.
+pub(crate) fn execution_interrupted() -> Result<(), ExecError> {
     EXECUTION_CANCELLATION.with(|current| {
         current
             .borrow()
             .as_ref()
-            .is_some_and(ExecutionCancellation::is_cancelled)
+            .map_or(Ok(()), ExecutionCancellation::interruption)
     })
+}
+
+/// Counts the steps of a loop whose length the data decides - a wildcard
+/// match, a regular-expression search, a walk over a document - and
+/// asks [`execution_interrupted`] once every [`INTERRUPT_CHECK_STEPS`].
+///
+/// The count carries over between values on the same thread, so a batch of
+/// values that each take a little under the interval is checked as often
+/// as one value that takes many intervals. A step is a decrement; the
+/// thread-local is read when the counter is made and written when it drops.
+pub(crate) struct InterruptCounter {
+    until_check: u32,
+    armed: bool,
+}
+
+impl InterruptCounter {
+    /// A counter that stops the loop when its statement is interrupted.
+    pub(crate) fn checked() -> Self {
+        Self {
+            until_check: STEPS_UNTIL_INTERRUPT_CHECK.get(),
+            armed: true,
+        }
+    }
+
+    /// A counter that never stops the loop, for a reference computation
+    /// that must run to its end.
+    #[cfg(test)]
+    pub(crate) const fn unchecked() -> Self {
+        Self {
+            until_check: u32::MAX,
+            armed: false,
+        }
+    }
+
+    /// Counts one step, and every [`INTERRUPT_CHECK_STEPS`] asks whether the
+    /// statement should stop.
+    #[inline]
+    pub(crate) fn step(&mut self) -> Result<(), ExecError> {
+        self.until_check = self.until_check.wrapping_sub(1);
+        if self.until_check == 0 {
+            self.until_check = INTERRUPT_CHECK_STEPS;
+            if self.armed {
+                execution_interrupted()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Counts `steps` steps at once, for a loop whose iterations differ in
+    /// cost.
+    #[inline]
+    pub(crate) fn steps(&mut self, steps: usize) -> Result<(), ExecError> {
+        let steps = u32::try_from(steps).unwrap_or(u32::MAX);
+        if steps >= self.until_check {
+            self.until_check = INTERRUPT_CHECK_STEPS;
+            if self.armed {
+                return execution_interrupted();
+            }
+            return Ok(());
+        }
+        self.until_check -= steps;
+        Ok(())
+    }
+}
+
+impl Drop for InterruptCounter {
+    fn drop(&mut self) {
+        if self.armed {
+            STEPS_UNTIL_INTERRUPT_CHECK.set(self.until_check);
+        }
+    }
 }
 
 /// Runs synchronous query setup/execution with a cancellation handle that is
@@ -2444,14 +2525,18 @@ impl MemoryTracker {
     /// execution deadline.
     #[must_use]
     pub fn with_deadline(limit: usize, deadline: Option<Instant>) -> Self {
+        let cancellation = EXECUTION_CANCELLATION
+            .with(|current| current.borrow().clone())
+            .unwrap_or_default();
+        // The handle carries the deadline to the loops inside one value's
+        // evaluation, which have the thread's handle and no tracker.
+        if let Some(deadline) = deadline {
+            cancellation.limit_to(deadline);
+        }
         Self {
             limit,
             deadline,
-            cancellation: Some(
-                EXECUTION_CANCELLATION
-                    .with(|current| current.borrow().clone())
-                    .unwrap_or_default(),
-            ),
+            cancellation: Some(cancellation),
             used: std::sync::atomic::AtomicUsize::new(0),
             peak: std::sync::atomic::AtomicUsize::new(0),
             charges_shared: true,

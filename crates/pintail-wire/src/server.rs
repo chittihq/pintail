@@ -1900,6 +1900,10 @@ impl Backend {
             })
             .flatten();
         let cancellation = pintail_exec::ExecutionCancellation::new();
+        // From the start, so work done while planning also sees the deadline.
+        if let Some(deadline) = deadline {
+            cancellation.limit_to(deadline);
+        }
         let running_guard = RunningQueryGuard::register(self.connection_id, &cancellation);
         let mut cancel_on_drop = CancelExecutionOnDrop::new(cancellation.clone());
         // The sink hands the stream over when the result starts streaming;

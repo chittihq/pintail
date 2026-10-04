@@ -1,17 +1,41 @@
 //! Query lifetime and aggregate reservation accounting for pressure cancellation.
-use std::sync::{
-    Arc, Mutex, OnceLock, Weak,
-    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    },
+    time::Instant,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct QueryState {
     cancelled: AtomicBool,
+    /// The query's deadline as nanoseconds after [`deadline_epoch`];
+    /// `u64::MAX` when it has none.
+    deadline: AtomicU64,
     bytes: AtomicUsize,
     /// Blocked waiting for the shared budget to release memory.
     waiting: AtomicBool,
     /// Registration order: a larger number is a younger query.
     sequence: u64,
+}
+
+impl Default for QueryState {
+    fn default() -> Self {
+        Self {
+            cancelled: AtomicBool::new(false),
+            deadline: AtomicU64::new(u64::MAX),
+            bytes: AtomicUsize::new(0),
+            waiting: AtomicBool::new(false),
+            sequence: 0,
+        }
+    }
+}
+
+/// The instant deadlines are counted from, so one fits in an atomic.
+fn deadline_epoch() -> Instant {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    *EPOCH.get_or_init(Instant::now)
 }
 
 /// Cooperative cancellation shared by all trackers belonging to one query.
@@ -42,6 +66,31 @@ impl ExecutionCancellation {
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.state.cancelled.load(Ordering::Acquire)
+    }
+
+    /// Gives the query a deadline, or an earlier one than it had.
+    ///
+    /// The execution's trackers check their own deadline between batches;
+    /// this one is for loops inside one value's evaluation, which reach
+    /// the query only through the thread's handle.
+    pub fn limit_to(&self, deadline: Instant) {
+        let nanos = deadline
+            .saturating_duration_since(deadline_epoch())
+            .as_nanos();
+        let nanos = u64::try_from(nanos).unwrap_or(u64::MAX - 1);
+        self.state.deadline.fetch_min(nanos, Ordering::AcqRel);
+    }
+
+    /// Why the query should stop now: cancelled, or past its deadline.
+    pub(crate) fn interruption(&self) -> Result<(), super::ExecError> {
+        if self.is_cancelled() {
+            return Err(super::ExecError::QueryCancelled);
+        }
+        let deadline = self.state.deadline.load(Ordering::Acquire);
+        if deadline != u64::MAX && deadline_epoch().elapsed().as_nanos() >= u128::from(deadline) {
+            return Err(super::ExecError::QueryTimedOut);
+        }
+        Ok(())
     }
 
     pub(super) fn reserve(&self, bytes: usize) {

@@ -2790,7 +2790,7 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::JsonOverlaps => {
             let left = parse_json_argument(&values[0])?;
             let right = parse_json_argument(&values[1])?;
-            Ok(Value::Int64(i64::from(json_overlaps(&left, &right))))
+            Ok(Value::Int64(i64::from(json_overlaps(&left, &right)?)))
         }
         ScalarFunction::JsonMemberOf => {
             let candidate = sql_value_to_json(&values[0]);
@@ -2918,16 +2918,15 @@ fn evaluate_eager_scalar_inner(
                 (scalar_string(&values[0])?, scalar_string(&values[1])?)
             };
             // A wildcard pattern can take time quadratic in its operands; the
-            // match stops when the statement is cancelled.
+            // match stops when the statement is cancelled or out of time.
             let matched = like_search(
                 &value,
                 &pattern,
                 escape,
                 binary,
                 collation,
-                &mut crate::execution::execution_cancelled,
-            )
-            .ok_or(ExecError::QueryCancelled)?;
+                &mut crate::execution::InterruptCounter::checked(),
+            )?;
             Ok(Value::Boolean(if negated { !matched } else { matched }))
         }
         ScalarFunction::InList { negated } => evaluate_in_list(
@@ -4658,7 +4657,8 @@ fn evaluate_eager_scalar_inner(
                 match_type.as_deref().unwrap_or(""),
                 collation,
             )?;
-            let matched = program.is_match(&text);
+            let matched =
+                program.is_match(&text, &mut crate::execution::InterruptCounter::checked())?;
             Ok(Value::Boolean(matched != negated))
         }
         ScalarFunction::RegexpSubstr | ScalarFunction::RegexpInstr => {
@@ -4680,7 +4680,12 @@ fn evaluate_eager_scalar_inner(
                 match_type.as_deref().unwrap_or(""),
                 collation,
             )?;
-            let found = program.nth_match(&text, from, occurrence);
+            let found = program.nth_match(
+                &text,
+                from,
+                occurrence,
+                &mut crate::execution::InterruptCounter::checked(),
+            )?;
             if matches!(function, ScalarFunction::RegexpSubstr) {
                 return Ok(found.map_or(Value::Null, |found| Value::Utf8(found.as_str().to_owned())));
             }
@@ -4711,7 +4716,13 @@ fn evaluate_eager_scalar_inner(
                 match_type.as_deref().unwrap_or(""),
                 collation,
             )?
-            .replace_from(&text, from, occurrence, &replacement);
+            .replace_from(
+                &text,
+                from,
+                occurrence,
+                &replacement,
+                &mut crate::execution::InterruptCounter::checked(),
+            )?;
             Ok(Value::Utf8(replaced))
         }
         ScalarFunction::JsonExtract { unquote } => {
@@ -4794,8 +4805,16 @@ fn evaluate_eager_scalar_inner(
                 None | Some(Value::Null) => Some('\\'),
                 Some(value) => scalar_string(value)?.chars().next().or(Some('\\')),
             };
-            let mut found = Vec::new();
-            json_search(&document, &pattern, escape, all, "$", &mut found, collation);
+            let mut search = JsonSearch {
+                pattern: &pattern,
+                escape,
+                all,
+                collation,
+                found: Vec::new(),
+                steps: crate::execution::InterruptCounter::checked(),
+            };
+            search.search(&document, "$")?;
+            let mut found = std::mem::take(&mut search.found);
             Ok(match found.len() {
                 // MySQL answers NULL when nothing matches, one bare path for
                 // a single hit, and an array once there are several.
@@ -4872,9 +4891,13 @@ fn evaluate_eager_scalar_inner(
                 None => Some(&target),
                 Some(path) => json_path_lookup(&target, &scalar_string(path)?)?,
             };
-            Ok(scoped.map_or(Value::Null, |value| {
-                Value::Int64(i64::from(json_contains(value, &candidate)))
-            }))
+            let Some(scoped) = scoped else {
+                return Ok(Value::Null);
+            };
+            let mut steps = crate::execution::InterruptCounter::checked();
+            Ok(Value::Int64(i64::from(json_contains(
+                scoped, &candidate, &mut steps,
+            )?)))
         }
         ScalarFunction::JsonContainsPath => {
             let parsed = parse_json_argument(&values[0])?;
@@ -8031,22 +8054,52 @@ fn json_type_name(value: &serde_json::Value) -> &'static str {
 /// an array contains a non-array candidate when any element contains it, an
 /// object contains an object when every candidate key is present and its
 /// value contained, and scalars must be equal.
-fn json_contains(target: &serde_json::Value, candidate: &serde_json::Value) -> bool {
+///
+/// Every wanted element is looked for among every member, work that is the
+/// product of the two documents' sizes, so each comparison is counted on
+/// `steps`.
+fn json_contains(
+    target: &serde_json::Value,
+    candidate: &serde_json::Value,
+    steps: &mut crate::execution::InterruptCounter,
+) -> Result<bool, ExecError> {
+    steps.step()?;
     match (target, candidate) {
-        (serde_json::Value::Array(items), serde_json::Value::Array(wanted)) => wanted
-            .iter()
-            .all(|entry| items.iter().any(|item| json_contains(item, entry))),
+        (serde_json::Value::Array(items), serde_json::Value::Array(wanted)) => {
+            for entry in wanted {
+                let mut found = false;
+                for item in items {
+                    if json_contains(item, entry, steps)? {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
         (serde_json::Value::Array(items), _) => {
-            items.iter().any(|item| json_contains(item, candidate))
+            for item in items {
+                if json_contains(item, candidate, steps)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
         }
         (serde_json::Value::Object(members), serde_json::Value::Object(wanted)) => {
-            wanted.iter().all(|(key, entry)| {
-                members
-                    .get(key)
-                    .is_some_and(|member| json_contains(member, entry))
-            })
+            for (key, entry) in wanted {
+                let Some(member) = members.get(key) else {
+                    return Ok(false);
+                };
+                if !json_contains(member, entry, steps)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
         }
-        (left, right) => left == right,
+        (left, right) => Ok(left == right),
     }
 }
 
@@ -8055,56 +8108,63 @@ fn json_contains(target: &serde_json::Value, candidate: &serde_json::Value) -> b
 /// `MySQL` matches with `LIKE` semantics — `%` for any run, `_` for one
 /// character — against string values only; numbers and booleans never match.
 /// Search stops at the first hit unless `all` is set.
-fn json_search(
-    document: &serde_json::Value,
-    pattern: &str,
+struct JsonSearch<'a> {
+    pattern: &'a str,
     escape: Option<char>,
     all: bool,
-    here: &str,
-    found: &mut Vec<String>,
     collation: Collation,
-) {
-    if !all && !found.is_empty() {
-        return;
-    }
-    match document {
-        serde_json::Value::String(text) => {
-            if like_matches(text, pattern, escape, false, collation) {
-                found.push(here.to_owned());
-            }
+    found: Vec<String>,
+    /// Every member visited and every LIKE step is counted here: a large
+    /// document times a wildcard pattern is work the data decides, and the
+    /// search ends with the statement's interruption once it says to stop.
+    steps: crate::execution::InterruptCounter,
+}
+
+impl JsonSearch<'_> {
+    fn search(&mut self, document: &serde_json::Value, here: &str) -> Result<(), ExecError> {
+        if !self.all && !self.found.is_empty() {
+            return Ok(());
         }
-        serde_json::Value::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
-                json_search(
-                    item,
-                    pattern,
-                    escape,
-                    all,
-                    &format!("{here}[{index}]"),
-                    found,
-                    collation,
-                );
-                if !all && !found.is_empty() {
-                    return;
+        self.steps.step()?;
+        match document {
+            serde_json::Value::String(text) => {
+                if like_search(
+                    text,
+                    self.pattern,
+                    self.escape,
+                    false,
+                    self.collation,
+                    &mut self.steps,
+                )? {
+                    self.found.push(here.to_owned());
                 }
             }
-        }
-        serde_json::Value::Object(members) => {
-            for (key, value) in members {
-                // A key needing quotes in a path gets them, so the answer can
-                // be fed straight back into JSON_EXTRACT.
-                let step = if key.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    format!("{here}.{key}")
-                } else {
-                    format!("{here}.\"{key}\"")
-                };
-                json_search(value, pattern, escape, all, &step, found, collation);
-                if !all && !found.is_empty() {
-                    return;
+            serde_json::Value::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    self.search(item, &format!("{here}[{index}]"))?;
+                    if !self.all && !self.found.is_empty() {
+                        return Ok(());
+                    }
                 }
             }
+            serde_json::Value::Object(members) => {
+                for (key, value) in members {
+                    // A key needing quotes in a path gets them, so the answer
+                    // can be fed straight back into JSON_EXTRACT.
+                    let step = if key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        format!("{here}.{key}")
+                    } else {
+                        format!("{here}.\"{key}\"")
+                    };
+                    self.search(value, &step)?;
+                    if !self.all && !self.found.is_empty() {
+                        return Ok(());
+                    }
+                }
+            }
+            _ => {}
         }
-        _ => {}
+        Ok(())
     }
 }
 
@@ -8633,20 +8693,46 @@ fn json_pretty(value: &serde_json::Value, indent: usize) -> String {
 /// `MySQL`'s `JSON_OVERLAPS`: arrays intersect element-wise, an array against
 /// anything else is membership, two objects share a member, and two scalars
 /// compare equal - all under JSON equality.
-fn json_overlaps(left: &serde_json::Value, right: &serde_json::Value) -> bool {
-    let equal = |a: &serde_json::Value, b: &serde_json::Value| {
-        crate::json_order::value_sort_key(a) == crate::json_order::value_sort_key(b)
+///
+/// Two arrays compare every pair, work the data decides, so each comparison
+/// is counted and the search ends with the statement's interruption.
+fn json_overlaps(left: &serde_json::Value, right: &serde_json::Value) -> Result<bool, ExecError> {
+    let mut steps = crate::execution::InterruptCounter::checked();
+    let mut equal = |a: &serde_json::Value, b: &serde_json::Value| {
+        steps.step()?;
+        Ok::<_, ExecError>(
+            crate::json_order::value_sort_key(a) == crate::json_order::value_sort_key(b),
+        )
     };
     match (left, right) {
-        (serde_json::Value::Array(a), serde_json::Value::Array(b)) => a
-            .iter()
-            .any(|item| b.iter().any(|other| equal(item, other))),
-        (serde_json::Value::Array(items), other) | (other, serde_json::Value::Array(items)) => {
-            items.iter().any(|item| equal(item, other))
+        (serde_json::Value::Array(a), serde_json::Value::Array(b)) => {
+            for item in a {
+                for other in b {
+                    if equal(item, other)? {
+                        return Ok(true);
+                    }
+                }
+            }
+            Ok(false)
         }
-        (serde_json::Value::Object(a), serde_json::Value::Object(b)) => a
-            .iter()
-            .any(|(key, value)| b.get(key).is_some_and(|member| equal(member, value))),
+        (serde_json::Value::Array(items), other) | (other, serde_json::Value::Array(items)) => {
+            for item in items {
+                if equal(item, other)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        (serde_json::Value::Object(a), serde_json::Value::Object(b)) => {
+            for (key, value) in a {
+                if let Some(member) = b.get(key)
+                    && equal(member, value)?
+                {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
         (a, b) => equal(a, b),
     }
 }
@@ -8698,31 +8784,18 @@ fn locate(needle: &str, haystack: &str, start: i64) -> u64 {
     u64::try_from(start.saturating_add(character_position).saturating_add(1)).unwrap_or(u64::MAX)
 }
 
-fn like_matches(
-    value: &str,
-    pattern: &str,
-    escape: Option<char>,
-    binary: bool,
-    collation: Collation,
-) -> bool {
-    like_search(value, pattern, escape, binary, collation, &mut || false).unwrap_or(false)
-}
-
-/// Steps of a LIKE match between two looks at whether it should stop.
-const LIKE_STEPS_PER_CHECK: u32 = 1 << 16;
-
 /// Matches `value` against a LIKE `pattern`. After a `%` the match retries
 /// from each later position, so the work can be the product of the two
-/// lengths; every [`LIKE_STEPS_PER_CHECK`] steps it asks `interrupted`, and
-/// answers `None` once that says to stop.
-fn like_search(
+/// lengths; each step is counted on `steps`, which ends the match with the
+/// statement's interruption once it says to stop.
+pub(crate) fn like_search(
     value: &str,
     pattern: &str,
     escape: Option<char>,
     binary: bool,
     collation: Collation,
-    interrupted: &mut dyn FnMut() -> bool,
-) -> Option<bool> {
+    steps: &mut crate::execution::InterruptCounter,
+) -> Result<bool, ExecError> {
     let value = value.chars().collect::<Vec<_>>();
     let mut tokens = Vec::with_capacity(pattern.chars().count());
     let mut pattern = pattern.chars();
@@ -8742,15 +8815,8 @@ fn like_search(
     let mut token_index = 0;
     let mut wildcard = None;
     let mut wildcard_value = 0;
-    let mut until_check = LIKE_STEPS_PER_CHECK;
     while value_index < value.len() {
-        until_check -= 1;
-        if until_check == 0 {
-            if interrupted() {
-                return None;
-            }
-            until_check = LIKE_STEPS_PER_CHECK;
-        }
+        steps.step()?;
         match tokens.get(token_index) {
             Some(LikeToken::Literal(literal))
                 if like_literal_matches(value[value_index], *literal, binary, collation) =>
@@ -8769,7 +8835,7 @@ fn like_search(
             }
             _ => {
                 let Some(wildcard_index) = wildcard else {
-                    return Some(false);
+                    return Ok(false);
                 };
                 wildcard_value += 1;
                 value_index = wildcard_value;
@@ -8780,7 +8846,7 @@ fn like_search(
     while matches!(tokens.get(token_index), Some(LikeToken::AnyMany)) {
         token_index += 1;
     }
-    Some(token_index == tokens.len())
+    Ok(token_index == tokens.len())
 }
 
 fn like_literal_matches(value: char, literal: char, binary: bool, collation: Collation) -> bool {
@@ -10212,6 +10278,53 @@ mod tests {
             assert!(matches!(call(&long), Err(crate::ExecError::QueryCancelled)));
             assert_eq!(call(&short).expect("answers"), Value::Boolean(true));
         });
+        // A statement past its deadline stops the same way, as a timeout.
+        let late = crate::ExecutionCancellation::new();
+        late.limit_to(std::time::Instant::now());
+        crate::with_execution_cancellation(late, || {
+            assert!(matches!(call(&long), Err(crate::ExecError::QueryTimedOut)));
+        });
+        // JSON_SEARCH matches every string of its document with LIKE.
+        let search = |args: &[Value]| {
+            super::evaluate_eager_scalar(ScalarFunction::JsonSearch, args, Some(DataType::Json))
+        };
+        let document = format!(
+            "[{}]",
+            vec![format!("\"{}\"", "a".repeat(4096)); 4].join(",")
+        );
+        let args = vec![
+            Value::Utf8(document),
+            Value::Utf8("all".into()),
+            Value::Utf8(format!("%{}b", "a".repeat(2048))),
+        ];
+        assert_eq!(search(&args).expect("answers"), Value::Null);
+        let cancelled = crate::ExecutionCancellation::new();
+        cancelled.cancel();
+        crate::with_execution_cancellation(cancelled, || {
+            assert!(matches!(
+                search(&args),
+                Err(crate::ExecError::QueryCancelled)
+            ));
+        });
+    }
+
+    /// A deadline set on the handle a tracker is made under reaches the
+    /// loops that ask the thread, before and after it passes.
+    #[test]
+    fn a_tracker_deadline_reaches_the_thread_handle() {
+        let handle = crate::ExecutionCancellation::new();
+        crate::with_execution_cancellation(handle, || {
+            let later = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+            let _tracker = crate::MemoryTracker::with_deadline(1 << 20, Some(later));
+            assert!(crate::execution::execution_interrupted().is_ok());
+            let _tracker =
+                crate::MemoryTracker::with_deadline(1 << 20, Some(std::time::Instant::now()));
+            assert!(matches!(
+                crate::execution::execution_interrupted(),
+                Err(crate::ExecError::QueryTimedOut)
+            ));
+        });
+        assert!(crate::execution::execution_interrupted().is_ok());
     }
 
     /// Three divergences measured against `MySQL` 8.4 and now repaired.

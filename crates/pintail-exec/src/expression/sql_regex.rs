@@ -9,6 +9,7 @@ use regex_automata::util::{
 };
 
 use super::{ExecError, MAX_COMPILED_REGEX_BYTES};
+use crate::execution::InterruptCounter;
 
 pub(super) const WORKSPACE_LIMIT: usize = 4 << 20;
 
@@ -123,24 +124,47 @@ impl Program {
         }
     }
 
-    pub(super) fn is_match(&self, text: &str) -> bool {
+    /// Whether `text` holds a match. The work is counted on `steps`, which
+    /// ends the search with the statement's interruption.
+    pub(super) fn is_match(
+        &self,
+        text: &str,
+        steps: &mut InterruptCounter,
+    ) -> Result<bool, ExecError> {
         match self {
-            Self::Fast(program) => program.is_match(text),
-            Self::Boundary(program) if single_line(text) => program.fast.is_match(text),
-            Self::Boundary(program) => program.captures_at(text, 0).is_some(),
+            Self::Fast(program) => {
+                steps.steps(text.len())?;
+                Ok(program.is_match(text))
+            }
+            Self::Boundary(program) if single_line(text) => {
+                steps.steps(text.len())?;
+                Ok(program.fast.is_match(text))
+            }
+            Self::Boundary(program) => Ok(program.captures_at(text, 0, steps)?.is_some()),
         }
     }
 
     /// Capture slots of the first match starting at or after byte `from`,
     /// with the text before `from` still visible to anchors and boundaries.
-    fn captures_from(&self, text: &str, from: usize) -> Option<Box<[usize]>> {
+    fn captures_from(
+        &self,
+        text: &str,
+        from: usize,
+        steps: &mut InterruptCounter,
+    ) -> Result<Option<Box<[usize]>>, ExecError> {
         let fast = match self {
             Self::Fast(program) => program,
             Self::Boundary(program) if single_line(text) => &program.fast,
-            Self::Boundary(program) => return program.captures_at(text, from),
+            Self::Boundary(program) => return program.captures_at(text, from, steps),
         };
-        let captures = fast.captures_at(text, from)?;
-        Some(
+        let Some(captures) = fast.captures_at(text, from) else {
+            steps.steps(text.len() - from)?;
+            return Ok(None);
+        };
+        // A search reads up to its match; one that finds a match a byte on,
+        // millions of times, is as much work as one long read.
+        steps.steps(captures.get(0).map_or(0, |found| found.end() - from) + 1)?;
+        Ok(Some(
             (0..captures.len())
                 .flat_map(|group| {
                     captures
@@ -150,31 +174,37 @@ impl Program {
                         })
                 })
                 .collect(),
-        )
+        ))
     }
 
-    /// Matches from byte `from` on, in the order a search reports them: after
-    /// a non-empty match the next search starts at its end, where an empty
-    /// match may follow; after an empty match it starts one character on.
-    pub(super) fn matches_from<'a>(
-        &'a self,
-        text: &'a str,
-        from: usize,
-    ) -> impl Iterator<Item = Box<[usize]>> + 'a {
-        let mut next = Some(from);
-        std::iter::from_fn(move || {
-            let slots = self.captures_from(text, next?)?;
-            let end = slots[1];
-            next = if slots[0] == end {
-                text[end..]
-                    .chars()
-                    .next()
-                    .map(|character| end + character.len_utf8())
-            } else {
-                Some(end)
-            };
-            Some(slots)
-        })
+    /// The match after the one that started the search at `next`, in the
+    /// order a search reports them: after a non-empty match the next search
+    /// starts at its end, where an empty match may follow; after an empty
+    /// match it starts one character on. `next` is `None` once the text is
+    /// exhausted.
+    fn next_match(
+        &self,
+        text: &str,
+        next: &mut Option<usize>,
+        steps: &mut InterruptCounter,
+    ) -> Result<Option<Box<[usize]>>, ExecError> {
+        let Some(from) = *next else {
+            return Ok(None);
+        };
+        let Some(slots) = self.captures_from(text, from, steps)? else {
+            *next = None;
+            return Ok(None);
+        };
+        let end = slots[1];
+        *next = if slots[0] == end {
+            text[end..]
+                .chars()
+                .next()
+                .map(|character| end + character.len_utf8())
+        } else {
+            Some(end)
+        };
+        Ok(Some(slots))
     }
 
     /// The `occurrence`-th match (1-based) from byte `from`.
@@ -183,15 +213,23 @@ impl Program {
         text: &'a str,
         from: usize,
         occurrence: usize,
-    ) -> Option<Match<'a>> {
-        let slots = self
-            .matches_from(text, from)
-            .nth(occurrence.checked_sub(1)?)?;
-        Some(Match {
-            text,
-            start: slots[0],
-            end: slots[1],
-        })
+        steps: &mut InterruptCounter,
+    ) -> Result<Option<Match<'a>>, ExecError> {
+        let Some(mut remaining) = occurrence.checked_sub(1) else {
+            return Ok(None);
+        };
+        let mut next = Some(from);
+        while let Some(slots) = self.next_match(text, &mut next, steps)? {
+            if remaining == 0 {
+                return Ok(Some(Match {
+                    text,
+                    start: slots[0],
+                    end: slots[1],
+                }));
+            }
+            remaining -= 1;
+        }
+        Ok(None)
     }
 
     /// Replaces the `occurrence`-th match from byte `from`, or every match
@@ -202,11 +240,15 @@ impl Program {
         from: usize,
         occurrence: usize,
         replacement: &str,
-    ) -> String {
+        steps: &mut InterruptCounter,
+    ) -> Result<String, ExecError> {
         let mut result = String::with_capacity(text.len());
         let mut copied = 0;
-        for (index, slots) in self.matches_from(text, from).enumerate() {
-            if occurrence != 0 && index + 1 != occurrence {
+        let mut next = Some(from);
+        let mut index = 0;
+        while let Some(slots) = self.next_match(text, &mut next, steps)? {
+            index += 1;
+            if occurrence != 0 && index != occurrence {
                 continue;
             }
             result.push_str(&text[copied..slots[0]]);
@@ -232,7 +274,7 @@ impl Program {
             }
         }
         result.push_str(&text[copied..]);
-        result
+        Ok(result)
     }
 
     fn group_index(&self, name: &str) -> Option<usize> {
@@ -313,7 +355,14 @@ struct Thread {
 }
 
 impl BoundaryProgram {
-    fn captures_at(&self, text: &str, from: usize) -> Option<Box<[usize]>> {
+    /// The first match at or after `from`. Each position costs a step per
+    /// live thread, counted on `steps`.
+    fn captures_at(
+        &self,
+        text: &str,
+        from: usize,
+        steps: &mut InterruptCounter,
+    ) -> Result<Option<Box<[usize]>>, ExecError> {
         let mut current = Vec::new();
         let mut next = Vec::new();
         let mut seen = vec![false; self.nfa.states().len()];
@@ -321,6 +370,7 @@ impl BoundaryProgram {
         let mut stack = Vec::new();
         let mut found = None;
         for at in from..=text.len() {
+            steps.steps(current.len() + 1)?;
             if found.is_none() && text.is_char_boundary(at) {
                 let thread = Thread {
                     state: self.nfa.start_anchored(),
@@ -350,12 +400,12 @@ impl BoundaryProgram {
                 }
             }
             if found.is_some() && next.is_empty() {
-                return found;
+                return Ok(found);
             }
             std::mem::swap(&mut current, &mut next);
             std::mem::swap(&mut seen, &mut next_seen);
         }
-        found
+        Ok(found)
     }
 
     fn expand(
@@ -457,7 +507,11 @@ impl BoundaryProgram {
         let mut from = 0;
         let mut copied = 0;
         let mut previous_end = None;
-        while let Some(slots) = self.captures_at(text, from) {
+        let mut steps = InterruptCounter::unchecked();
+        while let Some(slots) = self
+            .captures_at(text, from, &mut steps)
+            .expect("an unchecked search is never interrupted")
+        {
             let (start, end) = (slots[0], slots[1]);
             if start != end || previous_end != Some(end) {
                 result.push_str(&text[copied..start]);
@@ -496,7 +550,7 @@ impl BoundaryProgram {
 
 #[cfg(test)]
 mod tests {
-    use super::{LineEndings, Program};
+    use super::{ExecError, InterruptCounter, LineEndings, Program};
 
     #[test]
     fn boundary_matching_preserves_greediness_and_capture_expansion() {
@@ -531,7 +585,8 @@ mod tests {
             for text in &subjects {
                 assert_eq!(
                     boundary
-                        .captures_at(text, 0)
+                        .captures_at(text, 0, &mut InterruptCounter::unchecked())
+                        .unwrap()
                         .map(|slots| (slots[0], text[slots[0]..slots[1]].to_owned())),
                     reference
                         .find(text)
@@ -556,23 +611,66 @@ mod tests {
         }
     }
 
+    fn is_match(program: &Program, text: &str) -> bool {
+        program
+            .is_match(text, &mut InterruptCounter::unchecked())
+            .expect("an unchecked search is never interrupted")
+    }
+
     #[test]
     fn multiline_start_accepts_empty_input_but_not_a_trailing_empty_line() {
         let program = Program::new("(?m)^", false, false, false, LineEndings::Unicode).unwrap();
-        assert!(program.is_match(""));
+        assert!(is_match(&program, ""));
         let program = Program::new(r"(?m)b\s^", false, false, false, LineEndings::Unicode).unwrap();
-        assert!(!program.is_match("a\nb\n"));
+        assert!(!is_match(&program, "a\nb\n"));
     }
 
     #[test]
     fn strict_end_markers_follow_syntax_in_extended_patterns() {
         let program =
             Program::new("(?x)# [\na\\z$", false, false, false, LineEndings::Unicode).unwrap();
-        assert!(program.is_match("a"));
-        assert!(!program.is_match("a\n"));
+        assert!(is_match(&program, "a"));
+        assert!(!is_match(&program, "a\n"));
         let program =
             Program::new("(?x)# [\na\\Z", false, false, false, LineEndings::Unicode).unwrap();
-        assert!(program.is_match("a\n"));
+        assert!(is_match(&program, "a\n"));
+    }
+
+    /// A search over a long subject, through the boundary machine and the
+    /// fast one, ends with the statement's interruption: cancelled, or out
+    /// of time. The same searches unchecked still answer.
+    #[test]
+    fn a_long_search_stops_when_its_statement_is_interrupted() {
+        let text = format!("{}\n", "ab".repeat(200_000));
+        let boundary = Program::new("b$", false, true, false, LineEndings::Unicode).unwrap();
+        let fast = Program::new("b", false, false, false, LineEndings::Unicode).unwrap();
+        let replace = |program: &Program, steps: &mut InterruptCounter| {
+            program.replace_from(&text, 0, 0, "c", steps)
+        };
+        assert!(replace(&boundary, &mut InterruptCounter::unchecked()).is_ok());
+        assert!(replace(&fast, &mut InterruptCounter::unchecked()).is_ok());
+        let cancelled = crate::ExecutionCancellation::new();
+        cancelled.cancel();
+        crate::with_execution_cancellation(cancelled, || {
+            for program in [&boundary, &fast] {
+                assert!(matches!(
+                    replace(program, &mut InterruptCounter::checked()),
+                    Err(ExecError::QueryCancelled)
+                ));
+            }
+            assert!(matches!(
+                boundary.is_match(&text, &mut InterruptCounter::checked()),
+                Err(ExecError::QueryCancelled)
+            ));
+        });
+        let late = crate::ExecutionCancellation::new();
+        late.limit_to(std::time::Instant::now());
+        crate::with_execution_cancellation(late, || {
+            assert!(matches!(
+                boundary.nth_match(&text, 0, 200_000, &mut InterruptCounter::checked()),
+                Err(ExecError::QueryTimedOut)
+            ));
+        });
     }
 
     #[test]
