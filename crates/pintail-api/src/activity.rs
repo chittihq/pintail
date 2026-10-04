@@ -147,24 +147,22 @@ pub(crate) async fn retry_dead_letter(
     let result = run_reconcile_job(&state, &record.database_id, &table).await;
     state.release_job(&record.database_id);
     result.map_err(ApiError::unavailable)?;
-    if state
+    // The table has been reconciled, which is what the retry asked for. A
+    // letter already gone by now - pruned past its retention, or discarded
+    // from another session while the reconcile ran - is the end state the
+    // retry was heading for, not a failure of it.
+    state
         .metadata()?
         .delete_dlq_record(&id)
-        .map_err(ApiError::internal)?
-    {
-        audit::record(
-            &state,
-            &principal,
-            "dead_letter.retry",
-            Some(("database", &record.database_id)),
-            Some(serde_json::json!({"table": table})),
-        );
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::not_found(
-            "dead-letter record disappeared after retry",
-        ))
-    }
+        .map_err(ApiError::internal)?;
+    audit::record(
+        &state,
+        &principal,
+        "dead_letter.retry",
+        Some(("database", &record.database_id)),
+        Some(serde_json::json!({"table": table})),
+    );
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn visible_database(
