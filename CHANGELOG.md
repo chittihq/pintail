@@ -16,6 +16,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on the `pintail limits:` startup line, and `GET /api/storage` reports it
   with the last pass under `metadata.audit_retention`. Metadata migration
   25 adds the index the pruning needs.
+- Dead letters are pruned the same way: letters older than
+  `PINTAIL_DLQ_RETENTION_DAYS` (default 30; `0` keeps every letter) are
+  deleted on the same hourly pass, reported as `dlq_retention` on the
+  startup line and under `metadata.dlq_retention`. The dead-letter list, its
+  counts and the `pintail_dead_letters` gauge stay consistent; discarding
+  or retrying a pruned letter answers 404.
 
 ### Changed
 
@@ -43,6 +49,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A dead-letter retry whose letter was removed while its reconcile ran
+  answered 404 after the table had already been reconciled; it now
+  succeeds.
 - `EXISTS` / `NOT EXISTS` over an ungrouped aggregate whose `HAVING`
   aggregates nothing (`HAVING 1`, or a condition on the outer row only)
   answered false on empty input and raised a cardinality error on several
