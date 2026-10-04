@@ -67,6 +67,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (the default mode included) the two instants of the repeated hour are one
   value, and without those flags they stay two. WITH ROLLUP keeps them
   apart and orders by instant.
+- A DATE or DATETIME that no calendar has (a day past its month's end, a
+  zero month or day) is written as `0000-00-00` when grouped,
+  deduplicated, counted distinct or unioned under a sql_mode that rejects
+  it, as MySQL does; column statistics that prove a column holds only real
+  dates skip the check.
+- TIMESTAMP grouping, DISTINCT and COUNT(DISTINCT) keep instants apart
+  where MySQL reads the column through a covering source index, which
+  Pintail learns from the source's index definitions. Joins and IN between
+  TIMESTAMP columns compare session-zone readings, as MySQL's hash joins
+  do, and instants when a joined column leads a source index. A top-level
+  UNION over TIMESTAMP columns removes duplicates and orders by instant in
+  modes without the date-validation flags. Differences against MySQL on a
+  6,090-query matrix of zones and modes fell from 1,159 to 202; the rest
+  are listed in docs/limitations.md.
 - UNIX_TIMESTAMP of a TIMESTAMP column returns its stored instant in a
   daylight-saving zone instead of folding the repeated hour onto the
   earlier one.
