@@ -370,7 +370,7 @@ fn report_effective_limits(config: &pintail::config::AppConfig) {
     pintail_log::log_info!(
         "pintail limits: concurrent_queries={admission} queue_wait={:.1}s query_memory={} \
          shared_memory={} process_memory={} open_files={} spill_dir={} \
-         query_spill={} global_spill={} lookup_index_cache={} block_cache={}",
+         query_spill={} global_spill={} lookup_index_cache={} block_cache={} audit_retention={}",
         config.query_queue_wait().as_secs_f64(),
         describe(config.query_memory_limit_bytes() as u64),
         describe(config.total_query_memory_limit_bytes() as u64),
@@ -383,6 +383,10 @@ fn report_effective_limits(config: &pintail::config::AppConfig) {
         match pintail_store::block_cache_stats().limit_bytes {
             0 => "off".to_owned(),
             bytes => format!("{}MiB", bytes / (1024 * 1024)),
+        },
+        match pintail_api::audit_retention_days() {
+            0 => "unbounded".to_owned(),
+            days => format!("{days}d"),
         },
     );
 }

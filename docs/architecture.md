@@ -245,6 +245,11 @@ dashboard. While checks are clean, a consistent compacted copy is written to
 the newest `PINTAIL_META_BACKUP_KEEP` (default 8) are kept; zero for either
 turns copies off. Run history is pruned on the same pass: successful
 replication cycles after a day, everything else finished after thirty days.
+Audit events older than `PINTAIL_AUDIT_RETENTION_DAYS` (default 90; `0` keeps
+every event; anything but a whole number logs a warning and keeps the default)
+are deleted on the same pass, 10,000 per transaction; the setting is on the
+`pintail limits:` line as `audit_retention`, and `GET /api/storage` reports it
+with the last pass under `metadata.audit_retention`.
 
 MySQL parity is tabulated in [`parity.md`](../parity.md); compatibility
 boundaries that remain by design are listed in

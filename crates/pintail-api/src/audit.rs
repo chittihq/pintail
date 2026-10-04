@@ -670,4 +670,78 @@ mod tests {
         assert_eq!(counts.written.load(Ordering::Acquire), 50);
         assert!(query_rows(&node).is_empty());
     }
+
+    /// The audit writer keeps committing while the retention pass prunes:
+    /// a batch written in the gap between two pruning transactions commits
+    /// on its first attempt, and batches written from another thread for
+    /// the whole pass all commit too. Nothing is lost and no new row is
+    /// pruned.
+    #[tokio::test]
+    async fn the_audit_writer_commits_during_a_prune() {
+        let node = Node::new().await;
+        let path = node.state.metadata_path().expect("path").to_owned();
+        let old = (0..3_000)
+            .map(|serial| {
+                let mut event = queued(&node, &node.first_workspace, serial);
+                event.id = format!("audit_old_{serial}");
+                event.created_at = "2025-01-01T00:00:00+00:00".to_owned();
+                event
+            })
+            .collect::<Vec<_>>();
+        write_batch(&path, &old, &Counts::default(), CONTENTION);
+        let now = Utc::now();
+        // The test node is not shared across threads; the writer thread
+        // builds its events from these.
+        let (workspace_id, actor_id) = (node.first_workspace.clone(), node.admin_id.clone());
+        let fresh = |serial: usize| Queued {
+            id: format!("audit_new_{serial}"),
+            workspace_id: workspace_id.clone(),
+            by_key: false,
+            actor_id: actor_id.clone(),
+            action: "query.run".to_owned(),
+            target: None,
+            detail_json: None,
+            created_at: now.to_rfc3339(),
+            client_ip: None,
+            room: None,
+        };
+
+        let between = Counts::default();
+        let beside = Counts::default();
+        let mut gaps = 0;
+        let pruned = std::thread::scope(|scope| {
+            let writer = scope.spawn(|| {
+                for serial in 0..20 {
+                    write_batch(&path, &[fresh(10_000 + serial)], &beside, CONTENTION);
+                }
+            });
+            let pruned =
+                crate::metadata_health::prune_audit_log(&node.metadata(), now, 90, 100, |_| {
+                    let attempts = between.attempts.load(Ordering::Acquire);
+                    write_batch(&path, &[fresh(gaps)], &between, CONTENTION);
+                    assert_eq!(
+                        between.attempts.load(Ordering::Acquire),
+                        attempts + 1,
+                        "the gap between batches holds no lock"
+                    );
+                    gaps += 1;
+                });
+            writer.join().expect("writer thread");
+            pruned
+        })
+        .expect("retention on")
+        .expect("prune");
+
+        assert_eq!(pruned.removed, 3_000);
+        assert_eq!(pruned.batches, 31);
+        assert_eq!(gaps, 30);
+        for counts in [&between, &beside] {
+            assert_eq!(counts.lost.load(Ordering::Acquire), 0);
+        }
+        assert_eq!(between.commits.load(Ordering::Acquire), 30);
+        assert_eq!(beside.commits.load(Ordering::Acquire), 20);
+        let rows = query_rows(&node);
+        assert_eq!(rows.len(), 50);
+        assert!(rows.iter().all(|row| row.id.starts_with("audit_new_")));
+    }
 }
