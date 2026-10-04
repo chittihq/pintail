@@ -587,6 +587,8 @@ pub(crate) enum CompiledExpr {
         args: Vec<Self>,
         argument_types: Vec<Option<DataType>>,
         literal_regex: Option<CompiledRegex>,
+        /// Literal session zones are resolved once, including on the row path.
+        session_zone: Option<temporal::ZoneReading>,
         variables: Option<pintail_sql::UserVariableWrites>,
         data_type: Option<DataType>,
         /// Needed by `IN`, which compares its needle against every element.
@@ -1165,6 +1167,16 @@ impl CompiledExpr {
                         .map(|argument| Self::compile(argument, columns, collation))
                         .collect::<Result<Vec<_>, _>>()?,
                     literal_regex,
+                    session_zone: if *function == ScalarFunction::SessionTimestamp {
+                        match args.get(1).map(|argument| &argument.kind) {
+                            Some(BoundExprKind::Literal(Value::Utf8(zone))) => {
+                                temporal::ZoneReading::of(zone)
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    },
                     variables: pintail_sql::user_variable_writes(),
                     data_type: expr.data_type,
                     collation: scalar_collation,
@@ -1236,6 +1248,7 @@ impl CompiledExpr {
                 args,
                 argument_types,
                 literal_regex: _,
+                session_zone: _,
                 variables: _,
                 data_type,
                 collation,
@@ -1359,11 +1372,15 @@ impl CompiledExpr {
                 args,
                 argument_types,
                 literal_regex,
+                session_zone,
                 variables,
                 data_type,
                 collation,
                 overflow,
             } => {
+                if let Some(zone) = session_zone {
+                    return zone.read_value(&args[0].evaluate(batch, row)?);
+                }
                 if matches!(
                     function,
                     ScalarFunction::UserVariableRead | ScalarFunction::UserVariableAssign
@@ -1613,6 +1630,7 @@ impl CompiledExpr {
                 data_type: _,
                 argument_types: _,
                 variables: _,
+                session_zone: _,
                 literal_regex,
                 collation: _,
                 overflow: _,
@@ -9658,6 +9676,7 @@ mod tests {
             argument_types: vec![None; 3],
             args: vec![super::CompiledExpr::Column(0), literal(2), literal(5)],
             literal_regex: None,
+            session_zone: None,
             variables: None,
             data_type: Some(DataType::Boolean),
             collation: Collation::default(),
@@ -9707,6 +9726,7 @@ mod tests {
                 argument_types: vec![None; args.len()],
                 args,
                 literal_regex: None,
+                session_zone: None,
                 variables: None,
                 data_type: Some(DataType::Boolean),
                 collation: Collation::default(),
@@ -10685,6 +10705,7 @@ mod tests {
                 Some(DataType::Utf8),
             ],
             literal_regex: None,
+            session_zone: None,
             variables: None,
             collation: Collation::default(),
             overflow: None,
@@ -10826,3 +10847,6 @@ mod tests {
         assert_eq!(super::whole_second_time_number("839:00:00"), None);
     }
 }
+
+#[cfg(test)]
+mod session_zone_tests;

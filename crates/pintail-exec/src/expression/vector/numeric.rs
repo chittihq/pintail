@@ -810,6 +810,7 @@ mod tests {
                 argument_types: vec![Some(DataType::Time64 { fsp: 6 })],
                 args: vec![CompiledExpr::Column(0)],
                 literal_regex: None,
+                session_zone: None,
                 variables: None,
                 data_type: Some(target),
                 collation: crate::collation::Collation::default(),

@@ -399,7 +399,8 @@ pub(super) fn fixed_zone_seconds(text: &str) -> Option<i32> {
 
 /// A session zone as a reading of UTC instants: the seconds east of UTC it
 /// reads each instant at.
-pub(super) enum ZoneReading {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ZoneReading {
     /// One offset for every instant.
     Fixed(i32),
     /// An offset that depends on the instant (daylight saving, history).
@@ -415,13 +416,33 @@ impl ZoneReading {
         })
     }
 
+    /// Reads a stored timestamp using a zone resolved when its expression
+    /// was compiled. Zero timestamps remain the stored spelling.
+    pub(super) fn read_value(self, value: &Value) -> Result<Value, ExecError> {
+        if matches!(value, Value::Null) {
+            return Ok(Value::Null);
+        }
+        let text = scalar_string(value)?;
+        if text.starts_with("0000-00-00") {
+            return Ok(Value::Utf8(text));
+        }
+        let zone = match self {
+            Self::Fixed(seconds) => {
+                ZoneSpec::Fixed(FixedOffset::east_opt(seconds).expect("parsed offset"))
+            }
+            Self::Named(zone) => ZoneSpec::Named(zone),
+        };
+        let utc = ZoneSpec::Fixed(FixedOffset::east_opt(0).expect("UTC offset"));
+        Ok(convert_tz_zones(&text, false, || Some((utc, zone))).map_or(Value::Null, Value::Utf8))
+    }
+
     /// Seconds east of UTC at the instant `utc_seconds` after the epoch:
     /// the offset `with_timezone` applies to that instant, so a reading
     /// built from it is the one the text conversion spells. `None` for an
     /// instant the calendar cannot hold.
-    pub(super) fn seconds_east(&self, utc_seconds: i64) -> Option<i32> {
+    pub(super) fn seconds_east(self, utc_seconds: i64) -> Option<i32> {
         match self {
-            Self::Fixed(seconds) => Some(*seconds),
+            Self::Fixed(seconds) => Some(seconds),
             Self::Named(zone) => {
                 use chrono::Offset as _;
                 let instant = chrono::DateTime::from_timestamp(utc_seconds, 0)?.naive_utc();
@@ -510,6 +531,16 @@ pub(super) fn convert_tz_bounded(text: &str, from: &str, to: &str) -> Option<Str
 }
 
 fn convert_tz_impl(text: &str, from: &str, to: &str, bounded: bool) -> Option<String> {
+    convert_tz_zones(text, bounded, || {
+        Some((timezone_spec(from)?, timezone_spec(to)?))
+    })
+}
+
+fn convert_tz_zones(
+    text: &str,
+    bounded: bool,
+    zones: impl FnOnce() -> Option<(ZoneSpec, ZoneSpec)>,
+) -> Option<String> {
     let trimmed = text.trim();
     let naive = canonical_datetime(trimmed)
         .ok_or(())
@@ -522,8 +553,7 @@ fn convert_tz_impl(text: &str, from: &str, to: &str, bounded: bool) -> Option<St
     let fraction_digits = trimmed
         .rsplit_once('.')
         .map_or(0, |(_, fraction)| fraction.len().min(6));
-    let from = timezone_spec(from)?;
-    let to = timezone_spec(to)?;
+    let (from, to) = zones()?;
     let utc = match from {
         ZoneSpec::Fixed(offset) => match offset.from_local_datetime(&naive) {
             LocalResult::Single(value) | LocalResult::Ambiguous(value, _) => {

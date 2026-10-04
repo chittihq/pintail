@@ -32,6 +32,7 @@ pub(super) struct Call<'call> {
     pub(super) args: &'call [CompiledExpr],
     pub(super) argument_types: &'call [Option<DataType>],
     pub(super) literal_regex: Option<&'call CompiledRegex>,
+    pub(super) session_zone: Option<crate::expression::temporal::ZoneReading>,
     pub(super) data_type: Option<DataType>,
     pub(super) collation: Collation,
 }
@@ -147,6 +148,10 @@ pub(super) fn scalar_column(
             values.push(Value::Null);
             continue;
         }
+        if let Some(zone) = call.session_zone {
+            values.push(zone.read_value(&value_at(&operands[0], row)?).ok()?);
+            continue;
+        }
         arguments.clear();
         for operand in &operands {
             arguments.push(value_at(operand, row)?);
@@ -253,6 +258,9 @@ fn packed(
     declared: DataType,
 ) -> Option<ColumnVector> {
     match call.function {
+        ScalarFunction::SessionTimestamp => {
+            session_timestamp_dictionary(operands, call.session_zone?, declared)
+        }
         ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. } => extreme(
             operands,
             declared,
@@ -279,6 +287,60 @@ fn packed(
         }
         _ => super::text::packed_text(call.function, operands, declared, call.collation),
     }
+}
+
+/// A timestamp column containing a zero date stays on the text carrier.
+/// When storage retained its dictionary, convert its entries once and
+/// carry the codes into the result, including across repeated DST hours.
+fn session_timestamp_dictionary(
+    operands: &[Operand<'_>],
+    zone: crate::expression::temporal::ZoneReading,
+    declared: DataType,
+) -> Option<ColumnVector> {
+    let [Operand::Column(input), Operand::Constant(_)] = operands else {
+        return None;
+    };
+    if !matches!(declared, DataType::DateTime64 { .. }) || input.data_type() != declared {
+        return None;
+    }
+    let (TypedValues::Utf8(text), validity) = input.typed()? else {
+        return None;
+    };
+    let (codes, entries) = text.dictionary()?;
+    let mut heap = Vec::new();
+    let mut offsets = vec![0];
+    let mut present = Vec::with_capacity(entries.len());
+    for entry in entries {
+        match zone.read_value(&Value::Utf8(entry.clone())).ok()? {
+            Value::Utf8(text) => {
+                heap.extend_from_slice(text.as_bytes());
+                present.push(true);
+            }
+            Value::Null => present.push(false),
+            _ => return None,
+        }
+        offsets.push(heap.len());
+    }
+    let validity = if present.iter().all(|valid| *valid) {
+        validity.clone()
+    } else {
+        ValidityMask::from_bools(
+            &codes
+                .iter()
+                .enumerate()
+                .map(|(row, code)| {
+                    validity.is_valid(row) && present.get(*code as usize).copied().unwrap_or(false)
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
+    let text =
+        crate::array::StrColumn::from_dictionary(&heap, &offsets, codes.to_vec(), validity.clone());
+    Some(ColumnVector::from_typed(
+        declared,
+        TypedValues::Utf8(text),
+        validity,
+    ))
 }
 
 /// A packed column's rows in the order its values compare: integers and
@@ -849,6 +911,7 @@ mod tests {
                 function,
                 args,
                 argument_types: types,
+                session_zone: None,
                 variables: None,
                 literal_regex,
                 data_type,
@@ -892,6 +955,7 @@ mod tests {
                     args: vec![column(4), column(5)],
                     argument_types: vec![Some(DataType::Utf8); 2],
                     literal_regex: None,
+                    session_zone: None,
                     variables: None,
                     data_type: Some(DataType::Utf8),
                     collation: Collation::from_mysql_name(name).expect("collation"),

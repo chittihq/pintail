@@ -171,6 +171,7 @@ impl CompiledExpr {
     }
 }
 
+#[allow(clippy::too_many_lines)] // One arm per expression shape.
 fn kernel(
     expr: &CompiledExpr,
     batch: &RecordBatch,
@@ -255,6 +256,7 @@ fn kernel(
             args,
             argument_types,
             literal_regex,
+            session_zone,
             data_type: own,
             collation,
             ..
@@ -271,6 +273,7 @@ fn kernel(
                 args,
                 argument_types,
                 literal_regex: literal_regex.as_ref(),
+                session_zone: *session_zone,
                 data_type: *own,
                 collation: *collation,
             };
@@ -456,6 +459,7 @@ mod testing {
             argument_types: vec![None; args.len()],
             args,
             literal_regex: None,
+            session_zone: None,
             variables: None,
             data_type: Some(data_type),
             collation: Collation::default(),
