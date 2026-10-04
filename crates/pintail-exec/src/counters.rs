@@ -60,6 +60,9 @@ pub struct ExecCounters {
     pub fused_rounds: u64,
     /// Batches those rounds folded whole.
     pub fused_batches: u64,
+    /// Stored `TIMESTAMP` texts a session-zone kernel read as canonical
+    /// text, without the general time zone conversion.
+    pub session_texts_read: u64,
 }
 
 thread_local! {
@@ -84,6 +87,7 @@ thread_local! {
             range_windows_bounded: 0,
             fused_rounds: 0,
             fused_batches: 0,
+            session_texts_read: 0,
         })
     };
 }

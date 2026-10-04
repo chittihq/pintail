@@ -272,7 +272,9 @@ pub(super) fn session_timestamp_column(
     let Operand::Column(column) = &input else {
         return None;
     };
-    let units = temporal_column(column)?;
+    let Some(units) = temporal_column(column) else {
+        return session_timestamp_text(column, zone, data_type);
+    };
     let fsp = units.fsp?;
     if data_type.is_some_and(|declared| declared != DataType::DateTime64 { fsp }) {
         return None;
@@ -352,6 +354,69 @@ pub(super) fn session_timestamp_column(
     ))
 }
 
+/// The stored `TIMESTAMP` text column `column` read in a session zone: a
+/// column holding the zero `TIMESTAMP` has no packed units and stays on
+/// the text carrier, and each row is read from its canonical text into
+/// canonical text of the same width.
+///
+/// A coded column declines: the scalar call's own kernel reads each
+/// distinct entry once and keeps the codes. So does a column where some
+/// row is in another shape, which the row path reads.
+fn session_timestamp_text(
+    column: &ColumnVector,
+    zone: crate::expression::temporal::ZoneReading,
+    data_type: Option<DataType>,
+) -> Option<ColumnVector> {
+    use crate::expression::temporal::{READING_BYTES, ZoneCursor};
+    let declared = column.data_type();
+    if !matches!(declared, DataType::DateTime64 { .. })
+        || data_type.is_some_and(|wanted| wanted != declared)
+    {
+        return None;
+    }
+    let (TypedValues::Utf8(text), validity) = column.typed()? else {
+        return None;
+    };
+    if text.dictionary().is_some() {
+        return None;
+    }
+    let views = text.views();
+    let heap = text.heap();
+    let mut read = crate::array::StrColumn::with_capacity_for_lengths(
+        views.iter().map(|view| view.with_bytes(heap, <[u8]>::len)),
+    );
+    let mut cursor = ZoneCursor::new(zone);
+    let mut spelled = [0; READING_BYTES];
+    for (row, view) in views.iter().enumerate() {
+        if !validity.is_valid(row) {
+            read.push(b"");
+            continue;
+        }
+        let pushed = view.with_bytes(heap, |bytes| {
+            if bytes.starts_with(b"0000-00-00") {
+                read.push(bytes);
+                return true;
+            }
+            cursor
+                .read_canonical(bytes, &mut spelled)
+                .map(|reading| read.push(reading))
+                .is_some()
+        });
+        if !pushed {
+            return None;
+        }
+    }
+    let rows = u64::try_from(views.len()).unwrap_or(u64::MAX);
+    crate::counters::count(|counters| {
+        counters.session_texts_read = counters.session_texts_read.saturating_add(rows);
+    });
+    Some(ColumnVector::from_typed(
+        declared,
+        TypedValues::Utf8(read),
+        validity.clone(),
+    ))
+}
+
 /// No zone reads an instant a day or more from UTC: an offset is held as a
 /// fixed offset, which is strictly inside a day either way.
 const WIDEST_OFFSET_MICROS: i64 = MICROS_PER_DAY;
@@ -397,7 +462,13 @@ pub(super) fn session_comparison_mask(
         return None;
     };
     let zone = ZoneReading::of(zone)?;
-    let units = temporal_column(batch.column(*column)?)?;
+    let source = batch.column(*column)?;
+    let Some(units) = temporal_column(source) else {
+        let Value::Utf8(text) = literal else {
+            return None;
+        };
+        return session_text_comparison_mask(source, zone, *data_type, op, text);
+    };
     let fsp = units.fsp?;
     if data_type.is_some_and(|declared| declared != DataType::DateTime64 { fsp }) {
         return None;
@@ -471,6 +542,90 @@ pub(super) fn session_comparison_mask(
         compare(spelled + i64::from(seconds) * 1_000_000)
     });
     (!unread.into_inner()).then_some(mask)
+}
+
+/// [`session_comparison_mask`] over a stored `TIMESTAMP` column on the text
+/// carrier, which a column holding the zero `TIMESTAMP` is.
+///
+/// The answer is the one the reading column would give compared with the
+/// literal: canonical temporal text compares byte for byte, and a row whose
+/// reading is NULL holds for no operator. Each row is read straight into a
+/// buffer and compared there, so no reading is allocated; a coded column
+/// reads each distinct entry once and selects rows by code. A row in
+/// another shape than the canonical one takes the general conversion.
+fn session_text_comparison_mask(
+    column: &ColumnVector,
+    zone: crate::expression::temporal::ZoneReading,
+    data_type: Option<DataType>,
+    op: pintail_sql::BinaryOp,
+    literal: &str,
+) -> Option<crate::SelectionMask> {
+    use pintail_sql::BinaryOp;
+
+    use crate::expression::temporal::{READING_BYTES, ZoneCursor};
+    let declared = column.data_type();
+    if !matches!(declared, DataType::DateTime64 { .. })
+        || data_type.is_some_and(|wanted| wanted != declared)
+    {
+        return None;
+    }
+    let (TypedValues::Utf8(text), validity) = column.typed()? else {
+        return None;
+    };
+    if !matches!(
+        op,
+        BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::LessOrEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterOrEqual
+    ) {
+        return None;
+    }
+    let needle = literal.as_bytes();
+    let compare = move |reading: &[u8]| match op {
+        BinaryOp::Equal => reading == needle,
+        BinaryOp::NotEqual => reading != needle,
+        BinaryOp::Less => reading < needle,
+        BinaryOp::LessOrEqual => reading <= needle,
+        BinaryOp::Greater => reading > needle,
+        _ => reading >= needle,
+    };
+    let keep = |cursor: &mut ZoneCursor, stored: &[u8]| {
+        if stored.starts_with(b"0000-00-00") {
+            return compare(stored);
+        }
+        let mut spelled = [0; READING_BYTES];
+        if let Some(reading) = cursor.read_canonical(stored, &mut spelled) {
+            return compare(reading);
+        }
+        match std::str::from_utf8(stored).map(|stored| zone.read_value_generally(stored)) {
+            Ok(Value::Utf8(reading)) => compare(reading.as_bytes()),
+            _ => false,
+        }
+    };
+    let rows = text.len();
+    let mask = if let Some((codes, entries)) = text.dictionary() {
+        let mut cursor = ZoneCursor::new(zone);
+        let keeps = entries
+            .iter()
+            .map(|entry| keep(&mut cursor, entry.as_bytes()))
+            .collect::<Vec<_>>();
+        crate::expression::selection::select_words(codes, validity, |code| {
+            keeps.get(code as usize).copied().unwrap_or(false)
+        })
+    } else {
+        let heap = text.heap();
+        crate::expression::selection::select_words(text.views(), validity, |view| {
+            view.with_bytes(heap, |stored| keep(&mut ZoneCursor::new(zone), stored))
+        })
+    };
+    let rows = u64::try_from(rows).unwrap_or(u64::MAX);
+    crate::counters::count(|counters| {
+        counters.session_texts_read = counters.session_texts_read.saturating_add(rows);
+    });
+    Some(mask)
 }
 
 /// Whether `expr` reads a source `TIMESTAMP` in a named session zone: the

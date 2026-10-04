@@ -426,6 +426,18 @@ impl ZoneReading {
         if text.starts_with("0000-00-00") {
             return Ok(Value::Utf8(text));
         }
+        let mut spelled = [0; READING_BYTES];
+        if let Some(reading) = ZoneCursor::new(self).read_canonical(text.as_bytes(), &mut spelled) {
+            return Ok(Value::Utf8(
+                String::from_utf8(reading.to_vec()).expect("canonical text is ASCII"),
+            ));
+        }
+        Ok(self.read_value_generally(&text))
+    }
+
+    /// [`Self::read_value`] through the general conversion, which also
+    /// reads text in shapes other than the canonical one.
+    pub(crate) fn read_value_generally(self, text: &str) -> Value {
         let zone = match self {
             Self::Fixed(seconds) => {
                 ZoneSpec::Fixed(FixedOffset::east_opt(seconds).expect("parsed offset"))
@@ -433,7 +445,7 @@ impl ZoneReading {
             Self::Named(zone) => ZoneSpec::Named(zone),
         };
         let utc = ZoneSpec::Fixed(FixedOffset::east_opt(0).expect("UTC offset"));
-        Ok(convert_tz_zones(&text, false, || Some((utc, zone))).map_or(Value::Null, Value::Utf8))
+        convert_tz_zones(text, false, || Some((utc, zone))).map_or(Value::Null, Value::Utf8)
     }
 
     /// Seconds east of UTC at the instant `utc_seconds` after the epoch:
@@ -453,6 +465,94 @@ impl ZoneReading {
                 )
             }
         }
+    }
+}
+
+/// The widest canonical datetime text: `YYYY-MM-DD HH:MM:SS.ffffff`.
+pub(crate) const READING_BYTES: usize = 26;
+
+/// A session zone reading stored `TIMESTAMP` text one value after another.
+///
+/// The general conversion parses each value into a calendar date-time,
+/// resolves the zone by name, converts through the calendar and formats a
+/// fresh string: a few hundred nanoseconds a row, which a named zone's
+/// filter over a column with a zero `TIMESTAMP` (and so no packed units)
+/// spent on every row. Stored text is canonical, so here it is read as
+/// seconds and a fraction, shifted by the zone's offset at that second and
+/// spelled back into a buffer. A column in time order asks about the same
+/// second many times, so the offset is looked up again only when the
+/// second changes.
+pub(crate) struct ZoneCursor {
+    zone: ZoneReading,
+    /// The second last looked up and the zone's offset at it.
+    last: Option<(i64, i32)>,
+}
+
+impl ZoneCursor {
+    pub(crate) const fn new(zone: ZoneReading) -> Self {
+        Self { zone, last: None }
+    }
+
+    fn seconds_east(&mut self, second: i64) -> Option<i32> {
+        if let Some((known, offset)) = self.last
+            && known == second
+        {
+            return Some(offset);
+        }
+        let offset = self.zone.seconds_east(second)?;
+        self.last = Some((second, offset));
+        Some(offset)
+    }
+
+    /// The reading of canonical stored text, `YYYY-MM-DD HH:MM:SS` with up
+    /// to six fraction digits, spelled into `out`: byte for byte what
+    /// [`ZoneReading::read_value`] answers through the general conversion.
+    /// Every zone offset is whole seconds, so the fraction is carried over
+    /// as written, with its own digits.
+    ///
+    /// `None` for anything else: the zero `TIMESTAMP` (which every zone
+    /// reads as stored), text in another shape, a date the calendar
+    /// rejects, and a reading outside the years canonical text spells.
+    /// Those take the general conversion.
+    pub(crate) fn read_canonical<'out>(
+        &mut self,
+        text: &[u8],
+        out: &'out mut [u8; READING_BYTES],
+    ) -> Option<&'out [u8]> {
+        if text.len() > READING_BYTES {
+            return None;
+        }
+        let micros = crate::batch::parse_datetime_micros(std::str::from_utf8(text).ok()?)?;
+        let second = micros.div_euclid(1_000_000);
+        let local = second.checked_add(i64::from(self.seconds_east(second)?))?;
+        let (year, month, day) = pintail_types::civil_from_days(local.div_euclid(86_400));
+        if !(0..=9999).contains(&year) {
+            return None;
+        }
+        let clock = local.rem_euclid(86_400);
+        let fields = [
+            (0, 4, year),
+            (5, 2, month),
+            (8, 2, day),
+            (11, 2, clock / 3_600),
+            (14, 2, clock % 3_600 / 60),
+            (17, 2, clock % 60),
+        ];
+        for (start, width, mut value) in fields {
+            for position in (start..start + width).rev() {
+                out[position] = b'0' + u8::try_from(value % 10).ok()?;
+                value /= 10;
+            }
+        }
+        for position in [4, 7] {
+            out[position] = b'-';
+        }
+        out[10] = b' ';
+        for position in [13, 16] {
+            out[position] = b':';
+        }
+        out[19..text.len()].copy_from_slice(&text[19..]);
+        Some(&out[..text.len()])
     }
 }
 
