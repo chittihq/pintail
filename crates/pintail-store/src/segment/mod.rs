@@ -1919,10 +1919,7 @@ pub(crate) fn sparse_index_shared(
     // the footer, and publishing either copy is harmless.
     let sparse = std::sync::Arc::new(read_footer_layout(&path, meta)?.sparse);
     if let Some(key) = key {
-        let bytes = sparse
-            .iter()
-            .map(|(_, first)| size_of::<(u64, PrimaryKey)>() + first.parts().len() * 32)
-            .sum::<usize>()
+        let bytes = sparse_index_bytes(&sparse)
             .saturating_add(size_of::<VerifiedKey>() + key.0.as_os_str().len());
         if bytes <= CACHE_BYTES {
             let mut cache = cache
@@ -1939,6 +1936,24 @@ pub(crate) fn sparse_index_shared(
         }
     }
     Ok(sparse)
+}
+
+/// What a sparse index holds in memory: its entries' slots, each key's
+/// parts and the text and bytes those parts own.
+fn sparse_index_bytes(sparse: &[(u64, PrimaryKey)]) -> usize {
+    sparse
+        .iter()
+        .map(|(_, first)| {
+            size_of::<(u64, PrimaryKey)>()
+                .saturating_add(
+                    first
+                        .parts()
+                        .len()
+                        .saturating_mul(size_of::<pintail_types::KeyPart>()),
+                )
+                .saturating_add(first.heap_bytes())
+        })
+        .fold(0_usize, usize::saturating_add)
 }
 
 /// The blocks a lookup of one key reads: one block of each column asked
@@ -7312,6 +7327,53 @@ mod range_read_tests {
     use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
 
     use super::{Compression, ScanMemoryBudget, read_projected_column_ranges, write};
+
+    /// The sparse-index cache holds at most 16 MiB. An index of long text
+    /// keys owns more than its slots show, and that text counts: an index
+    /// whose keys alone pass the bound is read for its caller and not kept.
+    #[test]
+    fn a_sparse_index_counts_the_text_its_keys_own() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let schema = TableSchema::new(1, vec![Column::new(1, "code", DataType::Utf8, false)])
+            .expect("schema");
+        let rows = (0..6_000_u32)
+            .map(|ordinal| {
+                let code = format!("{ordinal:08}{}", "-".repeat(2_992));
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::Utf8(code.clone())]).expect("key"),
+                    vec![Value::Utf8(code)],
+                    1,
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        // A block per row, so the index holds every key.
+        let meta = write(
+            directory.path(),
+            1,
+            &schema,
+            &rows,
+            1,
+            Compression::Lz4,
+            true,
+        )
+        .expect("write segment");
+        let sparse =
+            super::sparse_index_shared(directory.path(), &meta, &schema).expect("sparse index");
+        let key_text = sparse
+            .iter()
+            .map(|(_, key)| key.heap_bytes())
+            .sum::<usize>();
+        assert!(key_text > 16 * 1024 * 1024, "{key_text} bytes of key text");
+        assert_eq!(
+            std::sync::Arc::strong_count(&sparse),
+            1,
+            "kept by the cache"
+        );
+        let again =
+            super::sparse_index_shared(directory.path(), &meta, &schema).expect("sparse index");
+        assert!(!std::sync::Arc::ptr_eq(&sparse, &again));
+    }
 
     #[test]
     #[allow(clippy::too_many_lines)]
