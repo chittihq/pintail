@@ -185,13 +185,20 @@ fn fixture() -> Fixture {
             .expect("ingest");
         start = end;
     }
+    // Column statistics on first use, as the server's catalog has: they
+    // prove the calendar columns hold real dates, so their keys need no
+    // copy check and keep the column folds.
+    let snapshot = table.snapshot();
     let entry = TableEntry::new(
         TableId::new(1),
         "kites",
         schema,
         TableStatistics::with_row_count(ROWS),
     )
-    .expect("entry");
+    .expect("entry")
+    .with_column_statistics(pintail_catalog::LazyColumnStatistics::new(move || {
+        snapshot.column_statistics()
+    }));
     Fixture {
         _directory: directory,
         table,

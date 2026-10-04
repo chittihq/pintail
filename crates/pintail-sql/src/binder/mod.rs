@@ -1,5 +1,9 @@
+mod calendar_copy;
+pub use calendar_copy::COPY_CHECK as CALENDAR_COPY_CHECK;
 mod dependency;
 mod function;
+mod index_read;
+pub use index_read::with_source_indexes;
 mod keyed_branch;
 mod outer_aggregate;
 mod outer_set;
@@ -153,6 +157,7 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::UnsupportedStatement(statement.to_string()));
         };
         let mut bound = self.bind_query(query, &[])?;
+        deduplicate_union_by_instants(&mut bound);
         // sql_select_limit caps a statement's own result when the statement
         // sets no LIMIT; subqueries and a written LIMIT are untouched.
         if bound.limit.is_none()
@@ -292,6 +297,7 @@ impl<'catalog> Binder<'catalog> {
             &self.next_derived_id,
         )?;
         bound.limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
+        calendar_copy::check_copies(&mut bound);
         let bound = pre_aggregate::apply(bound, |table, relation, input| {
             self.bind_derived_table(table, relation, &[], input)
         });
@@ -831,23 +837,42 @@ impl<'catalog> Binder<'catalog> {
                 }
             }
         }
-        let mut group_by = bind_group_by(
+        let group_by = bind_group_by(
             &select.group_by,
             &projection_items,
             &expression_tables,
             Some(&resolve_subquery),
-        )?
-        .into_iter()
-        // A TIMESTAMP groups by the instant it stores, unless the mode has
-        // MySQL copy it into the grouping by its wall clock.
-        .map(|key| {
-            if crate::session_parse_mode().copies_temporals_by_reading() && !ROLLUP_GROUPING.get() {
-                key
-            } else {
-                key.instant_key()
-            }
-        })
-        .collect::<Vec<_>>();
+        )?;
+        // What MySQL reads through a covering source index keeps instants.
+        let unfiltered = filter.is_none() && from.iter().all(|source| source.joins.is_empty());
+        let through_index = |key: &BoundExpr| {
+            index_read::reads_instants_through_index(
+                &tables,
+                !unfiltered,
+                key,
+                projection.iter().map(|item| &item.expr).chain(
+                    aggregates
+                        .iter()
+                        .filter_map(|aggregate| aggregate.expr.as_ref()),
+                ),
+            )
+        };
+        let by_index = matches!(group_by.as_slice(), [key] if through_index(key));
+        let mut group_by = group_by
+            .into_iter()
+            // A TIMESTAMP groups by the instant it stores, unless the mode
+            // has MySQL copy it into the grouping by its wall clock.
+            .map(|key| {
+                if crate::session_parse_mode().copies_temporals_by_reading()
+                    && !ROLLUP_GROUPING.get()
+                    && !by_index
+                {
+                    key
+                } else {
+                    key.instant_key()
+                }
+            })
+            .collect::<Vec<_>>();
         // HAVING resolves grouping columns before SELECT aliases; an alias
         // still outranks an unrelated source column with the same name.
         let having_expr = select
@@ -1062,7 +1087,39 @@ impl<'catalog> Binder<'catalog> {
         // NO_ZERO_DATE, NO_ZERO_IN_DATE or ALLOW_INVALID_DATES MySQL removes
         // duplicates by the wall clock instead, which is what the reading
         // does.
-        let by_reading = crate::session_parse_mode().copies_temporals_by_reading();
+        // A query MySQL answers from a covering source index of a grouped,
+        // distinct or counted TIMESTAMP keeps its instants in any mode.
+        let index_key = if group_by.is_empty() {
+            projection
+                .iter()
+                .map(|item| &item.expr)
+                .chain(
+                    aggregates
+                        .iter()
+                        .filter(|aggregate| {
+                            aggregate.distinct && aggregate.function == AggregateFunction::Count
+                        })
+                        .filter_map(|aggregate| aggregate.expr.as_ref()),
+                )
+                .find(|expr| column_instant(expr).is_some())
+                .is_some_and(|key| {
+                    windows.is_empty()
+                        && having.is_none()
+                        && index_read::reads_instants_through_index(
+                            &tables,
+                            !unfiltered,
+                            key,
+                            projection.iter().map(|item| &item.expr).chain(
+                                aggregates
+                                    .iter()
+                                    .filter_map(|aggregate| aggregate.expr.as_ref()),
+                            ),
+                        )
+                })
+        } else {
+            by_index
+        };
+        let by_reading = crate::session_parse_mode().copies_temporals_by_reading() && !index_key;
         let by_instant = distinct
             && !by_reading
             && group_by.is_empty()
@@ -2897,6 +2954,12 @@ fn reject_duplicate_relation(tables: &[BoundTable], table: &BoundTable) -> Resul
     }
 }
 
+/// The stored TIMESTAMP column under a session-zone reading of it.
+fn column_instant(expr: &BoundExpr) -> Option<&BoundExpr> {
+    expr.session_timestamp_source()
+        .filter(|source| matches!(source.kind, BoundExprKind::Column(_)))
+}
+
 /// The stored TIMESTAMP under a session-zone reading, when `expr` is one.
 fn stored_instant(expr: &BoundExpr) -> Option<&BoundExpr> {
     expr.session_timestamp_source().filter(|source| {
@@ -2922,6 +2985,51 @@ fn branches_read_instants(query: &BoundQuery, index: usize) -> bool {
             .set_ops
             .iter()
             .all(|(_, branch)| branches_read_instants(branch, index))
+}
+
+/// A set operation that returns TIMESTAMP columns to the client compares
+/// its rows by the instants they store, as `MySQL`'s union result does when
+/// the mode keeps instants in its copy, while the client still reads each
+/// in the session zone. Each such column gains a hidden twin carrying the
+/// instant in every branch: rows differ where their instants do, ORDER BY
+/// over the column sorts by the twin, and the twins are trimmed after it.
+fn deduplicate_union_by_instants(query: &mut BoundQuery) {
+    if query.recursive.is_some()
+        || (query.union_all.is_empty() && query.set_ops.is_empty())
+        || crate::session_parse_mode().copies_temporals_by_reading()
+    {
+        return;
+    }
+    let visible = query.projection.len() - query.hidden_sort_columns;
+    for index in 0..visible {
+        if !branches_read_instants(query, index) {
+            continue;
+        }
+        let twin = query.projection.len();
+        append_instant_twin(query, index);
+        for key in &mut query.order_by {
+            if key.index == index {
+                key.index = twin;
+            }
+        }
+        query.hidden_sort_columns += 1;
+    }
+}
+
+/// Appends the instant output column `index` reads to every branch.
+fn append_instant_twin(query: &mut BoundQuery, index: usize) {
+    if let Some(stored) = stored_instant(&query.projection[index].expr).cloned() {
+        query.projection.push(BoundProjection {
+            name: format!("<instant-{index}>"),
+            expr: stored,
+        });
+    }
+    for branch in &mut query.union_all {
+        append_instant_twin(branch, index);
+    }
+    for (_, branch) in &mut query.set_ops {
+        append_instant_twin(branch, index);
+    }
 }
 
 /// Replaces output column `index` of every branch by the instant it reads.
@@ -6325,13 +6433,12 @@ fn bind_aggregate(
             // Each TIMESTAMP component counts by its instant, as a single
             // one does, unless the mode copies it by its wall clock.
             let value = bind_expr(expr, tables, subqueries)?;
-            values.push(
-                if crate::session_parse_mode().copies_temporals_by_reading() {
-                    value
-                } else {
-                    value.instant_key()
-                },
-            );
+            let value = if crate::session_parse_mode().copies_temporals_by_reading() {
+                value
+            } else {
+                value.instant_key()
+            };
+            values.push(calendar_copy::copied(value, tables, false));
         }
         // COUNT(DISTINCT a,b,...) ignores a row when ANY component is NULL.
         // A canonical JSON array is an unambiguous composite key; the normal
@@ -7615,6 +7722,22 @@ const COMMON_TEMPORAL: DataType = DataType::DateTime64 { fsp: 6 };
 /// written a DATE never equalled the DATETIME at its midnight. Both are read
 /// as DATETIME(6), whose fixed-width text orders as time does.
 fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    // Two TIMESTAMP columns compare by their session-zone readings, as
+    // MySQL hashes and compares them, unless it looks one up in a source
+    // index the column leads, which matches the stored instants: the hour
+    // a zone repeats reads the same for two instants that are not equal.
+    let (left, right) = match (column_instant(&left), column_instant(&right)) {
+        (Some(stored_left), Some(stored_right))
+            if matches!(
+                (&stored_left.kind, &stored_right.kind),
+                (BoundExprKind::Column(a), BoundExprKind::Column(b))
+                    if index_read::looks_up_instants(a, b)
+            ) =>
+        {
+            (stored_left.clone(), stored_right.clone())
+        }
+        _ => (left, right),
+    };
     if matches!(left.data_type, Some(DataType::DateTime64 { .. }))
         && let Some(right) = datetime_coalesce(&right)
     {
@@ -9303,7 +9426,7 @@ struct SourceTokens {
 
 std::thread_local! {
     /// Whether the query being bound is a branch of a rewritten rollup.
-    static ROLLUP_GROUPING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(super) static ROLLUP_GROUPING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The statement last tokenized for projection names, with its tokens:
     /// every unnamed projection of one statement reads the same ones, and
     /// tokenizing the whole statement again for each was a cost per column.

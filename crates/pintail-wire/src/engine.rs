@@ -1902,10 +1902,13 @@ impl ReplicaEngine {
         // preparation folds its constants once.
         let _ = pintail_exec::take_session_division_warnings();
         pintail_sql::set_session_database_name(Some(database_name));
-        let bound = Binder::new(catalog, Some(database_name))
-            .with_source(sql)
-            .bind(statement)
-            .map_err(|error| query_bind_error(&error))?;
+        // The source's indexes decide how MySQL reads a grouped TIMESTAMP.
+        let bound = pintail_sql::with_source_indexes(catalog, &facts.indexes, || {
+            Binder::new(catalog, Some(database_name))
+                .with_source(sql)
+                .bind(statement)
+        })
+        .map_err(|error| query_bind_error(&error))?;
         let result_nullability = source_result_nullability(&bound, catalog, facts);
         let wire_columns = crate::presentation::columns(&bound, catalog, facts);
         let result_collations = bound

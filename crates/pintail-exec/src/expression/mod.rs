@@ -5564,6 +5564,11 @@ fn typed_calendar_cast(
     }
     let value = values.first()?;
     if let Some(Value::UInt64(policy)) = values.get(1)
+        && policy & pintail_sql::CALENDAR_COPY_CHECK != 0
+    {
+        return Some(copied_calendar(value, *policy, target));
+    }
+    if let Some(Value::UInt64(policy)) = values.get(1)
         && policy & 0b1_0001 == 0b1_0001
         && let Value::Utf8(text) = value
         && text.starts_with("0000-00-00")
@@ -5572,6 +5577,36 @@ fn typed_calendar_cast(
         return Some(Value::Null);
     }
     cast_temporal_carrier(value, source, target, None)
+}
+
+/// A calendar value as `MySQL` writes it into a grouping, deduplication or
+/// union result: the zero date in place of a day past its month's end
+/// (unless the policy allows invalid dates, bit 2) and of a zero month or
+/// day under `NO_ZERO_IN_DATE` (bit 1); any other value as it is.
+fn copied_calendar(value: &Value, policy: u64, target: DataType) -> Value {
+    let Value::Utf8(text) = value else {
+        return value.clone();
+    };
+    let Some((date, _)) = canonical_temporal_parts_policy(text, true, true) else {
+        return value.clone();
+    };
+    let field = |range: std::ops::Range<usize>| date[range].parse::<u32>().unwrap_or(0);
+    let (year, month, day) = (field(0..4), field(5..7), field(8..10));
+    let zero = year == 0 && month == 0 && day == 0;
+    let past_end = month != 0 && mysql_month_days(year, month).is_some_and(|days| day > days);
+    let rejected =
+        (policy & 4 == 0 && past_end) || (policy & 2 != 0 && !zero && (month == 0 || day == 0));
+    if !rejected {
+        return value.clone();
+    }
+    Value::Utf8(match target {
+        DataType::Date32 => "0000-00-00".to_owned(),
+        DataType::DateTime64 { fsp: 0 } => "0000-00-00 00:00:00".to_owned(),
+        DataType::DateTime64 { fsp } => {
+            format!("0000-00-00 00:00:00.{}", "0".repeat(usize::from(fsp)))
+        }
+        _ => return value.clone(),
+    })
 }
 
 /// Stored and typed temporal values already passed their producer's validity
@@ -10893,6 +10928,44 @@ mod tests {
             ),
             None,
             "text is parsed under the mode elsewhere"
+        );
+    }
+
+    #[test]
+    fn the_copy_check_rewrites_only_what_the_mode_rejects() {
+        use pintail_types::{DataType, Value};
+        let text = |value: &str| Value::Utf8(value.to_owned());
+        let copy = |stored: &str, policy: u64, target| {
+            super::copied_calendar(&text(stored), policy | 0b10_0000, target)
+        };
+        let datetime = DataType::DateTime64 { fsp: 3 };
+        // A day past its month's end, unless invalid dates are allowed.
+        assert_eq!(
+            copy("2024-02-30 10:00:00.500", 0, datetime),
+            text("0000-00-00 00:00:00.000")
+        );
+        assert_eq!(
+            copy("2024-02-30 10:00:00.500", 0b100, datetime),
+            text("2024-02-30 10:00:00.500")
+        );
+        // A zero month or day only under NO_ZERO_IN_DATE; the zero date and
+        // the year zero always stay.
+        assert_eq!(copy("2024-00-15", 0, DataType::Date32), text("2024-00-15"));
+        assert_eq!(
+            copy("2024-00-15", 0b10, DataType::Date32),
+            text("0000-00-00")
+        );
+        assert_eq!(
+            copy("0000-00-00", 0b10, DataType::Date32),
+            text("0000-00-00")
+        );
+        assert_eq!(
+            copy("0000-01-01", 0b10, DataType::Date32),
+            text("0000-01-01")
+        );
+        assert_eq!(
+            copy("2024-02-29", 0b10, DataType::Date32),
+            text("2024-02-29")
         );
     }
 

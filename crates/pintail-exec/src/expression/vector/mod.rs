@@ -342,6 +342,15 @@ fn specific_scalar(
             target: target @ DataType::Decimal { .. },
             characters: None,
         } => numeric::decimal_cast_column(batch, args, target, data_type, effects),
+        ScalarFunction::Cast(target @ (DataType::Date32 | DataType::DateTime64 { .. }))
+            if matches!(
+                args,
+                [_, CompiledExpr::Literal(Value::UInt64(policy))]
+                    if policy & pintail_sql::CALENDAR_COPY_CHECK != 0
+            ) =>
+        {
+            temporal::calendar_copy_column(batch, args, target, effects)
+        }
         ScalarFunction::Cast(target)
         | ScalarFunction::DeclaredCast {
             target,

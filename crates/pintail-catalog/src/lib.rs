@@ -119,6 +119,11 @@ pub struct ColumnFacts {
     /// Smallest and largest non-NULL value, when the column's type has an
     /// ordered numeric form.
     pub range: Option<ColumnRange>,
+    /// Whether every live value of a DATE or DATETIME column is a real
+    /// calendar date - no zero date and no zero month or day, no day past
+    /// its month's end - so no `sql_mode` rewrites it when it is grouped.
+    /// Always false for other types.
+    pub calendar_exact: bool,
 }
 
 /// A table's [`ColumnStatistics`], assembled on first use. Most queries

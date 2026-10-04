@@ -29,11 +29,23 @@ impl TableSnapshot {
         let mut sketches: Vec<Option<DistinctSketch>> =
             vec![Some(DistinctSketch::default()); columns.len()];
         let mut ranges: Vec<Option<Option<ColumnRange>>> = vec![None; columns.len()];
+        // A segment records temporal extremes only when every value parsed
+        // as a real calendar date, so their presence proves it.
+        let calendars = columns
+            .iter()
+            .map(|column| {
+                NativeUnits::for_data_type(column.data_type()).filter(|units| {
+                    matches!(units, NativeUnits::Date | NativeUnits::DateTime { .. })
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut exact = calendars.iter().map(Option::is_some).collect::<Vec<_>>();
         for segment in &self.manifest.segments {
             let Some(smas) = &segment.smas else {
                 rows = rows.saturating_add(segment.row_count);
                 sketches.fill(None);
                 ranges.fill(Some(None));
+                exact.fill(false);
                 continue;
             };
             rows = rows.saturating_add(smas.live_rows);
@@ -43,8 +55,12 @@ impl TableSnapshot {
                     // the column's default, which no sketch here counted.
                     sketches[index] = None;
                     ranges[index] = Some(None);
+                    exact[index] = false;
                     continue;
                 };
+                if sma.non_null > 0 && sma.extremes.is_none() {
+                    exact[index] = false;
+                }
                 non_null[index] = non_null[index].saturating_add(sma.non_null);
                 match (&mut sketches[index], &sma.distinct) {
                     (Some(sketch), Some(theirs)) => sketch.merge(theirs),
@@ -69,6 +85,18 @@ impl TableSnapshot {
         let live = self.memtable.values().filter(|row| !row.is_deleted());
         let memtable_rows = live.clone().count();
         rows = rows.saturating_add(u64::try_from(memtable_rows).unwrap_or(u64::MAX));
+        // Every unflushed row, not a sample: one row a calendar rejects is
+        // enough to need the per-value check.
+        for row in live.clone() {
+            for (index, value) in row.values().iter().enumerate().take(columns.len()) {
+                if let (true, Some(units), pintail_types::Value::Utf8(text)) =
+                    (exact[index], calendars[index], value)
+                    && units.parse_exact(text).is_none()
+                {
+                    exact[index] = false;
+                }
+            }
+        }
         let stride = memtable_rows.div_ceil(MEMTABLE_SAMPLE_ROWS).max(1);
         let scale = u64::try_from(stride).unwrap_or(1);
         for row in live.step_by(stride) {
@@ -94,6 +122,7 @@ impl TableSnapshot {
                         .as_ref()
                         .map(|sketch| sketch.estimate().min(non_null[index])),
                     range: ranges[index].flatten(),
+                    calendar_exact: exact[index],
                 })
                 .collect(),
         }

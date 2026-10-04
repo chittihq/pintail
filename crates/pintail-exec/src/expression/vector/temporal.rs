@@ -1101,6 +1101,27 @@ fn shifted(
 /// precision than `n`: the same instant, spelled with `n` fraction digits.
 /// Comparisons between temporal types are bound as these casts, so both
 /// sides meet as one type.
+/// The copy check over a batch whose calendar column is packed: every row
+/// of a packed column parsed as a real calendar date, so none is rewritten
+/// and the column is the answer. Any other batch is checked row by row.
+pub(super) fn calendar_copy_column(
+    batch: &RecordBatch,
+    args: &[CompiledExpr],
+    target: DataType,
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
+    let Operand::Column(input) = operand(batch, &args[0], effects)? else {
+        return None;
+    };
+    if input.data_type() != target || temporal_column(&input).is_none() {
+        return None;
+    }
+    crate::counters::count(|counters| {
+        counters.calendar_copies_packed = counters.calendar_copies_packed.saturating_add(1);
+    });
+    Some(input.into_owned())
+}
+
 pub(super) fn cast_column(
     batch: &RecordBatch,
     args: &[CompiledExpr],

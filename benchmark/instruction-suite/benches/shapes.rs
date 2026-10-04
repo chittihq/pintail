@@ -41,6 +41,9 @@ use pintail_instruction_suite::{Fixture, case};
 #[bench::zoned_since_day("zoned_since_day")]
 #[bench::zoned_all_days("zoned_all_days")]
 #[bench::zoned_named_zone_hour("zoned_named_zone_hour")]
+#[bench::datetime_groups("datetime_groups")]
+#[bench::datetime_distinct_days("datetime_distinct_days")]
+#[bench::derived_datetime_groups("derived_datetime_groups")]
 fn shape(name: &str) -> usize {
     let case = case(name);
     let fixture = Fixture::build(case.tables);

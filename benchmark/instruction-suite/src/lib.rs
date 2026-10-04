@@ -235,6 +235,26 @@ pub const CASES: &[Case] = &[
         "SELECT DATE(stamp) AS k, COUNT(*), SUM(price) FROM events GROUP BY k ORDER BY k",
     ),
     events(
+        "datetime_groups",
+        None,
+        "SELECT occurred_at, COUNT(*) FROM events \
+         WHERE occurred_at BETWEEN '2024-02-01 00:00:00' AND '2024-02-08 00:00:00' \
+         GROUP BY occurred_at ORDER BY occurred_at LIMIT 20",
+    ),
+    events(
+        "datetime_distinct_days",
+        None,
+        "SELECT COUNT(DISTINCT occurred_at), COUNT(DISTINCT DATE(occurred_at)) FROM events",
+    ),
+    events(
+        "derived_datetime_groups",
+        None,
+        "SELECT d, COUNT(*) FROM (SELECT occurred_at AS d FROM events \
+         WHERE occurred_at BETWEEN '2024-02-01 00:00:00' AND '2024-02-08 00:00:00' \
+         UNION ALL SELECT occurred_at FROM events WHERE id < 0) x \
+         GROUP BY d ORDER BY d LIMIT 20",
+    ),
+    events(
         "zoned_named_zone_hour",
         Some("America/New_York"),
         "SELECT HOUR(stamp) AS k, COUNT(*), SUM(price) FROM events \
@@ -491,6 +511,8 @@ impl Fixture {
             let mut store = TableStore::open(directory.path().join(name), schema.clone(), options)
                 .expect("store");
             store.bulk_ingest_snapshot(rows).expect("ingest");
+            // Column statistics on first use, as the server's catalog has.
+            let snapshot = store.snapshot();
             entries.push(
                 TableEntry::new(
                     TableId::new(index as u64 + 1),
@@ -499,6 +521,9 @@ impl Fixture {
                     TableStatistics::with_row_count(count),
                 )
                 .expect("entry")
+                .with_column_statistics(pintail_catalog::LazyColumnStatistics::new(move || {
+                    snapshot.column_statistics()
+                }))
                 .with_key_columns([1])
                 .expect("key"),
             );

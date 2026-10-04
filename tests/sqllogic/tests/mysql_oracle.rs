@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2684;
+const EXPECTED_CASES: usize = 2746;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -739,9 +739,11 @@ fn execute_pintail(
     provider: &SnapshotScanProvider<'_>,
 ) -> Result<Vec<Vec<OracleValue>>, String> {
     let statement = parse_statement(sql).map_err(|error| format!("parse: {error}"))?;
-    let bound = Binder::new(catalog, Some("app"))
-        .bind(&statement)
-        .map_err(|error| format!("bind: {error}"))?;
+    // The fixture's one secondary index, as the probe reports the source's.
+    let bound = pintail_sql::with_source_indexes(catalog, &oracle_calendar::indexes(), || {
+        Binder::new(catalog, Some("app")).bind(&statement)
+    })
+    .map_err(|error| format!("bind: {error}"))?;
     let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
     let physical = PhysicalPlanner::plan(logical, Collation::default())
         .map_err(|error| format!("physical plan: {error}"))?;

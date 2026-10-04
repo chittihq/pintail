@@ -163,6 +163,17 @@ pub fn sql() -> String {
     )
 }
 
+/// The fixture's secondary index `by_ts0`, as the probe would report it.
+pub fn indexes() -> Vec<pintail_sql::IndexFacts> {
+    vec![pintail_sql::IndexFacts {
+        database: "app".to_owned(),
+        table: TABLE.to_owned(),
+        index_name: "by_ts0".to_owned(),
+        unique: false,
+        columns: vec!["ts0".to_owned()],
+    }]
+}
+
 pub fn schema() -> TableSchema {
     TableSchema::new(
         1,
@@ -358,7 +369,79 @@ pub fn cases() -> Vec<OracleCase> {
     }
     interval_cases(&mut push);
     grouping_cases(&mut push);
+    copy_cases(&mut push);
     cases
+}
+
+/// Dates no calendar holds, copied into grouping, deduplication and union
+/// results: `MySQL` writes one the session's mode rejects as the zero date,
+/// a column copied as it is only under a date-validation flag, a computed
+/// value always; a rollup and a grouping with a DISTINCT aggregate sort
+/// instead and keep the keys as stored. Then the TIMESTAMP shapes `MySQL`
+/// reads through the fixture's index on `ts0`, which keep instants apart
+/// in any mode; joins that look `ts0` up by that index, and those that hash
+/// the unindexed `ts`; and a union returned to the client.
+fn copy_cases(push: &mut impl FnMut(&'static str, &'static str, String)) {
+    const PLAIN: &str = "NO_ENGINE_SUBSTITUTION";
+    for sql_mode in [
+        super::oracle_transport::DEFAULT_MODE,
+        PLAIN,
+        "NO_ZERO_DATE",
+        "NO_ZERO_IN_DATE",
+        "ALLOW_INVALID_DATES",
+    ] {
+        for sql in [
+            format!("SELECT dt, COUNT(*) FROM {TABLE} GROUP BY dt ORDER BY dt"),
+            format!("SELECT DISTINCT dt3 FROM {TABLE} ORDER BY dt3"),
+            format!(
+                "SELECT COUNT(DISTINCT dt), COUNT(DISTINCT d), COUNT(DISTINCT dt, d) FROM {TABLE}"
+            ),
+            format!("SELECT DATE(dt) x, COUNT(*) FROM {TABLE} GROUP BY x ORDER BY x"),
+            format!("SELECT DISTINCT DATE(dt3) FROM {TABLE} ORDER BY 1"),
+            format!("SELECT d FROM {TABLE} UNION SELECT d FROM {TABLE} ORDER BY 1"),
+            format!("SELECT dt, COUNT(*) FROM {TABLE} GROUP BY dt WITH ROLLUP"),
+            format!("SELECT DATE(dt) x, COUNT(DISTINCT dt) FROM {TABLE} GROUP BY x ORDER BY x"),
+        ] {
+            push(sql_mode, "calendar edges copies", sql);
+        }
+    }
+    let instants = format!("{TABLE} WHERE id > 100");
+    for sql_mode in [
+        super::oracle_transport::DEFAULT_MODE,
+        PLAIN,
+        "ALLOW_INVALID_DATES",
+    ] {
+        for sql in [
+            format!("SELECT DISTINCT ts0 FROM {TABLE} ORDER BY ts0"),
+            format!("SELECT ts0, COUNT(*), MIN(id) FROM {TABLE} GROUP BY ts0 ORDER BY ts0"),
+            format!("SELECT COUNT(DISTINCT ts0) FROM {TABLE}"),
+            format!("SELECT COUNT(*) FROM {TABLE} a JOIN {TABLE} b ON a.ts = b.ts"),
+            format!("SELECT ts FROM {instants} UNION SELECT ts FROM {instants} ORDER BY 1"),
+            format!("SELECT ts0 FROM {instants} UNION SELECT ts0 FROM {instants} ORDER BY 1"),
+        ] {
+            push(sql_mode, "session zone America/New_York", sql);
+        }
+    }
+    // An index lookup matches instants, in the modes where MySQL does not
+    // rewrite its lookup key; a materialized IN list is compared by wall
+    // clock, in the modes where MySQL's answer holds no repeated rows.
+    for sql_mode in [super::oracle_transport::DEFAULT_MODE, PLAIN] {
+        push(
+            sql_mode,
+            "session zone America/New_York",
+            format!("SELECT COUNT(*) FROM {TABLE} a JOIN {TABLE} b ON a.ts0 = b.ts0"),
+        );
+    }
+    for sql_mode in [super::oracle_transport::DEFAULT_MODE, "ALLOW_INVALID_DATES"] {
+        push(
+            sql_mode,
+            "session zone America/New_York",
+            format!(
+                "SELECT COUNT(*) FROM {TABLE} WHERE ts IN (SELECT ts FROM {TABLE} \
+                 WHERE id IN (106, 109))"
+            ),
+        );
+    }
 }
 
 /// Grouping, deduplication and unions over calendar columns under the

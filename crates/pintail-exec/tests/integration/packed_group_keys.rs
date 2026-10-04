@@ -209,13 +209,19 @@ fn ledger(layout: Layout, rows: u64, accounts: u64) -> Ledger {
         }
         table.ingest(writes).expect("memtable writes");
     }
+    // Column statistics on first use, as the server's catalog has: they
+    // prove the date key holds real dates, so it needs no copy check.
+    let snapshot = table.snapshot();
     let entry = TableEntry::new(
         TableId::new(1),
         "ledger",
         schema(),
         TableStatistics::with_row_count(rows),
     )
-    .expect("entry");
+    .expect("entry")
+    .with_column_statistics(pintail_catalog::LazyColumnStatistics::new(move || {
+        snapshot.column_statistics()
+    }));
     Ledger {
         _directory: directory,
         table,
@@ -663,13 +669,17 @@ mod bench {
                 .expect("ingest");
             start = end;
         }
+        let snapshot = table.snapshot();
         let entry = TableEntry::new(
             TableId::new(1),
             "ledger",
             schema(),
             TableStatistics::with_row_count(rows),
         )
-        .expect("entry");
+        .expect("entry")
+        .with_column_statistics(pintail_catalog::LazyColumnStatistics::new(move || {
+            snapshot.column_statistics()
+        }));
         let catalog =
             CatalogSnapshot::new([
                 DatabaseEntry::new(DatabaseId::new(1), "app", [entry]).expect("database")

@@ -66,6 +66,8 @@ pub struct ExecCounters {
     /// Stored `TIMESTAMP` texts a session-zone kernel read as canonical
     /// text, without the general time zone conversion.
     pub session_texts_read: u64,
+    /// Batches whose packed calendar column the copy check passed whole.
+    pub calendar_copies_packed: u64,
 }
 
 thread_local! {
@@ -92,6 +94,7 @@ thread_local! {
             fused_rounds: 0,
             fused_batches: 0,
             session_texts_read: 0,
+            calendar_copies_packed: 0,
         })
     };
 }

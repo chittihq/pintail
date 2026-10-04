@@ -476,7 +476,9 @@ impl LogicalPlanner {
                 right: Box::new(Self::plan(right)),
             };
         }
-        if !order_by.is_empty() {
+        // Hidden columns a set operation compares by are trimmed even when
+        // nothing orders the result: a sort with no keys keeps row order.
+        if !order_by.is_empty() || hidden_sort_columns > 0 {
             plan = LogicalPlan::Sort {
                 input: Box::new(plan),
                 keys: order_by,
