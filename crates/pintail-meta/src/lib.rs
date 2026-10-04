@@ -93,6 +93,24 @@ pub fn journal_commits() -> u64 {
     JOURNAL_COMMITS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Whether `error` is the store refusing a write because another
+/// connection held its lock past the busy timeout: a failure of the moment
+/// that every row would meet alike, as opposed to one row's own fault.
+#[must_use]
+pub fn is_lock_contention(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<rusqlite::Error>()
+            .and_then(rusqlite::Error::sqlite_error_code)
+            .is_some_and(|code| {
+                matches!(
+                    code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                )
+            })
+    })
+}
+
 fn count_write() {
     if JOURNAL_ONLY.get() {
         return;

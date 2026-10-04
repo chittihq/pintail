@@ -310,7 +310,9 @@ pub(crate) async fn query(
     let session = QuerySession::of(&request)?;
     let response = execute_query(&state, &request.db, &request.sql, session).await?;
     // The answer does not wait for its audit row: the row is queued for
-    // the audit writer, which commits it beside the response. A failed
+    // the audit writer, which commits it beside the response - unless the
+    // writer has fallen a whole queue behind, when the answer waits for
+    // room rather than the queue growing without bound. A failed
     // write is logged and dropped rather than failing the statement, and a
     // process that dies with the row still queued loses that row and
     // nothing else.
@@ -321,7 +323,8 @@ pub(crate) async fn query(
         "query.run",
         Some(("database", &request.db)),
         Some(serde_json::json!({"sql": request.sql, "rows": rows})),
-    );
+    )
+    .await;
     Ok(Json(response))
 }
 
