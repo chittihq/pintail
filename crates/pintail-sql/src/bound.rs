@@ -4,6 +4,10 @@ use pintail_types::{DataType, Value};
 /// The default text collation.
 pub const DEFAULT_TEXT_COLLATION: &str = "utf8mb4_0900_ai_ci";
 
+/// The relation a row constructor's `IN (subquery)` reads its members
+/// through: the derived table over the subquery that names its columns.
+pub const ROW_MEMBERS_RELATION: &str = "<row-members>";
+
 /// The older `MySQL` 5.x default, which most existing schemas still carry
 /// because a table keeps whatever collation it was created with.
 ///

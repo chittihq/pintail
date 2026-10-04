@@ -19,6 +19,7 @@ mod outer_set;
 mod packed_fold;
 mod packed_group;
 mod points;
+mod row_members;
 mod small_group_fold;
 mod sort;
 mod sparse_keys;
@@ -3695,7 +3696,20 @@ fn resolve_expr_subqueries(
             reserve_subquery_values(std::slice::from_ref(&value), memory_limit, retained_bytes)?;
             expression.kind = BoundExprKind::Literal(value);
         }
-        BoundExprKind::ExistsSubquery { query, .. } if bound_query_has_outer_refs(query) => {}
+        BoundExprKind::ExistsSubquery { query, negated } if bound_query_has_outer_refs(query) => {
+            // A row constructor's few members compare with every outer row
+            // in place of a subquery answered per row.
+            if let Some(expanded) = row_members::expand(
+                query,
+                *negated,
+                provider,
+                memory_limit.saturating_sub(*retained_bytes),
+                deadline,
+                collation,
+            ) {
+                *expression = expanded;
+            }
+        }
         BoundExprKind::ExistsSubquery { query, negated } => {
             let values = materialize_subquery(
                 (**query).clone(),

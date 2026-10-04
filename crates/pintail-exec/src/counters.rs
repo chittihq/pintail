@@ -49,6 +49,9 @@ pub struct ExecCounters {
     /// `IN (subquery)` tests of a constant answered by asking the subquery
     /// about that constant alone.
     pub membership_point_queries: u64,
+    /// Row constructor `IN (subquery)` tests whose members were read once
+    /// and compared with each outer row, in place of a subquery per row.
+    pub row_members_expanded: u64,
     /// Windows an integer-range fold took whole against the range it
     /// already had, checking each key as its slot was computed.
     pub range_windows_in_range: u64,
@@ -83,6 +86,7 @@ thread_local! {
             lookup_rows_joined: 0,
             membership_rows_looked_up: 0,
             membership_point_queries: 0,
+            row_members_expanded: 0,
             range_windows_in_range: 0,
             range_windows_bounded: 0,
             fused_rounds: 0,

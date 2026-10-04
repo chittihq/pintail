@@ -200,7 +200,7 @@ fn member_column(index: usize) -> Ident {
     Ident::with_quote('`', format!("<row-member-{index}>"))
 }
 
-const MEMBERS: &str = "<row-members>";
+const MEMBERS: &str = crate::bound::ROW_MEMBERS_RELATION;
 
 /// `EXISTS (SELECT 1 FROM (members) AS <row-members> (columns) WHERE
 /// condition)`, the derived table naming the subquery's `width` columns for

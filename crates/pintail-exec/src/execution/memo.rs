@@ -349,7 +349,7 @@ fn classify_subqueries(expression: &BoundExpr, memoizable: &mut Vec<bool>) {
 /// Whether any expression anywhere in the query can answer differently on
 /// two evaluations of the same inputs. Errs toward "volatile" for any shape
 /// it does not walk, so an unfamiliar construct is answered fresh.
-fn query_is_volatile(query: &BoundQuery) -> bool {
+pub(super) fn query_is_volatile(query: &BoundQuery) -> bool {
     query
         .projection
         .iter()

@@ -12,7 +12,7 @@ use pintail_exec::collation::Collation;
 use pintail_exec::{
     Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider,
     dependent_index_builds, dependent_set_executions, dependent_subquery_executions,
-    take_dependent_declines,
+    take_dependent_declines, take_exec_counters,
 };
 use pintail_sql::{Binder, parse_statement};
 use pintail_types::Value;
@@ -25,6 +25,8 @@ struct Ran {
     per_row: u64,
     sets: u64,
     indexes: u64,
+    /// Row memberships whose members were compared with every row.
+    expanded: u64,
     profile: String,
 }
 
@@ -48,6 +50,7 @@ fn ran(fixture: &Fixture, sql: &str) -> Ran {
     let per_row = dependent_subquery_executions();
     let sets = dependent_set_executions();
     let indexes = dependent_index_builds();
+    let _ = take_exec_counters();
     let mut execution = Execution::start_profiled(
         physical,
         &provider,
@@ -88,6 +91,7 @@ fn ran(fixture: &Fixture, sql: &str) -> Ran {
         per_row: dependent_subquery_executions() - per_row,
         sets: dependent_set_executions() - sets,
         indexes: dependent_index_builds() - indexes,
+        expanded: take_exec_counters().row_members_expanded,
         profile,
     }
 }
@@ -325,10 +329,11 @@ fn a_row_membership_in_an_uncorrelated_subquery_runs_it_once() {
         answers.contains("NULL") && answers.contains("1"),
         "{answers:?}"
     );
-    // Each membership test waits out a few rows, then reads its subquery
-    // once for all of them.
-    assert!(
-        listed.indexes >= 2 && listed.per_row <= 140,
+    // Each membership reads its few members once and compares every row
+    // with them: no index, no subquery per row.
+    assert_eq!(
+        (listed.indexes, listed.per_row, listed.expanded),
+        (0, 1, 3),
         "{}",
         listed.profile
     );
@@ -760,10 +765,13 @@ fn non_null_row_membership_skips_the_undecided_index() {
             ]
         );
     }
-    assert_eq!(listed.indexes, 2, "{}", listed.profile);
-    // The two uncorrelated, false EXISTS queries run once each, besides
-    // the 32 warmup executions of each matching index.
-    assert!(listed.per_row <= 66, "{}", listed.profile);
+    // Twenty members are compared with every row, read once per EXISTS.
+    assert_eq!(
+        (listed.indexes, listed.per_row, listed.expanded),
+        (0, 2, 2),
+        "{}",
+        listed.profile
+    );
 
     // A NOT NULL declaration is nullable after an outer join. Those rows
     // still need the undecided check, even though the members have no NULL.
