@@ -3,6 +3,12 @@ name: Release
 # Publishes the single-binary container to the GitHub Container Registry when
 # a version tag is pushed.
 #
+# The binary is profile-guided for each platform's generic target: the
+# Dockerfile builds it instrumented, trains it on benchmark/pgo-train.ts (no
+# source server needed) and rebuilds it with the profile, inside the image
+# build. That adds an instrumented build and a training run to each
+# architecture's job (docs/release-builds.md has the cost).
+#
 # Each architecture builds on its own native runner and the results are joined
 # into one manifest. The obvious alternative — one job emitting both platforms —
 # runs linux/arm64 under QEMU on an x86 runner, which is instruction-level
@@ -76,6 +82,10 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
+          # The Dockerfile's default, stated here so the release does not
+          # depend on it.
+          build-args: |
+            PINTAIL_PGO=1
           # Push anonymously by digest; the merge job below names them.
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           # Registry cache, not GitHub Actions cache. Measured on
@@ -87,6 +97,30 @@ jobs:
           # has no such cap, so the cooked-dependency layer survives.
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ strategy.job-index }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}:buildcache-${{ strategy.job-index }},mode=max,image-manifest=true
+
+      # Each architecture's image is checked on its own native runner, before
+      # the manifest names it: the server's startup line must say it is the
+      # profile-guided build for the generic target.
+      - name: Prove this architecture's binary is the profile-guided build
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE}@${DIGEST}"
+          docker run --detach --name pintail-variant "$image" \
+            --data-dir /var/lib/pintail --http-bind 127.0.0.1:8080 >/dev/null
+          line=''
+          for _ in $(seq 1 60); do
+            line=$(docker logs pintail-variant 2>&1 | grep -m1 'pintail optimizations:' || true)
+            [ -n "$line" ] && break
+            sleep 2
+          done
+          docker rm --force pintail-variant >/dev/null
+          echo "${line#*pintail optimizations: }"
+          case "$line" in
+            *"build_target=generic build_variant=pgo "*) ;;
+            *) echo "the image does not report build_target=generic build_variant=pgo" >&2; exit 1 ;;
+          esac
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
 
       - name: Record the digest
         run: |
@@ -166,6 +200,6 @@ jobs:
             echo "docker pull ${REGISTRY}/${IMAGE}:${{ needs.version.outputs.version }}"
             echo '```'
             echo
-            echo "Architectures: linux/amd64, linux/arm64 (each built natively)"
+            echo "Architectures: linux/amd64, linux/arm64 (each built natively, profile-guided for the generic target)"
             echo "Pre-release: ${{ needs.version.outputs.prerelease }} (a pre-release does not move \`latest\`)"
           } >> "$GITHUB_STEP_SUMMARY"
