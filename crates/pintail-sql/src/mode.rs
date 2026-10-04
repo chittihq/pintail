@@ -118,6 +118,19 @@ impl ParseMode {
         }
         mode
     }
+
+    /// Whether a temporal value copied into an intermediate result keeps
+    /// only its calendar reading. Under any of the three date-validation
+    /// flags `MySQL` checks each `TIMESTAMP` or `DATETIME` it writes into a
+    /// grouping, deduplication or union result against the mode, which it
+    /// does by reading the value as a calendar: a `TIMESTAMP` becomes its
+    /// wall clock in the session zone, so the two instants of the hour a
+    /// zone repeats are one value there. Without those flags the copy keeps
+    /// the stored instant.
+    #[must_use]
+    pub fn copies_temporals_by_reading(&self) -> bool {
+        self.no_zero_date || self.no_zero_in_date || self.allow_invalid_dates
+    }
 }
 
 thread_local! {

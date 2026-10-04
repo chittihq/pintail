@@ -169,6 +169,51 @@ impl<'catalog> Binder<'catalog> {
         Ok(bound)
     }
 
+    /// Binds the grouped branches a `WITH ROLLUP` query was rewritten into.
+    fn bind_rollup(
+        &self,
+        query: &Query,
+        rollup: &rollup::Rewritten,
+        outer_ctes: &[BoundCte],
+    ) -> Result<BoundQuery, BindError> {
+        // MySQL computes a rollup by sorting the rows and totalling
+        // each run, with no intermediate copy of the grouped values,
+        // so its groups are always instants.
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                ROLLUP_GROUPING.set(self.0);
+            }
+        }
+        let _restore = Restore(ROLLUP_GROUPING.replace(true));
+        let mut bound = self.bind_query(&rollup.query, outer_ctes)?;
+        // The hidden key columns have to be the last ones, with nothing
+        // after them: an ORDER BY that needed a hidden column of its own
+        // would have added it to the first branch alone.
+        let hidden = rollup::hidden_names(rollup.hidden / 2).collect::<Vec<_>>();
+        let in_place = bound
+            .projection
+            .len()
+            .checked_sub(rollup.hidden)
+            .is_some_and(|start| {
+                bound.projection[start..]
+                    .iter()
+                    .map(|item| item.name.as_str())
+                    .eq(hidden.iter().map(String::as_str))
+            });
+        if !in_place || bound.hidden_sort_columns != 0 {
+            return Err(BindError::InvalidOrderBy(query.to_string()));
+        }
+        // The groups come out in the order of their instants: a hidden
+        // key that reads a TIMESTAMP sorts by what it stores.
+        let start = bound.projection.len() - rollup.hidden;
+        for value in (start + 1..bound.projection.len()).step_by(2) {
+            carry_branch_instants(&mut bound, value);
+        }
+        bound.hidden_sort_columns = rollup.hidden;
+        Ok(bound)
+    }
+
     fn bind_query(&self, query: &Query, outer_ctes: &[BoundCte]) -> Result<BoundQuery, BindError> {
         if query.fetch.is_some()
             || !query.locks.is_empty()
@@ -180,26 +225,7 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::UnsupportedQueryClause(query.to_string()));
         }
         if let Some(rollup) = rollup::rewrite(query, self.source)? {
-            let mut bound = self.bind_query(&rollup.query, outer_ctes)?;
-            // The hidden key columns have to be the last ones, with nothing
-            // after them: an ORDER BY that needed a hidden column of its own
-            // would have added it to the first branch alone.
-            let hidden = rollup::hidden_names(rollup.hidden / 2).collect::<Vec<_>>();
-            let in_place = bound
-                .projection
-                .len()
-                .checked_sub(rollup.hidden)
-                .is_some_and(|start| {
-                    bound.projection[start..]
-                        .iter()
-                        .map(|item| item.name.as_str())
-                        .eq(hidden.iter().map(String::as_str))
-                });
-            if !in_place || bound.hidden_sort_columns != 0 {
-                return Err(BindError::InvalidOrderBy(query.to_string()));
-            }
-            bound.hidden_sort_columns = rollup.hidden;
-            return Ok(bound);
+            return self.bind_rollup(query, &rollup, outer_ctes);
         }
 
         let mut ctes = outer_ctes.to_vec();
@@ -812,7 +838,15 @@ impl<'catalog> Binder<'catalog> {
             Some(&resolve_subquery),
         )?
         .into_iter()
-        .map(BoundExpr::instant_key)
+        // A TIMESTAMP groups by the instant it stores, unless the mode has
+        // MySQL copy it into the grouping by its wall clock.
+        .map(|key| {
+            if crate::session_parse_mode().copies_temporals_by_reading() && !ROLLUP_GROUPING.get() {
+                key
+            } else {
+                key.instant_key()
+            }
+        })
         .collect::<Vec<_>>();
         // HAVING resolves grouping columns before SELECT aliases; an alias
         // still outranks an unrelated source column with the same name.
@@ -1025,12 +1059,12 @@ impl<'catalog> Binder<'catalog> {
         // instants read as the same wall clock and are still two rows. The
         // reading alone would merge them, so the query groups by its select
         // list with the stored column in the reading's place. Under
-        // NO_ZERO_DATE or NO_ZERO_IN_DATE MySQL removes duplicates by the
-        // wall clock instead, which is what the reading does.
-        let mode = crate::session_parse_mode();
+        // NO_ZERO_DATE, NO_ZERO_IN_DATE or ALLOW_INVALID_DATES MySQL removes
+        // duplicates by the wall clock instead, which is what the reading
+        // does.
+        let by_reading = crate::session_parse_mode().copies_temporals_by_reading();
         let by_instant = distinct
-            && !mode.no_zero_date
-            && !mode.no_zero_in_date
+            && !by_reading
             && group_by.is_empty()
             && aggregates.is_empty()
             && windows.is_empty()
@@ -1067,7 +1101,7 @@ impl<'catalog> Binder<'catalog> {
         }
         let distinct = distinct && !by_instant;
         // COUNT(DISTINCT) counts instants under the same modes.
-        if !mode.no_zero_date && !mode.no_zero_in_date {
+        if !by_reading {
             for aggregate in &mut aggregates {
                 if aggregate.distinct && aggregate.function == AggregateFunction::Count {
                     aggregate.expr = aggregate.expr.take().map(BoundExpr::instant_key);
@@ -2763,19 +2797,24 @@ impl<'catalog> Binder<'catalog> {
         // A TIMESTAMP leaves a derived table as the instant it stores and
         // is read in the session's zone by whoever selects it, so ordering,
         // grouping and comparing outside still see instants. Branches of a
-        // set operation must agree on what they carry, and keep the reading.
+        // set operation must agree on what they carry: they carry instants
+        // when every branch reads a stored TIMESTAMP there and the mode
+        // keeps instants in the union's copy, and the reading otherwise.
         let mut instants = vec![false; visible];
         if input.union_all.is_empty() && input.set_ops.is_empty() && input.recursive.is_none() {
             for (index, projection) in input.projection.iter_mut().take(visible).enumerate() {
-                let stored = projection.expr.session_timestamp_source().filter(|source| {
-                    matches!(
-                        source.kind,
-                        BoundExprKind::Column(_) | BoundExprKind::GroupKey(_)
-                    )
-                });
-                if let Some(stored) = stored.cloned() {
+                if let Some(stored) = stored_instant(&projection.expr).cloned() {
                     projection.expr = stored;
                     instants[index] = true;
+                }
+            }
+        } else if input.recursive.is_none()
+            && !crate::session_parse_mode().copies_temporals_by_reading()
+        {
+            for (index, carried) in instants.iter_mut().enumerate() {
+                if branches_read_instants(&input, index) {
+                    carry_branch_instants(&mut input, index);
+                    *carried = true;
                 }
             }
         }
@@ -2855,6 +2894,48 @@ fn reject_duplicate_relation(tables: &[BoundTable], table: &BoundTable) -> Resul
         Err(BindError::DuplicateRelation(table.relation_name.clone()))
     } else {
         Ok(())
+    }
+}
+
+/// The stored TIMESTAMP under a session-zone reading, when `expr` is one.
+fn stored_instant(expr: &BoundExpr) -> Option<&BoundExpr> {
+    expr.session_timestamp_source().filter(|source| {
+        matches!(
+            source.kind,
+            BoundExprKind::Column(_) | BoundExprKind::GroupKey(_)
+        )
+    })
+}
+
+/// Whether every branch of a set operation reads a stored TIMESTAMP in
+/// output column `index`.
+fn branches_read_instants(query: &BoundQuery, index: usize) -> bool {
+    query
+        .projection
+        .get(index)
+        .is_some_and(|projection| stored_instant(&projection.expr).is_some())
+        && query
+            .union_all
+            .iter()
+            .all(|branch| branches_read_instants(branch, index))
+        && query
+            .set_ops
+            .iter()
+            .all(|(_, branch)| branches_read_instants(branch, index))
+}
+
+/// Replaces output column `index` of every branch by the instant it reads.
+fn carry_branch_instants(query: &mut BoundQuery, index: usize) {
+    if let Some(projection) = query.projection.get_mut(index)
+        && let Some(stored) = stored_instant(&projection.expr).cloned()
+    {
+        projection.expr = stored;
+    }
+    for branch in &mut query.union_all {
+        carry_branch_instants(branch, index);
+    }
+    for (_, branch) in &mut query.set_ops {
+        carry_branch_instants(branch, index);
     }
 }
 
@@ -6241,7 +6322,16 @@ fn bind_aggregate(
             let FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) = argument else {
                 return Err(BindError::UnsupportedAggregate(function.to_string()));
             };
-            values.push(bind_expr(expr, tables, subqueries)?);
+            // Each TIMESTAMP component counts by its instant, as a single
+            // one does, unless the mode copies it by its wall clock.
+            let value = bind_expr(expr, tables, subqueries)?;
+            values.push(
+                if crate::session_parse_mode().copies_temporals_by_reading() {
+                    value
+                } else {
+                    value.instant_key()
+                },
+            );
         }
         // COUNT(DISTINCT a,b,...) ignores a row when ANY component is NULL.
         // A canonical JSON array is an unambiguous composite key; the normal
@@ -9212,6 +9302,8 @@ struct SourceTokens {
 }
 
 std::thread_local! {
+    /// Whether the query being bound is a branch of a rewritten rollup.
+    static ROLLUP_GROUPING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The statement last tokenized for projection names, with its tokens:
     /// every unnamed projection of one statement reads the same ones, and
     /// tokenizing the whole statement again for each was a cost per column.

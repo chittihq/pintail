@@ -357,7 +357,107 @@ pub fn cases() -> Vec<OracleCase> {
         }
     }
     interval_cases(&mut push);
+    grouping_cases(&mut push);
     cases
+}
+
+/// Grouping, deduplication and unions over calendar columns under the
+/// modes that change them. `ts` has no index, so `MySQL` groups it through
+/// an internal temporary result, and under any of `NO_ZERO_DATE`,
+/// `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES` it copies a `TIMESTAMP`
+/// there by its wall clock: the two instants of the hour a zone repeats
+/// become one group. Without those flags they stay two. A rollup sorts
+/// instead of copying and keeps them apart in every mode. Zero and partial
+/// dates pass through the functions that choose between calendar values,
+/// and `UNIX_TIMESTAMP` reads a `TIMESTAMP`'s instant in any zone.
+fn grouping_cases(push: &mut impl FnMut(&'static str, &'static str, String)) {
+    const PLAIN: &str = "NO_ENGINE_SUBSTITUTION";
+    let instants = format!("{TABLE} WHERE id > 100");
+    let modes = [
+        super::oracle_transport::DEFAULT_MODE,
+        PLAIN,
+        "ALLOW_INVALID_DATES",
+        "NO_ZERO_IN_DATE",
+        "ONLY_FULL_GROUP_BY",
+    ];
+    for family in ["session zone America/New_York", "session zone +05:30"] {
+        for sql_mode in modes {
+            for sql in [
+                format!("SELECT ts, COUNT(*), MIN(id) FROM {instants} GROUP BY ts ORDER BY ts"),
+                format!("SELECT DISTINCT ts FROM {instants} ORDER BY ts"),
+                format!(
+                    "SELECT COUNT(DISTINCT ts), COUNT(DISTINCT ts, id > 105), \
+                     COUNT(DISTINCT ts, ts0) FROM {instants}"
+                ),
+                format!(
+                    "SELECT DATE(ts), HOUR(ts), COUNT(*), COUNT(DISTINCT ts) FROM {instants} \
+                     GROUP BY DATE(ts), HOUR(ts) ORDER BY 1, 2"
+                ),
+                format!("SELECT ts, COUNT(*) FROM {instants} GROUP BY ts WITH ROLLUP"),
+                format!(
+                    "SELECT ts, COUNT(*) FROM (SELECT ts FROM {instants} UNION ALL \
+                     SELECT ts FROM {instants}) d GROUP BY ts ORDER BY ts"
+                ),
+                format!(
+                    "SELECT COUNT(*) FROM (SELECT ts FROM {instants} UNION \
+                     SELECT ts FROM {instants}) d"
+                ),
+                format!(
+                    "SELECT id, UNIX_TIMESTAMP(ts), UNIX_TIMESTAMP(ts0) FROM {instants} ORDER BY id"
+                ),
+            ] {
+                push(sql_mode, family, sql);
+            }
+        }
+    }
+    for sql_mode in [
+        super::oracle_transport::DEFAULT_MODE,
+        PLAIN,
+        "ALLOW_INVALID_DATES",
+    ] {
+        for sql in [
+            format!(
+                "SELECT id, COALESCE(dt, dt3), IFNULL(dt3, dt), IF(id > 0, dt, dt3), \
+                 GREATEST(dt, dt3), CASE WHEN id > 0 THEN d END, NULLIF(dt, '1999-01-01') \
+                 FROM {TABLE} ORDER BY id"
+            ),
+            format!(
+                "SELECT id, CAST(dt AS DATETIME(2)), CAST(dt3 AS DATE), CAST(d AS DATETIME), \
+                 CAST(ts0 AS DATETIME), CAST(ts0 AS DATE), COALESCE(ts0, ts) FROM {TABLE} \
+                 ORDER BY id"
+            ),
+            format!("SELECT ts FROM {instants} UNION SELECT ts0 FROM {instants} ORDER BY 1"),
+        ] {
+            push(sql_mode, "calendar edges choices and unions", sql);
+        }
+    }
+    // A union copies a column of its own type as it is, and checks a value
+    // it converts - a DATE into a DATETIME, one precision into another -
+    // as it does an expression it groups: only ALLOW_INVALID_DATES keeps
+    // a day past its month's end there.
+    for (sql_mode, sql) in [
+        (
+            PLAIN,
+            format!("SELECT dt FROM {TABLE} UNION SELECT dt FROM {TABLE} ORDER BY 1"),
+        ),
+        (
+            "ALLOW_INVALID_DATES",
+            format!("SELECT d FROM {TABLE} UNION ALL SELECT dt3 FROM {TABLE} ORDER BY 1"),
+        ),
+        (
+            "ALLOW_INVALID_DATES",
+            format!("SELECT dt FROM {TABLE} UNION SELECT dt3 FROM {TABLE} ORDER BY 1"),
+        ),
+        (
+            "ALLOW_INVALID_DATES",
+            format!(
+                "SELECT x, COUNT(*) FROM (SELECT COALESCE(dt, dt3) x FROM {TABLE}) g \
+                 GROUP BY x ORDER BY x"
+            ),
+        ),
+    ] {
+        push(sql_mode, "calendar edges choices and unions", sql);
+    }
 }
 
 /// Interval arithmetic and week extraction at the edges: the year zero,
