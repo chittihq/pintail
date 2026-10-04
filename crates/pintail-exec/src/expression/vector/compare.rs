@@ -82,12 +82,50 @@ pub(super) fn comparison_column(
                 .then(|| decimal_equalities(&left, &right, rows))
                 .flatten()
         })
+        .or_else(|| float_orderings(&left, &right, rows))
         .or_else(|| text_orderings(&left, &right, rows, collation))?;
     truth_column(
         orderings
             .into_iter()
             .map(|ordering| ordering.map(|ordering| holds(op, ordering))),
     )
+}
+
+/// Doubles already converted by the binder, including text/decimal
+/// comparisons. Without this last step their cast columns were built and
+/// discarded before the entire expression ran again row by row.
+fn float_orderings(left: &Operand<'_>, right: &Operand<'_>, rows: usize) -> Option<Orderings> {
+    enum Floats<'a> {
+        Column(&'a [f64], &'a ValidityMask),
+        Fixed(f64),
+    }
+    impl Floats<'_> {
+        fn at(&self, row: usize) -> Option<f64> {
+            match self {
+                Self::Column(values, validity) => validity.is_valid(row).then(|| values[row]),
+                Self::Fixed(value) => Some(*value),
+            }
+        }
+    }
+    fn floats<'a>(operand: &'a Operand<'_>) -> Option<Floats<'a>> {
+        match operand {
+            Operand::Column(column) => match column.typed()? {
+                (TypedValues::Float64(values), validity) => Some(Floats::Column(values, validity)),
+                _ => None,
+            },
+            Operand::Constant(Value::Float64(value)) => Some(Floats::Fixed(value.get())),
+            Operand::Constant(_) => None,
+        }
+    }
+    let (left, right) = (floats(left)?, floats(right)?);
+    (0..rows)
+        .map(|row| match (left.at(row), right.at(row)) {
+            // An unordered comparison is an error on the row path, so a
+            // NaN must decline the kernel, not become a SQL NULL.
+            (Some(left), Some(right)) => left.partial_cmp(&right).map(Some),
+            _ => Some(None),
+        })
+        .collect()
 }
 
 fn integer_orderings(left: &Operand<'_>, right: &Operand<'_>, rows: usize) -> Option<Orderings> {
@@ -470,6 +508,112 @@ mod tests {
                 Some("\u{e9}t\u{e9}"),
             ]),
         ])
+    }
+
+    #[test]
+    fn time_text_comparisons_keep_the_column_without_the_row_adapter() {
+        let input = ColumnVector::new(
+            DataType::Time64 { fsp: 6 },
+            [
+                Some("-12:00:00.000000"),
+                Some("00:00:00.000000"),
+                Some("100:00:00.000000"),
+                None,
+            ]
+            .into_iter()
+            .map(|value| value.map_or(Value::Null, |text| Value::Utf8(text.into())))
+            .collect(),
+        )
+        .expect("column");
+        let batch = batch_of(vec![input]);
+        for constant in ["00:00:00x", "100:00:00x", "839:00:00"] {
+            for op in [
+                BinaryOp::Equal,
+                BinaryOp::NotEqual,
+                BinaryOp::Less,
+                BinaryOp::LessOrEqual,
+                BinaryOp::Greater,
+                BinaryOp::GreaterOrEqual,
+            ] {
+                let expression = binary(
+                    op,
+                    cast(column(0), DataType::Utf8),
+                    text(constant),
+                    DataType::Boolean,
+                );
+                assert!(
+                    expression
+                        .evaluate_vector_column_quietly(&batch, Some(DataType::Boolean))
+                        .is_some(),
+                    "must not need the row adapter"
+                );
+                assert!(agrees_with_rows(&expression, &batch, DataType::Boolean));
+            }
+        }
+    }
+
+    #[test]
+    fn floating_comparisons_finish_the_cast_column_path() {
+        let input = crate::ColumnVector::new(
+            DataType::Float64,
+            vec![
+                Value::float64(-0.0),
+                Value::float64(1.5),
+                Value::Null,
+                Value::float64(f64::INFINITY),
+            ],
+        )
+        .expect("column");
+        let numbers = crate::RecordBatch::new(4, vec![input]).expect("batch");
+        for op in [
+            BinaryOp::Equal,
+            BinaryOp::NotEqual,
+            BinaryOp::Less,
+            BinaryOp::LessOrEqual,
+            BinaryOp::Greater,
+            BinaryOp::GreaterOrEqual,
+        ] {
+            let expression = binary(
+                op,
+                column(0),
+                CompiledExpr::Literal(Value::float64(0.0)),
+                DataType::Boolean,
+            );
+            assert!(
+                expression
+                    .evaluate_vector_column_quietly(&numbers, Some(DataType::Boolean))
+                    .is_some(),
+                "packed float comparison"
+            );
+            assert!(agrees_with_rows(&expression, &numbers, DataType::Boolean));
+        }
+        let nan = crate::RecordBatch::new(
+            1,
+            vec![
+                crate::ColumnVector::new(DataType::Float64, vec![Value::float64(f64::NAN)])
+                    .expect("column"),
+            ],
+        )
+        .expect("batch");
+        let expression = binary(BinaryOp::Equal, column(0), column(0), DataType::Boolean);
+        assert!(
+            expression
+                .evaluate_column(&nan, Some(DataType::Boolean))
+                .is_none()
+        );
+        assert!(expression.evaluate(&nan, 0).is_err());
+
+        let batch = batch_of(vec![
+            texts(&[Some("1.5"), Some("-0"), None, Some("2.5")]),
+            texts(&[Some("1.50"), Some("0.00"), Some("2.00"), Some("3.00")]),
+        ]);
+        let expression = binary(
+            BinaryOp::Equal,
+            cast(column(0), DataType::Float64),
+            cast(column(1), DataType::Float64),
+            DataType::Boolean,
+        );
+        assert!(agrees_with_rows(&expression, &batch, DataType::Boolean));
     }
 
     fn column(index: usize) -> CompiledExpr {

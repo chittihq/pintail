@@ -842,6 +842,19 @@ impl ColumnVector {
             .map(|(packed, validity)| (packed, validity))
     }
 
+    /// A TIME's existing text as plain text. Its scalar cast changes no
+    /// bytes, so share the column instead of rebuilding every row's string.
+    pub(crate) fn time_as_text(&self) -> Option<Self> {
+        if !matches!(self.data_type, DataType::Time64 { .. })
+            || !matches!(self.typed()?.0, TypedValues::Utf8(_))
+        {
+            return None;
+        }
+        let mut text = self.clone();
+        text.data_type = DataType::Utf8;
+        Some(text)
+    }
+
     /// Returns the logical scalar type.
     #[must_use]
     pub const fn data_type(&self) -> DataType {

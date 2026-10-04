@@ -261,6 +261,16 @@ fn packed(
         ScalarFunction::SessionTimestamp => {
             session_timestamp_dictionary(operands, call.session_zone?, declared)
         }
+        ScalarFunction::Cast(DataType::Utf8)
+        | ScalarFunction::DeclaredCast {
+            target: DataType::Utf8,
+            characters: None,
+        } if declared == DataType::Utf8 => {
+            let [Operand::Column(column)] = operands else {
+                return None;
+            };
+            column.time_as_text()
+        }
         ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. } => extreme(
             operands,
             declared,
