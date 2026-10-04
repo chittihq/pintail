@@ -139,6 +139,17 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// Whether the statement running on this thread has been cancelled, for a
+/// loop inside one value's evaluation that has no tracker to ask.
+pub(crate) fn execution_cancelled() -> bool {
+    EXECUTION_CANCELLATION.with(|current| {
+        current
+            .borrow()
+            .as_ref()
+            .is_some_and(ExecutionCancellation::is_cancelled)
+    })
+}
+
 /// Runs synchronous query setup/execution with a cancellation handle that is
 /// captured by every [`MemoryTracker`] opened in the scope.
 pub fn with_execution_cancellation<T>(

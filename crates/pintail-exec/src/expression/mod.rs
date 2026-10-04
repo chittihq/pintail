@@ -2899,7 +2899,17 @@ fn evaluate_eager_scalar_inner(
             } else {
                 (scalar_string(&values[0])?, scalar_string(&values[1])?)
             };
-            let matched = like_matches(&value, &pattern, escape, binary, collation);
+            // A wildcard pattern can take time quadratic in its operands; the
+            // match stops when the statement is cancelled.
+            let matched = like_search(
+                &value,
+                &pattern,
+                escape,
+                binary,
+                collation,
+                &mut crate::execution::execution_cancelled,
+            )
+            .ok_or(ExecError::QueryCancelled)?;
             Ok(Value::Boolean(if negated { !matched } else { matched }))
         }
         ScalarFunction::InList { negated } => evaluate_in_list(
@@ -8589,6 +8599,24 @@ fn like_matches(
     binary: bool,
     collation: Collation,
 ) -> bool {
+    like_search(value, pattern, escape, binary, collation, &mut || false).unwrap_or(false)
+}
+
+/// Steps of a LIKE match between two looks at whether it should stop.
+const LIKE_STEPS_PER_CHECK: u32 = 1 << 16;
+
+/// Matches `value` against a LIKE `pattern`. After a `%` the match retries
+/// from each later position, so the work can be the product of the two
+/// lengths; every [`LIKE_STEPS_PER_CHECK`] steps it asks `interrupted`, and
+/// answers `None` once that says to stop.
+fn like_search(
+    value: &str,
+    pattern: &str,
+    escape: Option<char>,
+    binary: bool,
+    collation: Collation,
+    interrupted: &mut dyn FnMut() -> bool,
+) -> Option<bool> {
     let value = value.chars().collect::<Vec<_>>();
     let mut tokens = Vec::with_capacity(pattern.chars().count());
     let mut pattern = pattern.chars();
@@ -8608,7 +8636,15 @@ fn like_matches(
     let mut token_index = 0;
     let mut wildcard = None;
     let mut wildcard_value = 0;
+    let mut until_check = LIKE_STEPS_PER_CHECK;
     while value_index < value.len() {
+        until_check -= 1;
+        if until_check == 0 {
+            if interrupted() {
+                return None;
+            }
+            until_check = LIKE_STEPS_PER_CHECK;
+        }
         match tokens.get(token_index) {
             Some(LikeToken::Literal(literal))
                 if like_literal_matches(value[value_index], *literal, binary, collation) =>
@@ -8627,7 +8663,7 @@ fn like_matches(
             }
             _ => {
                 let Some(wildcard_index) = wildcard else {
-                    return false;
+                    return Some(false);
                 };
                 wildcard_value += 1;
                 value_index = wildcard_value;
@@ -8638,7 +8674,7 @@ fn like_matches(
     while matches!(tokens.get(token_index), Some(LikeToken::AnyMany)) {
         token_index += 1;
     }
-    token_index == tokens.len()
+    Some(token_index == tokens.len())
 }
 
 fn like_literal_matches(value: char, literal: char, binary: bool, collation: Collation) -> bool {
@@ -10042,6 +10078,32 @@ mod tests {
             label: "shipped".to_owned(),
         };
         assert_eq!(super::mysql_u64(&shipped).expect("index"), 3);
+    }
+
+    /// A wildcard LIKE whose retries are the product of its operands'
+    /// lengths stops inside the match when its statement is cancelled; the
+    /// same match uncancelled, and a short one cancelled, still answer.
+    #[test]
+    fn a_long_like_match_stops_when_its_statement_is_cancelled() {
+        use pintail_types::{DataType, Value};
+        let like = ScalarFunction::Like {
+            negated: false,
+            escape: None,
+        };
+        let long = vec![
+            Value::Utf8("a".repeat(4096)),
+            Value::Utf8(format!("%{}b", "a".repeat(2048))),
+        ];
+        let short = vec![Value::Utf8("abc".into()), Value::Utf8("%c".into())];
+        let call =
+            |args: &[Value]| super::evaluate_eager_scalar(like, args, Some(DataType::Boolean));
+        assert_eq!(call(&long).expect("answers"), Value::Boolean(false));
+        let cancelled = crate::ExecutionCancellation::new();
+        cancelled.cancel();
+        crate::with_execution_cancellation(cancelled, || {
+            assert!(matches!(call(&long), Err(crate::ExecError::QueryCancelled)));
+            assert_eq!(call(&short).expect("answers"), Value::Boolean(true));
+        });
     }
 
     /// Three divergences measured against `MySQL` 8.4 and now repaired.
