@@ -1742,6 +1742,31 @@ fn read_time_arguments_as_dates(function: ScalarFunction, args: &mut [BoundExpr]
     }
 }
 
+/// `UNIX_TIMESTAMP` of a TIMESTAMP column is the instant the column stores,
+/// as `MySQL` reads it. Converting its session-zone reading back would
+/// resolve the hour a zone repeats to one of its two instants and move the
+/// other, so the stored UTC value is read instead, in UTC. Whether the
+/// call was rewritten.
+fn read_stored_instant(function: ScalarFunction, args: &mut Vec<BoundExpr>) -> bool {
+    if function != ScalarFunction::UnixTimestamp || args.len() != 1 {
+        return false;
+    }
+    let Some(source) = args[0]
+        .session_timestamp_source()
+        .filter(|source| matches!(source.kind, BoundExprKind::Column(_)))
+        .cloned()
+    else {
+        return false;
+    };
+    args[0] = source;
+    args.push(BoundExpr {
+        kind: BoundExprKind::Literal(Value::Utf8("+00:00".to_owned())),
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+    });
+    true
+}
+
 /// Resolve connection settings once, before expressions move to worker threads.
 fn capture_scalar_session(function: ScalarFunction, args: &mut Vec<BoundExpr>) {
     capture_timestamp_offsets(function, args);
@@ -1934,7 +1959,9 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
                 };
             }
             let mut args: Vec<_> = args.into_iter().map(fold_expr).collect();
-            capture_scalar_session(function, &mut args);
+            if !read_stored_instant(function, &mut args) {
+                capture_scalar_session(function, &mut args);
+            }
             BoundExpr {
                 kind: BoundExprKind::Scalar { function, args },
                 data_type: expr.data_type,
