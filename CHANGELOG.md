@@ -50,6 +50,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   unchanged (the corpus family runs about 4-5x faster). Correlated
   subqueries answered row by row no longer copy each subquery's bound tree
   per outer row (the batched dependent-subquery family runs 2.5x faster).
+- A text column that becomes dictionary-coded reserves its codes for the
+  whole chunk up front instead of growing them by reallocation; filtered
+  scans over such columns run up to 40% fewer instructions.
 - A row membership test over values that cannot be NULL drops its
   undecided-row bookkeeping, and a replayed join rejects unequal keys
   before resolving its subqueries. A filtered count reading only its
@@ -61,6 +64,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- String functions that build more than they read (REPEAT, SPACE,
+  LPAD/RPAD, INSERT, CONCAT, CONCAT_WS, REPLACE, TO_BASE64, and the JSON
+  constructors and modifiers) answer NULL with warning 1301 once the result
+  would pass `max_allowed_packet`, sized as MySQL 8.4 sizes it, instead of
+  erroring past 4 KiB or reserving memory for results that cannot exist.
+  `SET SESSION max_allowed_packet` answers error 1621.
+- `max_execution_time` stops a long LIKE, JSON_SEARCH, regular-expression
+  search, JSON_CONTAINS or JSON_OVERLAPS within a single value, and KILL
+  QUERY also stops the column LIKE kernel and those functions.
 - DISTINCT, GROUP BY, COUNT(DISTINCT) and unions inside derived tables
   over a TIMESTAMP in a daylight-saving session zone follow the sql_mode as
   MySQL does: under NO_ZERO_DATE, NO_ZERO_IN_DATE or ALLOW_INVALID_DATES
