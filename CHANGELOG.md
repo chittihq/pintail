@@ -55,6 +55,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- DISTINCT, GROUP BY, COUNT(DISTINCT) and unions inside derived tables
+  over a TIMESTAMP in a daylight-saving session zone follow the sql_mode as
+  MySQL does: under NO_ZERO_DATE, NO_ZERO_IN_DATE or ALLOW_INVALID_DATES
+  (the default mode included) the two instants of the repeated hour are one
+  value, and without those flags they stay two. WITH ROLLUP keeps them
+  apart and orders by instant.
+- UNIX_TIMESTAMP of a TIMESTAMP column returns its stored instant in a
+  daylight-saving zone instead of folding the repeated hour onto the
+  earlier one.
+- Zero and partial DATE/DATETIME values pass through COALESCE, IFNULL, IF,
+  CASE, GREATEST, LEAST, NULLIF and an explicit CAST instead of becoming
+  NULL; a TIMESTAMP column's zero still casts to NULL under NO_ZERO_DATE.
+- A UNION of calendar columns with different precisions, or of DATE with
+  DATETIME, is accepted and typed at the finer precision instead of
+  raising a syntax error.
 - A dead-letter retry whose letter was removed while its reconcile ran
   answered 404 after the table had already been reconciled; it now
   succeeds.
