@@ -4126,6 +4126,13 @@ impl FusedRounds {
     ) -> Result<(), ExecError> {
         let slot_count = slots.len();
         let workers = rayon::current_num_threads().max(1);
+        // Every seat may fill with totals over all the slots, held until
+        // the rounds stop: charged before any is made. When they do not
+        // fit, the driver's own path folds the input.
+        let seats_bytes = PackedFold::bytes(slot_count, shape.packed).saturating_mul(workers + 1);
+        if memory.reserve(seats_bytes).is_err() {
+            return Ok(());
+        }
         let mut seats: Vec<std::sync::Mutex<Option<PackedFold>>> = Vec::new();
         seats.resize_with(workers + 1, || std::sync::Mutex::new(None));
         let outcome = self.rounds(ahead, memory, |memory| {
@@ -4140,6 +4147,7 @@ impl FusedRounds {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
             })
             .collect::<Vec<_>>();
+        let mut committed = Ok(());
         if !folds.is_empty() {
             for (slot, entry) in slots.iter_mut().enumerate() {
                 if !occupied_in(&folds, slot) {
@@ -4148,9 +4156,15 @@ impl FusedRounds {
                 let states = entry.get_or_insert_with(|| {
                     shape.aggregates.iter().map(AggregateState::new).collect()
                 });
-                commit_merged(&folds, slot, states, shape.aggregates, memory)?;
+                committed = commit_merged(&folds, slot, states, shape.aggregates, memory);
+                if committed.is_err() {
+                    break;
+                }
             }
         }
+        drop(folds);
+        memory.release(seats_bytes);
+        committed?;
         outcome
     }
 }

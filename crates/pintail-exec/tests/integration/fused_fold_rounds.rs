@@ -423,3 +423,125 @@ fn a_small_ceiling_still_answers() {
     let fixture = fixture();
     check_shapes(&fixture, 24 << 20, false, 0);
 }
+
+const READINGS: u64 = 200_000;
+
+/// The amount of lane `lane` (1 to 7) in row `id`, in cents.
+fn reading_cents(id: u64, lane: u64) -> i64 {
+    i64::try_from(id * lane % 10_000).expect("small")
+}
+
+/// A table for a date-part key over a wide domain: seven amounts, a
+/// timestamp whose year and second take every value the rows give them.
+fn readings() -> (tempfile::TempDir, TableStore, CatalogSnapshot) {
+    let decimal = DataType::Decimal {
+        precision: 12,
+        scale: 2,
+    };
+    let mut columns = vec![
+        Column::new(1, "id", DataType::UInt64, false),
+        Column::new(2, "ts", DataType::DateTime64 { fsp: 0 }, false),
+    ];
+    for (offset, name) in ["a", "b", "c", "d", "e", "f", "g"].into_iter().enumerate() {
+        columns.push(Column::new(
+            3 + u32::try_from(offset).expect("small"),
+            name,
+            decimal,
+            false,
+        ));
+    }
+    let schema = TableSchema::new(1, columns).expect("schema");
+    let directory = tempfile::tempdir().expect("directory");
+    let mut table =
+        TableStore::open(directory.path(), schema.clone(), StoreOptions::default()).expect("table");
+    let row = |id: u64| {
+        let mut values = vec![
+            Value::UInt64(id),
+            Value::Utf8(format!("202{}-03-04 05:06:{:02}", id % 4, id % 60)),
+        ];
+        values.extend((1..=7).map(|lane| Value::Utf8(money(reading_cents(id, lane)))));
+        StoredRow::new(
+            PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+            values,
+            1,
+            false,
+        )
+    };
+    let mut start = 0;
+    while start < READINGS {
+        let end = (start + 20_000).min(READINGS);
+        table
+            .bulk_ingest_snapshot((start..end).map(row).collect())
+            .expect("ingest");
+        start = end;
+    }
+    let entry = TableEntry::new(
+        TableId::new(1),
+        "readings",
+        schema,
+        TableStatistics::with_row_count(READINGS),
+    )
+    .expect("entry")
+    .with_key_columns([1])
+    .expect("key");
+    let catalog = CatalogSnapshot::new([
+        DatabaseEntry::new(DatabaseId::new(1), "app", [entry]).expect("database")
+    ])
+    .expect("catalog");
+    (directory, table, catalog)
+}
+
+/// Each worker of a date-part round keeps totals over every slot of the
+/// key's domain until the rounds stop. Those totals are charged before
+/// they are made: under a ceiling they do not fit, the rounds stand aside
+/// and the driver's own path answers the same rows.
+#[test]
+fn date_part_rounds_charge_their_workers_totals() {
+    let (directory, table, catalog) = readings();
+    let fixture = Fixture {
+        _directory: directory,
+        table,
+        catalog,
+        rows: BTreeMap::new(),
+    };
+    let mut totals = BTreeMap::<(u64, u64), [i64; 7]>::new();
+    for id in 0..READINGS {
+        let group = totals.entry((2020 + id % 4, id % 60)).or_default();
+        for (lane, total) in (1..).zip(group.iter_mut()) {
+            *total += reading_cents(id, lane);
+        }
+    }
+    let mut expected = totals
+        .into_iter()
+        .map(|((year, second), sums)| {
+            let mut row = vec![year.to_string(), second.to_string()];
+            row.extend(sums.into_iter().map(money));
+            row
+        })
+        .collect::<Vec<_>>();
+    expected.sort();
+    let sql = "SELECT YEAR(ts) AS y, SECOND(ts) AS s, SUM(a), SUM(b), SUM(c), SUM(d), \
+               SUM(e), SUM(f), SUM(g) FROM readings GROUP BY y, s";
+    // Every seat's totals: a row count, and a total and a NULL count per
+    // lane, over 257 years by 61 seconds.
+    let seats_bytes = (rayon::current_num_threads() + 1) * 257 * 61 * (8 + 7 * (16 + 8));
+
+    let _ = pintail_exec::take_exec_counters();
+    assert_eq!(run(&fixture, sql, 256 << 20), expected, "roomy ceiling");
+    let roomy = pintail_exec::take_exec_counters();
+    if fused() {
+        assert!(roomy.fused_rounds > 0, "{roomy:?}");
+    }
+
+    // A statement of its own, or the first one's settled answer is reused.
+    let tight = 20 << 20;
+    let tight_sql = sql.replace("FROM readings", "FROM readings WHERE id < 1000000");
+    assert_eq!(run(&fixture, &tight_sql, tight), expected, "tight ceiling");
+    let counters = pintail_exec::take_exec_counters();
+    if seats_bytes > tight {
+        assert_eq!(
+            counters.fused_rounds, 0,
+            "{seats_bytes} bytes of totals under a {tight}-byte ceiling: {counters:?}"
+        );
+    }
+}
