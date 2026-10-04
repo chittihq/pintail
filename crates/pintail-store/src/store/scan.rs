@@ -3031,15 +3031,22 @@ impl ProjectedScanStream {
         }
         for (position, slice) in refused {
             // Alone, with the whole budget, and cut smaller when even that
-            // is too little: the path a round of one slice takes.
+            // is too little: the path a round of one slice takes. A slice
+            // cut smaller leaves its tail queued as the direct range; the
+            // tail is read here too, as further pieces of the same slice,
+            // so no piece of it is placed after the slices that follow it.
             self.slices.push_front(slice);
-            let chunks = self.next_column_chunks_inner(1, memory_limit, prewhere)?;
-            folded.extend(
-                chunks
-                    .into_iter()
-                    .enumerate()
-                    .map(|(piece, chunk)| fold(chunk, position, piece)),
-            );
+            let mut piece = 0;
+            loop {
+                let chunks = self.next_column_chunks_inner(1, memory_limit, prewhere)?;
+                for chunk in chunks {
+                    folded.push(fold(chunk, position, piece));
+                    piece += 1;
+                }
+                if self.direct_range.is_none() {
+                    break;
+                }
+            }
         }
         Ok(Some(folded))
     }

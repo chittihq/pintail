@@ -2112,3 +2112,127 @@ fn files_at_rest_tell_a_copied_table_from_one_that_applied_changes() {
         .unwrap();
     assert!(!changes_applied_at_rest(directory.path()).unwrap());
 }
+
+/// A fused round's slice that does not fit its share is read again alone,
+/// and cut into pieces when even the whole budget is too little. Every
+/// piece of it keeps the slice's place in the round: a consumer that
+/// orders the round's chunks by `(round, slice, piece)` reads the table in
+/// key order, the tail of a cut slice before the slices after it.
+#[test]
+#[allow(clippy::too_many_lines)] // the table, then a round per budget
+fn a_refused_slices_pieces_keep_its_place_in_the_round() {
+    const ROWS: u64 = 4_096;
+    let directory = tempfile::tempdir().unwrap();
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "note", DataType::Utf8, false),
+        ],
+    )
+    .unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        block_rows: 256,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema, options).unwrap();
+    let key = |id: u64| PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap();
+    // Two segments that do not overlap: long distinct notes, then short.
+    for (from, long) in [(0, true), (ROWS, false)] {
+        table
+            .ingest(
+                (from..from + ROWS)
+                    .map(|id| {
+                        let note = if long {
+                            format!("{id:08}{}", "n".repeat(2_040))
+                        } else {
+                            "s".to_owned()
+                        };
+                        StoredRow::new(
+                            key(id),
+                            vec![
+                                pintail_types::Value::UInt64(id),
+                                pintail_types::Value::Utf8(note),
+                            ],
+                            1,
+                            false,
+                        )
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        table.flush().unwrap();
+    }
+    let snapshot = table.snapshot();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .unwrap();
+    let mut cut = 0;
+    for limit in (18..=26).map(|shift| 1_usize << shift) {
+        let mut stream = snapshot
+            .scan_projected_range_stream(&key(0), &key(2 * ROWS), &[1, 2])
+            .unwrap()
+            .expect("stream");
+        let mut chunks = Vec::new();
+        let outcome = pool.install(|| {
+            for round in 0_usize.. {
+                let folded = stream.fold_column_chunks(
+                    2,
+                    limit,
+                    None,
+                    &|| true,
+                    &|chunk, slice, piece| {
+                        let columns = chunk.into_decoded_columns();
+                        let ids = columns
+                            .into_iter()
+                            .next()
+                            .unwrap()
+                            .into_values()
+                            .into_iter()
+                            .map(|value| match value {
+                                pintail_types::Value::UInt64(id) => id,
+                                other => panic!("unexpected {other:?}"),
+                            })
+                            .collect::<Vec<_>>();
+                        (slice, piece, ids)
+                    },
+                )?;
+                let Some(folded) = folded else {
+                    return Ok(());
+                };
+                chunks.extend(
+                    folded
+                        .into_iter()
+                        .map(|(slice, piece, ids)| ((round, slice, piece), ids)),
+                );
+            }
+            Ok(())
+        });
+        match outcome {
+            Ok(()) => {}
+            Err(StoreError::MemoryLimitExceeded { .. }) => continue,
+            Err(error) => panic!("limit {limit}: {error}"),
+        }
+        // A slice of the long notes came back in more than one piece.
+        if chunks
+            .iter()
+            .any(|((_, _, piece), ids)| *piece > 0 && ids.first().is_some_and(|id| *id < ROWS))
+            || chunks
+                .iter()
+                .filter(|(_, ids)| ids.first().is_some_and(|id| *id < ROWS))
+                .count()
+                > 1
+        {
+            cut += 1;
+        }
+        chunks.sort_by_key(|(place, _)| *place);
+        let ids = chunks
+            .into_iter()
+            .flat_map(|(_, ids)| ids)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, (0..2 * ROWS).collect::<Vec<_>>(), "limit {limit}");
+    }
+    assert!(cut > 0, "no budget cut the long slice");
+}
