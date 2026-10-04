@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- The optional x86-64-v3 second binary and its launcher
+  (`PINTAIL_X86_64_V3`, `scripts/pintail-launch.sh`).
+
 ### Added
 
 - The audit log is pruned: events older than `PINTAIL_AUDIT_RETENTION_DAYS`
@@ -25,6 +30,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The published image's server is profile-guided: built instrumented,
+  trained on a workload that needs no source server, and rebuilt with the
+  profile, for each platform's generic target. On the 20M-row benchmark it
+  is about 6.5% faster across Q1-Q8 and 11% faster on a key lookup, with
+  identical answers; its startup line reports `build_variant=pgo`.
+  `--build-arg PINTAIL_PGO=0` builds a plain binary, and
+  `docker-compose.dev.yml` builds plain by default.
 - Temporal functions over a column with few distinct values (DATE_FORMAT,
   the week and day functions, DATE_ADD/DATE_SUB and interval arithmetic,
   EXTRACT and the date parts, TIME formatting) are evaluated once per
