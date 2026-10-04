@@ -209,7 +209,7 @@ fn upgrading_a_store_backfills_the_marker_from_the_old_states() {
     drop(connection);
 
     let upgraded = MetaStore::open(&path).expect("upgrade");
-    assert_eq!(upgraded.schema_version().expect("version"), 24);
+    assert_eq!(upgraded.schema_version().expect("version"), 25);
     let marked = upgraded
         .tables("db-1")
         .expect("tables")
@@ -469,7 +469,7 @@ fn version_twenty_upgrade_preserves_only_active_copy_intent() {
         .unwrap();
     drop(connection);
     let store = MetaStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 24);
+    assert_eq!(store.schema_version().unwrap(), 25);
     assert!(store.table_copy_pending("db-1", "copying").unwrap());
     assert!(!store.table_copy_pending("db-1", "quarantined").unwrap());
     assert!(!store.table_copy_pending("db-1", "ready").unwrap());
@@ -545,7 +545,7 @@ fn a_table_copied_before_the_generation_record_upgrades_to_generation_zero() {
     drop(connection);
 
     let store = MetaStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 24);
+    assert_eq!(store.schema_version().unwrap(), 25);
     for name in ["old_copy", "recopied", "copied_again"] {
         assert_eq!(copy_generation(&store, name), 0, "{name}");
         assert_eq!(table_state(&store, name), ("pending".to_owned(), true));

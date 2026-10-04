@@ -5,7 +5,7 @@ fn opening_a_blank_control_plane_applies_the_initial_schema() {
 
     let metadata = pintail_meta::MetaStore::open(&database_path).expect("metadata store");
 
-    assert_eq!(metadata.schema_version().expect("schema version"), 24);
+    assert_eq!(metadata.schema_version().expect("schema version"), 25);
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn reopening_an_initialized_control_plane_is_idempotent() {
     pintail_meta::MetaStore::open(&database_path).expect("first open");
     let reopened = pintail_meta::MetaStore::open(&database_path).expect("second open");
 
-    assert_eq!(reopened.schema_version().expect("schema version"), 24);
+    assert_eq!(reopened.schema_version().expect("schema version"), 25);
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn version_one_control_plane_upgrades_polling_state_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 24);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let exists: bool = connection
@@ -103,7 +103,7 @@ fn version_two_control_plane_upgrades_polling_checksums_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 24);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let exists: bool = connection
@@ -134,7 +134,7 @@ fn version_three_control_plane_upgrades_schema_tracking_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 24);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let orphaned_column: bool = connection
@@ -168,7 +168,7 @@ fn version_four_control_plane_upgrades_api_configuration_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 24);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let api_scopes: bool = connection
@@ -214,7 +214,7 @@ fn version_five_control_plane_upgrades_wire_auth_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 24);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let native_hash: bool = connection
@@ -254,7 +254,7 @@ fn version_six_control_plane_upgrades_backup_state_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 24);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let backup_tables: i64 = connection
@@ -310,7 +310,7 @@ fn version_seven_adds_restored_table_state_without_losing_children() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 24);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     connection
@@ -351,7 +351,7 @@ fn version_twelve_control_plane_gains_caching_sha2_verifiers_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 24);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let caching_sha2: bool = connection
@@ -440,7 +440,7 @@ fn version_seventeen_widens_table_states_without_losing_rows() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 24);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
     let carried = upgraded.tables("db-1").expect("tables survive the rebuild");
     assert_eq!(carried.len(), 1);
     assert_eq!(carried[0].name, "orders");
@@ -630,7 +630,7 @@ fn a_fresh_file_opened_by_many_connections_at_once_migrates_once() {
                     })
                 })
                 .collect::<Vec<_>>();
-            let newest = 24;
+            let newest = 25;
             for opener in openers {
                 match opener.join().expect("opener thread") {
                     Ok(version) => assert_eq!(version, newest, "round {round}"),
@@ -639,4 +639,46 @@ fn a_fresh_file_opened_by_many_connections_at_once_migrates_once() {
             }
         });
     }
+}
+
+/// A file at version 24 gains the audit log's age index on upgrade, and the
+/// pruning batch's lookup of the oldest rows reads through it rather than
+/// scanning the table.
+#[test]
+fn version_twenty_four_control_plane_gains_the_audit_age_index() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let database_path = data_dir.path().join("pintail-meta.db");
+    drop(pintail_meta::MetaStore::open(&database_path).expect("current schema"));
+    let connection = rusqlite::Connection::open(&database_path).expect("set back");
+    connection
+        .execute_batch("DROP INDEX idx_audit_log_created; PRAGMA user_version = 24;")
+        .expect("version twenty-four file");
+    drop(connection);
+
+    let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
+    assert_eq!(upgraded.schema_version().expect("schema version"), 25);
+    drop(upgraded);
+
+    let connection = rusqlite::Connection::open(&database_path).expect("inspect upgrade");
+    let exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_audit_log_created')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("index lookup");
+    assert!(exists);
+    let plan = connection
+        .prepare(
+            "EXPLAIN QUERY PLAN SELECT rowid FROM audit_log \
+             WHERE created_at < '2026-01-01T00:00:00' ORDER BY created_at LIMIT 10",
+        )
+        .expect("plan")
+        .query_map([], |row| row.get::<_, String>(3))
+        .expect("plan rows")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("plan text")
+        .join("; ");
+    assert!(plan.contains("idx_audit_log_created"), "{plan}");
 }

@@ -26,8 +26,9 @@ pub use control::{
     InviteRecord, NewApiKey, NewAuditEvent, NewInvite, SyncRunRecord, TableRecord, UserRecord,
     WorkspaceMemberRecord, WorkspaceRecord,
 };
+pub use maintenance::AuditPrune;
 
-const CURRENT_SCHEMA_VERSION: u32 = 24;
+const CURRENT_SCHEMA_VERSION: u32 = 25;
 
 /// The change-capture decoder generation a table copy completed by this
 /// binary records (`tables.copy_generation`).
@@ -2797,7 +2798,19 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 24 {
         migration_v24(connection.transaction()?)?;
     }
+    if found < 25 {
+        migration_v25(connection.transaction()?)?;
+    }
     Ok(())
+}
+
+fn migration_v25(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/025_audit_log_created.sql"))
+        .context("failed to apply metadata migration 25")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 25")
 }
 
 fn migration_v24(transaction: Transaction<'_>) -> Result<()> {

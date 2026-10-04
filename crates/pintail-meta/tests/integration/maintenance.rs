@@ -164,3 +164,167 @@ fn pruning_keeps_copies_failures_and_live_runs_longer_than_routine_cycles() {
     kept.sort();
     assert_eq!(kept, ["new_cycle", "old_running"]);
 }
+
+fn store_with_workspace(dir: &std::path::Path) -> MetaStore {
+    let store = MetaStore::open(&dir.join("pintail-meta.db")).expect("metadata opens");
+    store
+        .create_workspace("ws", "Workspace", "workspace", "2026-01-01T00:00:00+00:00")
+        .expect("workspace");
+    store
+}
+
+fn audit(store: &MetaStore, id: &str, created_at: &str) {
+    store
+        .record_audit_event(&pintail_meta::NewAuditEvent {
+            id,
+            workspace_id: "ws",
+            actor_type: "user",
+            actor_id: "user",
+            actor_label: "user@example.com",
+            action: "query.run",
+            target_type: None,
+            target_id: None,
+            detail_json: None,
+            created_at,
+            client_ip: None,
+        })
+        .expect("audit event");
+}
+
+fn audit_ids(store: &MetaStore) -> Vec<String> {
+    let mut ids = store
+        .audit_log_in_workspace("ws", 100_000)
+        .expect("audit log")
+        .into_iter()
+        .map(|event| event.id)
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids
+}
+
+/// Rows written before the bound go, rows from the bound's own second and
+/// later stay, whichever UTC spelling they were written with.
+#[test]
+fn audit_pruning_removes_only_rows_before_the_bound() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let store = store_with_workspace(dir.path());
+    audit(&store, "old_offset", "2026-01-01T00:00:00.5+00:00");
+    audit(&store, "old_zulu", "2026-01-09T23:59:59Z");
+    audit(&store, "edge", "2026-01-10T00:00:00.000001+00:00");
+    audit(&store, "edge_zulu", "2026-01-10T00:00:00Z");
+    audit(&store, "new", "2026-02-01T00:00:00+00:00");
+
+    let outcome = store
+        .prune_audit_log("2026-01-10T00:00:00", 10_000, |_| {
+            panic!("one short batch has nothing to give way between")
+        })
+        .expect("prune");
+    assert_eq!(
+        outcome,
+        pintail_meta::AuditPrune {
+            removed: 2,
+            batches: 1
+        }
+    );
+    assert_eq!(audit_ids(&store), ["edge", "edge_zulu", "new"]);
+}
+
+/// However many rows are due, no transaction deletes more than a batch,
+/// and the oldest go first.
+#[test]
+fn audit_pruning_runs_in_bounded_batches() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let store = store_with_workspace(dir.path());
+    for serial in 0..25 {
+        audit(
+            &store,
+            &format!("old_{serial:02}"),
+            &format!("2026-01-01T00:00:{serial:02}+00:00"),
+        );
+    }
+    audit(&store, "new", "2026-03-01T00:00:00+00:00");
+
+    let mut batches = Vec::new();
+    let outcome = store
+        .prune_audit_log("2026-02-01T00:00:00", 10, |removed| {
+            let oldest_left = audit_ids(&store)
+                .into_iter()
+                .find(|id| id.starts_with("old_"));
+            batches.push((removed, oldest_left));
+        })
+        .expect("prune");
+    assert_eq!(
+        outcome,
+        pintail_meta::AuditPrune {
+            removed: 25,
+            batches: 3
+        }
+    );
+    assert_eq!(
+        batches,
+        [
+            (10, Some("old_10".to_owned())),
+            (10, Some("old_20".to_owned()))
+        ]
+    );
+    assert_eq!(audit_ids(&store), ["new"]);
+
+    // A batch that deletes exactly its size is followed by one that finds
+    // nothing, not by a pass that stops early.
+    for serial in 0..10 {
+        audit(
+            &store,
+            &format!("again_{serial}"),
+            "2026-01-01T00:00:00+00:00",
+        );
+    }
+    let outcome = store
+        .prune_audit_log("2026-02-01T00:00:00", 10, |_| {})
+        .expect("prune");
+    assert_eq!(
+        outcome,
+        pintail_meta::AuditPrune {
+            removed: 10,
+            batches: 2
+        }
+    );
+}
+
+/// No transaction is held between batches: another connection writing an
+/// audit event in that gap commits at once, under a zero busy timeout it
+/// would fail, and the pass neither loses its row nor stops.
+#[test]
+fn an_audit_write_between_pruning_batches_commits() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let store = store_with_workspace(dir.path());
+    for serial in 0..30 {
+        audit(
+            &store,
+            &format!("old_{serial:02}"),
+            "2026-01-01T00:00:00+00:00",
+        );
+    }
+    let writer = MetaStore::open(&dir.path().join("pintail-meta.db")).expect("second connection");
+    let mut written = 0;
+    let outcome = store
+        .prune_audit_log("2026-02-01T00:00:00", 10, |_| {
+            let holder =
+                rusqlite::Connection::open(dir.path().join("pintail-meta.db")).expect("lock probe");
+            holder
+                .busy_timeout(std::time::Duration::ZERO)
+                .expect("no waiting");
+            holder
+                .execute_batch("BEGIN IMMEDIATE; ROLLBACK;")
+                .expect("the write lock is free between batches");
+            audit(
+                &writer,
+                &format!("live_{written}"),
+                "2026-03-01T00:00:00+00:00",
+            );
+            written += 1;
+        })
+        .expect("prune");
+    assert_eq!(outcome.removed, 30);
+    assert_eq!(written, 3);
+    assert_eq!(audit_ids(&store), ["live_0", "live_1", "live_2"]);
+}
