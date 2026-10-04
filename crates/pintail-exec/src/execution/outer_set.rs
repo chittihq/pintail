@@ -465,6 +465,23 @@ fn unanswered(
     tuples
 }
 
+/// What `tuples` and an answer for each, at least `empty`, hold.
+fn tuple_bytes(tuples: &[Vec<Value>], empty: &Value) -> usize {
+    tuples.iter().fold(0_usize, |total, tuple| {
+        tuple.iter().fold(
+            total
+                .saturating_add(size_of::<Vec<Value>>())
+                .saturating_add(size_of::<Value>().saturating_mul(2))
+                .saturating_add(empty.heap_bytes()),
+            |total, value| {
+                total
+                    .saturating_add(size_of::<Value>())
+                    .saturating_add(value.heap_bytes())
+            },
+        )
+    })
+}
+
 /// Answers every unanswered tuple the operator holds in one execution of
 /// the form. The answers' bytes stay charged to the statement.
 fn fill(
@@ -478,20 +495,8 @@ fn fill(
     if form.kind != OuterSetKind::Value && answered < MIN_ROW_FORM_TUPLES {
         return Ok(Filled::TooFew);
     }
-    let bytes = tuples.iter().fold(0_usize, |total, tuple| {
-        tuple.iter().fold(
-            total
-                .saturating_add(size_of::<Vec<Value>>())
-                .saturating_add(size_of::<Value>().saturating_mul(2))
-                .saturating_add(shared.empty.heap_bytes()),
-            |total, value| {
-                total
-                    .saturating_add(size_of::<Value>())
-                    .saturating_add(value.heap_bytes())
-            },
-        )
-    });
-    context.memory.reserve(bytes)?;
+    let mut charges = Charges::new(context.memory);
+    charges.reserve(tuple_bytes(&tuples, &shared.empty))?;
 
     let mut query = form.query.clone();
     let count = u64::try_from(tuples.len()).unwrap_or(u64::MAX);
@@ -514,7 +519,7 @@ fn fill(
     }
     query.tables.iter_mut().for_each(sized);
     let held = restrict_to_outer_values(&mut query, &set.relations, &tuples, context.collation);
-    context.memory.reserve(held)?;
+    charges.reserve(held)?;
     let overlay = OuterRowsProvider {
         base: context.provider,
         relations: &set.relations,
@@ -536,11 +541,17 @@ fn fill(
         u64::try_from(tuples.len()).unwrap_or(u64::MAX),
     );
     if form.kind != OuterSetKind::Value {
-        let rows = collect_rows(&mut execution, form.kind, tuples.len(), context)?;
+        let rows = collect_rows(
+            || execution.next_batch(),
+            form.kind,
+            tuples.len(),
+            &mut charges,
+        )?;
         drop(execution);
         for (tuple, rows) in tuples.into_iter().zip(rows) {
             shared.rows.insert(tuple, Arc::new(rows));
         }
+        charges.keep();
         return Ok(Filled::Answered(answered));
     }
     let mut values: Vec<Option<Value>> = vec![None; tuples.len()];
@@ -568,26 +579,61 @@ fn fill(
         }
     }
     drop(execution);
-    context.memory.reserve(grown)?;
+    charges.reserve(grown)?;
     for (tuple, value) in tuples.into_iter().zip(values) {
         let value = value.unwrap_or_else(|| shared.empty.clone());
         shared.answers.insert(tuple, value);
     }
+    charges.keep();
     Ok(Filled::Answered(answered))
+}
+
+/// What one set execution has charged the statement so far. The answers
+/// it pays for stay charged once they are kept; when the execution fails
+/// they are dropped, and so is the charge, or the per-row path that
+/// answers instead would start short of the statement's allowance.
+struct Charges<'a> {
+    memory: &'a MemoryTracker,
+    bytes: usize,
+}
+
+impl<'a> Charges<'a> {
+    const fn new(memory: &'a MemoryTracker) -> Self {
+        Self { memory, bytes: 0 }
+    }
+
+    fn reserve(&mut self, bytes: usize) -> Result<(), ExecError> {
+        self.memory.reserve(bytes)?;
+        self.bytes = self.bytes.saturating_add(bytes);
+        Ok(())
+    }
+
+    /// The answers are kept: their bytes stay with the statement.
+    fn keep(mut self) {
+        self.bytes = 0;
+    }
+}
+
+impl Drop for Charges<'_> {
+    fn drop(&mut self) {
+        if self.bytes > 0 {
+            self.memory.release(self.bytes);
+        }
+    }
 }
 
 /// The rows of a form read row by row, per ordinal, in the order the
 /// execution yields them. Only whether a row exists is read of a
-/// `Presence` form, so one row per ordinal is kept. The rows' bytes stay
-/// charged to the statement.
+/// `Presence` form, so one row per ordinal is kept. The rows' bytes are
+/// added to `charges`.
 fn collect_rows(
-    execution: &mut Execution,
+    mut next_batch: impl FnMut() -> Result<Option<RecordBatch>, ExecError>,
     kind: OuterSetKind,
     tuples: usize,
-    context: &DependentRow<'_>,
+    charges: &mut Charges<'_>,
 ) -> Result<Vec<Vec<Value>>, ExecError> {
     let mut rows: Vec<Vec<Value>> = vec![Vec::new(); tuples];
-    while let Some(batch) = execution.next_batch()? {
+    while let Some(batch) = next_batch()? {
         let mut grown = 0_usize;
         for row in batch.selection().selected_rows() {
             let ordinal = match batch.column(0).and_then(|column| column.value(row)) {
@@ -614,7 +660,7 @@ fn collect_rows(
                 .saturating_add(value.heap_bytes());
             held.push(value.clone());
         }
-        context.memory.reserve(grown)?;
+        charges.reserve(grown)?;
     }
     Ok(rows)
 }
@@ -971,5 +1017,96 @@ fn and_conjuncts<'a>(expression: &'a BoundExpr, conjuncts: &mut Vec<&'a BoundExp
         and_conjuncts(right, conjuncts);
     } else {
         conjuncts.push(expression);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::batch::ColumnVector;
+
+    /// A form's result batch: `(ordinal, value)` per row.
+    fn answers(rows: &[(u64, &str)]) -> RecordBatch {
+        RecordBatch::new(
+            rows.len(),
+            vec![
+                ColumnVector::new(
+                    DataType::UInt64,
+                    rows.iter()
+                        .map(|(ordinal, _)| Value::UInt64(*ordinal))
+                        .collect(),
+                )
+                .expect("ordinals"),
+                ColumnVector::new(
+                    DataType::Utf8,
+                    rows.iter()
+                        .map(|(_, value)| Value::Utf8((*value).to_owned()))
+                        .collect(),
+                )
+                .expect("values"),
+            ],
+        )
+        .expect("batch")
+    }
+
+    /// Feeds `batches` to a collection, then fails with `failure` when
+    /// there is one, and reports what the statement is charged afterwards.
+    fn charged_after(
+        memory: &MemoryTracker,
+        batches: Vec<RecordBatch>,
+        failure: Option<ExecError>,
+    ) -> Result<usize, ExecError> {
+        let mut batches = batches.into_iter();
+        let mut failure = failure;
+        let mut charges = Charges::new(memory);
+        let rows = collect_rows(
+            || match batches.next() {
+                Some(batch) => Ok(Some(batch)),
+                None => failure.take().map_or(Ok(None), Err),
+            },
+            OuterSetKind::Members,
+            2,
+            &mut charges,
+        )?;
+        charges.keep();
+        drop(rows);
+        Ok(memory.used())
+    }
+
+    #[test]
+    fn a_failed_collection_gives_back_what_its_rows_were_charged() {
+        let long = "x".repeat(4_096);
+        let memory = MemoryTracker::new(1 << 20);
+        let failed = charged_after(
+            &memory,
+            vec![answers(&[(0, &long), (1, &long)])],
+            Some(ExecError::InvalidBatch("the child failed")),
+        );
+        assert!(failed.is_err());
+        assert_eq!(
+            memory.used(),
+            0,
+            "rows dropped with the failure stay charged"
+        );
+
+        // A later batch over the ceiling: the earlier batches' charge goes
+        // too, and the per-row path starts with the whole allowance.
+        let memory = MemoryTracker::new(16 * 1_024);
+        let failed = charged_after(
+            &memory,
+            vec![
+                answers(&[(0, &long)]),
+                answers(&[(1, &long), (1, &long), (0, &long)]),
+            ],
+            None,
+        );
+        assert!(matches!(failed, Err(ExecError::MemoryLimitExceeded { .. })));
+        assert_eq!(memory.used(), 0);
+
+        // Kept answers stay charged.
+        let memory = MemoryTracker::new(1 << 20);
+        let kept = charged_after(&memory, vec![answers(&[(0, &long), (1, "y")])], None)
+            .expect("collected");
+        assert!(kept > long.len());
     }
 }
