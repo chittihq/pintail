@@ -86,6 +86,8 @@ thread_local! {
     /// Lets a test write an earlier format, to forge segments older versions
     /// published.
     static WRITTEN_FORMAT_VERSION: std::cell::Cell<u8> = const { std::cell::Cell::new(FORMAT_VERSION) };
+    static NARROW_CODE_BLOCKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static OMITTED_NULL_BLOCKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Makes this thread write segments of an earlier format version.
@@ -3580,6 +3582,44 @@ impl Validity {
     }
 }
 
+/// Validate packed codes independently of widening and dictionary translation.
+/// A byte code indexes a fixed table, so translation has no per-row bounds test.
+// Keep widening separate so it cannot inhibit the four-byte copy loop.
+#[inline(never)]
+fn append_narrow_codes(
+    codes: &mut Vec<u32>,
+    raw: &[u8],
+    width: usize,
+    translation: &[u32],
+) -> Result<(), String> {
+    if width == 1 {
+        let greatest = raw.iter().copied().max();
+        if greatest.is_some_and(|code| usize::from(code) >= translation.len()) {
+            return Err("dictionary index is out of bounds".to_owned());
+        }
+        if translation
+            .iter()
+            .enumerate()
+            .all(|(index, code)| *code as usize == index)
+        {
+            codes.extend(raw.iter().copied().map(u32::from));
+            return Ok(());
+        }
+        let mut table = [0_u32; 256];
+        let entries = translation.len().min(table.len());
+        table[..entries].copy_from_slice(&translation[..entries]);
+        codes.extend(raw.iter().map(|code| table[usize::from(*code)]));
+    } else {
+        let decode = |chunk: &[u8]| usize::from(u16::from_le_bytes([chunk[0], chunk[1]]));
+        let greatest = raw.chunks_exact(2).map(decode).max();
+        if greatest.is_some_and(|code| code >= translation.len()) {
+            return Err("dictionary index is out of bounds".to_owned());
+        }
+        codes.extend(raw.chunks_exact(2).map(|chunk| translation[decode(chunk)]));
+    }
+    Ok(())
+}
+
 impl ColumnBuilder {
     /// Chooses the builder for one projected column: native-unit columns
     /// build text by formatting units; everything else follows the wire
@@ -3776,6 +3816,13 @@ impl ColumnBuilder {
                 // the surrounding code happened to inline: an unrelated
                 // change elsewhere in the crate made it ~40% slower.
                 let rows = raw.len() / width;
+                if width < 4 {
+                    append_narrow_codes(codes, raw, width, translation)?;
+                    #[cfg(test)]
+                    NARROW_CODE_BLOCKS.with(|count| count.set(count.get() + 1));
+                    validity.extend_valid(rows);
+                    return Ok(());
+                }
                 let start = codes.len();
                 // Blocks that share their column's dictionary number their
                 // values as the chunk does: the codes are copied, and one
@@ -5949,6 +5996,7 @@ struct ParsedBlock<'a> {
     maximum: &'a [u8],
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_block<'a>(
     path: &Path,
     decoder: &mut Decoder<'a>,
@@ -5972,6 +6020,7 @@ fn parse_block<'a>(
     let null_bitmap = block
         .bytes()
         .map_err(|reason| corrupt(path, block_offset + block.position(), reason))?;
+    let omitted_nulls = null_bitmap.is_empty();
     let null_bitmap = present_null_bitmap(null_bitmap, row_count, format_version);
     if null_bitmap.len() != row_count.div_ceil(8) {
         return Err(corrupt(
@@ -6042,7 +6091,13 @@ fn parse_block<'a>(
     // decoding it guards. The trailing byte is masked to the bits the row
     // count actually covers: without that, a corrupt file could hide a set
     // bit past the end that the per-row walk would have refused to count.
-    let actual_nulls = covered_null_count(null_bitmap, row_count);
+    let actual_nulls = if omitted_nulls {
+        #[cfg(test)]
+        OMITTED_NULL_BLOCKS.with(|count| count.set(count.get() + 1));
+        0
+    } else {
+        covered_null_count(null_bitmap, row_count)
+    };
     if actual_nulls != declared_nulls {
         return Err(corrupt(path, block_offset, "null count mismatch"));
     }
@@ -7709,6 +7764,67 @@ mod range_read_tests {
     }
 
     #[test]
+    fn narrow_dictionary_bulk_translation_preserves_values_and_rejects_bad_codes() {
+        use super::{ColumnBuilder, LogicalType, NARROW_CODE_BLOCKS};
+        for width in [1_usize, 2, 4] {
+            for entries in [[b"a".as_slice(), b"b"], [b"b".as_slice(), b"a"]] {
+                let mut builder = ColumnBuilder::new(LogicalType::Utf8, 8);
+                let first = builder
+                    .begin_dictionary_block(&[b"a", b"b"])
+                    .expect("dictionary");
+                builder
+                    .push_codes_bulk(&[0, 0, 0, 0], 4, &first)
+                    .expect("prefix");
+                let translation = builder
+                    .begin_dictionary_block(&entries)
+                    .expect("dictionary");
+                let bytes = [1_u32, 0, 1]
+                    .into_iter()
+                    .flat_map(|code| code.to_le_bytes()[..width].to_vec())
+                    .collect::<Vec<_>>();
+                NARROW_CODE_BLOCKS.with(|count| count.set(0));
+                builder
+                    .push_codes_bulk(&bytes, width, &translation)
+                    .expect("codes");
+                assert_eq!(
+                    NARROW_CODE_BLOCKS.with(std::cell::Cell::get),
+                    usize::from(width < 4)
+                );
+                let bad = [0_u32, 2]
+                    .into_iter()
+                    .flat_map(|code| code.to_le_bytes()[..width].to_vec())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    builder.push_codes_bulk(&bad, width, &translation),
+                    Err("dictionary index is out of bounds".to_owned())
+                );
+                let text = |entry: &[u8]| {
+                    Value::Utf8(std::str::from_utf8(entry).expect("text").to_owned())
+                };
+                assert_eq!(
+                    builder.finish().into_values(),
+                    vec![
+                        text(b"a"),
+                        text(entries[1]),
+                        text(entries[0]),
+                        text(entries[1])
+                    ]
+                );
+            }
+        }
+        // A two-byte code can name entries beyond the byte table, and the
+        // greatest code of each narrow width is checked before indexing.
+        let translation = (0_u32..300).rev().collect::<Vec<_>>();
+        let mut codes = vec![17];
+        super::append_narrow_codes(&mut codes, &[43, 1, 0, 0], 2, &translation).expect("wide code");
+        assert_eq!(codes, vec![17, 0, 299]);
+        for (width, raw) in [(1, vec![255]), (2, vec![255, 255])] {
+            assert!(super::append_narrow_codes(&mut codes, &raw, width, &[0, 1]).is_err());
+            assert_eq!(codes, vec![17, 0, 299]);
+        }
+    }
+
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn dictionary_indexes_are_as_narrow_as_the_entries_allow_and_old_files_still_read() {
         let schema = TableSchema::new(
@@ -7851,6 +7967,55 @@ mod range_read_tests {
             }
         }
         lengths
+    }
+
+    #[test]
+    fn omitted_null_bitmap_skips_counting_but_checks_declared_nulls() {
+        use super::{Decoder, Encoder, OMITTED_NULL_BLOCKS};
+        for (bitmap, declared, version, expected) in [
+            (vec![], 0, 7, Ok(0)),
+            (vec![], 1, 7, Err("null count mismatch")),
+            (vec![1], 1, 7, Ok(1)),
+            (vec![1], 0, 7, Err("null count mismatch")),
+            (vec![], 0, 6, Err("invalid null bitmap length")),
+        ] {
+            let mut payload = Encoder::new();
+            payload.u32(8);
+            payload.bytes(&bitmap, "bitmap").expect("bitmap");
+            payload.u8(super::Encoding::Plain as u8);
+            payload.u8(super::Compression::None as u8);
+            payload.u32(0);
+            payload.bytes(&[], "values").expect("values");
+            payload.u32(declared);
+            payload.bytes(&[], "minimum").expect("minimum");
+            payload.bytes(&[], "maximum").expect("maximum");
+            payload.bytes(&[0; 64], "HLL").expect("HLL");
+            let payload = payload.finish();
+            let mut outer = Encoder::new();
+            outer.bytes(&payload, "block").expect("block");
+            outer.u64(super::xxh3_64(&payload));
+            let bytes = outer.finish();
+            OMITTED_NULL_BLOCKS.with(|count| count.set(0));
+            let actual = super::parse_block(
+                std::path::Path::new("fixture"),
+                &mut Decoder::new(&bytes),
+                version,
+            );
+            match expected {
+                Ok(nulls) => assert_eq!(actual.expect("valid block").null_count, nulls),
+                Err(reason) => assert!(
+                    actual
+                        .err()
+                        .expect("corrupt block")
+                        .to_string()
+                        .contains(reason)
+                ),
+            }
+            assert_eq!(
+                OMITTED_NULL_BLOCKS.with(std::cell::Cell::get),
+                usize::from(bitmap.is_empty() && version == 7)
+            );
+        }
     }
 
     #[test]
