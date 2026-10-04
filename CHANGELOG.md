@@ -16,6 +16,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The calendar families of the differential corpus run 4.4-20x faster, all
   within 1.5x of MySQL; invalid and zero dates, fractional seconds and the
   order of warnings are unchanged.
+- A named session time zone is prepared once per statement and a column's
+  distinct timestamps are converted once, not per row (the America/New_York
+  corpus family runs 19% faster). TIME columns compared with text share
+  one parsed carrier per value, and a floating comparison is finished in
+  the vector path (about 29% faster on that family).
+- A row membership test over values that cannot be NULL drops its
+  undecided-row bookkeeping, and a replayed join rejects unequal keys
+  before resolving its subqueries. A filtered count reading only its
+  predicate column runs 11% faster on the 20M-row benchmark.
+- Reading a format 7 block with one- or two-byte dictionary indexes no
+  longer widens them on the general path, and a block that stores no null
+  bitmap skips counting one: text scans of format 7 data take 14% fewer
+  instructions and wide scans no longer read slower than format 6.
 
 ### Fixed
 
