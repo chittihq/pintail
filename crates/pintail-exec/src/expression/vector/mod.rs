@@ -386,8 +386,16 @@ fn operand<'batch>(
             .column(*index)
             .map(|column| Operand::Column(Cow::Borrowed(column))),
         CompiledExpr::Literal(value) => Some(Operand::Constant(value)),
-        nested => kernel(nested, batch, declared(nested), effects)
-            .map(|column| Operand::Column(Cow::Owned(column))),
+        nested => {
+            let column = kernel(nested, batch, declared(nested), effects)?;
+            // A parent's other operands or its own evaluation may warn too.
+            // Leave conversion diagnostics to row evaluation so they remain
+            // interleaved in expression order for each selected row.
+            if effects.conversions.is_some() {
+                return None;
+            }
+            Some(Operand::Column(Cow::Owned(column)))
+        }
     }
 }
 

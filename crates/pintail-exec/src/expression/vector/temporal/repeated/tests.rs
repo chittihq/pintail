@@ -322,7 +322,7 @@ fn repeated_constant_conversion_warnings_keep_their_multiplicity() {
 #[test]
 fn constant_temporal_subtrees_keep_arithmetic_vectorized() {
     let inputs = [
-        Some("0000-00-00"),
+        Some("2024-01-01"),
         Some("2024-02-29"),
         Some("2024-03-01"),
         None,
@@ -333,6 +333,38 @@ fn constant_temporal_subtrees_keep_arithmetic_vectorized() {
     ] {
         check(DataType::Date32, &inputs, sql, true);
     }
+}
+
+#[test]
+fn nested_conversion_warnings_decline_to_keep_row_order() {
+    let source = DataType::Date32;
+    let batch = RecordBatch::new(
+        2,
+        vec![
+            ColumnVector::new(
+                source,
+                vec![
+                    Value::Utf8("0000-00-00".into()),
+                    Value::Utf8("2024-00-00".into()),
+                ],
+            )
+            .expect("column"),
+        ],
+    )
+    .expect("batch");
+    let (expression, declared) = compile(source, "TO_DAYS(v) + TO_SECONDS(v)");
+    let _ = warnings();
+    assert!(expression.evaluate_column(&batch, Some(declared)).is_none());
+    assert_eq!(warnings().1, 0, "declined attempt leaves no diagnostics");
+    for row in 0..2 {
+        assert_eq!(expression.evaluate(&batch, row).expect("row"), Value::Null);
+    }
+    let (messages, count) = warnings();
+    assert_eq!(count, 4);
+    assert!(messages[0].1.contains("0000-00-00"));
+    assert!(messages[1].1.contains("0000-00-00"));
+    assert!(messages[2].1.contains("2024-00-00"));
+    assert!(messages[3].1.contains("2024-00-00"));
 }
 
 #[test]
