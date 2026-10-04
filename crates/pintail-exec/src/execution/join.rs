@@ -4702,7 +4702,7 @@ pub(super) fn execute_nested_loop_join(
                 } else if let Some(fixed) = &fixed {
                     predicate_truth(&fixed.evaluate(&batch, 0)?)?
                 } else {
-                    let mut predicate = condition.clone();
+                    let mut predicate = super::hollow_clone(condition);
                     let context = super::DependentRow {
                         batch: &batch,
                         row: 0,

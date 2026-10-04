@@ -795,7 +795,7 @@ pub(super) fn answer(
                     collation: context.collation,
                     ahead: &[],
                 };
-                let mut resolved = projection.clone();
+                let mut resolved = super::hollow_clone(projection);
                 memo.begin_row();
                 super::resolve_dependent_expr_subqueries(&mut resolved, &inner, memo)?;
                 CompiledExpr::compile(&resolved, &index.layout, context.collation)?

@@ -51,7 +51,7 @@ use pintail_types::{DataType, Value};
 use super::memo::DependentMemo;
 use super::{
     DependentRow, ExecError, MemoryTracker, PhysicalPlan, PullOperator, ScanProvider, batch_row,
-    build_operator, estimated_row_payload_bytes, expression_has_dependent_subquery,
+    build_operator, estimated_row_payload_bytes, expression_has_dependent_subquery, hollow_clone,
     projection_output_columns, record_dependent_memo, resolve_dependent_expr_subqueries,
     rows_to_columns,
 };
@@ -282,7 +282,7 @@ pub(super) fn build(
                     Eager::Deferred => Value::Null,
                     Eager::Compiled(compiled) => compiled.evaluate(&batch, row)?,
                     Eager::Dependent => {
-                        let mut expression = projection.expr.clone();
+                        let mut expression = hollow_clone(&projection.expr);
                         resolve_dependent_expr_subqueries(
                             &mut expression,
                             &context,
@@ -367,7 +367,7 @@ pub(super) fn build(
             };
             memo.begin_row();
             for (index, projection) in &deferred {
-                let mut expression = projection.expr.clone();
+                let mut expression = hollow_clone(&projection.expr);
                 resolve_dependent_expr_subqueries(&mut expression, &context, &mut memo)?;
                 let value = CompiledExpr::compile(&expression, &columns, collation)?
                     .evaluate(&batch, row)?;

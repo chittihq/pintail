@@ -4218,6 +4218,8 @@ pub(super) fn resolve_dependent_expr_subqueries(
     match &mut expression.kind {
         BoundExprKind::ScalarSubquery(query) => {
             let slot = memo.next_slot();
+            let held = held_body(query, slot, memo)?;
+            let query: &BoundQuery = held.as_deref().unwrap_or(&**query);
             memo.note_refusal(slot, query, context.memory);
             let value = if let Some(form) = query.outer_set.clone()
                 && let Some(value) = outer_set::answer(slot, query, &form, context, memo)?
@@ -4258,6 +4260,8 @@ pub(super) fn resolve_dependent_expr_subqueries(
         }
         BoundExprKind::ExistsSubquery { query, negated } => {
             let slot = memo.next_slot();
+            let held = held_body(query, slot, memo)?;
+            let query: &BoundQuery = held.as_deref().unwrap_or(&**query);
             let found = if let Some(found) = dependent_answer_from_index(
                 slot,
                 query,
@@ -4291,11 +4295,13 @@ pub(super) fn resolve_dependent_expr_subqueries(
             negated,
         } => {
             resolve_dependent_expr_subqueries(expr, context, memo)?;
+            let slot = memo.next_slot();
+            let held = held_body(query, slot, memo)?;
+            let query: &BoundQuery = held.as_deref().unwrap_or(&**query);
             let projection_type = query
                 .projection
                 .first()
                 .and_then(|projection| projection.expr.data_type);
-            let slot = memo.next_slot();
             memo.note_refusal(slot, query, context.memory);
             let member_collation = query
                 .projection
@@ -4317,7 +4323,7 @@ pub(super) fn resolve_dependent_expr_subqueries(
             if let Some((tuple, _)) = &members {
                 key.clone_from(tuple);
             } else {
-                let mut substituted = (**query).clone();
+                let mut substituted = query.clone();
                 substitute_outer_query(
                     &mut substituted,
                     context.batch,
@@ -4432,6 +4438,103 @@ pub(super) fn resolve_dependent_expr_subqueries(
         | BoundExprKind::Literal(_) => {}
     }
     Ok(())
+}
+
+/// A copy of `expression` for one row's resolution that leaves every
+/// subquery body out: the resolver reads each body from the memo made for
+/// `expression`, by the slot it walks to. Copying a correlated subquery's
+/// whole bound tree for every outer row - every table, column and name in
+/// it, only to replace it with its answer - cost more than answering it
+/// once an index or a set-at-a-time form answers the row.
+pub(super) fn hollow_clone(expression: &BoundExpr) -> BoundExpr {
+    let kind = match &expression.kind {
+        BoundExprKind::ScalarSubquery(_) => BoundExprKind::ScalarSubquery(Box::new(hollow_query())),
+        BoundExprKind::ExistsSubquery { negated, .. } => BoundExprKind::ExistsSubquery {
+            query: Box::new(hollow_query()),
+            negated: *negated,
+        },
+        BoundExprKind::InSubquery { expr, negated, .. } => BoundExprKind::InSubquery {
+            expr: Box::new(hollow_clone(expr)),
+            query: Box::new(hollow_query()),
+            negated: *negated,
+        },
+        BoundExprKind::PreparedIn {
+            expr,
+            membership,
+            negated,
+        } => BoundExprKind::PreparedIn {
+            expr: Box::new(hollow_clone(expr)),
+            membership: membership.clone(),
+            negated: *negated,
+        },
+        BoundExprKind::Unary { op, expr } => BoundExprKind::Unary {
+            op: *op,
+            expr: Box::new(hollow_clone(expr)),
+        },
+        BoundExprKind::IsNull { expr, negated } => BoundExprKind::IsNull {
+            expr: Box::new(hollow_clone(expr)),
+            negated: *negated,
+        },
+        BoundExprKind::Binary { op, left, right } => BoundExprKind::Binary {
+            op: *op,
+            left: Box::new(hollow_clone(left)),
+            right: Box::new(hollow_clone(right)),
+        },
+        BoundExprKind::Scalar { function, args } => BoundExprKind::Scalar {
+            function: *function,
+            args: args.iter().map(hollow_clone).collect(),
+        },
+        other => other.clone(),
+    };
+    BoundExpr {
+        data_type: expression.data_type,
+        nullable: expression.nullable,
+        kind,
+    }
+}
+
+/// The body a hollow copy leaves in a subquery's place. No bound subquery
+/// selects nothing, so an empty select list marks it.
+fn hollow_query() -> BoundQuery {
+    BoundQuery {
+        from: Vec::new(),
+        tables: Vec::new(),
+        projection: Vec::new(),
+        filter: None,
+        group_by: Vec::new(),
+        aggregates: Vec::new(),
+        windows: Vec::new(),
+        having: None,
+        distinct: false,
+        order_by: Vec::new(),
+        hidden_sort_columns: 0,
+        union_all: Vec::new(),
+        union_distinct: false,
+        set_ops: Vec::new(),
+        limit: None,
+        recursive: None,
+        outer_set: None,
+        outer_set_refusal: None,
+        text_collation: pintail_sql::DEFAULT_TEXT_COLLATION,
+    }
+}
+
+/// The body of the subquery at `slot` when `query` is a hollow copy's
+/// placeholder, `None` when `query` is the body itself.
+fn held_body(
+    query: &BoundQuery,
+    slot: memo::SubquerySlot,
+    memo: &DependentMemo,
+) -> Result<Option<std::sync::Arc<BoundQuery>>, ExecError> {
+    if !query.projection.is_empty() {
+        return Ok(None);
+    }
+    memo.body(slot)
+        .filter(|body| !body.projection.is_empty())
+        .map(Some)
+        .ok_or(ExecError::InvalidPhysicalPlan(
+            "a hollow subquery has no body in its memo",
+        ))
 }
 
 /// Members above which a dependent `IN`'s set is indexed and kept for the
@@ -6082,7 +6185,7 @@ fn precompute_dependent_aggregate_arguments(
             };
             memo.begin_row();
             for expression in &expressions {
-                let mut expression = expression.clone();
+                let mut expression = hollow_clone(expression);
                 resolve_dependent_expr_subqueries(&mut expression, &context, &mut memo)?;
                 let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
                 values.push(compiled.evaluate(&batch, row)?);
@@ -6544,7 +6647,7 @@ fn build_operator_inner(
                 {
                     let batch_bytes = batch.estimated_bytes();
                     for row in batch.selection().selected_rows() {
-                        let mut expression = predicate.clone();
+                        let mut expression = hollow_clone(&predicate);
                         let context = DependentRow {
                             batch: &batch,
                             row,
@@ -6734,7 +6837,7 @@ fn build_operator_inner(
                         };
                         memo.begin_row();
                         for projection in &expressions {
-                            let mut expression = projection.expr.clone();
+                            let mut expression = hollow_clone(&projection.expr);
                             resolve_dependent_expr_subqueries(
                                 &mut expression,
                                 &context,

@@ -63,6 +63,9 @@ pub(crate) struct DependentMemo {
     /// Per subquery slot, whether its body is free of volatile functions.
     /// Consulted before any lookup; a volatile query is never cached.
     memoizable: Vec<bool>,
+    /// Per subquery slot, its body: what a hollow copy of the expression
+    /// (`super::hollow_clone`) reads in place of the body it left out.
+    bodies: Vec<std::sync::Arc<BoundQuery>>,
     /// Set once a charge was refused or the entry cap was hit: from then on
     /// every lookup misses and nothing is inserted, and the operator runs
     /// exactly as it did before the memo existed.
@@ -91,13 +94,16 @@ impl DependentMemo {
     /// classified by whether its body may be cached.
     pub(crate) fn for_expressions<'a>(expressions: impl Iterator<Item = &'a BoundExpr>) -> Self {
         let mut memoizable = Vec::new();
+        let mut bodies = Vec::new();
         for expression in expressions {
             classify_subqueries(expression, &mut memoizable);
+            collect_bodies(expression, &mut bodies);
         }
         Self {
             entries: HashMap::new(),
             reserved: 0,
             memoizable,
+            bodies,
             disabled: false,
             cursor: 0,
             hits: 0,
@@ -173,6 +179,12 @@ impl DependentMemo {
     /// Starts a row: subquery slots are handed out again from the first.
     pub(crate) fn begin_row(&mut self) {
         self.cursor = 0;
+    }
+
+    /// The body of the subquery at `slot` in the expressions this memo was
+    /// made for.
+    pub(super) fn body(&self, slot: SubquerySlot) -> Option<std::sync::Arc<BoundQuery>> {
+        self.bodies.get(slot).cloned()
     }
 
     /// Claims the next subquery slot in this row's walk.
@@ -313,6 +325,36 @@ fn entry_bytes(key: &[Value], values: &[Value]) -> usize {
 /// The walk order here and in `resolve_dependent_expr_subqueries` must
 /// agree, or a slot would name the wrong subquery; both visit subqueries
 /// before recursing into their siblings and left before right.
+/// Every subquery body of `expression`, in the order its slots are walked.
+fn collect_bodies(expression: &BoundExpr, bodies: &mut Vec<std::sync::Arc<BoundQuery>>) {
+    match &expression.kind {
+        BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
+            bodies.push(std::sync::Arc::new((**query).clone()));
+        }
+        BoundExprKind::InSubquery { expr, query, .. } => {
+            collect_bodies(expr, bodies);
+            bodies.push(std::sync::Arc::new((**query).clone()));
+        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => collect_bodies(expr, bodies),
+        BoundExprKind::Binary { left, right, .. } => {
+            collect_bodies(left, bodies);
+            collect_bodies(right, bodies);
+        }
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                collect_bodies(argument, bodies);
+            }
+        }
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_) => {}
+    }
+}
+
 fn classify_subqueries(expression: &BoundExpr, memoizable: &mut Vec<bool>) {
     match &expression.kind {
         BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
@@ -452,6 +494,7 @@ mod tests {
             entries: std::collections::HashMap::new(),
             reserved: 0,
             memoizable: vec![true],
+            bodies: Vec::new(),
             disabled: false,
             cursor: 0,
             hits: 0,
@@ -487,6 +530,7 @@ mod tests {
             entries: std::collections::HashMap::new(),
             reserved: 0,
             memoizable: vec![true],
+            bodies: Vec::new(),
             disabled: false,
             cursor: 0,
             hits: 0,
@@ -525,6 +569,7 @@ mod tests {
             entries: std::collections::HashMap::new(),
             reserved: 0,
             memoizable: vec![true],
+            bodies: Vec::new(),
             disabled: false,
             cursor: 0,
             hits: 0,
@@ -566,6 +611,7 @@ mod tests {
             entries: std::collections::HashMap::new(),
             reserved: 0,
             memoizable: vec![false],
+            bodies: Vec::new(),
             disabled: false,
             cursor: 0,
             hits: 0,
@@ -582,5 +628,69 @@ mod tests {
         assert!(memo.get(0, &[Value::UInt64(1)]).is_none());
         let stats = memo.finish(&memory);
         assert_eq!((stats.hits, stats.misses), (0, 0), "not even counted");
+    }
+
+    #[test]
+    fn a_hollow_copy_reads_each_body_by_the_slot_it_walks_to() {
+        use pintail_sql::{BoundExpr, BoundExprKind, BoundProjection, ScalarFunction};
+        use pintail_types::DataType;
+
+        let truth = BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: false,
+            kind: BoundExprKind::Literal(Value::Boolean(true)),
+        };
+        let body = |name: &str| {
+            let mut query = crate::execution::hollow_query();
+            query.projection.push(BoundProjection {
+                name: name.to_owned(),
+                expr: truth.clone(),
+            });
+            Box::new(query)
+        };
+        let node = |kind| BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: true,
+            kind,
+        };
+        // IF((SELECT a), EXISTS (SELECT b), (SELECT c) IN (SELECT d)): the
+        // tested value's subquery is walked before its membership query.
+        let expression = node(BoundExprKind::Scalar {
+            function: ScalarFunction::If,
+            args: vec![
+                node(BoundExprKind::ScalarSubquery(body("a"))),
+                node(BoundExprKind::ExistsSubquery {
+                    query: body("b"),
+                    negated: false,
+                }),
+                node(BoundExprKind::InSubquery {
+                    expr: Box::new(node(BoundExprKind::ScalarSubquery(body("c")))),
+                    query: body("d"),
+                    negated: false,
+                }),
+            ],
+        });
+        let memo = DependentMemo::for_expressions(std::iter::once(&expression));
+        let names = (0..4)
+            .map(|slot| {
+                memo.body(slot).expect("a body per slot").projection[0]
+                    .name
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["a", "b", "c", "d"]);
+        assert!(memo.body(4).is_none());
+
+        let hollow = crate::execution::hollow_clone(&expression);
+        let BoundExprKind::Scalar { args, .. } = &hollow.kind else {
+            panic!("the copy keeps its shape");
+        };
+        let BoundExprKind::InSubquery { expr, query, .. } = &args[2].kind else {
+            panic!("the copy keeps its shape");
+        };
+        assert!(query.projection.is_empty(), "no body is copied");
+        assert!(
+            matches!(&expr.kind, BoundExprKind::ScalarSubquery(inner) if inner.projection.is_empty())
+        );
     }
 }
