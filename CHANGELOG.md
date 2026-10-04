@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `EXISTS` / `NOT EXISTS` over an ungrouped aggregate whose `HAVING`
+  aggregates nothing (`HAVING 1`, or a condition on the outer row only)
+  answered false on empty input and raised a cardinality error on several
+  rows; a `HAVING` naming the subquery's own select alias read an outer
+  column of that name instead. Introduced in 0.1.7.
+- `ORDER BY <primary key> DESC LIMIT n [OFFSET m]` returned the smallest
+  keys on tables read with unique-key visibility (polling replicas, and
+  change-capture tables with a secondary UNIQUE key that need
+  reconciliation). Introduced in 0.1.7.
 - The query audit queue is bounded at 32 MiB. When the metadata store falls
   behind, HTTP queries wait for room instead of the server buffering every
   statement's text without limit. A batch refused because the store is
