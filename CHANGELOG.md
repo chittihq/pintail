@@ -38,6 +38,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   corpus family runs 19% faster). TIME columns compared with text share
   one parsed carrier per value, and a floating comparison is finished in
   the vector path (about 29% faster on that family).
+- A `TIMESTAMP` column kept as stored text (one holding the zero
+  `TIMESTAMP`), read in a named session time zone such as
+  `America/New_York`, converts its text with a cursor over the zone's
+  transitions instead of the general conversion per row. Comparisons with
+  a constant run about twelve times faster, and the corpus family for a
+  named zone is level with MySQL.
 - A row membership test over values that cannot be NULL drops its
   undecided-row bookkeeping, and a replayed join rejects unequal keys
   before resolving its subqueries. A filtered count reading only its
