@@ -168,6 +168,78 @@ fn having_decides_whether_an_ungrouped_aggregate_row_exists() {
     assert!(none.sets >= 1 && none.per_row <= 2, "{}", none.profile);
 }
 
+/// A HAVING that aggregates nothing still filters the one aggregate row:
+/// the row exists for an empty input and for many input rows alike, so
+/// the answer is the HAVING condition alone, never one row per input row.
+#[test]
+fn a_having_without_an_aggregate_keeps_the_one_aggregate_row() {
+    let fixture = fixture(260);
+    let ids = |range: std::ops::RangeInclusive<u64>| {
+        range
+            .map(|parcel| vec![parcel.to_string()])
+            .collect::<Vec<_>>()
+    };
+    let cases = [
+        // No scan matches: the count is 0, and its row passes HAVING 1.
+        (
+            "SELECT p.id FROM parcels p WHERE EXISTS \
+               (SELECT COUNT(*) FROM scans s WHERE s.parcel_id = p.id AND s.ok > 100 HAVING 1) \
+             ORDER BY p.id",
+            ids(1..=260),
+        ),
+        (
+            "SELECT p.id FROM parcels p WHERE NOT EXISTS \
+               (SELECT COUNT(*) FROM scans s WHERE s.parcel_id = p.id AND s.ok > 100 HAVING 1) \
+             ORDER BY p.id",
+            Vec::new(),
+        ),
+        // Many scans per parcel: still one row each.
+        (
+            "SELECT p.id FROM parcels p WHERE EXISTS \
+               (SELECT COUNT(*) FROM scans s WHERE s.parcel_id = p.id HAVING 1) \
+             ORDER BY p.id",
+            ids(1..=260),
+        ),
+        // Uncorrelated, over the whole table.
+        (
+            "SELECT p.id FROM parcels p WHERE EXISTS \
+               (SELECT COUNT(*) FROM scans s HAVING 1) AND p.id <= 3 ORDER BY p.id",
+            ids(1..=3),
+        ),
+        // HAVING over the outer row's columns only.
+        (
+            "SELECT p.id FROM parcels p WHERE EXISTS \
+               (SELECT COUNT(*) FROM scans s WHERE s.parcel_id = p.id HAVING p.id > 250) \
+             ORDER BY p.id",
+            ids(251..=260),
+        ),
+        (
+            "SELECT p.id FROM parcels p WHERE NOT EXISTS \
+               (SELECT COUNT(*) FROM scans s WHERE s.parcel_id = p.id HAVING p.id > 5) \
+             ORDER BY p.id",
+            ids(1..=5),
+        ),
+    ];
+    for (sql, expected) in cases {
+        assert_eq!(ran(&fixture, sql).rows, expected, "{sql}");
+    }
+    // HAVING names the subquery's own alias, which is its count, not the
+    // outer row's `weight`. Parcels past SCANNED have no scan.
+    let aliased = ran(
+        &fixture,
+        "SELECT p.id FROM parcels p WHERE EXISTS \
+           (SELECT COUNT(*) AS weight FROM scans s WHERE s.parcel_id = p.id \
+            HAVING weight > 0 AND COUNT(*) >= 0) \
+         ORDER BY p.id",
+    );
+    let expected = (1..=260_u64)
+        .filter(|parcel| !scans_of(*parcel).is_empty())
+        .map(|parcel| vec![parcel.to_string()])
+        .collect::<Vec<_>>();
+    assert!(expected.len() < 260);
+    assert_eq!(aliased.rows, expected);
+}
+
 #[test]
 fn a_correlated_row_membership_reads_its_table_once() {
     let fixture = fixture(300);

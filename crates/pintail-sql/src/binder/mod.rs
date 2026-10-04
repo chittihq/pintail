@@ -4184,6 +4184,11 @@ fn bind_expr_inner(
         Expr::Exists { subquery, negated } => {
             let resolver =
                 subqueries.ok_or_else(|| BindError::UnsupportedSubquery(subquery.to_string()))?;
+            if let Some(held) = outer_having_as_value(subquery, *negated, resolver)
+                && let Ok(bound) = bind_expr_inner(&held, tables, aggregates, windows, subqueries)
+            {
+                return Ok(bound);
+            }
             let mut query = resolver(subquery)?;
             // An ungrouped aggregate is one row whatever it reads, so its
             // existence is known without running it. Under HAVING the row
@@ -4197,7 +4202,7 @@ fn bind_expr_inner(
                         nullable: false,
                     });
                 }
-                if let Some(held) = having_as_value(subquery, *negated)
+                if let Some(held) = having_as_value(subquery, *negated, resolver)
                     && let Ok(bound) =
                         bind_expr_inner(&held, tables, aggregates, windows, subqueries)
                 {
@@ -4262,8 +4267,16 @@ fn one_row_aggregate(query: &Query, bound: &BoundQuery) -> bool {
 }
 
 /// `EXISTS (SELECT .. HAVING h)` over an ungrouped aggregate, as the truth
-/// of `(SELECT h ..)`; `None` when the subquery orders or limits its row.
-fn having_as_value(query: &Query, negated: bool) -> Option<Expr> {
+/// of `(SELECT h ..)`; `None` when the subquery orders or limits its row,
+/// when `h` names one of its select aliases, or when `(SELECT h ..)` is no
+/// longer one aggregate row.
+///
+/// The aggregate row exists whatever the subquery reads, so the scalar form
+/// is sound only while `h` itself aggregates: `HAVING 1` or a HAVING over
+/// outer columns alone would leave `(SELECT h ..)` one row per input row,
+/// none for an empty input. A select alias is the select item's value; with
+/// the select list replaced, the name would reach a column instead.
+fn having_as_value(query: &Query, negated: bool, resolver: &SubqueryResolver<'_>) -> Option<Expr> {
     if query.order_by.is_some() || query.limit_clause.is_some() {
         return None;
     }
@@ -4272,8 +4285,115 @@ fn having_as_value(query: &Query, negated: bool) -> Option<Expr> {
         return None;
     };
     let having = select.having.take()?;
+    let aliases = select
+        .projection
+        .iter()
+        .filter_map(|item| match item {
+            SelectItem::ExprWithAlias { alias, .. } => Some(alias.value.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut names_alias = false;
+    let _ = sqlparser::ast::visit_expressions(&having, |candidate| {
+        if let Expr::Identifier(ident) = candidate
+            && aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(&ident.value))
+        {
+            names_alias = true;
+            return std::ops::ControlFlow::Break(());
+        }
+        std::ops::ControlFlow::Continue(())
+    });
+    if names_alias {
+        return None;
+    }
     select.projection = vec![SelectItem::UnnamedExpr(having)];
+    let bound = resolver(&value).ok()?;
+    if !one_row_aggregate(&value, &bound) {
+        return None;
+    }
     let held = Box::new(Expr::Subquery(Box::new(value)));
+    Some(if negated {
+        Expr::IsNotTrue(held)
+    } else {
+        Expr::IsTrue(held)
+    })
+}
+
+/// `EXISTS (SELECT .. HAVING h)` over an ungrouped aggregate whose HAVING
+/// reads only the enclosing query's columns, as the truth of `h` itself:
+/// the aggregate row exists whatever the subquery reads, and `h` is one
+/// value for that row. `None` unless every column `h` names is qualified by
+/// a name none of the subquery's own relations answers to, `h` holds no
+/// function call or subquery, and the subquery without its HAVING is one
+/// aggregate row.
+fn outer_having_as_value(
+    query: &Query,
+    negated: bool,
+    resolver: &SubqueryResolver<'_>,
+) -> Option<Expr> {
+    if query.order_by.is_some() || query.limit_clause.is_some() || query.with.is_some() {
+        return None;
+    }
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return None;
+    };
+    let having = select.having.as_ref()?;
+    let mut own = Vec::new();
+    for table in &select.from {
+        for factor in
+            std::iter::once(&table.relation).chain(table.joins.iter().map(|join| &join.relation))
+        {
+            match factor {
+                TableFactor::Table {
+                    alias: Some(alias), ..
+                }
+                | TableFactor::Derived {
+                    alias: Some(alias), ..
+                } => own.push(alias.name.value.clone()),
+                TableFactor::Table {
+                    name, alias: None, ..
+                } => own.push(name.0.last()?.as_ident()?.value.clone()),
+                _ => return None,
+            }
+        }
+    }
+    let mut outer_only = true;
+    let _ = sqlparser::ast::visit_expressions(having, |candidate| {
+        let inner = match candidate {
+            Expr::Identifier(_)
+            | Expr::Function(_)
+            | Expr::Subquery(_)
+            | Expr::Exists { .. }
+            | Expr::InSubquery { .. } => true,
+            Expr::CompoundIdentifier(parts) => match parts.as_slice() {
+                [.., qualifier, _] => own
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&qualifier.value)),
+                _ => true,
+            },
+            _ => false,
+        };
+        if inner {
+            outer_only = false;
+            return std::ops::ControlFlow::Break(());
+        }
+        std::ops::ControlFlow::Continue(())
+    });
+    if !outer_only {
+        return None;
+    }
+    let mut ungated = query.clone();
+    let SetExpr::Select(ungated_select) = ungated.body.as_mut() else {
+        return None;
+    };
+    ungated_select.having = None;
+    let bound = resolver(&ungated).ok()?;
+    if !one_row_aggregate(&ungated, &bound) {
+        return None;
+    }
+    let held = Box::new(Expr::Nested(Box::new(having.clone())));
     Some(if negated {
         Expr::IsNotTrue(held)
     } else {

@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2586;
+const EXPECTED_CASES: usize = 2591;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1843,6 +1843,13 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered("subquery alias scope", "SELECT id FROM orders WHERE EXISTS (SELECT id AS user_id FROM users GROUP BY user_id HAVING user_id = 8) ORDER BY id"),
         ordered("subquery alias scope", "SELECT id FROM orders WHERE user_id NOT IN (SELECT id + 1 AS total FROM users GROUP BY total) ORDER BY id"),
         ordered("subquery alias scope", "SELECT d.k, d.v FROM (SELECT id, total FROM orders) AS d (k, v) WHERE d.k < 5 ORDER BY d.k"),
+        // An ungrouped aggregate is one row for an empty input and for many
+        // rows alike; a HAVING that aggregates nothing filters that row.
+        ordered("exists over an aggregate", "SELECT EXISTS (SELECT COUNT(*) FROM orders HAVING 1), EXISTS (SELECT COUNT(*) FROM orders WHERE id < 0 HAVING 1), NOT EXISTS (SELECT COUNT(*) FROM orders WHERE id < 0 HAVING 1)"),
+        ordered("exists over an aggregate", "SELECT id FROM orders o WHERE EXISTS (SELECT COUNT(*) FROM orders i WHERE i.user_id = o.user_id AND i.id > 1000000 HAVING 1) ORDER BY id"),
+        ordered("exists over an aggregate", "SELECT id FROM orders o WHERE NOT EXISTS (SELECT COUNT(*) FROM orders i WHERE i.user_id = o.user_id HAVING 1) ORDER BY id"),
+        ordered("exists over an aggregate", "SELECT id FROM orders o WHERE EXISTS (SELECT COUNT(*) FROM users u WHERE u.id = o.user_id HAVING o.total > 20) ORDER BY id"),
+        ordered("exists over an aggregate", "SELECT id FROM orders o WHERE EXISTS (SELECT COUNT(*) AS total FROM users u WHERE u.id = o.user_id AND u.id > 2 HAVING total > 0 AND COUNT(*) >= 0) ORDER BY id"),
         // A JSON branch beside a number, a decimal or a date in a
         // conditional: the answer is the text of whichever branch the row
         // took, never the document read as a number.
