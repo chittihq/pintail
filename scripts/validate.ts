@@ -370,7 +370,7 @@ const STAGES: Stage[] = [
     remote: true,
     timeoutMinutes: 60,
     // The image is built as it ships: profile-guided, so the docker host
-    // compiles the workspace twice around a training run (about nine
+    // compiles the workspace twice around a training run (about ten
     // minutes on eight cores; PINTAIL_COMPOSE_PGO=0 builds it plain).
     stallMinutes: 30,
     command: ['bun', 'run', 'run.ts'],

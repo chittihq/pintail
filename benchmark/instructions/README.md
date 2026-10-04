@@ -44,9 +44,9 @@ this workload, not a claim about overall server latency.
 
 Build the instruction image with `--build-arg PINTAIL_PGO=1` to train and measure
 PGO. Compare its result against `release-linux.json` to isolate PGO from the
-release-profile change. The production Dockerfile accepts the same opt-in
-argument and uses the same rustc 1.97.1 compiler. Default images use the explicit
-release profile without PGO.
+release-profile change. The production Dockerfile takes the same argument and
+uses the same rustc 1.97.1 compiler, but defaults it to 1: the published image
+is profile-guided, trained on the server workload rather than this one.
 
 For a local build, install `rustup component add llvm-tools-preview`, then run
 `CARGO_TARGET_DIR=target bash scripts/pgo-build.sh server` (or `workload` for only

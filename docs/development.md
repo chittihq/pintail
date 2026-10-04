@@ -30,6 +30,12 @@ docker build --build-arg SENTRY_ORG --build-arg SENTRY_PROJECT \
   --secret id=sentry_auth_token,env=SENTRY_AUTH_TOKEN -t pintail:local .
 ```
 
+The image builds the server profile-guided, as the release does: an
+instrumented build, a training run and an optimized build, about nine and
+a half minutes cold on eight cores against under five for a plain build. Add
+`--build-arg PINTAIL_PGO=0` for a plain release binary when that is not
+needed; `docker-compose.dev.yml` builds plain unless `PINTAIL_PGO=1` is set.
+
 The isolated browser regressions use synthetic APIs and a local envelope
 receiver. After generating the dashboard, run `bun run dashboard` in
 `tests/browser` to check result pagination, tooltip cleanup, actual browser

@@ -9,9 +9,12 @@
 # does, in a few minutes. `workload` builds only the four-statement executor
 # example the instruction gate measures, trained on itself.
 #
-# Opt-in. Nothing here changes what a plain `cargo build --release` makes.
+# The release image's builder stage runs `server` mode (Dockerfile,
+# PINTAIL_PGO=1, the default there). Nothing here changes what a plain
+# `cargo build --release` makes.
 #
 #   PINTAIL_TARGET_CPU=x86-64-v3   compile for that level instead of generic
+#                                  (for measurement; the release ships generic)
 #   PINTAIL_PGO_BOLT=1             also lay the binary out after linking
 #                                  (needs llvm-bolt and merge-fdata on PATH)
 #   PINTAIL_PGO_PROFILE=<file>     use this merged profile; skip training

@@ -1,7 +1,8 @@
 # Portable PGO and x86-64-v3 PGO, measured (0a85254f)
 
 This measures the two-binary proposal in `docs/release-builds.md` on the current
-engine. All three binaries were built from one commit on one machine: 8 vCPU,
+engine. (On these figures the proposal was withdrawn: the release ships the
+portable profile-guided binary alone. See `docs/decisions.md`.) All three binaries were built from one commit on one machine: 8 vCPU,
 16 GB, AMD Ryzen 9 9950X (`/proc/cpuinfo` was checked before every measurement
 block), Ubuntu 24.04, rustc 1.97.0.
 

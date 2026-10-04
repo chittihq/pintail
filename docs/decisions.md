@@ -2110,3 +2110,23 @@ source database; the tables, the method and the release proposal are in
   chosen at start by the processor's flags. Built behind
   `PINTAIL_X86_64_V3=1` in the `Dockerfile`, default off; the release
   workflow is unchanged until the owner applies the proposal.
+
+**The release ships one portable profile-guided binary (owner decision,
+2026-10-04).** Re-measured on the current engine, the portable
+profile-guided build is -7.8% across Q1-Q8 and -10% to -16% on a key
+lookup with identical answers; the x86-64-v3 profile-guided build adds
+2.4 points across Q1-Q8 on top. That margin does not pay for a second
+binary, a launcher that trusts the processor flags the kernel reports, and
+a binary that dies with SIGILL when the choice is forced or wrong. So the
+two-binary proposal above is withdrawn: the `Dockerfile` builds one binary,
+profile-guided for the platform's generic target, by default
+(`PINTAIL_PGO=1`; `0` builds plain), `PINTAIL_X86_64_V3` and
+`scripts/pintail-launch.sh` are gone, and the release workflow checks on
+each architecture's own runner that the image reports
+`build_target=generic build_variant=pgo`. The training runs inside the
+image build, not on a CI host before it: the binary is then trained and
+linked under the runtime base's toolchain and glibc (a binary built on a
+newer host needs a newer glibc than the bookworm base has), and the
+training needs no source server, so the build stays one self-contained
+step. Vector kernels keep their runtime dispatch (`PINTAIL_SIMD`), which
+is how the generic binary uses AVX2 and AVX-512 where they exist.

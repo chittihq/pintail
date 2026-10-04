@@ -1,11 +1,11 @@
 # Release builds: what the build itself is worth
 
-The shipped binary is a generic x86-64 build with thin LTO and one codegen
+The published image holds one binary: a profile-guided build for the
+platform's generic target (x86-64 or arm64), with thin LTO and one codegen
 unit. This records what each build setting is worth on the current engine,
-what a profile-guided build adds, and a release layout that ships the gain
-without taking the generic binary away from anyone. The last section is a
-proposal: the scripts and the `Dockerfile` arguments exist and default to
-today's behaviour; the release workflow is unchanged.
+what a profile-guided build adds, and why the release ships that one
+binary and not a second one compiled for a newer processor level. The last
+section says how the image is built.
 
 ## How it was measured
 
@@ -114,6 +114,15 @@ is the best binary measured: about 11% less time across the seven
 queries, 19% on a filtered count, 12-15% on small statements. The two
 effects add: v3 alone is -4.5%, the profile alone about -5%.
 
+A later re-measurement on the current engine
+(`benchmark/evidence/pgo-v3-measurement.md`: 18 interleaved rounds per
+track, with a same-commit floor arm) put the portable profile-guided build
+at -7.8% across Q1-Q8 (-8.8% CPU), -5.1% across eight time-window shapes,
+and -10% to -16% on a key lookup over one connection, with every answer
+identical. Adding x86-64-v3 took Q1-Q8 to -10.0%: 2.4 points more, for a
+second binary, a launcher that has to read the processor's flags, and a
+binary that dies with SIGILL if that choice is ever forced or wrong.
+
 `PINTAIL_PGO_BOLT=1` adds a post-link layout pass. See the script's
 header for what it needs; its measured state is in `docs/decisions.md`.
 
@@ -127,9 +136,8 @@ the same flags, against the plain build:
   -15% on the top-spenders grouping, -11% on the two-key grouping, -6% on
   the monthly aggregates. It executes 4-10% MORE on all eight time-window
   shapes (day and hour aggregates over a `DATETIME` and a zoned
-  `TIMESTAMP`). Those shapes were not among the timed queries, so whether
-  they are slower on the clock under v3 is not known; it is the first
-  thing to time before a v3 binary ships.
+  `TIMESTAMP`). Timed later on the server, none of them was slower on the
+  clock under v3 (`benchmark/evidence/pgo-v3-measurement.md`).
 - **The profile-guided build** executes 0-10% more instructions on most
   cases (17% more on the two-column text filter, 6% fewer on
   `COUNT(DISTINCT)`), with first-level cache misses unchanged, while
@@ -151,81 +159,56 @@ though not the code.
 A running server names its own build: the startup line
 `pintail optimizations:` carries `build_target=` (generic, x86-64-v2,
 x86-64-v3, x86-64-v4) and `build_variant=` (standard, pgo, pgo+bolt).
+The published image reports `build_target=generic build_variant=pgo`.
 
-## Proposal: ship the gain beside the generic binary
+## What ships
 
-One image per architecture, as today. On linux/amd64 it holds two
-binaries and a launcher:
+One image per architecture (linux/amd64 and linux/arm64), each with one
+binary at `/usr/local/bin/pintail`: profile-guided, compiled for that
+platform's generic target, trained on `benchmark/pgo-train.ts`. It starts
+on every machine the plain build started on. The vector kernels still pick
+AVX2 or AVX-512 at run time where the processor has them (`PINTAIL_SIMD`
+overrides that), so the generic binary keeps the part of a newer level
+that matters most.
 
-```
-/usr/local/bin/pintail                      the launcher (a POSIX shell script)
-/usr/local/lib/pintail/pintail-generic      today's binary, unchanged
-/usr/local/lib/pintail/pintail-x86-64-v3    profile-guided, compiled for x86-64-v3
-```
+Why not the x86-64-v3 binary as well: over the portable profile-guided
+build it measured 2.4 points across Q1-Q8 and about the same on small
+statements (`benchmark/evidence/pgo-v3-measurement.md`). Shipping it meant a second
+binary, a launcher choosing between them from `/proc/cpuinfo`, a gate run
+for each binary, and a binary that dies with SIGILL before it logs
+anything if the choice is ever wrong. One binary that runs everywhere is
+worth more than those points.
 
-The launcher (`scripts/pintail-launch.sh`) reads the processor's flags
-from `/proc/cpuinfo`, picks the v3 binary when every flag of that level is
-present and the generic one otherwise, and `exec`s it, so the server is
-still the container's first process. `PINTAIL_BINARY=generic` or
-`=x86-64-v3` overrides the choice. The entrypoint, the arguments and the
-volume do not change, so no deployment has to. The runtime-dispatched
-kernels work in both: `PINTAIL_SIMD` is read by the binary, not the
-launcher. linux/arm64 keeps its single binary.
+How the image is built. The `Dockerfile`'s builder stage runs
+`scripts/pgo-build.sh server` when `PINTAIL_PGO=1`, its default: an
+instrumented build, the training run, a merge with `llvm-profdata`, and
+the optimized build. Training happens inside the image build rather than
+on a CI host before it, for two reasons: the binary is compiled, trained
+and linked under the same toolchain and glibc as the runtime base (a
+binary built on a newer host than the bookworm base asks for a newer
+glibc than the base has), and the training needs no source server, so
+nothing outside the build has to be arranged. The training tools and data
+stay in the builder stage. `--build-arg PINTAIL_PGO=0` builds a plain
+release binary; `docker-compose.dev.yml` builds plain unless
+`PINTAIL_PGO=1` is set, and the compose gate builds the image as it ships
+and fails unless the container reports `build_variant=pgo`.
 
-What exists, behind arguments that default to today's image:
+The release workflow passes `PINTAIL_PGO=1` explicitly and, on each
+architecture's own runner, starts the image it just pushed and fails the
+job unless the startup line says `build_target=generic build_variant=pgo`.
 
-- `--build-arg PINTAIL_X86_64_V3=1` builds the second binary and installs
-  the launcher (amd64 only; ignored elsewhere).
-- `--build-arg PINTAIL_PGO=1` makes the generic binary profile-guided as
-  well. Not proposed for the first release that carries the launcher: the
-  generic binary is the fallback and should stay the build that has been
-  running everywhere.
+Cost, measured as cold image builds (empty build cache, base images
+pulled) on an 8-vCPU Zen 5 machine:
 
-What the release workflow would need (not applied; `.github/workflows`
-is unchanged). In `release.yml`, the `build` job:
+| Image | Build | Image size |
+|---|---|---|
+| `PINTAIL_PGO=0` | 283 s | 472 MB |
+| `PINTAIL_PGO=1` | 573 s: instrumented build 150 s, training 237 s, optimized build 158 s | 505 MB |
 
-```yaml
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-            build_args: |
-              PINTAIL_X86_64_V3=1
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            build_args: ""
-```
+The profile-guided build skips the dependency pre-build (its flags differ,
+so the cooked dependencies would go unused). On the release workflow's
+four-vCPU hosted runners the two compilations take roughly twice as long,
+so each architecture's job should grow by about ten minutes; the two jobs
+run at the same time, so the release grows by the same. That is an
+estimate from this machine, not a measured workflow run.
 
-and in its `Build and push by digest` step:
-
-```yaml
-          build-args: ${{ matrix.build_args }}
-```
-
-and, in `publish`, after the existing health check, the same check once
-more with `--env PINTAIL_BINARY=generic`, plus one line that fails the job
-unless the default container's log contains `build_target=x86-64-v3
-build_variant=pgo` and the forced one's `build_target=generic`.
-
-Costs and conditions:
-
-- The amd64 build grows by an instrumented build, a training run and an
-  optimized build: a little over eight minutes on eight cores, more on a
-  smaller runner. A cold build of the two-binary image took 13 minutes on
-  the measuring machine. Its default container started the x86-64-v3
-  binary as process 1 and logged `build_target=x86-64-v3
-  build_variant=pgo`; with `PINTAIL_BINARY=generic` it started the
-  generic one; with `PINTAIL_SIMD=off` the kernels reported `baseline`. The image grows by one binary: 285 MB as the image
-  ships binaries today, with their line tables (58 MB stripped, against
-  261 MB and 54 MB for the generic one).
-- The build machine must itself support x86-64-v3, because the training
-  run executes the instrumented v3 binary. On one that does not, the build
-  fails at the training step; it does not produce a wrong image.
-- The v3 binary has to pass the gate before it ships: the rc stages run
-  against the generic build today, and a release that carries a second
-  binary needs at least the oracle and e2e stages run against that one
-  too.
-- The benchmark figures in the README come from the generic build. A
-  release that ships both should say which binary a table was measured on.
