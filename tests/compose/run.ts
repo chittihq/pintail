@@ -28,6 +28,9 @@ const repository = resolve(import.meta.dir, '..', '..')
 const composeFile = resolve(repository, 'docker-compose.yml')
 const PROJECT = 'pintail-compose-gate'
 const MYSQL_IMAGE = process.env.PINTAIL_COMPOSE_MYSQL_IMAGE ?? 'mysql:8.4'
+/// The image is built as it ships, profile-guided. `PINTAIL_COMPOSE_PGO=0`
+/// builds the plain binary instead when only the compose file is in question.
+const PGO = process.env.PINTAIL_COMPOSE_PGO ?? '1'
 const MYSQL_NAME = `${PROJECT}-mysql`
 const DATABASE = 'compose_gate'
 const ROWS = 300_000
@@ -260,8 +263,10 @@ async function main() {
   log('the compose file must parse before anything is built on its account')
   await compose(imageTag, 'config', '--quiet')
 
-  log(`building ${image} on the docker host from the working tree`)
-  await docker('build', '--tag', image, repository)
+  log(`building ${image} on the docker host from the working tree (PINTAIL_PGO=${PGO})`)
+  const buildStarted = Date.now()
+  await docker('build', '--build-arg', `PINTAIL_PGO=${PGO}`, '--tag', image, repository)
+  log(`image built in ${Math.round((Date.now() - buildStarted) / 1000)} s`)
 
   log(`starting the MySQL source ${MYSQL_NAME}`)
   await docker('rm', '-f', MYSQL_NAME).catch(() => undefined)
@@ -314,6 +319,17 @@ async function main() {
   if (missing.length > 0) {
     throw new Error(`the limits line lacks ${missing.join(', ')}: the compose file dropped a setting`)
   }
+  // The release image is one generic binary; this proves it is the
+  // profile-guided build and not a plain one that slipped through.
+  const optimizations = logs.split('\n').find((line) => line.includes('pintail optimizations:'))
+  if (!optimizations) throw new Error(`no optimizations line in the container log:\n${logs.slice(-2000)}`)
+  const variant = PGO === '1' ? 'pgo' : 'standard'
+  const build = ['build_target=generic', `build_variant=${variant}`]
+  const wrongBuild = build.filter((expected) => !optimizations.includes(expected))
+  if (wrongBuild.length > 0) {
+    throw new Error(`the image's binary is not the expected build (${wrongBuild.join(', ')}): ${optimizations}`)
+  }
+  log(build.join(' '))
 
   log('snapshotting the source through the container')
   const setup = await api<{ token: string }>(baseUrl, '/api/auth/setup', {

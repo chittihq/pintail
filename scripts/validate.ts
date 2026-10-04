@@ -369,8 +369,9 @@ const STAGES: Stage[] = [
     name: 'compose',
     remote: true,
     timeoutMinutes: 60,
-    // The image build compiles the workspace on the docker host; cargo-chef
-    // caches the dependencies, the workspace crates rebuild every time.
+    // The image is built as it ships: profile-guided, so the docker host
+    // compiles the workspace twice around a training run (about nine
+    // minutes on eight cores; PINTAIL_COMPOSE_PGO=0 builds it plain).
     stallMinutes: 30,
     command: ['bun', 'run', 'run.ts'],
     cwd: join(repository, 'tests', 'compose'),

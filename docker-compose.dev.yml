@@ -4,11 +4,17 @@
 # instead of compiling on the target host.
 #
 #   docker compose -f docker-compose.dev.yml up -d --build
+#
+# The binary is a plain release build: the published image's profile-guided
+# build adds an instrumented build and a training run. PINTAIL_PGO=1 in the
+# environment builds it the way the release does.
 
 services:
   pintail:
     build:
       context: .
+      args:
+        PINTAIL_PGO: ${PINTAIL_PGO:-0}
     image: pintail:dev
     ports:
       - "${PINTAIL_HTTP_PORT:-8080}:8080"

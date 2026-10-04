@@ -26,25 +26,28 @@ COPY tests/sqllogic ./tests/sqllogic
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
-# 1 builds the binary profile-guided: instrumented, trained by
-# benchmark/pgo-train.ts (no source server needed), rebuilt with the profile.
-ARG PINTAIL_PGO=0
-# 1 adds a second, profile-guided binary compiled for x86-64-v3 next to the
-# generic one, and makes `pintail` a launcher that picks by the processor's
-# flags (scripts/pintail-launch.sh). linux/amd64 only; other platforms keep
-# the single binary. The build machine must itself be x86-64-v3, because the
-# training run executes that binary.
-ARG PINTAIL_X86_64_V3=0
-ARG TARGETARCH
+# The release binary is profile-guided: built instrumented, trained by
+# benchmark/pgo-train.ts (it loads a local database over the wire, so no
+# source server is needed), then rebuilt with the profile, for the generic
+# target of the platform being built. The training runs inside this stage so
+# the binary is compiled and trained against the same toolchain and glibc as
+# the runtime base below. It adds an instrumented build and a training run to
+# the image build; `--build-arg PINTAIL_PGO=0` builds a plain release binary
+# instead, for local images that do not need the last few percent.
+ARG PINTAIL_PGO=1
 COPY --from=planner /source/recipe.json recipe.json
-# Rebuilds only when Cargo.lock changes.
+# Rebuilds only when Cargo.lock changes. A profile-guided build compiles its
+# dependencies with its own flags into its own target directory, so the
+# cooked dependencies would go unused: it skips this step.
 RUN --mount=type=cache,target=/source/target,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    cargo chef cook --locked --release --package pintail --recipe-path recipe.json
+    if [ "$PINTAIL_PGO" = 0 ]; then \
+      cargo chef cook --locked --release --package pintail --recipe-path recipe.json; \
+    fi
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY tests/sqllogic ./tests/sqllogic
-COPY scripts/pgo-build.sh scripts/pintail-launch.sh ./scripts/
+COPY scripts/pgo-build.sh ./scripts/
 # The training workload and the runtime it runs under. Neither reaches the
 # runtime image.
 COPY benchmark/package.json benchmark/bun.lock benchmark/pgo-train.ts benchmark/queries.ts ./benchmark/
@@ -73,16 +76,7 @@ RUN --mount=type=cache,target=/source/target,sharing=locked \
     elif [ "$PINTAIL_PGO" = 0 ]; then \
       cargo build --locked --release --package pintail \
       && cp /source/target/release/pintail /out/bin/pintail; \
-    else echo 'PINTAIL_PGO must be 0 or 1' >&2; exit 2; fi \
-    && if [ "$PINTAIL_X86_64_V3" = 1 ] && [ "$TARGETARCH" = amd64 ]; then \
-      rustup component add llvm-tools-preview \
-      && PINTAIL_TARGET_CPU=x86-64-v3 bash scripts/pgo-build.sh server \
-      && mkdir -p /out/lib/pintail \
-      && mv /out/bin/pintail /out/lib/pintail/pintail-generic \
-      && cp /source/target/pgo/pintail /out/lib/pintail/pintail-x86-64-v3 \
-      && install --mode 0755 scripts/pintail-launch.sh /out/bin/pintail; \
-    elif [ "$PINTAIL_X86_64_V3" != 0 ] && [ "$PINTAIL_X86_64_V3" != 1 ]; then \
-      echo 'PINTAIL_X86_64_V3 must be 0 or 1' >&2; exit 2; fi
+    else echo 'PINTAIL_PGO must be 0 or 1' >&2; exit 2; fi
 
 FROM debian:bookworm-slim
 
@@ -98,9 +92,8 @@ RUN apt-get update \
     && install --directory --owner pintail --group pintail /var/lib/pintail \
     && install --directory --owner pintail --group pintail /var/lib/pintail/spill
 
-# One binary at /usr/local/bin/pintail by default. With PINTAIL_X86_64_V3=1
-# that path is the launcher and the two binaries are under
-# /usr/local/lib/pintail.
+# The one binary, at /usr/local/bin/pintail. Its startup line
+# `pintail optimizations:` says `build_variant=pgo` when it is profile-guided.
 COPY --from=builder /out/ /usr/local/
 
 # jemalloc (the binary's allocator) returns freed pages after a second
