@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The audit log is pruned: events older than `PINTAIL_AUDIT_RETENTION_DAYS`
+  (default 90; `0` keeps every event) are deleted hourly and once at
+  startup, 10,000 per transaction, so audit writes and requests are never
+  held up for long. A value that is not a whole number of days logs a
+  warning and keeps the default. The setting appears as `audit_retention`
+  on the `pintail limits:` startup line, and `GET /api/storage` reports it
+  with the last pass under `metadata.audit_retention`. Metadata migration
+  25 adds the index the pruning needs.
+
 ### Changed
 
 - Temporal functions over a column with few distinct values (DATE_FORMAT,
