@@ -15,6 +15,10 @@ use crate::execution::ExecError;
 use crate::expression::CompiledExpr;
 use crate::expression::temporal::{apply_interval, date_part};
 
+mod repeated;
+
+pub(super) use repeated::repeated_column;
+
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 
 /// A temporal column's packed units, when its text is derived from them.
@@ -840,12 +844,16 @@ pub(super) fn date_interval_column(
     if matches!(amount, Value::Null) {
         return None;
     }
-    if unit == IntervalUnit::Second
-        && crate::expression::interval_second_micros(amount).ok()? % 1_000_000 != 0
-    {
-        return None;
-    }
-    let amount = crate::expression::mysql_i64(amount).ok()?;
+    // A malformed constant can warn during coercion. A packed probe that
+    // declines must leave that warning to the path that reads each row.
+    let amount = crate::execution::without_new_warnings(|| {
+        if unit == IntervalUnit::Second
+            && crate::expression::interval_second_micros(amount).ok()? % 1_000_000 != 0
+        {
+            return None;
+        }
+        crate::expression::mysql_i64(amount).ok()
+    })??;
     let Operand::Column(input) = operand(batch, argument, effects)? else {
         return None;
     };

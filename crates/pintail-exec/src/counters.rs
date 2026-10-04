@@ -16,6 +16,8 @@ pub struct ExecCounters {
     pub values_materialized: u64,
     /// Rows the scalar projection path evaluated expression by expression.
     pub rows_projected_scalar: u64,
+    /// Distinct inputs evaluated by a repeated temporal column kernel.
+    pub temporal_values_evaluated: u64,
     /// Rows a sort buffered as a vector of values.
     pub rows_sorted: u64,
     /// Cells copied from rows back into columns.
@@ -65,6 +67,7 @@ thread_local! {
         Cell::new(ExecCounters {
             values_materialized: 0,
             rows_projected_scalar: 0,
+            temporal_values_evaluated: 0,
             rows_sorted: 0,
             cells_regathered: 0,
             settled_delta_merges: 0,

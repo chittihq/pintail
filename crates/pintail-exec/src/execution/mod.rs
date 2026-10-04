@@ -198,6 +198,30 @@ pub(crate) fn record_statement_warning(warning: ConversionWarning) {
     });
 }
 
+/// Captures one calculation's conversion diagnostics without changing the
+/// statement's existing diagnostics. A batch kernel can replay these for
+/// each selected row only after the whole expression has succeeded.
+pub(crate) fn capture_conversion_warnings<T>(
+    work: impl FnOnce() -> T,
+) -> (T, (Vec<ConversionWarning>, u64)) {
+    let earlier = take_session_conversion_warnings();
+    let output = work();
+    let raised = take_session_conversion_warnings();
+    SESSION_CONVERSION_WARNINGS.with(|warnings| *warnings.borrow_mut() = earlier);
+    (output, raised)
+}
+
+/// Replays retained messages and their total, including occurrences past
+/// the diagnostics area's message limit.
+pub(crate) fn replay_conversion_warnings(messages: Vec<ConversionWarning>, count: u64) {
+    SESSION_CONVERSION_WARNINGS.with(|warnings| {
+        let mut warnings = warnings.borrow_mut();
+        let remaining = 1024_usize.saturating_sub(warnings.0.len());
+        warnings.0.extend(messages.into_iter().take(remaining));
+        warnings.1 = warnings.1.saturating_add(count);
+    });
+}
+
 /// Runs `work` and answers its output only when it raised no conversion
 /// warning. Whatever it raised is dropped, and the warnings the statement
 /// held before are left as they were.

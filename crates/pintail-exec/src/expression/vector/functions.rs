@@ -129,6 +129,9 @@ pub(super) fn scalar_column(
     if let Some(packed) = packed(batch, call, &operands, declared) {
         return Some(packed);
     }
+    if let Some(column) = super::temporal::repeated_column(batch, call, &operands, effects) {
+        return Some(column);
+    }
     // Nothing packed answers this call, so what follows reads the selected
     // rows one at a time. A caller with a row path of its own declines here
     // instead: adapting would build a column for every row on top of the

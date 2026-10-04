@@ -40,6 +40,7 @@ mod text;
 /// Warnings a batch's evaluation raised, for the selected rows only.
 pub(super) struct Effects {
     divisions_by_zero: u64,
+    conversions: Option<Box<(Vec<crate::execution::ConversionWarning>, u64)>>,
     /// Whether a function without a kernel of its own may still be answered
     /// by the adapter that evaluates it over the batch's selected rows.
     ///
@@ -57,6 +58,7 @@ impl Default for Effects {
     fn default() -> Self {
         Self {
             divisions_by_zero: 0,
+            conversions: None,
             adapter: true,
         }
     }
@@ -73,6 +75,21 @@ impl Effects {
 
     fn record(self) {
         crate::execution::note_divisions_by_zero(self.divisions_by_zero);
+        if let Some(warnings) = self.conversions {
+            crate::execution::replay_conversion_warnings(warnings.0, warnings.1);
+        }
+    }
+
+    /// Adds one selected row's captured diagnostics, preserving row order
+    /// and the total while retaining only the statement's first messages.
+    fn conversions(&mut self, warnings: &(Vec<crate::execution::ConversionWarning>, u64)) {
+        if warnings.1 == 0 {
+            return;
+        }
+        let pending = self.conversions.get_or_insert_with(Box::default);
+        let remaining = 1024_usize.saturating_sub(pending.0.len());
+        pending.0.extend(warnings.0.iter().take(remaining).cloned());
+        pending.1 = pending.1.saturating_add(warnings.1);
     }
 
     /// Whether a function with no packed kernel may be read row by row.
@@ -82,7 +99,7 @@ impl Effects {
 
     /// Whether the evaluation raised nothing to report.
     const fn quiet(&self) -> bool {
-        self.divisions_by_zero == 0
+        self.divisions_by_zero == 0 && self.conversions.is_none()
     }
 }
 
@@ -271,9 +288,21 @@ fn attempt(
     kernel: impl FnOnce(&mut Effects) -> Option<ColumnVector>,
 ) -> Option<ColumnVector> {
     let before = effects.divisions_by_zero;
+    let conversions = effects
+        .conversions
+        .as_ref()
+        .map(|warnings| (warnings.0.len(), warnings.1));
     let column = kernel(effects);
     if column.is_none() {
         effects.divisions_by_zero = before;
+        match (conversions, effects.conversions.as_mut()) {
+            (Some((length, count)), Some(warnings)) => {
+                warnings.0.truncate(length);
+                warnings.1 = count;
+            }
+            (None, _) => effects.conversions = None,
+            _ => {}
+        }
     }
     column
 }
