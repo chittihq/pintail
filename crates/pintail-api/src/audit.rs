@@ -715,8 +715,13 @@ mod tests {
                     write_batch(&path, &[fresh(10_000 + serial)], &beside, CONTENTION);
                 }
             });
-            let pruned =
-                crate::metadata_health::prune_audit_log(&node.metadata(), now, 90, 100, |_| {
+            let pruned = crate::metadata_health::prune_aged(
+                &node.metadata(),
+                crate::metadata_health::AUDIT,
+                now,
+                90,
+                100,
+                |_| {
                     let attempts = between.attempts.load(Ordering::Acquire);
                     write_batch(&path, &[fresh(gaps)], &between, CONTENTION);
                     assert_eq!(
@@ -725,7 +730,8 @@ mod tests {
                         "the gap between batches holds no lock"
                     );
                     gaps += 1;
-                });
+                },
+            );
             writer.join().expect("writer thread");
             pruned
         })

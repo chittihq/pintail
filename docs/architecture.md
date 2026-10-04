@@ -249,7 +249,12 @@ Audit events older than `PINTAIL_AUDIT_RETENTION_DAYS` (default 90; `0` keeps
 every event; anything but a whole number logs a warning and keeps the default)
 are deleted on the same pass, 10,000 per transaction; the setting is on the
 `pintail limits:` line as `audit_retention`, and `GET /api/storage` reports it
-with the last pass under `metadata.audit_retention`.
+with the last pass under `metadata.audit_retention`. Dead letters older than
+`PINTAIL_DLQ_RETENTION_DAYS` (default 30, validated the same way) are deleted
+on the same pass and in the same batches, reported as `dlq_retention` on that
+line and under `metadata.dlq_retention`. The dead-letter list, its counts and
+the `pintail_dead_letters` gauge are all read from the remaining rows, so a
+pruned letter leaves them together; discarding or retrying one answers 404.
 
 MySQL parity is tabulated in [`parity.md`](../parity.md); compatibility
 boundaries that remain by design are listed in

@@ -37,15 +37,26 @@ const CYCLE_RETENTION: chrono::Duration = chrono::Duration::days(1);
 const HISTORY_RETENTION: chrono::Duration = chrono::Duration::days(30);
 /// Audit events are kept this many days unless `PINTAIL_AUDIT_RETENTION_DAYS`
 /// says otherwise; zero keeps them all.
-const DEFAULT_AUDIT_RETENTION_DAYS: u32 = 90;
-const AUDIT_RETENTION_VARIABLE: &str = "PINTAIL_AUDIT_RETENTION_DAYS";
-/// Most audit events one pruning transaction deletes. A batch this size
-/// holds the write lock for tens of milliseconds, so the audit writer and
-/// request handlers queued behind it barely notice.
-const AUDIT_PRUNE_BATCH: u64 = 10_000;
+pub(crate) const AUDIT: Aged = Aged {
+    rows: "audit event",
+    variable: "PINTAIL_AUDIT_RETENTION_DAYS",
+    default_days: 90,
+};
+/// Dead letters are kept this many days unless `PINTAIL_DLQ_RETENTION_DAYS`
+/// says otherwise; zero keeps them all. A letter this old has been shown on
+/// the dashboard and counted in the exported gauge for a month.
+const DEAD_LETTERS: Aged = Aged {
+    rows: "dead letter",
+    variable: "PINTAIL_DLQ_RETENTION_DAYS",
+    default_days: 30,
+};
+/// Most rows one pruning transaction deletes. A batch this size holds the
+/// write lock for tens of milliseconds, so the audit writer, replication
+/// and request handlers queued behind it barely notice.
+const PRUNE_BATCH: u64 = 10_000;
 /// The pause between pruning batches, so writers waiting on the lock are
 /// not raced for it by the next batch.
-const AUDIT_PRUNE_PAUSE: Duration = Duration::from_millis(20);
+const PRUNE_PAUSE: Duration = Duration::from_millis(20);
 
 const BACKUP_DIRECTORY: &str = "meta-backups";
 const BACKUP_PREFIX: &str = "pintail-meta-";
@@ -63,22 +74,33 @@ pub(crate) struct MetadataHealth {
     /// Why the last attempt to write a copy failed, if it did.
     pub(crate) backup_error: Option<String>,
     /// How long audit events are kept, and what the last pruning pass did.
-    pub(crate) audit_retention: AuditRetention,
+    pub(crate) audit_retention: Retention,
+    /// How long dead letters are kept, and what the last pruning pass did.
+    pub(crate) dlq_retention: Retention,
 }
 
-/// The audit log's retention setting and its last pruning pass.
+/// One age-pruned table's retention setting and its last pruning pass.
 #[derive(Clone, Debug, Default, Serialize)]
-pub(crate) struct AuditRetention {
-    /// Days an audit event is kept; zero keeps every event.
+pub(crate) struct Retention {
+    /// Days a row is kept; zero keeps every row.
     pub(crate) days: u32,
     /// When the last pass finished; `None` before the first.
     pub(crate) last_pruned_at: Option<String>,
-    /// Events the last pass deleted.
+    /// Rows the last pass deleted.
     pub(crate) last_removed: u64,
     /// Transactions the last pass took.
     pub(crate) last_batches: u64,
     /// Why the last pass failed, if it did.
     pub(crate) last_error: Option<String>,
+}
+
+/// A table pruned by age alone, and the setting that says how old.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Aged {
+    /// What one row is, for the log.
+    rows: &'static str,
+    variable: &'static str,
+    default_days: u32,
 }
 
 /// Days audit events are kept, from `PINTAIL_AUDIT_RETENTION_DAYS`; zero
@@ -87,34 +109,55 @@ pub(crate) struct AuditRetention {
 #[must_use]
 pub fn audit_retention_days() -> u32 {
     static DAYS: OnceLock<u32> = OnceLock::new();
-    *DAYS.get_or_init(|| {
-        match parse_audit_retention(std::env::var(AUDIT_RETENTION_VARIABLE).ok().as_deref()) {
-            Ok(days) => days,
-            Err(rejected) => {
-                pintail_log::log_warn!(
-                    "{AUDIT_RETENTION_VARIABLE}={rejected:?} is not a whole number of days; \
-                     keeping audit events {DEFAULT_AUDIT_RETENTION_DAYS} days"
-                );
-                DEFAULT_AUDIT_RETENTION_DAYS
-            }
-        }
-    })
+    *DAYS.get_or_init(|| resolve_days(AUDIT))
 }
 
-/// The retention a raw `PINTAIL_AUDIT_RETENTION_DAYS` asks for: the default
-/// when unset or blank, the value when it is a whole number of days, and
-/// the rejected text otherwise.
-fn parse_audit_retention(raw: Option<&str>) -> Result<u32, String> {
+/// Days dead letters are kept, from `PINTAIL_DLQ_RETENTION_DAYS`; zero
+/// keeps them all. Read and validated as [`audit_retention_days`] is.
+#[must_use]
+pub fn dlq_retention_days() -> u32 {
+    static DAYS: OnceLock<u32> = OnceLock::new();
+    *DAYS.get_or_init(|| resolve_days(DEAD_LETTERS))
+}
+
+fn retention_days(table: Aged) -> u32 {
+    if table == AUDIT {
+        audit_retention_days()
+    } else {
+        dlq_retention_days()
+    }
+}
+
+fn resolve_days(table: Aged) -> u32 {
+    let raw = std::env::var(table.variable).ok();
+    match parse_retention(raw.as_deref(), table.default_days) {
+        Ok(days) => days,
+        Err(rejected) => {
+            pintail_log::log_warn!(
+                "{}={rejected:?} is not a whole number of days; keeping each {} {} days",
+                table.variable,
+                table.rows,
+                table.default_days
+            );
+            table.default_days
+        }
+    }
+}
+
+/// The retention a raw setting asks for: `default` when unset or blank,
+/// the value when it is a whole number of days, and the rejected text
+/// otherwise.
+fn parse_retention(raw: Option<&str>, default: u32) -> Result<u32, String> {
     match raw.map(str::trim) {
-        None | Some("") => Ok(DEFAULT_AUDIT_RETENTION_DAYS),
+        None | Some("") => Ok(default),
         Some(value) => value.parse::<u32>().map_err(|_| value.to_owned()),
     }
 }
 
-/// The bound below which audit events are pruned at `now`, in the form
+/// The bound below which rows are pruned at `now`, in the form
 /// [`pintail_meta::MetaStore::prune_audit_log`] compares; `None` when
 /// `days` keeps everything or reaches back past the calendar.
-fn audit_cutoff(now: chrono::DateTime<Utc>, days: u32) -> Option<String> {
+fn age_cutoff(now: chrono::DateTime<Utc>, days: u32) -> Option<String> {
     if days == 0 {
         return None;
     }
@@ -122,18 +165,23 @@ fn audit_cutoff(now: chrono::DateTime<Utc>, days: u32) -> Option<String> {
     Some(cutoff.format("%Y-%m-%dT%H:%M:%S").to_string())
 }
 
-/// Prunes audit events older than `days` before `now`, `batch_rows` per
+/// Prunes `table`'s rows older than `days` before `now`, `batch_rows` per
 /// transaction, calling `between` after each full batch. `None` when
 /// `days` is zero and nothing is pruned.
-pub(crate) fn prune_audit_log(
+pub(crate) fn prune_aged(
     metadata: &pintail_meta::MetaStore,
+    table: Aged,
     now: chrono::DateTime<Utc>,
     days: u32,
     batch_rows: u64,
     between: impl FnMut(u64),
 ) -> Option<anyhow::Result<pintail_meta::AgePrune>> {
-    let cutoff = audit_cutoff(now, days)?;
-    Some(metadata.prune_audit_log(&cutoff, batch_rows, between))
+    let cutoff = age_cutoff(now, days)?;
+    Some(if table == AUDIT {
+        metadata.prune_audit_log(&cutoff, batch_rows, between)
+    } else {
+        metadata.prune_dead_letters(&cutoff, batch_rows, between)
+    })
 }
 
 fn health_cell() -> &'static Mutex<MetadataHealth> {
@@ -153,6 +201,7 @@ pub(crate) fn current() -> MetadataHealth {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
     health.audit_retention.days = audit_retention_days();
+    health.dlq_retention.days = dlq_retention_days();
     health
 }
 
@@ -268,16 +317,17 @@ fn prune(state: &ApiState) {
         Ok(removed) => pintail_log::log_info!("pruned {removed} sync run(s) past retention"),
         Err(error) => pintail_log::log_error!("sync run pruning failed: {error}"),
     }
-    prune_audit(state, now);
+    prune_by_age(state, AUDIT, now);
+    prune_by_age(state, DEAD_LETTERS, now);
 }
 
-/// One pass over the audit log, between the batches of which the lock is
-/// left free for [`AUDIT_PRUNE_PAUSE`].
-fn prune_audit(state: &ApiState, now: chrono::DateTime<Utc>) {
-    let days = audit_retention_days();
+/// One pass over an age-pruned table, between the batches of which the
+/// lock is left free for [`PRUNE_PAUSE`].
+fn prune_by_age(state: &ApiState, table: Aged, now: chrono::DateTime<Utc>) {
+    let days = retention_days(table);
     let outcome = match state.metadata() {
-        Ok(metadata) => prune_audit_log(&metadata, now, days, AUDIT_PRUNE_BATCH, |_| {
-            std::thread::sleep(AUDIT_PRUNE_PAUSE);
+        Ok(metadata) => prune_aged(&metadata, table, now, days, PRUNE_BATCH, |_| {
+            std::thread::sleep(PRUNE_PAUSE);
         })
         .map(|outcome| outcome.map_err(|error| format!("{error:#}"))),
         Err(error) => Some(Err(error.to_string())),
@@ -287,15 +337,20 @@ fn prune_audit(state: &ApiState, now: chrono::DateTime<Utc>) {
     };
     match &outcome {
         Ok(pruned) if pruned.removed > 0 => pintail_log::log_info!(
-            "pruned {} audit event(s) older than {days} day(s) in {} batch(es)",
+            "pruned {} {}(s) older than {days} day(s) in {} batch(es)",
             pruned.removed,
+            table.rows,
             pruned.batches
         ),
         Ok(_) => {}
-        Err(error) => pintail_log::log_error!("audit log pruning failed: {error}"),
+        Err(error) => pintail_log::log_error!("{} pruning failed: {error}", table.rows),
     }
     update(|health| {
-        let retention = &mut health.audit_retention;
+        let retention = if table == AUDIT {
+            &mut health.audit_retention
+        } else {
+            &mut health.dlq_retention
+        };
         retention.last_pruned_at = Some(Utc::now().to_rfc3339());
         match outcome {
             Ok(pruned) => {
@@ -411,37 +466,30 @@ fn rfc3339(time: SystemTime) -> String {
 mod tests {
     use chrono::{TimeZone as _, Utc};
 
-    use super::{
-        DEFAULT_AUDIT_RETENTION_DAYS, audit_cutoff, backups, parse_audit_retention, prune_audit_log,
-    };
+    use super::{AUDIT, DEAD_LETTERS, age_cutoff, backups, parse_retention, prune_aged};
     use crate::test_support::Node;
 
     #[test]
-    fn audit_retention_reads_whole_days_and_rejects_the_rest() {
-        assert_eq!(
-            parse_audit_retention(None),
-            Ok(DEFAULT_AUDIT_RETENTION_DAYS)
-        );
-        assert_eq!(parse_audit_retention(Some("  ")), Ok(90));
-        assert_eq!(parse_audit_retention(Some("30")), Ok(30));
-        assert_eq!(parse_audit_retention(Some(" 0 ")), Ok(0));
+    fn retention_reads_whole_days_and_rejects_the_rest() {
+        assert_eq!(parse_retention(None, AUDIT.default_days), Ok(90));
+        assert_eq!(parse_retention(None, DEAD_LETTERS.default_days), Ok(30));
+        assert_eq!(parse_retention(Some("  "), 90), Ok(90));
+        assert_eq!(parse_retention(Some("30"), 90), Ok(30));
+        assert_eq!(parse_retention(Some(" 0 "), 90), Ok(0));
         for bad in ["-1", "7d", "1.5", "ninety", "99999999999"] {
-            assert_eq!(parse_audit_retention(Some(bad)), Err(bad.to_owned()));
+            assert_eq!(parse_retention(Some(bad), 90), Err(bad.to_owned()));
         }
     }
 
     #[test]
-    fn the_audit_cutoff_is_whole_seconds_days_back_and_absent_at_zero() {
+    fn the_age_cutoff_is_whole_seconds_days_back_and_absent_at_zero() {
         let now = Utc
             .with_ymd_and_hms(2026, 10, 4, 12, 30, 15)
             .single()
             .expect("time");
-        assert_eq!(
-            audit_cutoff(now, 90).as_deref(),
-            Some("2026-07-06T12:30:15")
-        );
-        assert_eq!(audit_cutoff(now, 0), None);
-        assert_eq!(audit_cutoff(now, u32::MAX), None, "before the calendar");
+        assert_eq!(age_cutoff(now, 90).as_deref(), Some("2026-07-06T12:30:15"));
+        assert_eq!(age_cutoff(now, 0), None);
+        assert_eq!(age_cutoff(now, u32::MAX), None, "before the calendar");
     }
 
     fn audit_at(node: &Node, id: &str, created_at: &str) {
@@ -491,12 +539,12 @@ mod tests {
 
         let metadata = node.metadata();
         assert!(
-            prune_audit_log(&metadata, now, 0, 10_000, |_| {}).is_none(),
+            prune_aged(&metadata, AUDIT, now, 0, 10_000, |_| {}).is_none(),
             "zero keeps everything"
         );
         assert_eq!(query_ids(&node).len(), 4);
 
-        let pruned = prune_audit_log(&metadata, now, 90, 10_000, |_| {})
+        let pruned = prune_aged(&metadata, AUDIT, now, 90, 10_000, |_| {})
             .expect("retention on")
             .expect("prune");
         assert_eq!((pruned.removed, pruned.batches), (2, 1));
@@ -520,7 +568,7 @@ mod tests {
             .single()
             .expect("time");
         let mut sizes = Vec::new();
-        let pruned = prune_audit_log(&node.metadata(), now, 90, 20, |removed| {
+        let pruned = prune_aged(&node.metadata(), AUDIT, now, 90, 20, |removed| {
             sizes.push(removed);
         })
         .expect("retention on")
@@ -528,6 +576,113 @@ mod tests {
         assert_eq!((pruned.removed, pruned.batches), (45, 3));
         assert_eq!(sizes, [20, 20]);
         assert!(query_ids(&node).is_empty());
+    }
+
+    /// Dead letters past retention leave every view of the queue at once:
+    /// the list, the per-database count the gauge reads, and the endpoints
+    /// that act on one letter, which answer a pruned letter as one that
+    /// does not exist. Zero keeps every letter, and a pass over more
+    /// letters than a batch takes a transaction per batch.
+    #[tokio::test]
+    async fn dead_letters_past_retention_leave_the_list_counts_and_actions_together() {
+        let node = Node::new().await;
+        let database = node.database(&node.admin, "shop").await;
+        let metadata = node.metadata();
+        for serial in 0..25 {
+            metadata
+                .record_dlq(
+                    &format!("dlq_old_{serial:02}"),
+                    &database,
+                    Some("orders"),
+                    "{}",
+                    "undecodable row",
+                    "2026-08-01T00:00:00+00:00",
+                )
+                .expect("old letter");
+        }
+        metadata
+            .record_dlq(
+                "dlq_new",
+                &database,
+                Some("orders"),
+                "{}",
+                "undecodable row",
+                "2026-10-01T00:00:00+00:00",
+            )
+            .expect("new letter");
+        let now = Utc
+            .with_ymd_and_hms(2026, 10, 4, 0, 0, 0)
+            .single()
+            .expect("time");
+
+        assert!(
+            prune_aged(&metadata, DEAD_LETTERS, now, 0, 10, |_| {}).is_none(),
+            "zero keeps every letter"
+        );
+        assert_eq!(
+            metadata
+                .dlq_records(Some(&database), 1_000_000)
+                .expect("letters")
+                .len(),
+            26
+        );
+
+        let generation = pintail_meta::write_generation();
+        let mut sizes = Vec::new();
+        let pruned = prune_aged(&metadata, DEAD_LETTERS, now, 30, 10, |removed| {
+            sizes.push(removed);
+        })
+        .expect("retention on")
+        .expect("prune");
+        assert_eq!((pruned.removed, pruned.batches), (25, 3));
+        assert_eq!(sizes, [10, 10]);
+        assert!(
+            pintail_meta::write_generation() > generation,
+            "pruning dead letters is a change readers must see"
+        );
+
+        let (status, listed) = node
+            .call(
+                "GET",
+                &format!("/api/dlq?db={database}"),
+                Some(&node.admin),
+                None,
+            )
+            .await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{listed}");
+        let ids = listed
+            .as_array()
+            .expect("list")
+            .iter()
+            .map(|letter| letter["id"].as_str().expect("id").to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["dlq_new"]);
+        assert_eq!(
+            metadata
+                .dlq_records(Some(&database), 1_000_000)
+                .expect("letters")
+                .len(),
+            1,
+            "the gauge's count matches the list"
+        );
+
+        for (method, uri) in [
+            ("DELETE", "/api/dlq/dlq_old_03"),
+            ("POST", "/api/dlq/dlq_old_03/retry"),
+        ] {
+            let (status, body) = node.call(method, uri, Some(&node.admin), None).await;
+            assert_eq!(status, axum::http::StatusCode::NOT_FOUND, "{method} {body}");
+        }
+        let (status, body) = node
+            .call("DELETE", "/api/dlq/dlq_new", Some(&node.admin), None)
+            .await;
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT, "{body}");
+        assert!(
+            metadata
+                .dlq_records(Some(&database), 10)
+                .expect("letters")
+                .is_empty()
+        );
     }
 
     #[test]

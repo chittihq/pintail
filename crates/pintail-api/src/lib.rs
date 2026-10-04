@@ -60,7 +60,7 @@ use rust_embed::RustEmbed;
 use serde::Serialize;
 use tower_http::compression::CompressionLayer;
 
-pub use metadata_health::audit_retention_days;
+pub use metadata_health::{audit_retention_days, dlq_retention_days};
 pub use optimizations::{Optimizations, optimizations};
 pub use state::ApiState;
 pub use supervisor::spawn as spawn_supervisor;
