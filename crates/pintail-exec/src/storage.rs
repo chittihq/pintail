@@ -6947,8 +6947,16 @@ mod tests {
             execute_rows("SELECT COUNT(name) FROM events", catalog, &provider)[0][0].clone()
         };
         // First run computes; the second must serve the memo (same value).
+        // The counters are process-wide and other tests share the process,
+        // so each side of the pair is a lower bound.
+        let before = crate::settled_memo_stats();
         assert_eq!(count(&table, &catalog), Value::UInt64(1000));
+        let stored = crate::settled_memo_stats();
+        assert!(stored.stores > before.stores, "{before:?} -> {stored:?}");
+        assert!(stored.misses > before.misses, "{before:?} -> {stored:?}");
         assert_eq!(count(&table, &catalog), Value::UInt64(1000));
+        let replayed = crate::settled_memo_stats();
+        assert!(replayed.hits > stored.hits, "{stored:?} -> {replayed:?}");
         // A new segment bumps the manifest generation: stale memo entries
         // become unreachable and the fresh count is exact.
         table

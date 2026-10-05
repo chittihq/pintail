@@ -138,6 +138,33 @@ fn render(state: &ApiState) -> anyhow::Result<String> {
         "PREPAREs refused at a session's prepared-statement ceiling (MySQL error 1461).",
         wire.prepared_statements_refused,
     );
+    // The settled aggregate memo answers a repeat with no work, which a
+    // client cannot tell from an execution; these say which one it got.
+    let memo = pintail_exec::settled_memo_stats();
+    counter(
+        &mut output,
+        "pintail_settled_memo_hits_total",
+        "Aggregates answered from the settled result memo without reading rows.",
+        memo.hits,
+    );
+    counter(
+        &mut output,
+        "pintail_settled_memo_misses_total",
+        "Memo-eligible aggregates over a settled snapshot that found no entry and executed.",
+        memo.misses,
+    );
+    counter(
+        &mut output,
+        "pintail_settled_memo_stores_total",
+        "Settled result memo entries written after an execution.",
+        memo.stores,
+    );
+    counter(
+        &mut output,
+        "pintail_settled_memo_delta_merges_total",
+        "Answers built from a memo entry plus insert-only memtable rows.",
+        memo.delta_merges,
+    );
 
     output.push_str(
         "# HELP pintail_database_state Database state as a one-hot labeled gauge.\n\

@@ -1,5 +1,6 @@
 mod aggregate;
 pub use aggregate::take_fold_phase_timings;
+pub use aggregate::{SettledMemoStats, settled_memo_stats};
 mod budget;
 mod columnar_sort;
 mod deferred_projection;

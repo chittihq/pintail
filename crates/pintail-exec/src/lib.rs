@@ -45,6 +45,7 @@ pub use execution::{
     take_session_division_warnings, take_session_group_concat_warnings,
 };
 pub use execution::{PathSwitch, parallel_pool_threads, path_switches};
+pub use execution::{SettledMemoStats, settled_memo_stats};
 pub use execution::{
     dependent_index_builds, dependent_index_declines, dependent_index_probes,
     dependent_memo_disabled, dependent_memo_hits, dependent_memo_misses, dependent_set_executions,

@@ -2601,6 +2601,57 @@ static SETTLED_AGGREGATE_MEMO: std::sync::LazyLock<SettledMemo> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 const SETTLED_MEMO_MAX_ENTRIES: usize = 32;
+
+static SETTLED_MEMO_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SETTLED_MEMO_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SETTLED_MEMO_STORES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SETTLED_MEMO_DELTA_MERGES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Process-wide settled-memo activity since start, for `/metrics`.
+///
+/// A replayed answer and an executed one look identical to a client, so a
+/// benchmark that claims to time cache hits has to be able to prove it did.
+/// `ExecCounters` cannot: it is thread-local and the HTTP and wire paths run
+/// queries on worker threads.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SettledMemoStats {
+    /// Aggregates answered from a memo entry without reading a row.
+    pub hits: u64,
+    /// Memo-eligible aggregates (a settled plan with a deterministic
+    /// signature) that found no entry and executed.
+    pub misses: u64,
+    /// Entries written after an execution.
+    pub stores: u64,
+    /// Answers built from a memo entry plus insert-only memtable rows.
+    pub delta_merges: u64,
+}
+
+#[must_use]
+pub fn settled_memo_stats() -> SettledMemoStats {
+    use std::sync::atomic::Ordering::Relaxed;
+    SettledMemoStats {
+        hits: SETTLED_MEMO_HITS.load(Relaxed),
+        misses: SETTLED_MEMO_MISSES.load(Relaxed),
+        stores: SETTLED_MEMO_STORES.load(Relaxed),
+        delta_merges: SETTLED_MEMO_DELTA_MERGES.load(Relaxed),
+    }
+}
+
+fn store_settled(
+    memo: &mut HashMap<SettledMemoKey, std::sync::Arc<super::two_pass::SettledRows>>,
+    key: SettledMemoKey,
+    rows: Vec<Vec<Value>>,
+) {
+    if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
+        memo.clear();
+    }
+    memo.insert(
+        key,
+        std::sync::Arc::new(super::two_pass::SettledRows::new(rows)),
+    );
+    SETTLED_MEMO_STORES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
 const SETTLED_MEMO_MAX_ROWS: usize = 1 << 17;
 
 /// Deterministic plan signature, or `None` when any expression could
@@ -3465,12 +3516,16 @@ pub(super) fn build_hash_aggregate(
             .cloned()
     {
         memory.reserve(entry.payload())?;
+        SETTLED_MEMO_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return Ok(MaterializedRows {
             rows: Vec::new(),
             position: 0,
             spilled: None,
             ready: Some(super::two_pass::ReadyColumns::settled(entry)),
         });
+    }
+    if memo_key.is_some() {
+        SETTLED_MEMO_MISSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     if memo_key.is_none()
         // A bare scan only: the delta rows are raw inserts, and a Filter
@@ -3537,6 +3592,7 @@ pub(super) fn build_hash_aggregate(
             crate::counters::count(|counters| {
                 counters.settled_delta_merges = counters.settled_delta_merges.saturating_add(1);
             });
+            SETTLED_MEMO_DELTA_MERGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(MaterializedRows {
                 rows: merged,
                 position: 0,
@@ -3552,13 +3608,7 @@ pub(super) fn build_hash_aggregate(
     {
         if let Some(key) = &memo_key {
             let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
-            if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
-                memo.clear();
-            }
-            memo.insert(
-                key.clone(),
-                std::sync::Arc::new(super::two_pass::SettledRows::new(rows.clone())),
-            );
+            store_settled(&mut memo, key.clone(), rows.clone());
         }
         return Ok(MaterializedRows {
             rows,
@@ -3589,13 +3639,7 @@ pub(super) fn build_hash_aggregate(
     if let Some(rows) = segment_fold {
         if let Some(key) = &memo_key {
             let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
-            if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
-                memo.clear();
-            }
-            memo.insert(
-                key.clone(),
-                std::sync::Arc::new(super::two_pass::SettledRows::new(rows.clone())),
-            );
+            store_settled(&mut memo, key.clone(), rows.clone());
         }
         return Ok(MaterializedRows {
             rows,
@@ -3639,13 +3683,7 @@ pub(super) fn build_hash_aggregate(
         && result.rows.len() <= SETTLED_MEMO_MAX_ROWS
     {
         let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
-        if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
-            memo.clear();
-        }
-        memo.insert(
-            key,
-            std::sync::Arc::new(super::two_pass::SettledRows::new(result.rows.clone())),
-        );
+        store_settled(&mut memo, key, result.rows.clone());
     }
     Ok(result)
 }
