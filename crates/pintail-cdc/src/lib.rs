@@ -567,11 +567,12 @@ async fn run_cdc_inner(
     loop {
         // Every path back here - start, reconnect, recopy - rebuilt the
         // position from its checkpoint, which does not carry the floor.
+        let stored_at_resume = stored_version_floor(&targets);
         position.floor = position.floor.max(resume_floor(
             &metadata,
             database_id,
             &position,
-            stored_version_floor(&targets),
+            stored_at_resume,
         )?);
         // Nor does it carry the slots earlier transactions ran on into. An
         // empty batch means the position is the durable one, and so is the
@@ -584,6 +585,7 @@ async fn run_cdc_inner(
             pos: position.pos,
             floor: position.floor,
             carry: position.carry,
+            stored_at_resume,
         };
         // Writes out the closed transactions waiting in the batch: one WAL
         // record and one sync per touched table, one checkpoint for all of
@@ -3824,6 +3826,38 @@ struct DurablePoint {
     floor: u64,
     /// The version carry the checkpoint holds.
     carry: u64,
+    /// The highest row version stored when the stream resumed. Above
+    /// `floor`, those rows were written by an apply that died before its
+    /// checkpoint, and the stream is replaying them: every apply intent and
+    /// every checkpoint until the replay passes them has to keep naming
+    /// them, or a second crash finds them unaccounted for.
+    stored_at_resume: u64,
+}
+
+impl DurablePoint {
+    /// The intent of an apply from this point that writes up to `highest`.
+    /// A replay's batch may end below rows the dead process stored past the
+    /// same checkpoint; the intent still has to cover those.
+    fn intent(&self, highest: u64) -> CdcApplyIntent {
+        CdcApplyIntent {
+            floor: self.floor,
+            highest: highest.max(self.stored_at_resume),
+            binlog_file: self.file.clone(),
+            binlog_pos: self.pos,
+        }
+    }
+
+    /// What a checkpoint at `file`:`pos` with `floor` leaves of the rows a
+    /// dead process stored: a checkpoint part-way through a replay leaves
+    /// the rest above it, named against the new position.
+    fn unfinished_past(&self, floor: u64, file: &str, pos: u64) -> Option<CdcApplyIntent> {
+        (self.stored_at_resume > floor).then(|| CdcApplyIntent {
+            floor,
+            highest: self.stored_at_resume,
+            binlog_file: file.to_owned(),
+            binlog_pos: pos,
+        })
+    }
 }
 
 /// Where one catch-up's time went, for the debug line that ends it.
@@ -4075,15 +4109,7 @@ fn flush_batch(
         .copied()
         .collect::<BTreeSet<_>>();
     if let Some(highest) = batch.highest_version {
-        metadata.record_cdc_apply_intent(
-            database_id,
-            &CdcApplyIntent {
-                floor: durable.floor,
-                highest,
-                binlog_file: durable.file.clone(),
-                binlog_pos: durable.pos,
-            },
-        )?;
+        metadata.record_cdc_apply_intent(database_id, &durable.intent(highest))?;
     }
     let work = targets
         .iter_mut()
@@ -4144,13 +4170,18 @@ fn flush_batch(
         binlog_file: Some(checkpoint.binlog_file.clone()),
         binlog_pos: Some(checkpoint.binlog_pos),
     };
+    let floor = batch
+        .highest_version
+        .map_or(durable.floor, |highest| durable.floor.max(highest));
+    let unfinished = durable.unfinished_past(floor, &batch.file, batch.pos);
     recovery_point("cdc.before_checkpoint_commit")?;
-    metadata.commit_cdc_checkpoint_carrying(
+    metadata.commit_cdc_checkpoint_leaving(
         database_id,
         &checkpoint_record,
         &touched_names,
         &Utc::now().to_rfc3339(),
         (position.carry != durable.carry).then_some(position.carry),
+        unfinished.as_ref(),
     )?;
     recovery_point("cdc.after_checkpoint_commit")?;
     phases.checkpoint += synchronized.elapsed();
@@ -4158,9 +4189,7 @@ fn flush_batch(
     durable.file.clone_from(&batch.file);
     durable.pos = batch.pos;
     durable.carry = position.carry;
-    if let Some(highest) = batch.highest_version {
-        durable.floor = durable.floor.max(highest);
-    }
+    durable.floor = floor;
     let flushed = FlushedBatch {
         transactions: batch.transactions,
         mutations: batch.mutations,
@@ -4902,6 +4931,31 @@ mod tests {
             .expect("checkpoint");
         assert_eq!(metadata.cdc_apply_intent("source").expect("intent"), None);
         assert_eq!(floor(&metadata, 950, 500), 500, "the apply finished");
+
+        // A checkpoint part-way through a replay names what is still
+        // stored above it, so a process killed after it replays again.
+        let unfinished = pintail_meta::CdcApplyIntent {
+            floor: 600,
+            highest: 800,
+            binlog_file: "mysql-bin.000003".to_owned(),
+            binlog_pos: 1_000,
+        };
+        metadata
+            .commit_cdc_checkpoint_leaving(
+                "source",
+                &checkpoint(1_000),
+                &[],
+                "2026-09-24T00:00:02Z",
+                None,
+                Some(&unfinished),
+            )
+            .expect("checkpoint inside a replay");
+        assert_eq!(
+            metadata.cdc_apply_intent("source").expect("intent"),
+            Some(unfinished)
+        );
+        assert_eq!(floor(&metadata, 1_000, 800), 600, "the replay goes on");
+        assert_eq!(floor(&metadata, 1_000, 801), 801, "rows nobody announced");
     }
 
     #[test]

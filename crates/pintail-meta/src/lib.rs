@@ -413,6 +413,13 @@ fn cdc_apply_intent_key(database_id: &str) -> String {
     format!("cdc.apply_intent.{database_id}")
 }
 
+fn encode_cdc_apply_intent(intent: &CdcApplyIntent) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        intent.floor, intent.highest, intent.binlog_pos, intent.binlog_file
+    )
+}
+
 fn cdc_version_carry_key(database_id: &str) -> String {
     format!("cdc.version_carry.{database_id}")
 }
@@ -1409,6 +1416,39 @@ impl MetaStore {
         now: &str,
         version_carry: Option<u64>,
     ) -> Result<()> {
+        self.commit_cdc_checkpoint_leaving(
+            database_id,
+            checkpoint,
+            touched_tables,
+            now,
+            version_carry,
+            None,
+        )
+    }
+
+    /// Commits a CDC source checkpoint and, in the same transaction, either
+    /// clears the apply intent or replaces it with `unfinished`.
+    ///
+    /// A checkpoint normally covers every row the apply it ends wrote. A
+    /// stream that resumed after a crash, though, is replaying rows the dead
+    /// process already stored, and a checkpoint part-way through that replay
+    /// still leaves stored rows above it. `unfinished` names them against
+    /// the new checkpoint, so a process killed after this commit resumes
+    /// from it as a replay too.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the position is invalid or the control-plane
+    /// transaction cannot commit.
+    pub fn commit_cdc_checkpoint_leaving(
+        &mut self,
+        database_id: &str,
+        checkpoint: &SnapshotCheckpointRecord,
+        touched_tables: &[String],
+        now: &str,
+        version_carry: Option<u64>,
+        unfinished: Option<&CdcApplyIntent>,
+    ) -> Result<()> {
         if !matches!(checkpoint.kind.as_str(), "gtid" | "filepos") {
             bail!("CDC checkpoint kind must be gtid or filepos");
         }
@@ -1459,13 +1499,27 @@ impl MetaStore {
                 (database_id, now),
             )
             .context("failed to mark database streaming")?;
-        // The rows this checkpoint covers are no longer an unfinished apply.
-        transaction
-            .execute(
-                "DELETE FROM settings WHERE key = ?1",
-                [cdc_apply_intent_key(database_id)],
-            )
-            .context("failed to clear the CDC apply intent")?;
+        // The rows this checkpoint covers are no longer an unfinished apply;
+        // rows stored past it by an earlier process still are.
+        if let Some(intent) = unfinished {
+            transaction
+                .execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (
+                        cdc_apply_intent_key(database_id),
+                        encode_cdc_apply_intent(intent),
+                    ),
+                )
+                .context("failed to carry the CDC apply intent")?;
+        } else {
+            transaction
+                .execute(
+                    "DELETE FROM settings WHERE key = ?1",
+                    [cdc_apply_intent_key(database_id)],
+                )
+                .context("failed to clear the CDC apply intent")?;
+        }
         if let Some(carry) = version_carry {
             transaction
                 .execute(
@@ -1496,10 +1550,7 @@ impl MetaStore {
     ) -> Result<()> {
         self.set_setting(
             &cdc_apply_intent_key(database_id),
-            &format!(
-                "{}:{}:{}:{}",
-                intent.floor, intent.highest, intent.binlog_pos, intent.binlog_file
-            ),
+            &encode_cdc_apply_intent(intent),
         )
     }
 

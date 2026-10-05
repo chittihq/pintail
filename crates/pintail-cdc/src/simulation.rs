@@ -323,6 +323,7 @@ impl Simulation {
                 pos: position.pos,
                 floor: 0,
                 carry: 0,
+                stored_at_resume: 0,
             },
             position,
             pending: PendingTransaction::default(),
@@ -672,6 +673,22 @@ impl Simulation {
     /// Reopens everything from disk and replays the source past the durable
     /// checkpoint.
     fn restart(&mut self, step: usize) {
+        for index in self.reopen(step) {
+            if let Err(error) = self.deliver(index) {
+                self.fail(
+                    step,
+                    &format!(
+                        "replaying transaction {} failed: {error}",
+                        self.log[index].sequence
+                    ),
+                );
+            }
+        }
+    }
+
+    /// Reopens everything from disk at the durable checkpoint, and returns
+    /// the transactions the source holds past it.
+    fn reopen(&mut self, step: usize) -> Vec<usize> {
         ARMED.with(|armed| armed.set(None));
         self.targets.clear();
         self.pending = PendingTransaction::default();
@@ -710,13 +727,10 @@ impl Simulation {
         let resume = checkpoint.binlog_pos.unwrap_or(0);
         self.position = StreamPosition::from_checkpoint(checkpoint, SourceFlavor::Mysql)
             .expect("resume position");
-        self.position.floor = resume_floor(
-            &self.metadata,
-            DATABASE,
-            &self.position,
-            stored_version_floor(&self.targets),
-        )
-        .expect("resume floor");
+        let stored_at_resume = stored_version_floor(&self.targets);
+        self.position.floor =
+            resume_floor(&self.metadata, DATABASE, &self.position, stored_at_resume)
+                .expect("resume floor");
         self.position.slot_bits = slot_bits(self.seed);
         self.position.carry = self
             .metadata
@@ -727,6 +741,7 @@ impl Simulation {
             pos: self.position.pos,
             floor: self.position.floor,
             carry: self.position.carry,
+            stored_at_resume,
         };
         let replay = (0..self.log.len())
             .filter(|&index| self.log[index].commit_position() > resume)
@@ -735,17 +750,7 @@ impl Simulation {
             "restart: replay {} transactions past {resume}",
             replay.len()
         ));
-        for index in replay {
-            if let Err(error) = self.deliver(index) {
-                self.fail(
-                    step,
-                    &format!(
-                        "replaying transaction {} failed: {error}",
-                        self.log[index].sequence
-                    ),
-                );
-            }
-        }
+        replay
     }
 
     fn verify(&self, step: usize) {
@@ -1052,5 +1057,58 @@ fn a_keyless_table_refuses_updates_and_deletes_instead_of_guessing() {
             refusal.to_string().contains("requires resnapshot"),
             "{refusal}"
         );
+    }
+}
+
+/// A process killed while it replays a batch an earlier process stored and
+/// never checkpointed leaves those rows above the checkpoint a second time:
+/// under the intent of a smaller replayed batch, or past a checkpoint the
+/// replay already moved. The next restart is still a replay of the same
+/// transactions, not a source whose numbering restarted.
+#[test]
+fn a_restart_killed_while_replaying_an_unfinished_batch_replays_again() {
+    const BATCH: usize = 5;
+    for seed in 1..=6 {
+        for (replayed, site) in [
+            (0, "cdc.after_ingest"),
+            (0, "cdc.before_checkpoint_commit"),
+            (1, "cdc.after_ingest"),
+            (1, "cdc.after_checkpoint_commit"),
+            (2, "cdc.before_checkpoint_commit"),
+            (BATCH - 1, "cdc.before_checkpoint_commit"),
+        ] {
+            let workspace = tempfile::tempdir().expect("simulation workspace");
+            let mut simulation = Simulation::new(seed, workspace.path());
+            let first = simulation.log.len();
+            for _ in 0..BATCH {
+                let change = simulation.generate_rows();
+                let sequence = simulation.log.len() as u64 + 1;
+                simulation.log.push(Transaction { sequence, change });
+            }
+            ARMED.with(|armed| armed.set(Some("cdc.before_checkpoint_commit")));
+            let mut batch = ApplyBatch::default();
+            let died = (first..simulation.log.len())
+                .try_for_each(|index| simulation.stage(index, &mut batch))
+                .and_then(|()| simulation.flush(&mut batch))
+                .expect_err("the batch dies before its checkpoint");
+            assert!(died.to_string().contains(CRASH_MARKER), "{died}");
+
+            let replay = simulation.reopen(0);
+            assert_eq!(replay.len(), BATCH, "seed {seed}: nothing was checkpointed");
+            for &index in &replay[..replayed] {
+                simulation.deliver(index).expect("replay");
+            }
+            ARMED.with(|armed| armed.set(Some(site)));
+            let died = simulation
+                .deliver(replay[replayed])
+                .expect_err("the replay dies");
+            assert!(
+                died.to_string().contains(CRASH_MARKER),
+                "seed {seed}, {replayed} replayed, {site}: {died}"
+            );
+
+            simulation.restart(0);
+            simulation.verify(0);
+        }
     }
 }
