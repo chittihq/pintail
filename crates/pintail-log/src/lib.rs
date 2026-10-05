@@ -128,7 +128,8 @@ pub fn emit_at(level: u8, message: &str) {
 struct Deferred {
     lines: Vec<(u8, String)>,
     /// The writer is awake and will take whatever is queued; nobody needs
-    /// to wake it again.
+    /// to wake it again. False whenever the writer waits, so a line queued
+    /// while it waits always wakes it.
     writing: bool,
 }
 
@@ -169,8 +170,15 @@ fn deferred_queue() -> Option<&'static DeferredQueue> {
                             .queue
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        deferred.writing = false;
                         while deferred.lines.is_empty() {
+                            // Cleared before every wait, not once per pass:
+                            // a line written at once can flush the lines
+                            // this writer was just woken for before it runs,
+                            // and a writer that went back to waiting still
+                            // marked awake would never be woken again - the
+                            // next deferred line would sit in the queue
+                            // until something else flushed it.
+                            deferred.writing = false;
                             deferred = queue
                                 .queued
                                 .wait(deferred)
@@ -228,9 +236,18 @@ pub fn flush_deferred() {
     let Some(Some(queue)) = DEFERRED.get() else {
         return;
     };
-    // One flush at a time takes lines and writes them, so two flushes
-    // cannot write their lines out of order. The sink is called after both
-    // locks are let go: it is someone else's code, and may log.
+    // A sink that logs lands back here on the same thread, which already
+    // holds the flush lock below. Its own line is written at once; the
+    // lines this flush took are already on stderr.
+    if IN_FLUSH.with(std::cell::Cell::get) {
+        return;
+    }
+    // One flush at a time takes lines, writes them and hands them to the
+    // sink, so two flushes cannot deliver their lines out of order to either.
+    // The sink is called before the flush lock is let go: called after it, a
+    // line written at once on another thread could reach the sink ahead of
+    // the deferred lines this flush wrote before it. The queue lock is not
+    // held, so a sink may queue deferred lines.
     let flushing = queue
         .flushing
         .lock()
@@ -252,12 +269,19 @@ pub fn flush_deferred() {
         text.push('\n');
     }
     let _ = std::io::stderr().lock().write_all(text.as_bytes());
-    drop(flushing);
     if let Some(sink) = SINK.get() {
+        IN_FLUSH.with(|in_flush| in_flush.set(true));
         for (level, line) in &lines {
             sink(*level, line);
         }
+        IN_FLUSH.with(|in_flush| in_flush.set(false));
     }
+    drop(flushing);
+}
+
+std::thread_local! {
+    /// Whether this thread is inside [`flush_deferred`]'s sink calls.
+    static IN_FLUSH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Logs a failure. Always emitted.
@@ -317,6 +341,43 @@ macro_rules! log_debug {
 #[cfg(test)]
 mod tests {
     use super::{DEBUG, ERROR, INFO, enabled};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    /// Every line any test logs, as the sink received it. The sink is the
+    /// process's one sink, so tests share it and each picks out its own lines
+    /// by prefix.
+    static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    fn record(_level: u8, message: &str) {
+        SEEN.lock().unwrap().push(message.to_owned());
+    }
+
+    /// Installs [`record`]. Every test installs the same function, so
+    /// whichever test runs first in the process wins and the rest find it in
+    /// place.
+    fn install_sink() {
+        let _ = super::set_sink(record);
+    }
+
+    fn seen_with(prefix: &str) -> Vec<String> {
+        SEEN.lock()
+            .unwrap()
+            .iter()
+            .filter(|line| line.starts_with(prefix))
+            .cloned()
+            .collect()
+    }
+
+    /// Waits until the sink has received `line`; panics with `what` if the
+    /// background writer has not written it within ten seconds.
+    fn wait_for(line: &str, what: &str) {
+        let waited = Instant::now();
+        while !SEEN.lock().unwrap().iter().any(|seen| seen == line) {
+            assert!(waited.elapsed() < Duration::from_secs(10), "{what}");
+            std::thread::sleep(Duration::from_micros(100));
+        }
+    }
 
     #[test]
     fn error_is_always_enabled() {
@@ -327,37 +388,86 @@ mod tests {
 
     #[test]
     fn deferred_lines_reach_the_sink_in_order_and_before_a_line_written_at_once() {
-        use std::sync::Mutex;
-        static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
-        fn sink(_level: u8, message: &str) {
-            if message.starts_with("ordered ") {
-                SEEN.lock().unwrap().push(message.to_owned());
-            }
-        }
-        assert!(super::set_sink(sink), "this test owns the process's sink");
+        install_sink();
         for index in 0..50 {
             super::emit_deferred(INFO, format!("ordered {index}"));
         }
         // Written at once: everything queued before it goes first.
         super::emit_at(INFO, "ordered at-once");
-        let seen = SEEN.lock().unwrap().clone();
         let mut expected = (0..50)
             .map(|index| format!("ordered {index}"))
             .collect::<Vec<_>>();
         expected.push("ordered at-once".to_owned());
-        assert_eq!(seen, expected);
+        assert_eq!(seen_with("ordered "), expected);
         // And a deferred line with nothing after it is written by the
         // background writer on its own.
         super::emit_deferred(INFO, "ordered last".to_owned());
-        let waited = std::time::Instant::now();
-        while SEEN.lock().unwrap().len() < 52 {
-            assert!(
-                waited.elapsed() < std::time::Duration::from_secs(10),
-                "the background writer never wrote the line"
+        wait_for("ordered last", "the background writer never wrote the line");
+        expected.push("ordered last".to_owned());
+        assert_eq!(seen_with("ordered "), expected);
+    }
+
+    #[test]
+    fn the_writer_wakes_again_after_a_flush_took_the_lines_it_was_woken_for() {
+        // Each round wakes the idle writer with a deferred line and then, on
+        // this thread, writes a line at once - which flushes the queued line
+        // before the writer has run. The writer wakes to an empty queue; it
+        // must still be woken for the next deferred line, which nothing
+        // else will ever flush.
+        install_sink();
+        for round in 0..200 {
+            super::emit_deferred(INFO, format!("wake {round} queued"));
+            super::emit_at(INFO, &format!("wake {round} at-once"));
+            super::emit_deferred(INFO, format!("wake {round} last"));
+            wait_for(
+                &format!("wake {round} last"),
+                &format!("round {round}: the background writer was never woken again"),
             );
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            // Let the writer go back to waiting, so the next round's line
+            // wakes it from there.
+            std::thread::sleep(Duration::from_micros(300));
         }
-        assert_eq!(SEEN.lock().unwrap().last().unwrap(), "ordered last");
+    }
+
+    #[test]
+    fn lines_from_many_threads_all_reach_the_sink_each_thread_in_order() {
+        // Threads mixing deferred lines with lines written at once: every
+        // line reaches the sink, and each thread's lines reach it in the
+        // order that thread logged them, whichever thread or the writer
+        // happened to write them.
+        install_sink();
+        const THREADS: usize = 6;
+        const LINES: usize = 3000;
+        std::thread::scope(|scope| {
+            for thread in 0..THREADS {
+                scope.spawn(move || {
+                    for index in 0..LINES {
+                        let line = format!("mix {thread} {index}");
+                        if index % 7 == 5 {
+                            super::emit_at(INFO, &line);
+                        } else {
+                            super::emit_deferred(INFO, line);
+                        }
+                    }
+                });
+            }
+        });
+        for thread in 0..THREADS {
+            wait_for(
+                &format!("mix {thread} {}", LINES - 1),
+                &format!("thread {thread}: its last deferred line was never written"),
+            );
+        }
+        for thread in 0..THREADS {
+            let expected = (0..LINES)
+                .map(|index| format!("mix {thread} {index}"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                seen_with(&format!("mix {thread} ")),
+                expected,
+                "thread {thread}'s lines reached the sink missing or out of order"
+            );
+        }
     }
 
     #[test]
