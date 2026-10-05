@@ -21,8 +21,9 @@ mod wal;
 pub use database::DatabaseStore;
 pub use error::StoreError;
 pub use maintenance::{
-    MaintenanceStatus, maintenance_status, merge_threads, merge_write_rate, statement_finished,
-    statement_started,
+    CopyInFlight, MaintenanceStatus, copies_in_flight, copy_started, maintenance_status,
+    merge_threads, merge_write_rate, segment_upgrade_deferral, segment_upgrade_enabled,
+    segment_upgrade_setting, statement_finished, statement_started,
 };
 pub use publication::{
     directory_epoch, lease_unwritten_table, publication_epoch, publish_changes_under,
@@ -43,8 +44,9 @@ pub use store::{
     ProjectedScan, ProjectedScanStream, ProjectedValueChunk, ScanStats, StorageMetrics,
     StoreOptions, TableSnapshot, TableStore, TextKeyFn, TextKeyer, ValidityIter, WalSync,
     changes_applied_at_rest, override_side_index, projected_scan_width, scan_threads_setting,
-    side_index_cache_default, side_index_cache_limit, side_index_cache_usage, side_index_enabled,
-    side_index_note, side_index_totals, side_index_trace, size_overrides,
+    segment_formats_at_rest, side_index_cache_default, side_index_cache_limit,
+    side_index_cache_usage, side_index_enabled, side_index_note, side_index_totals,
+    side_index_trace, size_overrides,
 };
 
 /// The instruction set the vector kernels run at in this process, and the

@@ -503,8 +503,60 @@ pub struct TableStore {
 /// One background size-tier merge in flight.
 struct BackgroundMerge {
     worker: std::thread::JoinHandle<()>,
-    receiver: std::sync::mpsc::Receiver<Result<Vec<segment::SegmentMeta>, StoreError>>,
+    /// The outputs: one group for a merge, one per input for an upgrade.
+    receiver: std::sync::mpsc::Receiver<Result<Vec<Vec<segment::SegmentMeta>>, StoreError>>,
     input_files: Vec<String>,
+    /// Set for the rewrite of old-format segments into the current format:
+    /// the bytes it rewrites.
+    upgrade: Option<u64>,
+}
+
+/// The crash-consistency boundaries of one kind of background rewrite.
+struct RewriteSites {
+    after_reserve: &'static str,
+    before_publish: &'static str,
+    after_publish: &'static str,
+}
+
+const MERGE_SITES: RewriteSites = RewriteSites {
+    after_reserve: "store.merge.after_reserve",
+    before_publish: "store.merge.before_publish",
+    after_publish: "store.merge.after_publish",
+};
+
+const UPGRADE_SITES: RewriteSites = RewriteSites {
+    after_reserve: "store.upgrade.after_reserve",
+    before_publish: "store.upgrade.before_publish",
+    after_publish: "store.upgrade.after_publish",
+};
+
+/// Segment IDs one background rewrite reserves through a manifest publish.
+const RESERVED_SEGMENT_IDS: u64 = 65_536;
+/// Segment file bytes one upgrade rewrites at most, unless its first segment
+/// alone is larger: a replication stream's tables wait for a rewrite they
+/// started before they close, so one is kept to a few seconds of work.
+const UPGRADE_GROUP_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Counts the segment files the manifest at rest in `directory` names, by
+/// the format version each was written in. Reads the manifest and each
+/// file's header only, holds no lock, and skips a file removed while it
+/// looked (a merge retired it).
+///
+/// # Errors
+///
+/// Returns an error when the manifest is corrupt or a segment's header
+/// cannot be read.
+pub fn segment_formats_at_rest(directory: &Path) -> Result<BTreeMap<u8, usize>, StoreError> {
+    let mut formats = BTreeMap::new();
+    for file_name in manifest::segment_files_at_rest(directory)? {
+        match segment::written_as(&directory.join(&file_name)) {
+            Ok(written) => *formats.entry(written.version).or_default() += 1,
+            Err(StoreError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(formats)
 }
 
 /// A table's log is cut back only after a manifest naming the flushed rows is
@@ -567,12 +619,13 @@ impl TableStore {
             worker,
             receiver,
             input_files,
+            upgrade,
         } = merge;
         let outcome = receiver.recv();
         let _ = worker.join();
         match outcome {
             Ok(Ok(outputs)) => {
-                if let Err(error) = self.publish_merge(&input_files, outputs) {
+                if let Err(error) = self.publish_merge(&input_files, outputs, upgrade) {
                     self.last_background_error = Some(error.to_string());
                 } else {
                     let _ = self.reclaim_obsolete_segments();
@@ -1828,16 +1881,25 @@ impl TableStore {
                 return Ok(false);
             }
         };
-        self.publish_merge(&merge.input_files, outputs)?;
+        self.publish_merge(&merge.input_files, outputs, merge.upgrade)?;
         Ok(true)
     }
 
     /// Replaces a finished merge's inputs with its outputs in a new manifest.
+    /// An upgrade's outputs come one group per input, and each group takes
+    /// its input's place in the manifest's order, so nothing that orders
+    /// segments sees the table change.
     fn publish_merge(
         &mut self,
         input_files: &[String],
-        outputs: Vec<segment::SegmentMeta>,
+        groups: Vec<Vec<segment::SegmentMeta>>,
+        upgrade: Option<u64>,
     ) -> Result<(), StoreError> {
+        let sites = if upgrade.is_some() {
+            &UPGRADE_SITES
+        } else {
+            &MERGE_SITES
+        };
         let inputs = input_files.iter().collect::<std::collections::HashSet<_>>();
         let mut next_manifest = self.manifest.as_ref().clone();
         next_manifest.layer_index = LayerIndexSlot::default();
@@ -1857,20 +1919,242 @@ impl TableStore {
             .collect::<Vec<_>>();
         // Publication removes exactly the merged inputs BY NAME: flushes
         // during the merge appended segments this filter must keep.
-        next_manifest
-            .segments
-            .retain(|meta| !inputs.contains(&meta.file_name));
-        next_manifest.segments.extend(outputs);
+        if upgrade.is_some() {
+            if retired_paths.is_empty() {
+                // Every segment left the table while it was rewritten: the
+                // copies are no longer the table's, and the next open
+                // sweeps them.
+                return Ok(());
+            }
+            for (file_name, outputs) in input_files.iter().zip(groups) {
+                // One that left the table keeps its copy out the same way.
+                if let Some(place) = next_manifest
+                    .segments
+                    .iter()
+                    .position(|meta| &meta.file_name == file_name)
+                {
+                    next_manifest.segments.splice(place..=place, outputs);
+                }
+            }
+        } else {
+            next_manifest
+                .segments
+                .retain(|meta| !inputs.contains(&meta.file_name));
+            next_manifest.segments.extend(groups.into_iter().flatten());
+        }
+        let upgraded = retired_paths.len();
         let _published = self.publication.publishing();
-        crash_point("store.merge.before_publish")?;
+        crash_point(sites.before_publish)?;
         manifest::publish(&self.directory, &next_manifest)?;
-        crash_point("store.merge.after_publish")?;
+        crash_point(sites.after_publish)?;
         let previous = std::mem::replace(&mut self.manifest, Arc::new(next_manifest));
         self.retired.push(RetiredGeneration {
             readers: Arc::downgrade(&previous),
             paths: retired_paths,
         });
+        if let Some(bytes) = upgrade {
+            crate::maintenance::segments_upgraded(upgraded, bytes);
+            self.note_upgrade_finished();
+        }
         Ok(())
+    }
+
+    /// Logs, once, that the table holds no segment of an older format any
+    /// more: called after each upgrade publishes.
+    fn note_upgrade_finished(&self) {
+        let current = segment::WRITTEN_SEGMENT_FORMAT;
+        let remaining = self
+            .manifest
+            .segments
+            .iter()
+            .filter(|meta| {
+                segment::written_as(&self.directory.join(&meta.file_name))
+                    .is_ok_and(|written| written.version < current)
+            })
+            .count();
+        if remaining == 0 {
+            pintail_log::log_info!(
+                "pintail store table {} finished upgrading: all {} segments are format {current}",
+                self.directory.display(),
+                self.manifest.segments.len()
+            );
+        }
+    }
+
+    /// Counts this table's segments by the format version each was written
+    /// in.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a segment's header cannot be read.
+    pub fn segment_formats(&self) -> Result<BTreeMap<u8, usize>, StoreError> {
+        let mut formats = BTreeMap::new();
+        for meta in &self.manifest.segments {
+            let written = segment::written_as(&self.directory.join(&meta.file_name))?;
+            *formats.entry(written.version).or_default() += 1;
+        }
+        Ok(formats)
+    }
+
+    /// Reserves a range of segment IDs for a background rewrite through a
+    /// manifest publish, so the reservation survives a restart mid-rewrite,
+    /// and answers its first ID.
+    fn reserve_segment_ids(&mut self, sites: &RewriteSites) -> Result<u64, StoreError> {
+        let id_base = self.manifest.next_segment_id;
+        let mut next_manifest = self.manifest.as_ref().clone();
+        next_manifest.generation = next_manifest
+            .generation
+            .checked_add(1)
+            .ok_or(StoreError::SequenceOverflow)?;
+        next_manifest.next_segment_id = next_manifest
+            .next_segment_id
+            .checked_add(RESERVED_SEGMENT_IDS)
+            .ok_or(StoreError::SequenceOverflow)?;
+        let _published = self.publication.publishing();
+        manifest::publish(&self.directory, &next_manifest)?;
+        crash_point(sites.after_reserve)?;
+        self.manifest = Arc::new(next_manifest);
+        Ok(id_base)
+    }
+
+    /// The segments, in manifest order, written in a format older than the
+    /// one this build writes, as many as [`UPGRADE_GROUP_BYTES`] of files
+    /// hold and at least one: each with its index, how it was written and
+    /// its size.
+    fn old_format_segments(&self) -> Result<Vec<(usize, segment::WrittenAs, u64)>, StoreError> {
+        let mut group = Vec::new();
+        let mut bytes = 0_u64;
+        for (index, meta) in self.manifest.segments.iter().enumerate() {
+            let path = self.directory.join(&meta.file_name);
+            let written = segment::written_as(&path)?;
+            if written.version >= segment::WRITTEN_SEGMENT_FORMAT {
+                continue;
+            }
+            let size = std::fs::metadata(&path)
+                .map_err(|error| StoreError::io("inspect segment for upgrade", error))?
+                .len();
+            if !group.is_empty() && bytes.saturating_add(size) > UPGRADE_GROUP_BYTES {
+                break;
+            }
+            bytes = bytes.saturating_add(size);
+            group.push((index, written, size));
+        }
+        Ok(group)
+    }
+
+    /// Starts rewriting segments written in an older format into the
+    /// format this build writes - a group of them in manifest order, up to
+    /// [`UPGRADE_GROUP_BYTES`] of files - on the background merge thread
+    /// and through the merge's own path: the same slot, pacing and write
+    /// budget, the same reserved IDs, the same publication. Each segment
+    /// is rewritten alone and its output takes its place. Readers keep the
+    /// snapshot they hold; an old file goes once its last reader has.
+    ///
+    /// Returns whether an upgrade is now running. None starts while a merge
+    /// is in flight or the planner has one to run - a merge writes its
+    /// inputs in the current format anyway - when the volume cannot hold
+    /// the rewrite beside its inputs, or when every segment is current.
+    ///
+    /// A rewrite keeps the segment's rows: one per key, as a merge of it
+    /// alone would, with deletes dropped only where nothing outside it
+    /// could hold what they delete. A segment written zstd-compressed (a
+    /// whole-table merge's output) is written zstd-compressed again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a manifest cannot be published or segment
+    /// metadata cannot be read.
+    pub fn start_segment_upgrade(&mut self) -> Result<bool, StoreError> {
+        if self.poll_background_merge()? {
+            self.reclaim_obsolete_segments()?;
+        }
+        if self.background.is_some() || self.compaction_plan()?.is_some() {
+            return Ok(false);
+        }
+        let group = self.old_format_segments()?;
+        if group.is_empty() {
+            return Ok(false);
+        }
+        let bytes = group.iter().map(|(_, _, size)| *size).sum::<u64>();
+        let available = fs2::available_space(&self.directory)
+            .map_err(|error| StoreError::io("inspect free space for upgrade", error))?;
+        if available < bytes.saturating_add(self.options.compaction_disk_reserve_bytes) {
+            return Ok(false);
+        }
+        let jobs = group
+            .iter()
+            .map(|(index, written, _)| {
+                let compression = if written.zstd {
+                    segment::Compression::Zstd
+                } else {
+                    segment::Compression::AdaptiveLz4
+                };
+                (
+                    self.manifest.segments[*index].clone(),
+                    compression,
+                    merge_drops_tombstones(&self.manifest.segments, &[*index]),
+                )
+            })
+            .collect::<Vec<_>>();
+        pintail_log::log_debug!(
+            "pintail store table {} upgrades {} segments to format {} ({bytes} bytes)",
+            self.directory.display(),
+            jobs.len(),
+            segment::WRITTEN_SEGMENT_FORMAT,
+        );
+        let input_files = jobs
+            .iter()
+            .map(|(meta, _, _)| meta.file_name.clone())
+            .collect::<Vec<_>>();
+        let id_base = self.reserve_segment_ids(&UPGRADE_SITES)?;
+        let directory = self.directory.clone();
+        let schema = self.schema.clone();
+        let options = self.options;
+        let yield_flag = Arc::clone(&self.merge_yield);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let running = crate::maintenance::UpgradeRunning::start();
+        // An upgrade is never behind: it paces itself under statements.
+        let mut ticket = crate::maintenance::MergeTicket::queue(bytes, false);
+        let worker = std::thread::Builder::new()
+            .name("pintail-upgrade".to_owned())
+            .spawn(move || {
+                let result = if ticket.admit(&yield_flag) {
+                    let mut next_id = id_base;
+                    jobs.iter()
+                        .map(|(meta, compression, drop_tombstones)| {
+                            let outputs = run_background_merge(
+                                &directory,
+                                &schema,
+                                options,
+                                std::slice::from_ref(meta),
+                                *compression,
+                                *drop_tombstones,
+                                None,
+                                next_id,
+                                &yield_flag,
+                                &mut ticket,
+                            )?;
+                            next_id = next_id
+                                .checked_add(u64::try_from(outputs.len()).unwrap_or(u64::MAX))
+                                .ok_or(StoreError::SequenceOverflow)?;
+                            Ok(outputs)
+                        })
+                        .collect::<Result<Vec<_>, StoreError>>()
+                } else {
+                    Err(merge_yielded())
+                };
+                drop(ticket);
+                drop(running);
+                let _ = sender.send(result);
+            })
+            .map_err(|error| StoreError::io("spawn segment upgrade thread", error))?;
+        self.background = Some(BackgroundMerge {
+            worker,
+            receiver,
+            input_files,
+            upgrade: Some(bytes),
+        });
+        Ok(true)
     }
 
     /// Starts a size-tier merge on a background thread. The thread reads
@@ -1878,7 +2162,6 @@ impl TableStore {
     /// IDs come from a range reserved here so concurrent flushes never
     /// collide with them.
     fn spawn_background_merge(&mut self) -> Result<(), StoreError> {
-        const RESERVED_SEGMENT_IDS: u64 = 65_536;
         let Some(plan) = self.compaction_plan()? else {
             return Ok(());
         };
@@ -1921,22 +2204,12 @@ impl TableStore {
             .iter()
             .map(|meta| meta.file_name.clone())
             .collect::<Vec<_>>();
-        // Reserve an ID range through a manifest publish, so the reservation
-        // survives a restart mid-merge.
-        let id_base = self.manifest.next_segment_id;
-        let mut next_manifest = self.manifest.as_ref().clone();
-        next_manifest.generation = next_manifest
-            .generation
-            .checked_add(1)
-            .ok_or(StoreError::SequenceOverflow)?;
-        next_manifest.next_segment_id = next_manifest
-            .next_segment_id
-            .checked_add(RESERVED_SEGMENT_IDS)
-            .ok_or(StoreError::SequenceOverflow)?;
-        let _published = self.publication.publishing();
-        manifest::publish(&self.directory, &next_manifest)?;
-        crash_point("store.merge.after_reserve")?;
-        self.manifest = Arc::new(next_manifest);
+        let id_base = self.reserve_segment_ids(&MERGE_SITES)?;
+        let compression = if full_merge {
+            segment::Compression::Zstd
+        } else {
+            segment::Compression::AdaptiveLz4
+        };
         let directory = self.directory.clone();
         let schema = self.schema.clone();
         let options = self.options;
@@ -1954,7 +2227,7 @@ impl TableStore {
                         &schema,
                         options,
                         &input_metas,
-                        full_merge,
+                        compression,
                         drop_tombstones,
                         window.as_ref(),
                         id_base,
@@ -1967,13 +2240,14 @@ impl TableStore {
                 drop(ticket);
                 // The owner joins this worker before releasing its writer
                 // lock; the next open may then sweep unpublished chunks.
-                let _ = sender.send(result);
+                let _ = sender.send(result.map(|outputs| vec![outputs]));
             })
             .map_err(|error| StoreError::io("spawn compaction thread", error))?;
         self.background = Some(BackgroundMerge {
             worker,
             receiver,
             input_files,
+            upgrade: None,
         });
         Ok(())
     }
@@ -2227,6 +2501,7 @@ impl TableStore {
             }
             for path in generation.paths {
                 segment::forget_cached_blocks(&path);
+                segment::forget_written_as(&path);
                 match std::fs::remove_file(&path) {
                     Ok(()) => reclaimed += 1,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -2867,7 +3142,7 @@ fn run_background_merge(
     schema: &TableSchema,
     options: StoreOptions,
     input_metas: &[segment::SegmentMeta],
-    full_merge: bool,
+    compression: segment::Compression,
     drop_tombstones: bool,
     window: Option<&MergeWindow>,
     id_base: u64,
@@ -2882,11 +3157,6 @@ fn run_background_merge(
         .iter_mut()
         .map(segment::SegmentRowStream::next_row)
         .collect::<Result<Vec<_>, _>>()?;
-    let compression = if full_merge {
-        segment::Compression::Zstd
-    } else {
-        segment::Compression::AdaptiveLz4
-    };
     let output_row_limit = usize::try_from(options.max_compaction_rows).unwrap_or(usize::MAX);
     let mut rows = Vec::with_capacity(output_row_limit.min(64 * 1024));
     let mut buffered_bytes = 0_usize;

@@ -25,6 +25,12 @@
 //! Statements are counted by whoever answers them
 //! ([`statement_started`]); a process that never calls it has merges that
 //! never pace, which is what an embedded store or a test wants.
+//!
+//! The same slots, pacing and write budget carry the rewrite of segments an
+//! older build wrote into the format this one writes
+//! ([`segment_upgrade_enabled`]): a bounded group of segments at a time,
+//! each as a merge of that segment alone, started only when no merge wants the table, no copy is
+//! running and replication has caught up ([`segment_upgrade_deferral`]).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
@@ -133,9 +139,123 @@ pub fn merge_write_rate() -> u64 {
     })
 }
 
+/// Reads `PINTAIL_SEGMENT_UPGRADE`: anything but `off`, `0`, `false` or
+/// `no` (in any case) leaves the sweep on, which is also what unset means.
+#[must_use]
+pub fn segment_upgrade_setting(value: Option<&str>) -> bool {
+    !value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "off" | "0" | "false" | "no"
+        )
+    })
+}
+
+/// Whether segments written in an older format are rewritten into the
+/// current one in the background: `PINTAIL_SEGMENT_UPGRADE=off|on`, on by
+/// default. Read once.
+#[must_use]
+pub fn segment_upgrade_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        segment_upgrade_setting(std::env::var("PINTAIL_SEGMENT_UPGRADE").ok().as_deref())
+    })
+}
+
+static COPIES: AtomicUsize = AtomicUsize::new(0);
+static UPGRADES_RUNNING: AtomicUsize = AtomicUsize::new(0);
+static SEGMENTS_UPGRADED: AtomicU64 = AtomicU64::new(0);
+static BYTES_UPGRADED: AtomicU64 = AtomicU64::new(0);
+
+/// A table copy in flight, from its start until this is dropped. While
+/// any copy runs no segment upgrade starts: a copy writes a whole table's
+/// worth of new segments and is what the disk's bandwidth is for.
+#[derive(Debug)]
+pub struct CopyInFlight(());
+
+/// Counts a table copy as running until the answer is dropped.
+#[must_use]
+pub fn copy_started() -> CopyInFlight {
+    COPIES.fetch_add(1, Ordering::AcqRel);
+    CopyInFlight(())
+}
+
+impl Drop for CopyInFlight {
+    fn drop(&mut self) {
+        COPIES.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Table copies running in this process.
+#[must_use]
+pub fn copies_in_flight() -> usize {
+    COPIES.load(Ordering::Acquire)
+}
+
+/// Why no segment upgrade may start now, or `None` when one may: the
+/// sweep is off, a copy is running, the stream that would start it has
+/// not caught up with its source, or a merge was started instead.
+#[must_use]
+pub fn segment_upgrade_deferral(
+    enabled: bool,
+    copies: usize,
+    caught_up: bool,
+    merges_started: usize,
+) -> Option<&'static str> {
+    if !enabled {
+        Some("PINTAIL_SEGMENT_UPGRADE is off")
+    } else if copies > 0 {
+        Some("a table copy is in flight")
+    } else if !caught_up {
+        Some("replication has not caught up")
+    } else if merges_started > 0 {
+        Some("merges run first")
+    } else {
+        None
+    }
+}
+
+/// One segment upgrade from its start to its end, counted in the status.
+pub(crate) struct UpgradeRunning(());
+
+impl UpgradeRunning {
+    pub(crate) fn start() -> Self {
+        UPGRADES_RUNNING.fetch_add(1, Ordering::AcqRel);
+        Self(())
+    }
+}
+
+impl Drop for UpgradeRunning {
+    fn drop(&mut self) {
+        UPGRADES_RUNNING.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Counts `segments` segments of `bytes` input bytes rewritten into the
+/// current format and published.
+pub(crate) fn segments_upgraded(segments: usize, bytes: u64) {
+    SEGMENTS_UPGRADED.fetch_add(
+        u64::try_from(segments).unwrap_or(u64::MAX),
+        Ordering::AcqRel,
+    );
+    BYTES_UPGRADED.fetch_add(bytes, Ordering::AcqRel);
+}
+
 /// What background maintenance is doing at this moment, process-wide.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MaintenanceStatus {
+    /// Whether old-format segments are being rewritten into the current
+    /// format (`PINTAIL_SEGMENT_UPGRADE`).
+    pub segment_upgrade: bool,
+    /// Segment upgrades running or waiting for a merge slot.
+    pub upgrades_running: usize,
+    /// Segments rewritten into the current format since the process
+    /// started.
+    pub segments_upgraded: u64,
+    /// Bytes of old-format segments those upgrades rewrote.
+    pub bytes_upgraded: u64,
+    /// Table copies running, during which no upgrade starts.
+    pub copies_in_flight: usize,
     /// Merges holding a slot and working.
     pub merges_running: usize,
     /// Merges started and waiting for a slot.
@@ -183,6 +303,11 @@ impl MaintenanceStatus {
 #[must_use]
 pub fn maintenance_status() -> MaintenanceStatus {
     MaintenanceStatus {
+        segment_upgrade: segment_upgrade_enabled(),
+        upgrades_running: UPGRADES_RUNNING.load(Ordering::Acquire),
+        segments_upgraded: SEGMENTS_UPGRADED.load(Ordering::Acquire),
+        bytes_upgraded: BYTES_UPGRADED.load(Ordering::Acquire),
+        copies_in_flight: COPIES.load(Ordering::Acquire),
         merges_running: RUNNING.load(Ordering::Acquire),
         merges_waiting: WAITING.load(Ordering::Acquire),
         merge_threads: merge_threads(),
@@ -402,6 +527,40 @@ mod tests {
         }
         statement_finished();
         assert_eq!(ticket.slept, Duration::ZERO);
+    }
+
+    #[test]
+    fn the_upgrade_setting_is_on_unless_turned_off() {
+        assert!(segment_upgrade_setting(None));
+        assert!(segment_upgrade_setting(Some("on")));
+        assert!(segment_upgrade_setting(Some("1")));
+        for off in ["off", "OFF", " 0 ", "false", "no"] {
+            assert!(!segment_upgrade_setting(Some(off)), "{off}");
+        }
+    }
+
+    #[test]
+    fn an_upgrade_waits_for_copies_catch_up_and_merges_and_never_runs_when_off() {
+        assert_eq!(
+            segment_upgrade_deferral(false, 0, true, 0),
+            Some("PINTAIL_SEGMENT_UPGRADE is off")
+        );
+        let copy = copy_started();
+        assert!(copies_in_flight() > 0);
+        assert_eq!(
+            segment_upgrade_deferral(true, copies_in_flight(), true, 0),
+            Some("a table copy is in flight")
+        );
+        drop(copy);
+        assert_eq!(
+            segment_upgrade_deferral(true, 0, false, 0),
+            Some("replication has not caught up")
+        );
+        assert_eq!(
+            segment_upgrade_deferral(true, 0, true, 1),
+            Some("merges run first")
+        );
+        assert_eq!(segment_upgrade_deferral(true, 0, true, 0), None);
     }
 
     #[test]

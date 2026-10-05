@@ -2198,6 +2198,114 @@ pub(crate) fn file_identity(path: &Path) -> Option<(u64, i128)> {
     Some((stat.len(), nanos))
 }
 
+/// How a segment file was written: what a rewrite into the current format
+/// has to know about it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WrittenAs {
+    /// The format version in its header.
+    pub(crate) version: u8,
+    /// Whether its blocks are zstd-compressed, the coldest tier a merge of
+    /// a whole table writes; a rewrite keeps a cold segment cold.
+    pub(crate) zstd: bool,
+}
+
+/// Blocks of the first column looked at for their compression: a segment's
+/// blocks share one writer policy, and a framed text block says nothing of
+/// it, so the first few that are not framed decide.
+const COMPRESSION_PROBE_BLOCKS: usize = 4;
+
+/// Each segment file read, by path: the identity it had and how it was
+/// written.
+type WrittenAsCache = std::sync::Mutex<HashMap<PathBuf, ((u64, i128), WrittenAs)>>;
+
+fn written_as_cache() -> &'static WrittenAsCache {
+    static CACHE: std::sync::OnceLock<WrittenAsCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// Drops what [`written_as`] remembers of a file that is being removed.
+pub(crate) fn forget_written_as(path: &Path) {
+    written_as_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(path);
+}
+
+/// Reads how the segment file at `path` was written from its header and
+/// its first blocks' headers, without decoding or verifying any payload.
+/// Remembered per file identity: a segment never changes once published.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or its header is not a
+/// segment's.
+pub(crate) fn written_as(path: &Path) -> Result<WrittenAs, StoreError> {
+    let identity = file_identity(path);
+    if let Some(identity) = identity
+        && let Some((known, written)) = written_as_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(path)
+        && *known == identity
+    {
+        return Ok(*written);
+    }
+    let mut decoder = FileDecoder::open(path)?;
+    let magic = decoder
+        .raw(MAGIC.len())
+        .map_err(|reason| corrupt_here(path, &decoder, reason))?;
+    if magic.as_slice() != MAGIC {
+        return Err(corrupt(path, 0, "invalid segment magic"));
+    }
+    let version = read_format_version(path, &mut decoder)?;
+    let mut zstd = false;
+    // An empty segment is never written, so the first column holds a block;
+    // a file cut short simply answers what its header says.
+    if let Ok((_, _, block_count)) =
+        read_column_directory_entry(path, &mut decoder, HEADER_LENGTH as u64)
+    {
+        for _ in 0..block_count.min(COMPRESSION_PROBE_BLOCKS) {
+            let Ok(Some(tag)) = probe_block_compression(&mut decoder) else {
+                break;
+            };
+            if tag == Compression::Framed as u8 {
+                continue;
+            }
+            zstd = tag == Compression::Zstd as u8;
+            break;
+        }
+    }
+    let written = WrittenAs { version, zstd };
+    if let Some(identity) = identity {
+        written_as_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(path.to_path_buf(), (identity, written));
+    }
+    Ok(written)
+}
+
+/// Reads one block's compression tag and leaves the decoder at the next
+/// block: the payload's row count and null bitmap come before the
+/// encoding and the tag. `None` for a payload too short to hold them.
+fn probe_block_compression(decoder: &mut FileDecoder) -> Result<Option<u8>, String> {
+    let length = usize::try_from(decoder.u32()?).map_err(|_| "block length".to_owned())?;
+    let start = decoder.position;
+    let mut tag = None;
+    if length >= 10 {
+        let _rows = decoder.u32()?;
+        let bitmap = usize::try_from(decoder.u32()?).map_err(|_| "bitmap length".to_owned())?;
+        if bitmap.saturating_add(10) <= length {
+            decoder.skip(bitmap)?;
+            let _encoding = decoder.u8()?;
+            tag = Some(decoder.u8()?);
+        }
+    }
+    // The payload, then its checksum.
+    decoder.seek_to(start.saturating_add(length).saturating_add(8))?;
+    Ok(tag)
+}
+
 fn verified_key(path: &Path, meta: &SegmentMeta, schema: &TableSchema) -> Option<VerifiedKey> {
     let (length, nanos) = file_identity(path)?;
     Some((

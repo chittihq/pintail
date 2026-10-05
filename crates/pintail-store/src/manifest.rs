@@ -98,6 +98,18 @@ pub(crate) fn highest_version_at_rest(directory: &Path) -> Result<Option<u64>, S
     }))
 }
 
+/// The segment files the published manifest names, without reading the
+/// segments or holding the table's writer lock; empty when there is none.
+pub(crate) fn segment_files_at_rest(directory: &Path) -> Result<Vec<String>, StoreError> {
+    Ok(read(directory)?.map_or_else(Vec::new, |manifest| {
+        manifest
+            .segments
+            .into_iter()
+            .map(|segment| segment.file_name)
+            .collect()
+    }))
+}
+
 /// Decodes the published manifest, checking its own integrity but not that
 /// it fits any schema. `None` when there is none.
 #[allow(clippy::too_many_lines)]

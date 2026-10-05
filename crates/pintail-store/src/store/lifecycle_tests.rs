@@ -25,6 +25,7 @@ fn dropping_store_keeps_writer_lock_until_background_output_finishes() {
         worker,
         receiver,
         input_files: Vec::new(),
+        upgrade: None,
     });
     let (dropping, started) = mpsc::channel();
     let (dropped, done) = mpsc::channel();
@@ -85,7 +86,7 @@ fn reset_discards_completed_unpublished_compaction_outputs() {
         &schema,
         options,
         &inputs,
-        true,
+        segment::Compression::Zstd,
         true,
         None,
         999,
@@ -96,7 +97,7 @@ fn reset_discards_completed_unpublished_compaction_outputs() {
     let (sender, receiver) = mpsc::channel();
     let (ready, sent) = mpsc::channel();
     let worker = std::thread::spawn(move || {
-        sender.send(Ok(outputs)).unwrap();
+        sender.send(Ok(vec![outputs])).unwrap();
         ready.send(()).unwrap();
     });
     table.background = Some(BackgroundMerge {
@@ -106,6 +107,7 @@ fn reset_discards_completed_unpublished_compaction_outputs() {
             .iter()
             .map(|segment| segment.file_name.clone())
             .collect(),
+        upgrade: None,
     });
     sent.recv_timeout(Duration::from_secs(2)).unwrap();
     table.reset_for_resnapshot().unwrap();
@@ -2024,6 +2026,335 @@ mod mixed_segment_versions {
                 .join("segment-00000000000000000902.ptseg")
                 .exists()
         );
+    }
+
+    /// Writes four disjoint segments of 1,000 rows each, the first three in
+    /// format 6 as an earlier build would have, the last in the current one.
+    /// Disjoint and free of deletes, so no merge has anything to do.
+    fn settled_table_from_an_earlier_build(directory: &Path) -> TableStore {
+        let mut table = TableStore::open(directory, schema(), options()).unwrap();
+        segment::write_format_version_for_test(6);
+        for chunk in 0..3_u64 {
+            table
+                .ingest(
+                    (chunk * 1_000 + 1..=chunk * 1_000 + 1_000)
+                        .map(|id| row(id, 0, 1))
+                        .collect(),
+                )
+                .unwrap();
+            table.flush().unwrap();
+        }
+        segment::write_format_version_for_test(segment::CURRENT_FORMAT_VERSION);
+        table
+            .ingest((3_001..=4_000).map(|id| row(id, 0, 1)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        table
+    }
+
+    fn formats(pairs: &[(u8, usize)]) -> BTreeMap<u8, usize> {
+        pairs
+            .iter()
+            .copied()
+            .filter(|(_, count)| *count > 0)
+            .collect()
+    }
+
+    fn old_segments(table: &TableStore) -> usize {
+        table
+            .segment_formats()
+            .unwrap()
+            .iter()
+            .filter(|(version, _)| **version < segment::CURRENT_FORMAT_VERSION)
+            .map(|(_, count)| *count)
+            .sum()
+    }
+
+    /// Runs upgrades one after another until none starts; answers how many
+    /// segments they rewrote.
+    fn upgrade_everything(table: &mut TableStore) -> usize {
+        let before = old_segments(table);
+        let mut upgrades = 0;
+        while table.start_segment_upgrade().unwrap() {
+            table.settle_background_merge();
+            table.reclaim_obsolete_segments().unwrap();
+            upgrades += 1;
+            assert!(upgrades < 100, "the upgrade never came to rest");
+        }
+        before - old_segments(table)
+    }
+
+    #[test]
+    fn old_format_segments_are_rewritten_into_the_current_one_with_the_same_answers() {
+        let current = segment::CURRENT_FORMAT_VERSION;
+        let directory = tempfile::tempdir().unwrap();
+        let mut table = settled_table_from_an_earlier_build(directory.path());
+        let before = visible(&table);
+        assert_eq!(before.len(), 4_000);
+        assert_eq!(
+            table.segment_formats().unwrap(),
+            formats(&[(6, 3), (current, 1)])
+        );
+        assert_eq!(
+            segment_formats_at_rest(directory.path()).unwrap(),
+            formats(&[(6, 3), (current, 1)])
+        );
+        let order = table
+            .manifest
+            .segments
+            .iter()
+            .map(|meta| meta.min_key.clone())
+            .collect::<Vec<_>>();
+        let upgraded_before = crate::maintenance::maintenance_status().segments_upgraded;
+
+        assert_eq!(upgrade_everything(&mut table), 3);
+        assert!(
+            crate::maintenance::maintenance_status().segments_upgraded >= upgraded_before + 3,
+            "every upgrade is counted"
+        );
+        assert_eq!(table.segment_formats().unwrap(), formats(&[(current, 4)]));
+        assert_eq!(
+            versions(directory.path()),
+            vec![current; 4],
+            "old files reclaimed"
+        );
+        assert_eq!(visible(&table), before, "same rows after the upgrade");
+        // Each rewrite took its input's place in the manifest.
+        assert_eq!(
+            table
+                .manifest
+                .segments
+                .iter()
+                .map(|meta| meta.min_key.clone())
+                .collect::<Vec<_>>(),
+            order
+        );
+        drop(table);
+        let reopened = TableStore::open(directory.path(), schema(), options()).unwrap();
+        assert_eq!(visible(&reopened), before, "same rows after a reopen");
+        assert_eq!(
+            segment_formats_at_rest(directory.path()).unwrap(),
+            formats(&[(current, 4)])
+        );
+    }
+
+    #[test]
+    fn an_upgrade_keeps_a_cold_segment_zstd_compressed() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut table = TableStore::open(directory.path(), schema(), options()).unwrap();
+        segment::write_format_version_for_test(6);
+        table
+            .ingest((1..=2_000).map(|id| row(id, 0, 1)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        table
+            .ingest((1_000..=2_500).map(|id| row(id, 1, 2)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        // A merge of the whole table: the coldest tier.
+        assert_eq!(table.compact().unwrap().input_segments(), 2);
+        table.reclaim_obsolete_segments().unwrap();
+        segment::write_format_version_for_test(segment::CURRENT_FORMAT_VERSION);
+        let path = |table: &TableStore| table.directory.join(&table.manifest.segments[0].file_name);
+        let old = segment::written_as(&path(&table)).unwrap();
+        assert_eq!((old.version, old.zstd), (6, true));
+        let before = visible(&table);
+        assert_eq!(upgrade_everything(&mut table), 1);
+        let new = segment::written_as(&path(&table)).unwrap();
+        assert_eq!(
+            (new.version, new.zstd),
+            (segment::CURRENT_FORMAT_VERSION, true)
+        );
+        assert_eq!(visible(&table), before);
+    }
+
+    #[test]
+    fn a_merge_the_planner_wants_comes_before_an_upgrade() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut table = TableStore::open(directory.path(), schema(), options()).unwrap();
+        segment::write_format_version_for_test(6);
+        table
+            .ingest((1..=2_000).map(|id| row(id, 0, 1)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        table
+            .ingest((1_500..=2_500).map(|id| row(id, 1, 2)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        segment::write_format_version_for_test(segment::CURRENT_FORMAT_VERSION);
+        // Two overlapping old segments: the merge rewrites both anyway.
+        assert!(table.compaction_plan().unwrap().is_some());
+        assert!(!table.start_segment_upgrade().unwrap());
+        assert!(table.background.is_none(), "nothing was started");
+        assert_eq!(table.compact().unwrap().input_segments(), 2);
+        table.reclaim_obsolete_segments().unwrap();
+        assert_eq!(
+            table.segment_formats().unwrap(),
+            formats(&[(segment::CURRENT_FORMAT_VERSION, 1)])
+        );
+        assert!(!table.start_segment_upgrade().unwrap(), "nothing is old");
+    }
+
+    #[test]
+    fn readers_keep_a_consistent_snapshot_while_an_upgrade_runs_and_publishes() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut table = settled_table_from_an_earlier_build(directory.path());
+        let expected = visible(&table);
+        let held = table.snapshot();
+        let old_files = table
+            .manifest
+            .segments
+            .iter()
+            .map(|meta| directory.path().join(&meta.file_name))
+            .collect::<Vec<_>>();
+
+        // Readers that open the table from its files, over and over, while
+        // the upgrades run and publish.
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let readers = (0..2)
+            .map(|_| {
+                let stop = Arc::clone(&stop);
+                let directory = directory.path().to_path_buf();
+                let expected = expected.clone();
+                std::thread::spawn(move || {
+                    let mut reads = 0_usize;
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) || reads == 0 {
+                        let reader = TableSnapshot::open(&directory, schema()).unwrap();
+                        assert_eq!(reader.scan().unwrap(), expected, "a read mid-upgrade");
+                        reads += 1;
+                    }
+                    reads
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut upgrades = 0;
+        while table.start_segment_upgrade().unwrap() {
+            table.settle_background_merge();
+            assert_eq!(
+                table.reclaim_obsolete_segments().unwrap(),
+                0,
+                "the held snapshot still reads the old files"
+            );
+            upgrades += 1;
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for reader in readers {
+            assert!(reader.join().unwrap() > 0);
+        }
+        assert_eq!(upgrades, 1, "the three small segments are one group");
+        assert_eq!(held.scan().unwrap(), expected, "the held snapshot");
+        assert!(old_files.iter().all(|path| path.exists()));
+        assert_eq!(visible(&table), expected);
+        drop(held);
+        assert_eq!(table.reclaim_obsolete_segments().unwrap(), 3);
+        assert_eq!(
+            old_files.iter().filter(|path| path.exists()).count(),
+            1,
+            "only the segment that was already current is left"
+        );
+    }
+
+    #[test]
+    fn an_upgrade_asked_to_yield_publishes_nothing_and_runs_again_later() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut table = settled_table_from_an_earlier_build(directory.path());
+        let expected = visible(&table);
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        table.yield_merges_to(Arc::clone(&flag));
+        // The reservation is published, then the rewrite stops: the state a
+        // crash right after the reservation leaves.
+        assert!(table.start_segment_upgrade().unwrap());
+        drop(table);
+        let mut reopened = TableStore::open(directory.path(), schema(), options()).unwrap();
+        assert_eq!(visible(&reopened), expected);
+        assert_eq!(
+            reopened.segment_formats().unwrap(),
+            formats(&[(6, 3), (segment::CURRENT_FORMAT_VERSION, 1)])
+        );
+        assert_eq!(upgrade_everything(&mut reopened), 3);
+        assert_eq!(visible(&reopened), expected);
+    }
+
+    /// Set for the child process the crash test below runs: the table it
+    /// upgrades until its failpoint stops it.
+    #[cfg(feature = "failpoints")]
+    const CRASH_DIRECTORY: &str = "PINTAIL_UPGRADE_CRASH_DIRECTORY";
+
+    #[cfg(feature = "failpoints")]
+    #[test]
+    #[ignore = "child process with an isolated failpoint configuration"]
+    fn upgrade_crash_worker() {
+        let Some(directory) = std::env::var_os(CRASH_DIRECTORY) else {
+            return;
+        };
+        let mut table = TableStore::open(&directory, schema(), options()).unwrap();
+        // The failpoint aborts the process somewhere in here.
+        upgrade_everything(&mut table);
+        panic!("the upgrade finished without reaching its failpoint");
+    }
+
+    /// A process killed at each of an upgrade's crash-consistency
+    /// boundaries reopens to the same rows, with no file the manifest does
+    /// not name, and finishes the upgrade on the next try.
+    #[cfg(feature = "failpoints")]
+    #[test]
+    fn a_crash_at_each_upgrade_publish_point_recovers() {
+        let current = segment::CURRENT_FORMAT_VERSION;
+        for (site, upgraded) in [
+            ("store.upgrade.after_reserve", 0),
+            ("store.upgrade.before_publish", 0),
+            ("store.upgrade.after_publish", 3),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let table = settled_table_from_an_earlier_build(directory.path());
+            let expected = visible(&table);
+            drop(table);
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "store::lifecycle_tests::mixed_segment_versions::upgrade_crash_worker",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("PINTAIL_FAILPOINT", site)
+                .env(CRASH_DIRECTORY, directory.path())
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{site}: the child did not stop");
+            assert!(
+                stderr.contains(&format!("failpoint {site} hit 1: aborting")),
+                "{site}: {stderr}"
+            );
+            let mut reopened = TableStore::open(directory.path(), schema(), options()).unwrap();
+            assert_eq!(visible(&reopened), expected, "{site}: rows after the crash");
+            assert_eq!(
+                reopened.segment_formats().unwrap(),
+                formats(&[(6, 3 - upgraded), (current, 1 + upgraded)]),
+                "{site}"
+            );
+            // The open swept what the dead process wrote and the manifest
+            // does not name, and the input an upgrade retired.
+            let named = reopened
+                .manifest
+                .segments
+                .iter()
+                .map(|meta| meta.file_name.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            let on_disk = std::fs::read_dir(directory.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|name| name.contains(".ptseg"))
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(on_disk, named, "{site}: stray files");
+            assert_eq!(upgrade_everything(&mut reopened), 3 - upgraded, "{site}");
+            assert_eq!(visible(&reopened), expected, "{site}: rows once upgraded");
+            assert_eq!(
+                reopened.segment_formats().unwrap(),
+                formats(&[(current, 4)]),
+                "{site}"
+            );
+        }
     }
 }
 
