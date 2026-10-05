@@ -62,6 +62,55 @@ fn segment_selects_and_round_trips_every_block_encoding() {
     );
 }
 
+/// A segment a newer release wrote is refused with that cause named, not only
+/// as damage, so an older binary started on an upgraded directory says why.
+#[test]
+fn a_segment_from_a_newer_format_is_refused_as_newer() {
+    let directory = tempfile::tempdir().expect("temporary table directory");
+    let schema =
+        TableSchema::new(1, vec![Column::new(1, "id", DataType::UInt64, false)]).expect("schema");
+    let rows = (0..64_u64)
+        .map(|id| {
+            StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                vec![Value::UInt64(id)],
+                id + 1,
+                false,
+            )
+        })
+        .collect::<Vec<_>>();
+    let segment_path = {
+        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+            .expect("open");
+        table.ingest(rows).expect("ingest");
+        table
+            .flush()
+            .expect("flush")
+            .segment_path()
+            .expect("segment")
+            .to_path_buf()
+    };
+    let mut bytes = std::fs::read(&segment_path).expect("segment bytes");
+    let written = bytes[5];
+    bytes[5] = written + 1;
+    std::fs::write(&segment_path, &bytes).expect("rewrite segment");
+
+    let error = match TableStore::open(directory.path(), schema, StoreOptions::default()) {
+        Err(error) => error.to_string(),
+        Ok(table) => table
+            .snapshot()
+            .scan()
+            .expect_err("a newer segment must not be read")
+            .to_string(),
+    };
+    let expected = format!(
+        "format version {} is newer than this build reads ({written}); \
+         a newer Pintail release wrote it",
+        written + 1
+    );
+    assert!(error.contains(&expected), "{error}");
+}
+
 #[test]
 fn adaptive_compression_mixes_raw_and_lz4_blocks_and_reopens() {
     let directory = tempfile::tempdir().expect("temporary table directory");

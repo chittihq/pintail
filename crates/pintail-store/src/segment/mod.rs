@@ -121,12 +121,31 @@ const fn format_version_supported(version: u8) -> bool {
     matches!(version, 1..=8)
 }
 
+/// A segment whose format version this build cannot read. One ahead of the
+/// version this build writes came from a newer release, and says so: an older
+/// binary started on an upgraded directory names the cause rather than
+/// reporting only damage.
+fn unsupported_format(path: &Path, version: u8) -> StoreError {
+    if version > FORMAT_VERSION {
+        corrupt(
+            path,
+            MAGIC.len(),
+            format!(
+                "format version {version} is newer than this build reads ({FORMAT_VERSION}); \
+                 a newer Pintail release wrote it"
+            ),
+        )
+    } else {
+        corrupt(path, MAGIC.len(), "unsupported format version")
+    }
+}
+
 fn read_format_version(path: &Path, decoder: &mut FileDecoder) -> Result<u8, StoreError> {
     let version = decoder
         .u8()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
     if !format_version_supported(version) {
-        return Err(corrupt(path, MAGIC.len(), "unsupported format version"));
+        return Err(unsupported_format(path, version));
     }
     decoder.format_version = Some(version);
     Ok(version)
@@ -2383,7 +2402,7 @@ pub(crate) fn verify(
         return Err(corrupt(&path, 0, "invalid segment header"));
     }
     if !format_version_supported(header[MAGIC.len()]) {
-        return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
+        return Err(unsupported_format(&path, header[MAGIC.len()]));
     }
     let layout = parse_footer_body(&path, &footer, footer_offset, meta, header[MAGIC.len()])?;
     if let Some(expected) = layout.descriptor_digest {
