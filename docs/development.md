@@ -162,6 +162,7 @@ of the rule.
 | `small_reads` | Where a small read runs: `alone` (the default), `hold`, `handover` or `worker`. | `PINTAIL_SMALL_READS` |
 | `shared_queries` | Identical concurrent requests share one execution. | `PINTAIL_DISABLE_SHARED_QUERIES` |
 | `secondary_index` | Lookups through the side index. | `PINTAIL_SECONDARY_INDEX=0` |
+| `segment_upgrade` | Segments an older build wrote are rewritten into `segment_format` in the background (see the storage section of `docs/architecture.md`). | `PINTAIL_SEGMENT_UPGRADE=off` |
 | `settled_memo` | A settled aggregate replays its answer. | `PINTAIL_DISABLE_SETTLED_MEMO` |
 | `packed_group` | Composite `GROUP BY` keys fold packed. | `PINTAIL_DISABLE_PACKED_GROUP` |
 | `grouped_fold` | Grouped aggregates fold a segment at a time. | `PINTAIL_DISABLE_GROUPED_FOLD` |

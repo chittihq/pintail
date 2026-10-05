@@ -12,7 +12,11 @@
 //! subprocess per dashboard refresh is the same trade the vitals sampler
 //! already makes for its non-Linux readings.
 
-use std::{path::Path, process::Command};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use axum::{Extension, Json, extract::State};
 use serde::Serialize;
@@ -58,6 +62,105 @@ pub(crate) struct StorageResponse {
     optimizations: crate::optimizations::Optimizations,
     /// What background merges are doing, process-wide.
     maintenance: Maintenance,
+    /// How far the rewrite of segments older builds wrote into the current
+    /// format has come, process-wide and per table.
+    segment_upgrade: SegmentUpgrade,
+}
+
+/// The background rewrite of old-format segments into the format this
+/// build writes (`PINTAIL_SEGMENT_UPGRADE`).
+#[derive(Debug, Serialize)]
+pub(crate) struct SegmentUpgrade {
+    /// Whether the sweep runs.
+    enabled: bool,
+    /// The format version this build writes.
+    current_format: u8,
+    /// Upgrades running or waiting for a merge slot.
+    running: usize,
+    /// Segments rewritten since the process started.
+    segments_upgraded: u64,
+    /// Bytes of old-format segments those rewrites read.
+    bytes_upgraded: u64,
+    /// Table copies running, during which no upgrade starts.
+    copies_in_flight: usize,
+    /// Segments, across the tables below, still in an older format.
+    old_segments: usize,
+    /// Every replicated table's segments by format version.
+    tables: Vec<TableFormats>,
+}
+
+/// One table's segments by the format version each was written in.
+#[derive(Debug, Serialize)]
+pub(crate) struct TableFormats {
+    database_id: String,
+    table: String,
+    /// Segment count per format version.
+    formats: BTreeMap<u8, usize>,
+    /// All of the table's segments.
+    segments: usize,
+    /// Those written in an older format than the current one.
+    old_segments: usize,
+    /// No segment of the table is in an older format.
+    upgraded: bool,
+}
+
+fn segment_upgrade(tables: &[(String, String, PathBuf)]) -> SegmentUpgrade {
+    let status = pintail_store::maintenance_status();
+    let current = pintail_store::WRITTEN_SEGMENT_FORMAT;
+    let tables = tables
+        .iter()
+        .filter_map(|(database_id, table, directory)| {
+            // A table not copied yet, or one whose files a merge moved
+            // while this looked, is left out rather than reported wrong.
+            let formats = pintail_store::segment_formats_at_rest(directory).ok()?;
+            let segments = formats.values().sum::<usize>();
+            let old_segments = formats
+                .iter()
+                .filter(|(version, _)| **version < current)
+                .map(|(_, count)| *count)
+                .sum::<usize>();
+            Some(TableFormats {
+                database_id: database_id.clone(),
+                table: table.clone(),
+                formats,
+                segments,
+                old_segments,
+                upgraded: old_segments == 0,
+            })
+        })
+        .collect::<Vec<_>>();
+    SegmentUpgrade {
+        enabled: status.segment_upgrade,
+        current_format: current,
+        running: status.upgrades_running,
+        segments_upgraded: status.segments_upgraded,
+        bytes_upgraded: status.bytes_upgraded,
+        copies_in_flight: status.copies_in_flight,
+        old_segments: tables.iter().map(|table| table.old_segments).sum(),
+        tables,
+    }
+}
+
+/// Every replicated table the control plane tracks, with its directory.
+fn tracked_tables(state: &ApiState, data_dir: &Path) -> Vec<(String, String, PathBuf)> {
+    let Ok(metadata) = state.metadata() else {
+        return Vec::new();
+    };
+    let Ok(databases) = metadata.databases() else {
+        return Vec::new();
+    };
+    let mut tables = Vec::new();
+    for database in databases {
+        let root = data_dir.join("databases").join(&database.id).join("tables");
+        for table in metadata.tables(&database.id).unwrap_or_default() {
+            if table.orphaned_at.is_some() {
+                continue;
+            }
+            let directory = crate::snapshot::table_directory(&root, &table.name);
+            tables.push((database.id.clone(), table.name, directory));
+        }
+    }
+    tables
 }
 
 /// Background merges at this moment: how many run and wait, the bytes they
@@ -110,10 +213,11 @@ pub(crate) async fn storage(
 ) -> Result<Json<StorageResponse>, ApiError> {
     principal.require_scope("read")?;
     let data_dir = state.data_dir()?.to_path_buf();
-    Ok(Json(report(&data_dir)))
+    let tables = tracked_tables(&state, &data_dir);
+    Ok(Json(report(&data_dir, &tables)))
 }
 
-fn report(data_dir: &Path) -> StorageResponse {
+fn report(data_dir: &Path, tables: &[(String, String, PathBuf)]) -> StorageResponse {
     let data = volume(data_dir);
     let system = volume(Path::new("/"));
     StorageResponse {
@@ -147,6 +251,7 @@ fn report(data_dir: &Path) -> StorageResponse {
         metadata: crate::metadata_health::current(),
         optimizations: crate::optimizations::optimizations(),
         maintenance: maintenance(),
+        segment_upgrade: segment_upgrade(tables),
     }
 }
 
@@ -270,7 +375,7 @@ mod tests {
         // one `/` reports unless this checkout lives on a mounted disk, so
         // assert the relationship rather than a value.
         let here = std::env::current_dir().expect("working directory");
-        let answer = report(&here);
+        let answer = report(&here, &[]);
         let (Some(data), Some(system)) = (&answer.data, &answer.system) else {
             // No usable `df` on this machine; the endpoint degrades to
             // "unknown" and there is nothing to compare.
@@ -283,7 +388,7 @@ mod tests {
     #[test]
     fn a_missing_directory_measures_nothing_rather_than_guessing_a_parent() {
         let missing = std::path::Path::new("/pintail-nonexistent-path-for-tests/data");
-        let answer = report(missing);
+        let answer = report(missing, &[]);
         assert!(
             answer.data.is_none(),
             "an unmeasurable path must not borrow another volume's numbers"

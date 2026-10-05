@@ -216,14 +216,8 @@ fn tuning_settings() -> Vec<String> {
         .collect()
 }
 
-/// Reads the report from the running process.
-#[must_use]
-pub fn optimizations() -> Optimizations {
-    let (level, setting) = pintail_store::simd_dispatch();
-    let scan_setting = pintail_store::scan_threads_setting();
-    let (execute_threads, execute_overridden) = pintail_exec::parallel_pool_threads();
-    let plan_cache_bounds = pintail_wire::plan_cache_bounds();
-    let small_reads = pintail_wire::small_reads_mode();
+/// Every switchable path, in the order the startup line prints them.
+fn switchable_paths(plan_cache_bounds: Option<(usize, usize)>) -> Vec<Path> {
     let mut paths = vec![
         Path {
             name: "inline_statements",
@@ -245,12 +239,29 @@ pub fn optimizations() -> Optimizations {
             enabled: pintail_store::side_index_enabled(),
             variable: "PINTAIL_SECONDARY_INDEX",
         },
+        Path {
+            name: "segment_upgrade",
+            enabled: pintail_store::segment_upgrade_enabled(),
+            variable: "PINTAIL_SEGMENT_UPGRADE",
+        },
     ];
     paths.extend(pintail_exec::path_switches().map(|switch| Path {
         name: switch.name,
         enabled: switch.enabled,
         variable: switch.variable,
     }));
+    paths
+}
+
+/// Reads the report from the running process.
+#[must_use]
+pub fn optimizations() -> Optimizations {
+    let (level, setting) = pintail_store::simd_dispatch();
+    let scan_setting = pintail_store::scan_threads_setting();
+    let (execute_threads, execute_overridden) = pintail_exec::parallel_pool_threads();
+    let plan_cache_bounds = pintail_wire::plan_cache_bounds();
+    let small_reads = pintail_wire::small_reads_mode();
+    let paths = switchable_paths(plan_cache_bounds);
 
     let (memtable_bytes, compaction_input_rows, compaction_output_rows) =
         pintail_store::size_overrides();
@@ -378,7 +389,7 @@ mod tests {
     /// report and nothing else.
     const CHILD: &str = "PINTAIL_OPTIMIZATIONS_TEST_CHILD";
 
-    const KEYS: [&str; 25] = [
+    const KEYS: [&str; 26] = [
         "cpu_model=",
         "cpu_cores=",
         "cpu_features=",
@@ -397,6 +408,7 @@ mod tests {
         "small_reads=",
         "shared_queries=",
         "secondary_index=",
+        "segment_upgrade=",
         "settled_memo=",
         "packed_group=",
         "grouped_fold=",
@@ -444,6 +456,7 @@ mod tests {
             .env("PINTAIL_SCAN_THREADS", "3")
             .env("PINTAIL_PLAN_CACHE", "0")
             .env("PINTAIL_SMALL_READS", "worker")
+            .env("PINTAIL_SEGMENT_UPGRADE", "off")
             .output()
             .expect("run the child");
         let output = String::from_utf8_lossy(&child.stdout);
@@ -469,6 +482,7 @@ mod tests {
         assert!(paths.contains(" settled_memo=on "), "{paths}");
         assert!(paths.contains(" plan_cache=off "), "{paths}");
         assert!(paths.contains(" small_reads=worker "), "{paths}");
+        assert!(paths.contains(" segment_upgrade=off "), "{paths}");
         let non_default = paths.split_once("non_default=").expect("the list").1;
         for setting in [
             "PINTAIL_SIMD=off",
@@ -477,6 +491,7 @@ mod tests {
             "PINTAIL_INLINE_STATEMENTS",
             "PINTAIL_PLAN_CACHE",
             "PINTAIL_SMALL_READS=worker",
+            "PINTAIL_SEGMENT_UPGRADE",
         ] {
             assert!(
                 non_default.contains(setting),

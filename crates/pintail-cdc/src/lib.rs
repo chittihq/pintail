@@ -1175,6 +1175,10 @@ async fn run_cdc_inner(
                     &position,
                     targets,
                     options.stop.as_ref(),
+                    // Cut short by its budget or a stop: the source may
+                    // hold more.
+                    false,
+                    &blocked_targets,
                 );
             }
         }
@@ -1266,6 +1270,8 @@ async fn run_cdc_inner(
             &position,
             targets,
             options.stop.as_ref(),
+            true,
+            &blocked_targets,
         );
     }
 }
@@ -4078,20 +4084,36 @@ fn settle_paused_skips(
 /// own, so this is also how many such threads a stream leaves behind it.
 const MERGES_STARTED_PER_STREAM: usize = 2;
 
+/// Segment upgrades one finished stream may start, when it started no
+/// merge: each rewrites a bounded group of one table's segments, and the
+/// stream's tables wait for it when they close.
+const UPGRADES_STARTED_PER_STREAM: usize = 1;
+
 /// Moves the tables' compaction forward at the end of a stream: a table
 /// whose writes stopped has no flush left to do it. Starts at a different
 /// table each time so the same few are not always first.
-fn maintain_targets(targets: &mut [CdcTarget], stop: Option<&CycleStop>) {
+///
+/// A stream that reached the end of its source's log and started no merge
+/// then rewrites segments an older build wrote into the current format
+/// (`PINTAIL_SEGMENT_UPGRADE`), unless a table copy is running. A table
+/// waiting for a resync, or paused, is left as it is: its copy is to be
+/// replaced. Returns why no upgrade was looked for, or `None`.
+fn maintain_targets(
+    targets: &mut [CdcTarget],
+    stop: Option<&CycleStop>,
+    caught_up: bool,
+    blocked: &BTreeSet<usize>,
+) -> Option<&'static str> {
     static ROTATION: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let count = targets.len();
     if count == 0 {
-        return;
+        return Some("no tables");
     }
     let first = ROTATION.fetch_add(1, Ordering::Relaxed) % count;
     let mut running = 0;
     for offset in 0..count {
         if running >= MERGES_STARTED_PER_STREAM || stop.is_some_and(CycleStop::requested) {
-            return;
+            break;
         }
         let target = &mut targets[(first + offset) % count];
         match target.store.maintain() {
@@ -4105,6 +4127,52 @@ fn maintain_targets(targets: &mut [CdcTarget], stop: Option<&CycleStop>) {
             ),
         }
     }
+    if stop.is_some_and(CycleStop::requested) {
+        return Some("an operator action is waiting");
+    }
+    if let Some(reason) = pintail_store::segment_upgrade_deferral(
+        pintail_store::segment_upgrade_enabled(),
+        pintail_store::copies_in_flight(),
+        caught_up,
+        running,
+    ) {
+        return Some(reason);
+    }
+    upgrade_targets(targets, blocked, first, UPGRADES_STARTED_PER_STREAM);
+    None
+}
+
+/// Starts up to `limit` segment upgrades among the `targets` not in
+/// `blocked`, from `first` on.
+fn upgrade_targets(
+    targets: &mut [CdcTarget],
+    blocked: &BTreeSet<usize>,
+    first: usize,
+    limit: usize,
+) -> usize {
+    let count = targets.len();
+    let mut started = 0;
+    for offset in 0..count {
+        if started >= limit {
+            break;
+        }
+        let index = (first + offset) % count;
+        if blocked.contains(&index) {
+            continue;
+        }
+        let target = &mut targets[index];
+        match target.store.start_segment_upgrade() {
+            Ok(true) => started += 1,
+            Ok(false) => {}
+            // The old segment still answers correctly; a later stream
+            // tries again.
+            Err(error) => pintail_log::log_debug!(
+                "cdc segment upgrade of {} deferred: {error}",
+                target.source.name
+            ),
+        }
+    }
+    started
 }
 
 fn finish_result(
@@ -4113,8 +4181,10 @@ fn finish_result(
     position: &StreamPosition,
     mut targets: Vec<CdcTarget>,
     stop: Option<&CycleStop>,
+    caught_up: bool,
+    blocked: &BTreeSet<usize>,
 ) -> Result<CdcResult, CdcError> {
-    maintain_targets(&mut targets, stop);
+    maintain_targets(&mut targets, stop, caught_up, blocked);
     targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
     Ok(CdcResult {
         commits,

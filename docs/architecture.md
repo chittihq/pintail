@@ -119,6 +119,34 @@ oversized candidate is deferred rather than materialized opportunistically;
 queries remain correct through merge-on-read while the operator observes the
 resulting segment shape and maintenance metrics.
 
+Segments an older build wrote keep their format until something rewrites
+them, and a settled table that no merge picks would keep it for good. A
+background sweep rewrites them into the format the running build writes,
+on by default (`PINTAIL_SEGMENT_UPGRADE=off` turns it off). One upgrade
+takes a table's old segments in manifest order, up to 64 MiB of files (at
+least one segment), and rewrites each as a merge of that segment alone: the
+same slot among `PINTAIL_MERGE_THREADS`, the same lowered priority and
+pacing under statements, the same write budget
+(`PINTAIL_MERGE_WRITE_BYTES_PER_SEC`), reserved segment IDs and publication;
+each rewrite takes its input's place in the manifest, readers keep the
+snapshot they hold, and an old file is deleted after its last reader. A
+replication stream starts at most one upgrade when it ends, and only when it
+reached the end of its source's log, started no merge (a merge rewrites its
+inputs in the current format anyway, so a table with one planned is left to
+it) and no table copy is running in the process; a table waiting for a
+resync, or paused, is skipped. A segment written zstd-compressed by a
+whole-table merge is written zstd-compressed again. The stream's tables
+wait for the upgrade they started before they close, so the next stream
+starts up to one group's rewrite later. The sweep needs free disk for one
+group's rewrite at a time beside its inputs (at most 64 MiB, or the one
+segment when it is larger), plus the merge disk reserve; without it the
+upgrade waits. The
+`pintail paths:` startup line reports `segment_upgrade=on|off`, and
+`GET /api/storage` reports `segment_upgrade`: the upgrades running and done,
+and each table's segments by format version. A table whose last old segment
+is rewritten logs `finished upgrading` at info. Polling-mode tables are not
+swept; their segments convert when a merge picks them.
+
 A secondary side index answers equality and IN filters, and join key sets,
 on integer columns other than the table key, whose values scatter across
 every block so zone maps prune nothing. Per segment it holds the column's

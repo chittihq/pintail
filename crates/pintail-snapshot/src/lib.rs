@@ -411,6 +411,8 @@ async fn run_snapshot_inner(
     options: SnapshotOptions,
     progress: ProgressListener,
 ) -> Result<SnapshotResult, SnapshotError> {
+    // No segment upgrade starts anywhere in the process while a copy runs.
+    let _copy = pintail_store::copy_started();
     if options.workers == 0 {
         return Err(SnapshotError::InvalidConfiguration(
             "worker count must be non-zero".to_owned(),
