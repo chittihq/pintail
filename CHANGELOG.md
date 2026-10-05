@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Re-running the installer to upgrade now moves the generated
+  `PINTAIL_BUILD_VERSION` with the image, so clients stop reporting the
+  previous release. A compose file whose pintail image line the installer
+  cannot find stops the upgrade with the manual step instead of restarting
+  the old release (#45).
+
 ## [0.1.8-rc2] - 2026-10-05
 
 ### Changed
