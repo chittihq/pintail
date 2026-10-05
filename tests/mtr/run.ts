@@ -38,6 +38,7 @@
 ///           MTR_FILES=func_math,func_str bun run run.ts
 ///           MTR_FILES='^(func_|group_by|order_by)' bun run run.ts
 ///           MTR_SUITE=mariadb bun run run.ts
+///           MTR_MODE=replica MTR_CASCADE=1 MTR_SUITE=mysql-innodb bun run run.ts
 ///           MTR_GATE=1 PINTAIL_MTR_BINARY=../../target/release/pintail bun run run.ts
 
 import { createServer } from 'node:net'
@@ -63,6 +64,10 @@ let provenance: { sourceCommit: string | null; sourceDirty: boolean | null; bina
 const SUITES = {
   mysql: { repo: 'mysql/mysql-server', ref: '99960bf74fa919347e4f4e3ca47672f333d6e91f', dir: ['mysql-test', 't'] },
   mariadb: { repo: 'MariaDB/server', ref: '170b1d70737be6f134448f51713cdc1ae215b420', dir: ['mysql-test', 'main'] },
+  /// The storage engine's own suite, where the foreign-key action tests
+  /// live. Not part of any gate: `MTR_CASCADE=1` replays it for the
+  /// cascade measurement, at the same commit as the main suite.
+  'mysql-innodb': { repo: 'mysql/mysql-server', ref: '99960bf74fa919347e4f4e3ca47672f333d6e91f', dir: ['mysql-test', 'suite', 'innodb', 't'] },
 } as const
 type SuiteName = keyof typeof SUITES
 const SUITE_NAME = (process.env.MTR_SUITE ?? 'mysql') as SuiteName
@@ -95,6 +100,32 @@ const DEBUG = process.env.MTR_DEBUG === '1'
 /// reproductions has no baseline to ratchet against; each of its statements
 /// is one the mirror once answered wrongly or could not answer.
 const STRICT = process.env.MTR_STRICT === '1'
+/// Cascade measurement (replica mode only, never a gate): replay just the
+/// files that declare a foreign key with `ON DELETE/UPDATE CASCADE` or
+/// `SET NULL`, whatever EXCLUDED_PATTERN says about their family, and
+/// classify every compared SELECT that reads a table such a key acts on.
+/// `MySQL` applies those actions inside the storage engine without row
+/// events, so the mirror learns of them only from its cascade
+/// reconciliation. The database runs with that reconciliation effectively
+/// off; a SELECT that differs right after catch-up forces one pass and is
+/// compared again:
+///   exact      - equal right after catch-up;
+///   stale      - different until the reconciliation pass, then equal;
+///   wrong      - still different after the pass;
+///   not-run    - the pass did not finish within its budget.
+/// `MTR_FILES` narrows the scan; the ledger goes beside the run, never over
+/// the tracked one.
+const CASCADE = process.env.MTR_CASCADE === '1'
+if (CASCADE && MODE !== 'replica') throw new Error('MTR_CASCADE=1 measures change capture; set MTR_MODE=replica')
+if (CASCADE && (BANK || GATE)) throw new Error('MTR_CASCADE=1 is a measurement, not a gate; unset MTR_BANK and MTR_GATE')
+/// A referential action MySQL performs without row events.
+const INVISIBLE_FK_ACTION = /\bon\s+(delete|update)\s+(cascade|set\s+null)\b/i
+/// The interval the cascade replay runs with between forced passes: long
+/// enough never to fire on its own during a file.
+const CASCADE_IDLE_INTERVAL_S = 1_000_000_000
+/// How long a forced pass may take before the statement counts as not-run.
+const CASCADE_PASS_BUDGET_MS = Number(process.env.MTR_CASCADE_PASS_MS ?? '20000')
+type CascadeKind = 'exact' | 'stale' | 'wrong' | 'not-run'
 const oracleSuffix = ORACLE_IMAGE === 'mysql:8.4' ? '' : `-${ORACLE_IMAGE.replace(/[^a-z0-9]+/gi, '')}`
 const suffix = `${SUITE_NAME === 'mysql' ? '' : `-${SUITE_NAME}`}${MODE === 'replica' ? '-replica' : ''}${oracleSuffix}`
 const baselinePath = join(import.meta.dir, `baseline${suffix}.json`)
@@ -176,6 +207,8 @@ interface FileResult {
   /// statistics the oracle refreshes in the background, and a statement it
   /// refuses has no answer to compare in this run.
   oracleRefused: string[]
+  /// `MTR_CASCADE=1`: compared SELECTs reading a cascade-affected table.
+  cascade?: Record<CascadeKind, number>
 }
 
 interface Stmt {
@@ -307,7 +340,7 @@ const LOCAL_DIR = process.env.MTR_LOCAL_DIR ? resolve(process.env.MTR_LOCAL_DIR)
 if (STRICT && !LOCAL_DIR) throw new Error('MTR_STRICT=1 judges a directory of reproductions; set MTR_LOCAL_DIR')
 /// Where the ledger of a run goes. The tracked one describes the pinned
 /// suite; a directory of reproductions writes beside its own run instead.
-const ledgerDir = LOCAL_DIR ? join(runDir, 'ledger') : import.meta.dir
+const ledgerDir = LOCAL_DIR || CASCADE ? join(runDir, 'ledger') : import.meta.dir
 /// The oracle's "the SELECT would examine more than MAX_JOIN_SIZE rows".
 const ER_TOO_BIG_SELECT = 1104
 
@@ -315,7 +348,9 @@ async function listTestFiles(): Promise<string[]> {
   if (LOCAL_DIR) {
     return readdirSync(LOCAL_DIR).filter((name) => name.endsWith('.test')).map((name) => name.slice(0, -'.test'.length)).sort()
   }
-  const cached = join(cacheDir, REF, '_index.json')
+  // The engine suite shares the main suite's commit, so its listing needs a
+  // name of its own in that commit's cache.
+  const cached = join(cacheDir, REF, `_index${SUITE.dir.slice(2).map((part) => `-${part}`).join('')}.json`)
   if (existsSync(cached)) return JSON.parse(readFileSync(cached, 'utf8')) as string[]
   let sha = REF
   for (const part of SUITE.dir) {
@@ -973,8 +1008,37 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
   await root.query(`CREATE TABLE ${schema}.__mtr_sync (id INT PRIMARY KEY)`)
   const database = await api<{ id: string }>('/api/databases', {
     method: 'POST',
-    body: { name: schema, dsn: `mysql://root:pintail-root@${host}:${mysqlPort}/${schema}`, mode: 'cdc', keyless_policy: 'auto_resync' },
+    body: {
+      name: schema, dsn: `mysql://root:pintail-root@${host}:${mysqlPort}/${schema}`, mode: 'cdc', keyless_policy: 'auto_resync',
+      ...(CASCADE ? { reconcile_interval_seconds: CASCADE_IDLE_INTERVAL_S } : {}),
+    },
   })
+  const cascadeCounts: Record<CascadeKind, number> = { exact: 0, stale: 0, wrong: 0, 'not-run': 0 }
+  type TableRow = { name: string; cascade_reconciled?: boolean; last_reconcile_at?: string | null }
+  const tableRows = () => api<TableRow[]>(`/api/tables?db=${database.id}`)
+  const setInterval_ = (seconds: number) =>
+    api(`/api/databases/${database.id}`, { method: 'PUT', body: { name: schema, mode: 'cdc', reconcile_interval_seconds: seconds } })
+  /// Lets the scheduled cascade pass run once over `tables` and waits for
+  /// each to record a finished pass. False when one did not in time.
+  const forceCascadePass = async (tables: string[]): Promise<boolean> => {
+    const before = new Map((await tableRows()).map((t) => [t.name.toLowerCase(), t.last_reconcile_at ?? '']))
+    await setInterval_(1)
+    const deadline = Date.now() + CASCADE_PASS_BUDGET_MS
+    let done = false
+    try {
+      while (Date.now() < deadline) {
+        const now = new Map((await tableRows()).map((t) => [t.name.toLowerCase(), t.last_reconcile_at ?? '']))
+        if (tables.every((name) => (now.get(name) ?? '') !== '' && now.get(name) !== before.get(name))) {
+          done = true
+          break
+        }
+        await Bun.sleep(100)
+      }
+    } finally {
+      await setInterval_(CASCADE_IDLE_INTERVAL_S)
+    }
+    return done
+  }
   const probe = await api<unknown>(`/api/databases/${database.id}/probe`).catch((error) => String(error))
   const cleanup = async () => {
     await api(`/api/databases/${database.id}`, { method: 'DELETE' }).catch(() => {})
@@ -1144,6 +1208,25 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
         const got = canonicalRows(actual.rows, ordered)
         const rowsMatch = want.length === got.length && want.every((line, index) => line === got[index])
         const namesMatch = expected.names.join('\t') === actual.names.join('\t')
+        if (CASCADE) {
+          const touched = (await tableRows())
+            .filter((t) => t.cascade_reconciled && new RegExp(String.raw`(?<![\w$.])\x60?${t.name}\x60?(?![\w$])`, 'i').test(sql))
+            .map((t) => t.name.toLowerCase())
+          if (touched.length) {
+            let kind: CascadeKind = 'exact'
+            // Rows only: a column-name difference is no cascade's doing.
+            if (!rowsMatch) {
+              if (!(await forceCascadePass(touched))) kind = 'not-run'
+              else {
+                const again = canonicalRows((await run(pt, sql).catch(() => ({ names: [], rows: [] }) as Answer)).rows, ordered)
+                kind = again.length === want.length && again.every((line, index) => line === want[index]) ? 'stale' : 'wrong'
+              }
+              diffLines.push(`## line ${statement.line} (${id}): cascade ${kind} on ${touched.join(', ')}\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
+            }
+            cascadeCounts[kind] += 1
+            if (DEBUG || kind !== 'exact') log(`${name}: line ${statement.line} cascade ${kind} (${touched.join(', ')})`)
+          }
+        }
         if (rowsMatch && namesMatch) {
           counts.exact += 1
           exactIds.push(id)
@@ -1199,7 +1282,10 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
   } else {
     rmSync(join(diffsDir, `${name}${suffix}-errors.md`), { force: true })
   }
-  return { file: name, statements: statements.length, counts, parserNote: note, errorClasses, exact: exactIds.sort(), oracleRefused: refusedIds.sort() }
+  return {
+    file: name, statements: statements.length, counts, parserNote: note, errorClasses, exact: exactIds.sort(), oracleRefused: refusedIds.sort(),
+    ...(CASCADE ? { cascade: cascadeCounts } : {}),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1264,7 +1350,7 @@ function publish(results: FileResult[], mysqlVersion: string) {
   for (const r of results) for (const [cls, n] of Object.entries(r.errorClasses)) classes[cls] = (classes[cls] ?? 0) + n
   const topClasses = Object.entries(classes).sort((a, b) => b[1] - a[1]).slice(0, 25)
   const lines = [
-    `# ${SUITE_NAME === 'mysql' ? "MySQL's" : "MariaDB's"} regression suite against Pintail`,
+    `# ${SUITE_NAME === 'mariadb' ? "MariaDB's" : "MySQL's"} regression suite against Pintail`,
     '',
     `Measured ${new Date().toISOString()}: \`${SUITE.dir.join('/')}\` from ${SUITE.repo} at \`${REF.slice(0, 12)}\`, oracle MySQL ${mysqlVersion}, ${results.length} files.`,
     '',
@@ -1304,6 +1390,25 @@ function publish(results: FileResult[], mysqlVersion: string) {
             : 'None: the mirror followed the source through every file.',
           '',
         ]
+      : []),
+    ...(CASCADE
+      ? (() => {
+          const sum = (kind: CascadeKind) => results.reduce((n, r) => n + (r.cascade?.[kind] ?? 0), 0)
+          return [
+            '## Cascade-affected SELECTs',
+            '',
+            `Compared SELECTs reading a table that an \`ON DELETE/UPDATE CASCADE\` or \`SET NULL\` key acts on: ` +
+              `${sum('exact')} exact right after catch-up, ${sum('stale')} stale until one cascade reconciliation pass and exact after it, ` +
+              `${sum('wrong')} still different after the pass, ${sum('not-run')} whose pass did not finish within ${CASCADE_PASS_BUDGET_MS} ms.`,
+            '',
+            '| File | Exact | Stale until reconcile | Wrong after reconcile | Pass not run |',
+            '|---|---:|---:|---:|---:|',
+            ...results
+              .filter((r) => r.cascade && Object.values(r.cascade).some((n) => n > 0))
+              .map((r) => `| ${r.file} | ${r.cascade!.exact} | ${r.cascade!.stale} | ${r.cascade!.wrong} | ${r.cascade!['not-run']} |`),
+            '',
+          ]
+        })()
       : []),
     '## What Pintail could not run, by message shape',
     '',
@@ -1393,7 +1498,26 @@ async function main() {
   let selected: string[]
   if (FILES.startsWith('^')) selected = all.filter((name) => new RegExp(FILES).test(name))
   else if (FILES) selected = FILES.split(',').map((name) => name.trim()).filter(Boolean)
-  else selected = all.filter((name) => !EXCLUDED_PATTERN.test(name))
+  else selected = CASCADE ? all : all.filter((name) => !EXCLUDED_PATTERN.test(name))
+  if (CASCADE) {
+    // Every candidate is read (and cached) to find the ones that declare
+    // an action MySQL performs without row events.
+    const declares = new Map<string, boolean>()
+    let next = 0
+    const candidates = selected
+    await Promise.all(Array.from({ length: 16 }, async () => {
+      while (next < candidates.length) {
+        const name = candidates[next++]
+        try {
+          declares.set(name, INVISIBLE_FK_ACTION.test(await fetchTestFile(name)))
+        } catch (error) {
+          log(`${name}: could not fetch (${error instanceof Error ? error.message : String(error)})`)
+        }
+      }
+    }))
+    selected = candidates.filter((name) => declares.get(name))
+    log(`cascade: ${selected.length} of ${candidates.length} files declare ON DELETE/UPDATE CASCADE or SET NULL: ${selected.join(', ')}`)
+  }
   const fullSelection = new Set(selected)
   if (SHARD) {
     if (FILES) throw new Error('MTR_SHARD partitions the whole selection; unset MTR_FILES')
