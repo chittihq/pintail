@@ -1887,17 +1887,19 @@ pub trait BatchStream: Send {
     /// Narrows a not-yet-started stream to rows that can be among the first
     /// `k` in the order of the integer column at `position` (descending, or
     /// ascending; `nulls_first` when a NULL sorts before every value): the
-    /// rows at or before the bound the side index finds. Answers whether it
-    /// did. A caller that got `true` must check that at least `k` rows came
-    /// back, and read the stream's rows unrestricted otherwise.
+    /// rows at or before the bound the side index finds. Answers the bound
+    /// when it did. The narrowing prunes and does not filter: rows from
+    /// outside the bound may still come back, so a caller that got a bound
+    /// must check that the `k`-th row in order lies at or before it, and read
+    /// the stream's rows unrestricted otherwise.
     fn restrict_order_limit(
         &mut self,
         _position: usize,
         _k: usize,
         _descending: bool,
         _nulls_first: bool,
-    ) -> bool {
-        false
+    ) -> Option<i128> {
+        None
     }
 
     /// The collation this stream's own predicate evaluation compared text
@@ -5108,8 +5110,8 @@ enum PullOperator {
         collation: Collation,
         /// When `input` is a scan narrowed to the rows the side index
         /// places among the first `top_k`, the same input unnarrowed: read
-        /// instead when fewer than `top_k` rows came back.
-        fallback: Option<Box<Self>>,
+        /// instead when the narrowed rows do not prove the answer.
+        fallback: Option<Box<NarrowedOrder>>,
     },
     Window {
         input: Box<Self>,
@@ -5229,15 +5231,15 @@ impl PullOperator {
 
     /// Hands the scan beneath, through a projection, the first `k` rows'
     /// order on its column at scan `position` (see
-    /// [`BatchStream::restrict_order_limit`]). Answers whether the scan
-    /// was narrowed.
+    /// [`BatchStream::restrict_order_limit`]). Answers the bound the scan
+    /// was narrowed to.
     fn restrict_order_limit(
         &mut self,
         position: usize,
         k: usize,
         descending: bool,
         nulls_first: bool,
-    ) -> bool {
+    ) -> Option<i128> {
         match self {
             Self::Scan { stream, .. } => {
                 stream.restrict_order_limit(position, k, descending, nulls_first)
@@ -5245,7 +5247,7 @@ impl PullOperator {
             Self::Project { input, .. } | Self::Profiled { input, .. } => {
                 input.restrict_order_limit(position, k, descending, nulls_first)
             }
-            _ => false,
+            _ => None,
         }
     }
 
@@ -6175,14 +6177,21 @@ impl PullOperator {
                     };
                     let mut sorted = build_sort(input, keys, *top_k, trim_to, memory, *collation)?;
                     // Superseded and deleted rows count toward the side
-                    // index's bound but not toward the answer: short of
-                    // `top_k` rows, the narrowed read proves nothing.
-                    if let Some(mut unnarrowed) = fallback.take()
-                        && top_k.is_some_and(|k| sorted.known_len().is_none_or(|len| len < k))
+                    // index's bound but not toward the answer, and rows from
+                    // outside the bound can still arrive: unless the `k`-th
+                    // row lies within it, the narrowed read proves nothing.
+                    if let Some(mut narrowed) = fallback.take()
+                        && top_k.is_some_and(|k| !narrowed.proves(&sorted, k))
                     {
                         drop(sorted);
-                        sorted =
-                            build_sort(&mut unnarrowed, keys, *top_k, trim_to, memory, *collation)?;
+                        sorted = build_sort(
+                            &mut narrowed.unnarrowed,
+                            keys,
+                            *top_k,
+                            trim_to,
+                            memory,
+                            *collation,
+                        )?;
                     }
                     *state = Some(sorted);
                 }
@@ -7170,19 +7179,11 @@ fn build_operator_inner(
             let (mut input, mut columns) = build_operator(*input, provider, memory, collation)?;
             columns.truncate(visible);
             // A scan narrowed to the rows the side index places first keeps
-            // an unrestricted twin, read only when too few rows came back.
+            // an unrestricted twin, read only when the narrowed rows do not
+            // prove the answer.
             let fallback = match (order, fallback_plan) {
-                (Some(target), Some(plan))
-                    if input.restrict_order_limit(
-                        target.position,
-                        target.k,
-                        target.descending,
-                        target.nulls_first,
-                    ) =>
-                {
-                    Some(Box::new(
-                        build_operator(plan, provider, memory, collation)?.0,
-                    ))
+                (Some(target), Some(plan)) => {
+                    narrow_order_limit(&mut input, target, plan, provider, memory, collation)?
                 }
                 _ => None,
             };
@@ -7274,13 +7275,79 @@ fn batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
 const ORDER_LIMIT_ROWS: usize = 65_536;
 
 /// A limited sort a scan beneath can narrow by the side index: the first
-/// key's column at `position` in the scan's projection.
+/// key's column at `position` in the scan's projection, and at
+/// `sort_column` in the rows the sort reads.
 #[derive(Clone, Copy)]
 struct OrderLimitTarget {
     position: usize,
+    sort_column: usize,
     k: usize,
     descending: bool,
     nulls_first: bool,
+}
+
+/// A limited sort's input narrowed by the side index to the rows at or
+/// before `bound` in the first key's order, with the same input unnarrowed.
+pub(super) struct NarrowedOrder {
+    unnarrowed: PullOperator,
+    /// The first key's column in the rows the sort reads.
+    column: usize,
+    bound: i128,
+    descending: bool,
+}
+
+/// Narrows `input` for the limited sort `target` describes and builds its
+/// unnarrowed twin from `plan`; `None` when the scan declined.
+///
+/// Kept out of line: `build_operator` recurses once per plan node, and a
+/// twin held in its frame made every level of a deep plan's recursion pay
+/// for it, enough to overflow a test thread's stack in a debug build.
+#[inline(never)]
+fn narrow_order_limit(
+    input: &mut PullOperator,
+    target: OrderLimitTarget,
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<Option<Box<NarrowedOrder>>, ExecError> {
+    let Some(bound) = input.restrict_order_limit(
+        target.position,
+        target.k,
+        target.descending,
+        target.nulls_first,
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(Box::new(NarrowedOrder {
+        unnarrowed: build_operator(plan, provider, memory, collation)?.0,
+        column: target.sort_column,
+        bound,
+        descending: target.descending,
+    })))
+}
+
+impl NarrowedOrder {
+    /// Whether the narrowed read's first `k` rows are the answer: they are
+    /// when its `k`-th row lies at or before the bound, because every row
+    /// the narrowing left out lies after it. Fewer than `k` rows, a `k`-th
+    /// row past the bound (a row from outside it made up the count), or one
+    /// that cannot be read as an integer prove nothing.
+    fn proves(&self, sorted: &SortedRows, k: usize) -> bool {
+        if k == 0 || sorted.known_len().is_none_or(|len| len < k) {
+            return false;
+        }
+        let value = match sorted.value_at(k - 1, self.column) {
+            Some(Value::Int64(value)) => i128::from(value),
+            Some(Value::UInt64(value)) => i128::from(value),
+            _ => return false,
+        };
+        if self.descending {
+            value >= self.bound
+        } else {
+            value <= self.bound
+        }
+    }
 }
 
 /// The target when a limited sort reads a scan with no predicates of its
@@ -7320,6 +7387,7 @@ fn order_limit_target(
     };
     Some(OrderLimitTarget {
         position,
+        sort_column: key.index,
         k,
         descending: !key.ascending,
         nulls_first: key.nulls_first,

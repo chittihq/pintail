@@ -41,6 +41,18 @@ impl SortedRows {
         }
     }
 
+    /// The value of `column` in the kept row at `row`, in order, when the
+    /// rows are held where it can be read without serving them.
+    pub(super) fn value_at(&self, row: usize, column: usize) -> Option<Value> {
+        match self {
+            Self::Memory(rows) if rows.spilled.is_none() => {
+                rows.rows.get(row)?.get(column).cloned()
+            }
+            Self::Columnar(sorted) => sorted.value_at(row, column),
+            _ => None,
+        }
+    }
+
     fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
         match self {
             Self::Memory(rows) => {

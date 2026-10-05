@@ -157,6 +157,16 @@ impl ColumnarSorted {
         })
     }
 
+    /// The value of `column` in the kept row at `row`, in order. Reads the
+    /// input's batches, so a sort-only column the output drops is there.
+    pub(super) fn value_at(&self, row: usize, column: usize) -> Option<Value> {
+        let (batch, row) = *self.order.get(row)?;
+        self.batches
+            .get(batch as usize)?
+            .column(column)?
+            .value_owned(row as usize)
+    }
+
     /// Each kept row as (batch, row), in sorted order.
     pub(super) fn into_order(self) -> Vec<(u32, u32)> {
         self.order

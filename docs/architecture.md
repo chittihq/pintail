@@ -184,9 +184,10 @@ first `k` rows in that column's order end: the value at or before which
 the scanned segments hold `k` entries. The scan is narrowed to the rows at
 or before it, the memtable's included, and every row it leaves out sorts
 after every row it keeps, since only the first sort key decides that. The
-bound counts superseded and deleted rows, so the sort keeps an unnarrowed
-twin of its input and reads that instead when fewer than `k` rows come
-back. A nullable column whose NULLs sort first (ascending) is narrowed
+bound counts superseded and deleted rows, and rows from outside it can
+still come back, so the sort keeps an unnarrowed twin of its input and
+reads that instead unless the `k`-th row it kept lies at or before the
+bound. A nullable column whose NULLs sort first (ascending) is narrowed
 only while no segment holds a NULL and the memtable is empty.
 
 The byte-level format and crash ordering are specified in

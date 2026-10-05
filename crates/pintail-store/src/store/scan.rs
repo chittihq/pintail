@@ -4368,9 +4368,9 @@ impl ProjectedScanStream {
     /// order bound), with the memtable's rows counted as possible NULLs
     /// under a nullable column, since nothing indexes them. A scan
     /// restricted to the rows at or before the bound answers the first `k`
-    /// exactly only when at least `k` rows come back: superseded and
-    /// deleted segment rows count toward the bound but not toward the
-    /// answer.
+    /// exactly only when at least `k` of the rows that come back lie at or
+    /// before it: superseded and deleted segment rows count toward the bound
+    /// but not toward the answer, and rows past it can still come back.
     ///
     /// # Errors
     ///

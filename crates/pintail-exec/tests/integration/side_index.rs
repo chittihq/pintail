@@ -597,6 +597,58 @@ fn a_narrowed_order_limit_short_of_rows_reads_the_whole_table() {
     fixture.check_order_limits("deletes flushed");
 }
 
+/// All but ten rows holding the smallest amount, and all but ten holding
+/// the largest, moved to the middle, with new middle rows beside them, all
+/// still in the memtable. The postings place the first rows among the moved
+/// ones, so the narrowed scan holds ten rows at the bound; the rows it
+/// returns from outside the bound must not make up the count, or the sort
+/// answers with middle rows where the next value's rows belong.
+#[test]
+fn a_narrowed_order_limit_is_not_filled_from_outside_its_bound() {
+    let mut fixture = Fixture::new();
+    let extremes = fixture
+        .model
+        .iter()
+        .filter(|(_, event)| matches!(event.amount, -40 | 60))
+        .map(|(id, event)| (*id, event.clone()))
+        .collect::<Vec<_>>();
+    let mut changes = Vec::new();
+    let mut kept = BTreeMap::new();
+    for (id, event) in extremes {
+        let seen = kept.entry(event.amount).or_insert(0_usize);
+        *seen += 1;
+        if *seen <= 10 {
+            continue;
+        }
+        fixture.version += 1;
+        let moved = Event {
+            amount: 30,
+            ..event
+        };
+        changes.push(event_row(id, &moved, fixture.version, false));
+        fixture.model.insert(id, moved);
+    }
+    for id in EVENTS + 1..=EVENTS + 100 {
+        fixture.version += 1;
+        let event = Event {
+            account: Some(5),
+            kind: "held",
+            amount: 0,
+        };
+        changes.push(event_row(id, &event, fixture.version, false));
+        fixture.model.insert(id, event);
+    }
+    for batch in changes.chunks(2_000) {
+        fixture
+            .events
+            .ingest_cdc(batch.to_vec())
+            .expect("change batch");
+    }
+    fixture.check_order_limits("extremes moved, in the memtable");
+    fixture.events.flush().expect("flush");
+    fixture.check_order_limits("extremes moved, flushed");
+}
+
 #[test]
 #[ignore = "measurement: run with --ignored --nocapture"]
 fn measure_order_limits() {
