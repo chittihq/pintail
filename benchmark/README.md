@@ -83,6 +83,59 @@ evidence). Results are written to
 The full artifacts are checked in as release evidence and include exact row
 counts, per-query timings, aggregate speedup, and the gate outcome.
 
+## Cache study: both result caches, and freshness after ingestion
+
+The canonical table times a Pintail settled-memo hit against a ClickHouse
+execution with its query cache off: one engine's cache against the other's
+execution. `BENCHMARK_CACHE_STUDY=1` adds three comparisons that keep the
+two apart (`cache-study.ts`, issue #36). The memo-off execution track is
+unchanged and still the engine-speed comparison.
+
+- **Static, both caches warm.** Pintail's settled memo and ClickHouse's query
+  cache on RMT+FINAL (`use_query_cache = 1`, `query_cache_ttl = 3600`,
+  `query_cache_min_query_runs = 0`, `query_cache_min_query_duration = 0`;
+  the server's `query_cache_*` limits are recorded in the artifact). Each
+  query is warmed, then timed. Every timed answer is compared with MySQL and
+  proved a hit: Pintail by `pintail_settled_memo_hits_total` on `/metrics`
+  read around each answer, ClickHouse by `QueryCacheHits` in
+  `system.query_log` per query id. A shape a cache does not serve (Pintail
+  answers a bare `COUNT(*)` from table statistics, not the memo) is marked
+  `not cached`. The same statement executed with the cache off stays beside
+  it as the uncached reference.
+- **Freshness after ingestion.** ClickHouse gets a versioned copy,
+  `ReplacingMergeTree(_version, _is_deleted)` read with `final = 1`, the
+  shape a CDC pipeline keeps. With both caches warm, one deterministic
+  change to an invented key band of `orders` commits to MySQL: an insert of
+  new keys, an update that moves rows to a new status, or a delete. The
+  harness writes the same change into ClickHouse the moment MySQL commits,
+  so ClickHouse's delay is a floor for any real pipeline; Pintail gets it
+  through its own CDC. Both engines are then polled (every
+  `BENCHMARK_CACHE_POLL_MS`, default 100 ms, for up to
+  `BENCHMARK_CACHE_TIMEOUT_S`, default TTL + 60 s) with a count-and-total
+  query, a group-by-status query and a control on the unchanged `users`
+  table. Every answer is classified against MySQL's answer before and after
+  the change, so a stale answer counts as stale, never as a fast correct
+  one, and a query that never turns correct is a timeout. A row-level read
+  of the changed keys, which no result cache serves, marks when each
+  engine's data shows the change: an old answer before that point is
+  replication delay, after it cache staleness. The first correct answer
+  (the recomputation) and the answers after it are reported separately.
+- **ClickHouse's two freshness modes.** Native TTL expiry
+  (`BENCHMARK_CACHE_TTL_S`, default 60, ClickHouse's own default), and an
+  explicit `SYSTEM DROP QUERY CACHE` issued once a cache-off read of the
+  changed keys matches MySQL; the probes and the drop are charged as
+  coordination cost. Each mode sees one insert, one update and one delete.
+
+Before each change Pintail is polled until its memo serves the warm
+queries again (`BENCHMARK_CACHE_SETTLE_S`, default 60): the memo only
+answers over a settled table, so this waits for the previous change to
+flush. The phase writes to the source, so it runs after every other track,
+on a Pintail restarted with the memo on. Results land in `results.json`
+under `cacheStudy` and in `results.md`; `render-readme-table.ts` adds the
+README form when the artifact carries it. `PINTAIL_BENCHMARK_IMAGE=<tag>`
+reuses an image already built from the commit instead of building one;
+`BENCHMARK_CONCURRENCY=` (empty) skips the concurrency sweep.
+
 ## Workload
 
 | Query | Shape |
