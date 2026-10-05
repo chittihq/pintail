@@ -134,9 +134,9 @@ impl LazyText {
                     TextKind::Decimal { scale } => {
                         pintail_types::format_decimal_scaled(i128::from(*unit), scale)
                     }
-                    TextKind::Date => pintail_types::format_date_days(*unit)
+                    TextKind::Date => pintail_types::format_date_units(*unit)
                         .expect("stored date units round-trip"),
-                    TextKind::DateTime { fsp } => pintail_types::format_datetime_micros(*unit, fsp)
+                    TextKind::DateTime { fsp } => pintail_types::format_datetime_units(*unit, fsp)
                         .expect("stored datetime units round-trip"),
                 };
                 column.push(text.as_bytes());
@@ -364,8 +364,8 @@ impl TypedValues {
             Self::Temporal { units, text } => {
                 let unit = *units.get(row)?;
                 match text.kind {
-                    TextKind::Date => pintail_types::format_date_days(unit),
-                    TextKind::DateTime { fsp } => pintail_types::format_datetime_micros(unit, fsp),
+                    TextKind::Date => pintail_types::format_date_units(unit),
+                    TextKind::DateTime { fsp } => pintail_types::format_datetime_units(unit, fsp),
                     // Value-born temporal columns keep their original text;
                     // serve it instead of refusing (a filtered MIN/MAX over
                     // such a column previously errored here).
@@ -427,8 +427,8 @@ fn canonical_temporal_text(
     };
     let canonical = units.iter().zip(values).all(|(&unit, value)| match value {
         Value::Utf8(written) => match data_type {
-            DataType::DateTime64 { fsp } => pintail_types::format_datetime_micros(unit, fsp),
-            _ => pintail_types::format_date_days(unit),
+            DataType::DateTime64 { fsp } => pintail_types::format_datetime_units(unit, fsp),
+            _ => pintail_types::format_date_units(unit),
         }
         .is_some_and(|formatted| formatted == *written),
         _ => matches!(value, Value::Null),
@@ -614,9 +614,9 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 }
                 if let (Some(packed), Some(micros)) = (temporal.as_mut(), temporal_kind) {
                     let parsed = if micros {
-                        parse_datetime_micros(text)
+                        pintail_types::parse_datetime_units(text)
                     } else {
-                        parse_date_days(text)
+                        pintail_types::parse_date_units(text)
                     };
                     match parsed {
                         Some(units) => packed.push(units),

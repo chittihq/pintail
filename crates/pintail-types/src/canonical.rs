@@ -131,6 +131,80 @@ pub fn parse_decimal_scaled(text: &str, scale: u8) -> Option<i128> {
     Some(if negative { -magnitude } else { magnitude })
 }
 
+/// The day count the executor packs `MySQL`'s zero date `0000-00-00` as: the
+/// day before 0000-01-01, which no real date reaches, so it orders before
+/// every real date as `MySQL` orders the zero date. Storage never writes it;
+/// only the executor's packed columns and keys carry it.
+pub const ZERO_DATE_DAYS: i64 = -719_529;
+
+/// The microseconds the executor packs the zero `DATETIME`
+/// `0000-00-00 00:00:00` as: midnight of [`ZERO_DATE_DAYS`], so a zero date
+/// widened to a datetime is the zero datetime, and a zero datetime's day is
+/// the zero date.
+pub const ZERO_DATETIME_MICROS: i64 = ZERO_DATE_DAYS * 86_400_000_000;
+
+/// [`parse_date_days`], or [`ZERO_DATE_DAYS`] for exactly `0000-00-00`: the
+/// executor's packed form of a stored date.
+#[must_use]
+pub fn parse_date_units(text: &str) -> Option<i64> {
+    parse_date_days(text).or_else(|| (text == "0000-00-00").then_some(ZERO_DATE_DAYS))
+}
+
+/// [`parse_datetime_micros`], or [`ZERO_DATETIME_MICROS`] for the zero
+/// datetime with any count of zero fraction digits: the executor's packed
+/// form of a stored datetime.
+#[must_use]
+pub fn parse_datetime_units(text: &str) -> Option<i64> {
+    parse_datetime_micros(text).or_else(|| is_zero_datetime(text).then_some(ZERO_DATETIME_MICROS))
+}
+
+/// Whether `text` is `0000-00-00 00:00:00`, with an optional fraction of
+/// one to six zero digits.
+fn is_zero_datetime(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix("0000-00-00 00:00:00") else {
+        return false;
+    };
+    rest.is_empty()
+        || rest.strip_prefix('.').is_some_and(|fraction| {
+            (1..=6).contains(&fraction.len()) && fraction.bytes().all(|digit| digit == b'0')
+        })
+}
+
+/// [`format_date_days`] of a packed date, which may be the zero date.
+#[must_use]
+pub fn format_date_units(days: i64) -> Option<String> {
+    if days == ZERO_DATE_DAYS {
+        return Some(zero_text(None));
+    }
+    format_date_days(days)
+}
+
+/// [`format_datetime_micros`] of a packed datetime, which may be the zero
+/// datetime: spelled with `fsp` zero fraction digits, as `MySQL` shows it.
+#[must_use]
+pub fn format_datetime_units(micros: i64, fsp: u8) -> Option<String> {
+    if micros == ZERO_DATETIME_MICROS && fsp <= 6 {
+        return Some(zero_text(Some(fsp)));
+    }
+    format_datetime_micros(micros, fsp)
+}
+
+/// The zero date's text, or the zero datetime's with `fsp` fraction digits.
+/// Out of line, so the formatters of real dates stay as small as they were.
+#[cold]
+#[inline(never)]
+fn zero_text(fsp: Option<u8>) -> String {
+    let Some(fsp) = fsp else {
+        return "0000-00-00".to_owned();
+    };
+    let mut text = "0000-00-00 00:00:00".to_owned();
+    if fsp > 0 {
+        text.push('.');
+        text.extend(std::iter::repeat_n('0', usize::from(fsp)));
+    }
+    text
+}
+
 /// Formats days since 1970-01-01 as canonical `YYYY-MM-DD` (the inverse of
 /// [`parse_date_days`]). `None` outside years 0000–9999, the widest range
 /// canonical text can carry.
@@ -314,6 +388,57 @@ pub const fn civil_from_days(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_zero_date_packs_below_every_real_date_and_spells_back() {
+        let first = parse_date_days("0000-01-01").expect("first real date");
+        assert_eq!(ZERO_DATE_DAYS, first - 1);
+        assert_eq!(parse_date_units("0000-00-00"), Some(ZERO_DATE_DAYS));
+        assert_eq!(
+            parse_date_units("2024-02-29"),
+            parse_date_days("2024-02-29")
+        );
+        for partial in ["2024-00-15", "2024-01-00", "0000-00-01", "2023-02-29"] {
+            assert_eq!(parse_date_units(partial), None, "{partial}");
+        }
+        assert_eq!(
+            format_date_units(ZERO_DATE_DAYS).as_deref(),
+            Some("0000-00-00")
+        );
+        assert_eq!(format_date_days(ZERO_DATE_DAYS), None);
+
+        let midnight = parse_datetime_micros("0000-01-01 00:00:00").expect("first instant");
+        assert_eq!(ZERO_DATETIME_MICROS, midnight - 86_400_000_000);
+        for zero in [
+            "0000-00-00 00:00:00",
+            "0000-00-00 00:00:00.0",
+            "0000-00-00 00:00:00.000000",
+        ] {
+            assert_eq!(
+                parse_datetime_units(zero),
+                Some(ZERO_DATETIME_MICROS),
+                "{zero}"
+            );
+        }
+        for other in [
+            "0000-00-00 00:00:01",
+            "0000-00-00 00:00:00.",
+            "0000-00-00 00:00:00.0000000",
+            "0000-00-00",
+        ] {
+            assert_eq!(parse_datetime_units(other), None, "{other}");
+        }
+        assert_eq!(
+            format_datetime_units(ZERO_DATETIME_MICROS, 3).as_deref(),
+            Some("0000-00-00 00:00:00.000")
+        );
+        assert_eq!(
+            format_datetime_units(ZERO_DATETIME_MICROS, 0).as_deref(),
+            Some("0000-00-00 00:00:00")
+        );
+        assert_eq!(format_datetime_micros(ZERO_DATETIME_MICROS, 0), None);
+        assert_eq!(format_datetime_units(ZERO_DATETIME_MICROS + 1, 6), None);
+    }
 
     #[test]
     fn date_text_round_trips_across_the_canonical_range() {

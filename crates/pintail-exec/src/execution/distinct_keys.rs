@@ -87,12 +87,12 @@ impl UnitKind {
                 .then(|| crate::batch::parse_decimal_scaled(text, scale))
                 .flatten(),
             Self::Date => {
-                let days = crate::batch::parse_date_days(text)?;
-                (pintail_types::format_date_days(days)? == text).then_some(i128::from(days))
+                let days = pintail_types::parse_date_units(text)?;
+                (pintail_types::format_date_units(days)? == text).then_some(i128::from(days))
             }
             Self::DateTime { fsp } => {
-                let micros = crate::batch::parse_datetime_micros(text)?;
-                (pintail_types::format_datetime_micros(micros, fsp)? == text)
+                let micros = pintail_types::parse_datetime_units(text)?;
+                (pintail_types::format_datetime_units(micros, fsp)? == text)
                     .then(|| self.key_of_units(i128::from(micros)))
             }
         }
@@ -102,8 +102,8 @@ impl UnitKind {
     pub(crate) fn text_of_key(self, key: i128) -> Option<String> {
         match self {
             Self::Decimal { scale } => Some(pintail_types::format_decimal_scaled(key, scale)),
-            Self::Date => pintail_types::format_date_days(i64::try_from(key).ok()?),
-            Self::DateTime { fsp } => pintail_types::format_datetime_micros(
+            Self::Date => pintail_types::format_date_units(i64::try_from(key).ok()?),
+            Self::DateTime { fsp } => pintail_types::format_datetime_units(
                 i64::try_from(key)
                     .ok()?
                     .checked_mul(Self::datetime_step(fsp))?,

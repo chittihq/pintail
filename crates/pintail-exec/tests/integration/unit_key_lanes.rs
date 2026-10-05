@@ -4,8 +4,9 @@
 //!
 //! The rows live in a settled segment, in the memtable only, or in a
 //! segment with writes on top, and one layout adds rows holding zero dates:
-//! a batch with one has no units to read, and it has to fold by value
-//! rather than read as NULL. Expectations are computed from the generator;
+//! a batch with one packs the zero date as units below every real date, and
+//! it has to answer as the zero date rather than read as NULL or as a real
+//! day. Expectations are computed from the generator;
 //! the zero-date layout is also compared with the same query kept on the
 //! general path by an aggregate no lane takes. ENUM and SET keys are
 //! checked for their declared order under the same aggregates.
@@ -439,11 +440,19 @@ fn a_day_key_and_a_date_column_key_match_the_generator() {
     });
 }
 
-/// The lanes must be what answered, and the batch without units must have
-/// been met after them: otherwise the layouts above prove nothing about a
-/// zero date arriving in the middle of a lane's stream.
+/// Whether no batch of a query folded row by row, as its notes report.
+fn rode_the_lanes(notes: &str) -> bool {
+    !notes
+        .replace(" 0 batches folded row by row", "")
+        .contains("folded row by row")
+}
+
+/// The lanes must be what answered, the batch holding zero dates included:
+/// the zero date packs as units below every real date, so a batch holding
+/// one arriving in the middle of a lane's stream rides the lanes too, and
+/// nothing folds row by row.
 #[test]
-fn a_later_batch_with_zero_dates_folds_row_by_row_beside_the_lanes() {
+fn a_later_batch_with_zero_dates_rides_the_lanes() {
     let rows = 150_000;
     let (_directory, table, model) = build(Layout::ZeroDatesInALaterSegment, rows);
     let total = rows + 3_000;
@@ -473,15 +482,15 @@ fn a_later_batch_with_zero_dates_folds_row_by_row_beside_the_lanes() {
             .collect::<Vec<Vec<String>>>();
         assert_eq!(sorted(got), sorted(want), "{sql}");
         assert!(
-            notes.contains("folded row by row"),
-            "{sql}: the batch without units was not met by the lanes: {notes}"
+            rode_the_lanes(&notes),
+            "{sql}: the batch holding zero dates left the lanes: {notes}"
         );
     }
     // A zero datetime's day, as the general path names it.
     let (got, notes) = laned(&table, total, "DATE(seen_at)");
     assert_eq!(got, sorted(general(&table, total, "DATE(seen_at)")));
     assert!(
-        notes.contains("the key's packed units") && notes.contains("folded row by row"),
+        notes.contains("the key's packed units") && rode_the_lanes(&notes),
         "DATE(seen_at): {notes}"
     );
     // With no zero date anywhere the same key is the lanes' alone.
@@ -518,7 +527,7 @@ fn a_later_batch_with_zero_dates_folds_row_by_row_beside_the_lanes() {
         })
         .collect();
         assert_eq!(sorted(got), sorted(general), "{sql}");
-        assert!(notes.contains("folded row by row"), "{sql}: {notes}");
+        assert!(rode_the_lanes(&notes), "{sql}: {notes}");
     }
 }
 

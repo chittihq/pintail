@@ -148,4 +148,5 @@ mod wide_row_checksum;
 mod window_frame_scaling;
 mod window_hidden_order;
 mod windowed_aggregate_bench;
+mod zero_date_folds;
 mod zero_timestamp_date;

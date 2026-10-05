@@ -21,7 +21,7 @@ use crate::execution::MemoryScope;
 use crate::{
     BatchStream, ColumnVector, DEFAULT_BATCH_ROWS, ExecError, RecordBatch, Scan, ScanProvider,
     array::{StrColumn, ValidityMask},
-    batch::{LazyText, TypedValues, parse_date_days, parse_datetime_micros, parse_decimal_scaled},
+    batch::{LazyText, TypedValues, parse_decimal_scaled},
 };
 
 /// Storage scan provider backed by reader-pinned table snapshots.
@@ -3776,6 +3776,45 @@ pub(crate) fn column_vector_from_decoded(
     }
 }
 
+/// The units of a stored calendar column whose every value is spelled
+/// exactly as its units format back: at the column's own width, a real date
+/// or the zero date. A segment stores a calendar column as text when some
+/// value has no real-date units, and the zero date is the usual one; it
+/// packs as the day before every real date, so the batch keeps the packed
+/// kernels and folds. `None` for any other type, or when a value is
+/// spelled otherwise - a partial or invalid date, or another width.
+fn canonical_calendar_units(
+    data_type: pintail_types::DataType,
+    heap: &[u8],
+    offsets: &[usize],
+    validity: &pintail_store::ColumnValidity,
+) -> Option<Vec<i64>> {
+    let (width, datetime) = match data_type {
+        pintail_types::DataType::Date32 => (10, false),
+        pintail_types::DataType::DateTime64 { fsp: 0 } => (19, true),
+        pintail_types::DataType::DateTime64 { fsp } if fsp <= 6 => (20 + usize::from(fsp), true),
+        _ => return None,
+    };
+    let mut units = Vec::with_capacity(validity.len());
+    for (row, valid) in validity.iter().enumerate() {
+        if !valid {
+            units.push(0);
+            continue;
+        }
+        let bytes = &heap[offsets[row]..offsets[row + 1]];
+        if bytes.len() != width {
+            return None;
+        }
+        let text = std::str::from_utf8(bytes).ok()?;
+        units.push(if datetime {
+            pintail_types::parse_datetime_units(text)?
+        } else {
+            pintail_types::parse_date_units(text)?
+        });
+    }
+    Some(units)
+}
+
 /// Builds the typed projection for a Utf8-carried column straight from the
 /// decoded arena: plain strings become view columns; decimal and temporal
 /// carriers additionally parse once into packed integers, mirroring
@@ -3788,6 +3827,16 @@ fn typed_from_utf8_arena_labelled(
     enum_labels: Option<&Arc<Vec<String>>>,
     set_members: Option<&Arc<Vec<String>>>,
 ) -> ColumnVector {
+    let mask = ValidityMask::from_column_validity(validity);
+    if let Some(units) = canonical_calendar_units(data_type, heap, offsets, validity) {
+        // Text spelled exactly as the units format: it regenerates from
+        // them only if some consumer asks, so it is not copied here.
+        let text = match data_type {
+            pintail_types::DataType::DateTime64 { fsp } => LazyText::datetime(fsp),
+            _ => LazyText::date(),
+        };
+        return ColumnVector::from_typed(data_type, TypedValues::Temporal { units, text }, mask);
+    }
     let mut text =
         StrColumn::with_capacity_for_lengths(offsets.windows(2).map(|pair| pair[1] - pair[0]));
     for row in 0..validity.len() {
@@ -3796,7 +3845,6 @@ fn typed_from_utf8_arena_labelled(
     let text = text
         .with_enum_labels(enum_labels.map(Arc::clone))
         .with_set_members(set_members.map(Arc::clone));
-    let mask = ValidityMask::from_column_validity(validity);
     let typed = match data_type {
         pintail_types::DataType::Decimal { scale, .. } => {
             let mut packed = Vec::with_capacity(validity.len());
@@ -3839,9 +3887,9 @@ fn typed_from_utf8_arena_labelled(
                     .ok()
                     .and_then(|value| {
                         if datetime {
-                            parse_datetime_micros(value)
+                            pintail_types::parse_datetime_units(value)
                         } else {
-                            parse_date_days(value)
+                            pintail_types::parse_date_units(value)
                         }
                     });
                 if let Some(value) = parsed {

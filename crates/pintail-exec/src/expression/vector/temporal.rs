@@ -31,8 +31,27 @@ pub(super) struct Temporal<'batch> {
 }
 
 impl Temporal<'_> {
-    /// Row `row` as the date-time row evaluation parses from its text.
+    /// The unit the zero date packs as in this column: below every real
+    /// date, and no instant.
+    const fn zero(&self) -> i64 {
+        match self.fsp {
+            None => pintail_types::ZERO_DATE_DAYS,
+            Some(_) => pintail_types::ZERO_DATETIME_MICROS,
+        }
+    }
+
+    /// Whether some row, NULL or not, holds the zero date: one pass for the
+    /// least unit, asked only once a kernel has declined.
+    pub(super) fn holds_zero(&self) -> bool {
+        pintail_simd::min_i64(self.units).is_some_and(|least| least <= self.zero())
+    }
+
+    /// Row `row` as the date-time row evaluation parses from its text;
+    /// `None` for the zero date, which has none.
     fn datetime(&self, row: usize) -> Option<NaiveDateTime> {
+        if self.units[row] <= self.zero() {
+            return None;
+        }
         let micros = match self.fsp {
             None => self.units[row].checked_mul(MICROS_PER_DAY)?,
             Some(_) => self.spelled(row),
@@ -118,16 +137,30 @@ pub(super) fn temporal_column(column: &ColumnVector) -> Option<Temporal<'_>> {
     };
     // The text's spelling is not read here, only the units, and they are
     // the exact instant wherever a packed temporal is built: every
-    // construction parses each row with the strict parser and abandons the
-    // packed column when any row fails. A column read from storage keeps
-    // the text as written, so requiring derived text kept every stored
-    // DATE and DATETIME off these kernels.
+    // construction parses each row with the strict parser - which admits
+    // the zero date as a unit below every real day, and nothing else that
+    // is not a calendar date - and abandons the packed column when any row
+    // fails. A column read from storage may keep the text as written, so
+    // requiring derived text kept every stored DATE and DATETIME off these
+    // kernels. A kernel reading a row's calendar reads it through
+    // `datetime`, which has none for the zero date.
     let _ = text;
     Some(Temporal {
         units,
         validity,
         fsp,
     })
+}
+
+/// A calendar column's text: a column the store kept as text, or a packed
+/// one's text, built from its units where it was not kept.
+fn calendar_text(column: &ColumnVector) -> Option<(&crate::array::StrColumn, &ValidityMask)> {
+    let (typed, validity) = column.typed()?;
+    match typed {
+        TypedValues::Utf8(text) => Some((text, validity)),
+        TypedValues::Temporal { .. } => Some((typed.text_column(validity)?, validity)),
+        _ => None,
+    }
 }
 
 /// Whether canonical text can spell `value`'s year, as derived text must.
@@ -190,8 +223,8 @@ pub(super) fn date_format_column(
     // days and months; a time argument takes a statement date as well,
     // and that is row evaluation's.
     // Last comes the binder's zero-date policy (signed), which decides
-    // only how a date written as text reads; a packed temporal holds a
-    // real instant in every row, so no row here depends on it.
+    // only how a date written as text reads; every row this answers holds
+    // a real instant (a zero date declines), so none depends on it.
     let args = match args {
         [rest @ .., CompiledExpr::Literal(Value::Int64(_))] if rest.len() >= 2 => rest,
         args => args,
@@ -272,9 +305,26 @@ pub(super) fn session_timestamp_column(
     let Operand::Column(column) = &input else {
         return None;
     };
-    let Some(units) = temporal_column(column) else {
-        return session_timestamp_text(column, zone, data_type);
-    };
+    match temporal_column(column) {
+        // A column holding the zero TIMESTAMP, which no zone moves, reads
+        // through its text as a column the store kept as text does.
+        Some(units) => session_timestamp_units(&units, zone, data_type).or_else(|| {
+            units
+                .holds_zero()
+                .then(|| session_timestamp_text(column, zone, data_type))
+                .flatten()
+        }),
+        None => session_timestamp_text(column, zone, data_type),
+    }
+}
+
+/// [`session_timestamp_column`] over a column's packed units.
+fn session_timestamp_units(
+    units: &Temporal<'_>,
+    zone: crate::expression::temporal::ZoneReading,
+    data_type: Option<DataType>,
+) -> Option<ColumnVector> {
+    use crate::expression::temporal::ZoneReading;
     let fsp = units.fsp?;
     if data_type.is_some_and(|declared| declared != DataType::DateTime64 { fsp }) {
         return None;
@@ -374,9 +424,7 @@ fn session_timestamp_text(
     {
         return None;
     }
-    let (TypedValues::Utf8(text), validity) = column.typed()? else {
-        return None;
-    };
+    let (text, validity) = calendar_text(column)?;
     if text.dictionary().is_some() {
         return None;
     }
@@ -442,8 +490,6 @@ pub(super) fn session_comparison_mask(
     op: pintail_sql::BinaryOp,
     literal: &Value,
 ) -> Option<crate::SelectionMask> {
-    use pintail_sql::BinaryOp;
-
     use crate::expression::temporal::ZoneReading;
     let CompiledExpr::Scalar {
         function: ScalarFunction::SessionTimestamp,
@@ -463,19 +509,35 @@ pub(super) fn session_comparison_mask(
     };
     let zone = ZoneReading::of(zone)?;
     let source = batch.column(*column)?;
-    let Some(units) = temporal_column(source) else {
-        let Value::Utf8(text) = literal else {
-            return None;
-        };
-        return session_text_comparison_mask(source, zone, *data_type, op, text);
+    let Value::Utf8(text) = literal else {
+        return None;
     };
+    match temporal_column(source) {
+        // A column holding the zero TIMESTAMP compares through its text, as
+        // a column the store kept as text does.
+        Some(units) => session_units_mask(&units, zone, *data_type, op, text).or_else(|| {
+            units
+                .holds_zero()
+                .then(|| session_text_comparison_mask(source, zone, *data_type, op, text))
+                .flatten()
+        }),
+        None => session_text_comparison_mask(source, zone, *data_type, op, text),
+    }
+}
+
+/// [`session_comparison_mask`] over a column's packed units.
+fn session_units_mask(
+    units: &Temporal<'_>,
+    zone: crate::expression::temporal::ZoneReading,
+    data_type: Option<DataType>,
+    op: pintail_sql::BinaryOp,
+    text: &str,
+) -> Option<crate::SelectionMask> {
+    use pintail_sql::BinaryOp;
     let fsp = units.fsp?;
     if data_type.is_some_and(|declared| declared != DataType::DateTime64 { fsp }) {
         return None;
     }
-    let Value::Utf8(text) = literal else {
-        return None;
-    };
     let expected_len = if fsp == 0 { 19 } else { 20 + usize::from(fsp) };
     if text.len() != expected_len {
         return None;
@@ -569,9 +631,7 @@ fn session_text_comparison_mask(
     {
         return None;
     }
-    let (TypedValues::Utf8(text), validity) = column.typed()? else {
-        return None;
-    };
+    let (text, validity) = calendar_text(column)?;
     if !matches!(
         op,
         BinaryOp::Equal
@@ -745,11 +805,14 @@ pub(super) fn date_of_column(
     effects: &mut Effects,
 ) -> Option<ColumnVector> {
     // The binder appends the session's zero-date policy to `DATE(x)`. It
-    // decides only how a zero or partial calendar casts, and a packed
-    // temporal holds neither: every row parsed strictly into a real
-    // instant, so the policy cannot change any row this kernel answers.
-    let ([argument] | [argument, CompiledExpr::Literal(Value::UInt64(_))]) = args else {
-        return None;
+    // decides only how a zero or partial calendar casts. A packed temporal
+    // holds no partial date, and its zero date stays the zero date unless
+    // the policy reads a source TIMESTAMP under NO_ZERO_DATE (bits 4 and
+    // 0), which answers NULL: that is row evaluation's.
+    let (argument, policy) = match args {
+        [argument] => (argument, 0),
+        [argument, CompiledExpr::Literal(Value::UInt64(policy))] => (argument, *policy),
+        _ => return None,
     };
     if data_type != Some(DataType::Date32) {
         return None;
@@ -758,20 +821,21 @@ pub(super) fn date_of_column(
     if !input.varies() {
         return None;
     }
-    dates_of(batch, &input, function)
+    dates_of(batch, &input, function, policy & 0b1_0001 != 0b1_0001)
 }
 
 fn dates_of(
     batch: &RecordBatch,
     input: &Operand<'_>,
     function: ScalarFunction,
+    zero_stays: bool,
 ) -> Option<ColumnVector> {
     use chrono::Datelike as _;
     let input = moment(input)?;
     if function == ScalarFunction::Date
         && let Moment::Column(column) = &input
     {
-        return days_of(column);
+        return days_of(column, zero_stays);
     }
     let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)?;
     let mut days = Vec::with_capacity(batch.row_count());
@@ -820,29 +884,48 @@ fn dates_of(
 /// calendar conversion arrives at, without one. Grouping a recent window by
 /// day reads this for every row, where the conversion cost more than the
 /// rest of the aggregate. A unit whose year canonical text cannot spell
-/// declines, as the calendar path does.
-fn days_of(column: &Temporal<'_>) -> Option<ColumnVector> {
+/// declines, as the calendar path does. The zero date's day is the zero
+/// date, as row evaluation casts it, where `zero_stays`; otherwise a batch
+/// holding it declines.
+fn days_of(column: &Temporal<'_>, zero_stays: bool) -> Option<ColumnVector> {
     let spellable = column.four_digit_years();
+    let zero = column.zero();
     let mut days = Vec::with_capacity(column.units.len());
     // With no NULL row the least and greatest unit bound every row, and
     // the loop is one division a row with nothing to branch on.
+    // The zero datetime is midnight of the zero date's day, so the same
+    // division answers it.
     if let Some((least, greatest)) = column.bounds() {
-        if !spellable.contains(&least) || !spellable.contains(&greatest) {
+        if !spellable.contains(&greatest) {
             return None;
         }
-        match column.fsp {
-            None => days.extend_from_slice(column.units),
-            Some(_) => days.extend(
-                column
+        let first = *spellable.start();
+        if spellable.contains(&least)
+            || (least == zero
+                && zero_stays
+                && column
                     .units
                     .iter()
-                    .map(|unit| unit.div_euclid(MICROS_PER_DAY)),
-            ),
+                    .all(|unit| *unit == zero || *unit >= first))
+        {
+            match column.fsp {
+                None => days.extend_from_slice(column.units),
+                Some(_) => days.extend(
+                    column
+                        .units
+                        .iter()
+                        .map(|unit| unit.div_euclid(MICROS_PER_DAY)),
+                ),
+            }
         }
     }
     for (row, unit) in column.units.iter().enumerate().skip(days.len()) {
         if !column.validity.is_valid(row) {
             days.push(0);
+            continue;
+        }
+        if *unit == zero && zero_stays {
+            days.push(pintail_types::ZERO_DATE_DAYS);
             continue;
         }
         if !spellable.contains(unit) {
@@ -1101,25 +1184,107 @@ fn shifted(
 /// precision than `n`: the same instant, spelled with `n` fraction digits.
 /// Comparisons between temporal types are bound as these casts, so both
 /// sides meet as one type.
-/// The copy check over a batch whose calendar column is packed: every row
-/// of a packed column parsed as a real calendar date, so none is rewritten
-/// and the column is the answer. Any other batch is checked row by row.
+/// The copy check over a batch of one calendar column.
+///
+/// A packed column holds real calendar dates and the zero date, and the
+/// check keeps both as they are, so the column is the answer. A column
+/// held as text - one with a partial date, or a day past its month's end -
+/// is read in one pass over its bytes: a row whose month is 01 to 12 and
+/// whose day is 01 to 28 is a date no mode rejects, and only the others
+/// are checked as row evaluation checks them. A batch with no row rewritten
+/// is the answer too; otherwise only the rewritten rows change.
 pub(super) fn calendar_copy_column(
     batch: &RecordBatch,
     args: &[CompiledExpr],
     target: DataType,
     effects: &mut Effects,
 ) -> Option<ColumnVector> {
-    let Operand::Column(input) = operand(batch, &args[0], effects)? else {
+    let [argument, CompiledExpr::Literal(Value::UInt64(policy))] = args else {
         return None;
     };
-    if input.data_type() != target || temporal_column(&input).is_none() {
+    let Operand::Column(input) = operand(batch, argument, effects)? else {
+        return None;
+    };
+    if input.data_type() != target {
         return None;
     }
-    crate::counters::count(|counters| {
-        counters.calendar_copies_packed = counters.calendar_copies_packed.saturating_add(1);
-    });
-    Some(input.into_owned())
+    if temporal_column(&input).is_some() {
+        crate::counters::count(|counters| {
+            counters.calendar_copies_packed = counters.calendar_copies_packed.saturating_add(1);
+        });
+        return Some(input.into_owned());
+    }
+    let (TypedValues::Utf8(text), validity) = input.typed()? else {
+        return None;
+    };
+    let heap = text.heap();
+    let mut rewritten = Vec::new();
+    for (row, view) in text.views().iter().enumerate() {
+        if !validity.is_valid(row) {
+            continue;
+        }
+        let rewrite = view.with_bytes(heap, |bytes| {
+            if plainly_civil(bytes) {
+                return Ok(None);
+            }
+            let written = std::str::from_utf8(bytes).map_err(|_| ())?;
+            let copied = crate::expression::copied_calendar(
+                &Value::Utf8(written.to_owned()),
+                *policy,
+                target,
+            );
+            match copied {
+                Value::Utf8(copied) if copied == written => Ok(None),
+                Value::Utf8(copied) => Ok(Some(copied)),
+                _ => Err(()),
+            }
+        });
+        match rewrite {
+            Ok(Some(copied)) => rewritten.push((row, copied)),
+            Ok(None) => {}
+            // Bytes row evaluation reads some other way are its own.
+            Err(()) => return None,
+        }
+    }
+    if rewritten.is_empty() {
+        return Some(input.into_owned());
+    }
+    let mut copied = crate::array::StrColumn::with_capacity_for_lengths(
+        text.views()
+            .iter()
+            .map(|view| view.with_bytes(heap, <[u8]>::len)),
+    );
+    let mut next = rewritten.iter().peekable();
+    for (row, view) in text.views().iter().enumerate() {
+        match next.peek() {
+            Some((at, value)) if *at == row => {
+                copied.push(value.as_bytes());
+                next.next();
+            }
+            _ => view.with_bytes(heap, |bytes| copied.push(bytes)),
+        }
+    }
+    Some(ColumnVector::from_typed(
+        target,
+        TypedValues::Utf8(copied),
+        validity.clone(),
+    ))
+}
+
+/// Whether stored calendar text begins `YYYY-MM-DD` with a month from 01 to
+/// 12 and a day from 01 to 28: a real date in every month of every year,
+/// which the copy check keeps under every mode.
+fn plainly_civil(bytes: &[u8]) -> bool {
+    let [y0, y1, y2, y3, b'-', m0, m1, b'-', d0, d1, ..] = *bytes else {
+        return false;
+    };
+    let digits = [y0, y1, y2, y3, m0, m1, d0, d1];
+    if !digits.iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    let month = (m0 - b'0') * 10 + (m1 - b'0');
+    let day = (d0 - b'0') * 10 + (d1 - b'0');
+    (1..=12).contains(&month) && (1..=28).contains(&day)
 }
 
 pub(super) fn cast_column(
@@ -1132,9 +1297,15 @@ pub(super) fn cast_column(
     let [argument, rest @ ..] = args else {
         return None;
     };
-    if !matches!(rest, [] | [CompiledExpr::Literal(Value::UInt64(_))]) {
-        return None;
-    }
+    let policy = match rest {
+        [] => 0,
+        [CompiledExpr::Literal(Value::UInt64(policy))] => *policy,
+        _ => return None,
+    };
+    // The zero date casts to the zero datetime, which is the zero date's
+    // units widened, except that a source TIMESTAMP read under NO_ZERO_DATE
+    // (bits 4 and 0) casts it to NULL: that is row evaluation's.
+    let zero_stays = policy & 0b1_0001 != 0b1_0001;
     let DataType::DateTime64 { fsp: out_fsp } = target else {
         return None;
     };
@@ -1150,9 +1321,13 @@ pub(super) fn cast_column(
         Some(fsp) if fsp <= out_fsp => 1,
         Some(_) => return None,
     };
+    let zero = input.zero();
     let mut units = Vec::with_capacity(input.units.len());
     for (row, unit) in input.units.iter().enumerate() {
         units.push(if input.validity.is_valid(row) {
+            if !zero_stays && *unit == zero {
+                return None;
+            }
             unit.checked_mul(scale)?
         } else {
             0
@@ -1970,5 +2145,249 @@ mod tests {
             &batch,
             DataType::DateTime64 { fsp: 0 }
         ));
+    }
+
+    /// A packed column of ordinary dates with the zero date in two rows,
+    /// as a scan of a segment holding zero dates builds it.
+    fn zero_temporal(fsp: Option<u8>) -> ColumnVector {
+        let mut texts = ORDINARY
+            .iter()
+            .map(|date| {
+                date.map(|date| match fsp {
+                    None => date.to_owned(),
+                    Some(0) => format!("{date} 10:11:12"),
+                    Some(fsp) => format!("{date} 10:11:12.{}", "5".repeat(usize::from(fsp))),
+                })
+            })
+            .collect::<Vec<_>>();
+        let zero = match fsp {
+            None => "0000-00-00".to_owned(),
+            Some(0) => "0000-00-00 00:00:00".to_owned(),
+            Some(fsp) => format!("0000-00-00 00:00:00.{}", "0".repeat(usize::from(fsp))),
+        };
+        texts[1] = Some(zero.clone());
+        texts[4] = Some(zero);
+        let values = texts
+            .iter()
+            .map(|text| text.clone().map_or(Value::Null, Value::Utf8))
+            .collect::<Vec<_>>();
+        let data_type = fsp.map_or(DataType::Date32, |fsp| DataType::DateTime64 { fsp });
+        let column = ColumnVector::new(data_type, values).expect("column");
+        let (typed, _) = column.typed().expect("packed");
+        assert!(
+            matches!(typed, TypedValues::Temporal { .. }) && typed.unit_kind().is_some(),
+            "the zero date packs, with text derived from the units"
+        );
+        column
+    }
+
+    /// Every kernel over a packed column holding the zero date answers what
+    /// row evaluation answers, or declines; `DATE()` and the copy check
+    /// answer.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn kernels_over_packed_zero_dates_agree_with_row_evaluation() {
+        for fsp in [None, Some(0), Some(3)] {
+            let batch = batch(zero_temporal(fsp));
+            let declared = fsp.map_or(DataType::Date32, |fsp| DataType::DateTime64 { fsp });
+            for part in [
+                DatePart::Year,
+                DatePart::Month,
+                DatePart::Day,
+                DatePart::Hour,
+                DatePart::Second,
+                DatePart::Quarter,
+                DatePart::DayOfWeek,
+                DatePart::Week,
+            ] {
+                let expression = typed_scalar(
+                    declared,
+                    ScalarFunction::DatePart(part),
+                    vec![CompiledExpr::Column(0)],
+                    DataType::Int64,
+                );
+                agrees_with_rows(&expression, &batch, DataType::Int64);
+            }
+            for policy in [None, Some(0_u64), Some(0b1), Some(0b11), Some(0b1_0001)] {
+                let mut args = vec![CompiledExpr::Column(0)];
+                args.extend(policy.map(|policy| CompiledExpr::Literal(Value::UInt64(policy))));
+                let expression =
+                    typed_scalar(declared, ScalarFunction::Date, args, DataType::Date32);
+                let answered = agrees_with_rows(&expression, &batch, DataType::Date32);
+                if policy != Some(0b1_0001) {
+                    let column = expression
+                        .evaluate_column(&batch, Some(DataType::Date32))
+                        .expect("DATE() answers");
+                    assert!(
+                        matches!(column.typed(), Some((TypedValues::Temporal { .. }, _))),
+                        "DATE() over {fsp:?} with policy {policy:?} stays packed"
+                    );
+                }
+                assert!(answered || policy == Some(0b1_0001));
+            }
+            agrees_with_rows(
+                &typed_scalar(
+                    declared,
+                    ScalarFunction::LastDay,
+                    vec![CompiledExpr::Column(0)],
+                    DataType::Date32,
+                ),
+                &batch,
+                DataType::Date32,
+            );
+            for format in ["%Y-%m-%d", "%Y-%m", "%H:%i"] {
+                let expression = typed_scalar(
+                    declared,
+                    ScalarFunction::DateFormat,
+                    vec![
+                        CompiledExpr::Column(0),
+                        CompiledExpr::Literal(Value::Utf8(format.to_owned())),
+                    ],
+                    DataType::Utf8,
+                );
+                agrees_with_rows(&expression, &batch, DataType::Utf8);
+            }
+            for (unit, target) in [
+                (IntervalUnit::Day, DataType::Date32),
+                (IntervalUnit::Month, DataType::Date32),
+                (IntervalUnit::Hour, DataType::DateTime64 { fsp: 0 }),
+            ] {
+                let target = if fsp.is_some() { declared } else { target };
+                let expression = typed_scalar(
+                    declared,
+                    ScalarFunction::DateInterval {
+                        unit,
+                        subtract: false,
+                    },
+                    vec![
+                        CompiledExpr::Column(0),
+                        CompiledExpr::Literal(Value::Int64(1)),
+                    ],
+                    target,
+                );
+                agrees_with_rows(&expression, &batch, target);
+            }
+            for policy in [0_u64, 0b1, 0b1_0001] {
+                let target = DataType::DateTime64 { fsp: 6 };
+                let expression = typed_scalar(
+                    declared,
+                    ScalarFunction::Cast(target),
+                    vec![
+                        CompiledExpr::Column(0),
+                        CompiledExpr::Literal(Value::UInt64(policy)),
+                    ],
+                    target,
+                );
+                agrees_with_rows(&expression, &batch, target);
+            }
+            let expression = typed_scalar(
+                declared,
+                ScalarFunction::DateDiff,
+                vec![
+                    CompiledExpr::Column(0),
+                    CompiledExpr::Literal(Value::Utf8("2024-01-01".to_owned())),
+                ],
+                DataType::Int64,
+            );
+            agrees_with_rows(&expression, &batch, DataType::Int64);
+            // The copy check keeps the zero date under every mode, so a
+            // packed column passes whole.
+            for policy in [0_u64, 0b10, 0b100, 0b111] {
+                let expression = copy_check(declared, policy);
+                let _ = crate::counters::take_exec_counters();
+                assert!(agrees_with_rows(&expression, &batch, declared));
+                assert!(crate::counters::take_exec_counters().calendar_copies_packed > 0);
+            }
+        }
+    }
+
+    /// A scalar over column 0, which the binder types as `column`, as it
+    /// types every column argument.
+    fn typed_scalar(
+        column: DataType,
+        function: ScalarFunction,
+        args: Vec<CompiledExpr>,
+        data_type: DataType,
+    ) -> CompiledExpr {
+        let mut expression = scalar(function, args, data_type);
+        if let CompiledExpr::Scalar { argument_types, .. } = &mut expression {
+            argument_types[0] = Some(column);
+        }
+        expression
+    }
+
+    /// The binder's copy check of a stored calendar column of `data_type`.
+    fn copy_check(data_type: DataType, policy: u64) -> CompiledExpr {
+        typed_scalar(
+            data_type,
+            ScalarFunction::Cast(data_type),
+            vec![
+                CompiledExpr::Column(0),
+                CompiledExpr::Literal(Value::UInt64(policy | pintail_sql::CALENDAR_COPY_CHECK)),
+            ],
+            data_type,
+        )
+    }
+
+    /// A column held as text - it holds dates no unit spells - is checked
+    /// in one pass: only the rows the mode rejects change.
+    #[test]
+    fn the_copy_check_rewrites_only_rejected_rows_of_a_text_column() {
+        for (data_type, written) in [
+            (
+                DataType::Date32,
+                [
+                    "2024-02-30",
+                    "2024-00-15",
+                    "2024-01-15",
+                    "0000-00-00",
+                    "2023-12-31",
+                    "2024-02-29",
+                ],
+            ),
+            (
+                DataType::DateTime64 { fsp: 0 },
+                [
+                    "2024-02-30 10:00:00",
+                    "2024-00-15 10:00:00",
+                    "2024-01-15 10:00:00",
+                    "0000-00-00 00:00:00",
+                    "2023-12-31 23:59:59",
+                    "2024-02-29 00:00:00",
+                ],
+            ),
+        ] {
+            let mut values = written
+                .iter()
+                .map(|text| Value::Utf8((*text).to_owned()))
+                .collect::<Vec<_>>();
+            values.insert(2, Value::Null);
+            let column = ColumnVector::new(data_type, values).expect("column");
+            assert!(matches!(column.typed(), Some((TypedValues::Utf8(_), _))));
+            let batch = batch(column);
+            // NO_ZERO_IN_DATE rejects the zero month; strict dates reject
+            // February 30th unless invalid dates are allowed.
+            for (policy, rewritten) in [(0_u64, 1), (0b10, 2), (0b100, 0), (0b110, 1)] {
+                let expression = copy_check(data_type, policy);
+                assert!(agrees_with_rows(&expression, &batch, data_type));
+                // The text pass answered, not the row path, and it changed
+                // only the rows the mode rejects.
+                let CompiledExpr::Scalar { args, .. } = &expression else {
+                    unreachable!("a scalar")
+                };
+                let copied = super::calendar_copy_column(
+                    &batch,
+                    args,
+                    data_type,
+                    &mut super::Effects::default(),
+                )
+                .expect("the text pass answers");
+                let input = batch.column(0).expect("column");
+                let changed = (0..batch.row_count())
+                    .filter(|row| copied.value(*row) != input.value(*row))
+                    .count();
+                assert_eq!(changed, rewritten, "policy {policy}");
+            }
+        }
     }
 }

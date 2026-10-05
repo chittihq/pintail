@@ -87,8 +87,8 @@ pub(super) fn units_fit_a_lane(precision: u8) -> bool {
 fn temporal_unit_text(units: i128, data_type: DataType) -> Option<String> {
     let units = i64::try_from(units).ok()?;
     match data_type {
-        DataType::Date32 => pintail_types::format_date_days(units),
-        DataType::DateTime64 { fsp } => pintail_types::format_datetime_micros(units, fsp),
+        DataType::Date32 => pintail_types::format_date_units(units),
+        DataType::DateTime64 { fsp } => pintail_types::format_datetime_units(units, fsp),
         _ => None,
     }
 }
@@ -1043,13 +1043,13 @@ fn unit_key_bits(value: &Value, group_type: DataType) -> Option<(u64, bool)> {
     let units = |units: i64| (u64::from_ne_bytes(units.to_ne_bytes()), false);
     match (group_type, value) {
         (_, Value::Null) => Some((0, true)),
-        (DataType::Date32, Value::Utf8(text)) => pintail_types::parse_date_days(text)
-            .filter(|days| pintail_types::format_date_days(*days).as_deref() == Some(text))
+        (DataType::Date32, Value::Utf8(text)) => pintail_types::parse_date_units(text)
+            .filter(|days| pintail_types::format_date_units(*days).as_deref() == Some(text))
             .map(units),
         (DataType::DateTime64 { fsp }, Value::Utf8(text)) => {
-            pintail_types::parse_datetime_micros(text)
+            pintail_types::parse_datetime_units(text)
                 .filter(|micros| {
-                    pintail_types::format_datetime_micros(*micros, fsp).as_deref() == Some(text)
+                    pintail_types::format_datetime_units(*micros, fsp).as_deref() == Some(text)
                 })
                 .map(units)
         }
@@ -2446,6 +2446,32 @@ fn two_pass_scatter_date_parts(
     Ok(())
 }
 
+/// The lane id of a date-part key's row that its units gave no part for:
+/// the zero date's, read as the scalar reads it, or the refusal of a
+/// column without units. Out of line, as no row of a real date comes here.
+#[cold]
+#[inline(never)]
+fn zero_date_part_id(
+    batch: &RecordBatch,
+    column: usize,
+    row: usize,
+    part: DatePart,
+) -> Result<u64, ExecError> {
+    match crate::expression::zero_date_part_at(batch, column, row, part) {
+        Some(Ok(Value::Int64(value))) => match u64::try_from(value) {
+            Ok(value) if value < 0xF_FFFF => Ok(value + 1),
+            _ => Err(ExecError::InvalidBatch(
+                "date-part group key does not fit its 20-bit lane",
+            )),
+        },
+        Some(Ok(Value::Null)) => Ok(0),
+        Some(Err(error)) => Err(error),
+        _ => Err(ExecError::InvalidBatch(
+            "date-part group key column lost its packed units",
+        )),
+    }
+}
+
 /// One row's date-part key: each part's `(value + 1)` in 20 bits, 0 for a
 /// NULL part.
 fn date_parts_key_bits(
@@ -2469,7 +2495,8 @@ fn date_parts_key_bits(
             },
             Some(Ok(Value::Null)) => 0,
             Some(Err(error)) => return Err(error),
-            _ => {
+            None => zero_date_part_id(batch, *column, row, *part)?,
+            Some(Ok(_)) => {
                 return Err(ExecError::InvalidBatch(
                     "date-part group key column lost its packed units",
                 ));
@@ -3007,7 +3034,15 @@ struct IntRangeFold {
     span: usize,
     /// Whether the key column is signed, which is how its bits are spelled.
     signed: bool,
-    /// Key slots plus the NULL slot.
+    /// The zero date's unit, when the key is a DATE or DATETIME. It packs
+    /// below every real date, hundreds of thousands of days from the dates
+    /// rows hold, so it has a slot of its own - slot 1, before every real
+    /// date's - and the range covers only the real dates.
+    zero: Option<i64>,
+    /// The slot of the range's first key, after the NULL slot and the zero
+    /// date's.
+    first: usize,
+    /// Key slots plus the NULL slot (and the zero date's).
     slot_count: usize,
     /// One fold per worker, kept across windows and combined per slot only
     /// when the groups are committed: merging them whole after every window
@@ -3025,10 +3060,13 @@ struct IntRangeFold {
 impl IntRangeFold {
     /// The map key the scatter would have built for `slot`.
     fn key_bits(&self, slot: usize) -> (u64, bool) {
-        if slot == 0 {
-            return (0, true);
+        if slot < self.first {
+            return match self.zero {
+                Some(zero) if slot == 1 => (u64::from_ne_bytes(zero.to_ne_bytes()), false),
+                _ => (0, true),
+            };
         }
-        let key = self.base + i128::try_from(slot - 1).expect("slot fits i128");
+        let key = self.base + i128::try_from(slot - self.first).expect("slot fits i128");
         let bits = if self.signed {
             u64::from_ne_bytes(
                 i64::try_from(key)
@@ -3039,6 +3077,22 @@ impl IntRangeFold {
             u64::try_from(key).expect("unsigned key in range")
         };
         (bits, false)
+    }
+}
+
+/// The slot of a range's first key: after the NULL slot, and after the zero
+/// date's when the range has one.
+const fn first_key_slot(zero: Option<i64>) -> usize {
+    if zero.is_some() { 2 } else { 1 }
+}
+
+/// The unit the zero date packs as for a key column of `data_type`, when it
+/// is a DATE or DATETIME.
+const fn zero_key_unit(data_type: DataType) -> Option<i64> {
+    match data_type {
+        DataType::Date32 => Some(pintail_types::ZERO_DATE_DAYS),
+        DataType::DateTime64 { .. } => Some(pintail_types::ZERO_DATETIME_MICROS),
+        _ => None,
     }
 }
 
@@ -3074,6 +3128,36 @@ fn int_key_column(
         _ => derived_temporal_units(batch, column)
             .map(|(units, validity)| (PackedInts::Signed(units), validity)),
     }
+}
+
+/// [`key_bounds`] with the zero date left out, for a range that keeps it in
+/// a slot of its own. Only a morsel whose least key is the zero date reads
+/// its keys a second time.
+fn key_bounds_beside_zero(
+    keys: PackedInts<'_>,
+    validity: &crate::array::ValidityMask,
+    rows: &FoldRows<'_>,
+    zero: Option<i64>,
+) -> Option<(i128, i128)> {
+    let bounds = key_bounds(keys, validity, rows)?;
+    let (Some(zero), PackedInts::Signed(values)) = (zero, keys) else {
+        return Some(bounds);
+    };
+    if bounds.0 != i128::from(zero) {
+        return Some(bounds);
+    }
+    let mut real: Option<(i64, i64)> = None;
+    let mut take = |row: usize| {
+        let key = values[row];
+        if validity.is_valid(row) && key != zero {
+            real = Some(real.map_or((key, key), |(low, high)| (low.min(key), high.max(key))));
+        }
+    };
+    match rows {
+        FoldRows::Span(span) => span.clone().for_each(&mut take),
+        FoldRows::Picked(picked) => picked.iter().for_each(|row| take(*row as usize)),
+    }
+    real.map(|(low, high)| (i128::from(low), i128::from(high)))
 }
 
 /// The smallest and largest non-NULL key among `rows`.
@@ -3121,9 +3205,9 @@ fn key_bounds(
     }
 }
 
-/// Each listed row's slot: `1 + key - base`, or 0 for a NULL key. `false`
-/// when a key lies outside the `span` keys from `base`; the slots are then
-/// not to be used.
+/// Each listed row's slot: `FIRST + key - base`, or 0 for a NULL key.
+/// `false` when a key lies outside the `span` keys from `base`; the slots
+/// are then not to be used.
 ///
 /// The check rides the pass that computes the slots: an offset is inside
 /// when neither it nor `span - 1 - offset` has its top bit set, and the OR
@@ -3133,7 +3217,7 @@ fn key_bounds(
     clippy::cast_sign_loss,
     clippy::cast_possible_wrap
 )]
-fn range_slots(
+fn range_slots<const FIRST: u32>(
     keys: PackedInts<'_>,
     validity: &crate::array::ValidityMask,
     rows: &FoldRows<'_>,
@@ -3154,7 +3238,7 @@ fn range_slots(
             let mut slot = |offset| {
                 let offset: u64 = bits(offset);
                 outside |= offset | last.wrapping_sub(offset);
-                (offset as u32).wrapping_add(1)
+                (offset as u32).wrapping_add(FIRST)
             };
             match rows {
                 FoldRows::Span(span) if validity.no_nulls() => slots.extend(
@@ -3187,6 +3271,48 @@ fn range_slots(
     outside >> 63 == 0
 }
 
+/// [`range_slots`] for a range with the zero date's slot, after the one
+/// pass met a key outside the range: the zero date takes slot 1 and every
+/// other key `2 + key - base`. `false` when a key other than the zero
+/// date lies outside the range. Only batches holding the zero date, or a
+/// key outside the range, pay for this second pass.
+fn range_slots_beside_zero(
+    keys: &[i64],
+    validity: &crate::array::ValidityMask,
+    rows: &FoldRows<'_>,
+    (base, span, zero): (i128, usize, i64),
+    slots: &mut Vec<u32>,
+) -> bool {
+    slots.clear();
+    let slot = |row: usize| -> Option<u32> {
+        if !validity.is_valid(row) {
+            return Some(0);
+        }
+        let key = keys[row];
+        if key == zero {
+            return Some(1);
+        }
+        let offset = usize::try_from(i128::from(key) - base).ok()?;
+        (offset < span).then(|| u32::try_from(offset + 2).ok())?
+    };
+    let mut inside = true;
+    match rows {
+        FoldRows::Span(span) => slots.extend(span.clone().map(|row| {
+            slot(row).unwrap_or_else(|| {
+                inside = false;
+                0
+            })
+        })),
+        FoldRows::Picked(picked) => slots.extend(picked.iter().map(|row| {
+            slot(*row as usize).unwrap_or_else(|| {
+                inside = false;
+                0
+            })
+        })),
+    }
+    inside
+}
+
 /// Folds one morsel into a worker's range fold, as far as its keys lie in
 /// the range: the row it stopped at when a key does not, with the rows
 /// before it folded and the ones from it on untouched.
@@ -3194,7 +3320,7 @@ fn fold_range_morsel(
     morsel: &Morsel<'_>,
     column: usize,
     lanes: &[TwoPassLane],
-    (base, span, signed): (i128, usize, bool),
+    (base, span, signed, zero): (i128, usize, bool, Option<i64>),
     fold: &mut PackedFold,
 ) -> Option<usize> {
     let batch = morsel.batch;
@@ -3213,7 +3339,15 @@ fn fold_range_morsel(
     while start < morsel.rows.end {
         let end = start.saturating_add(RANGE_FOLD_ROWS).min(morsel.rows.end);
         let rows = fold_rows(batch, start..end, &mut selected);
-        if !range_slots(keys, validity, &rows, base, span, &mut slots) {
+        let inside = match zero {
+            None => range_slots::<1>(keys, validity, &rows, base, span, &mut slots),
+            Some(zero) => {
+                range_slots::<2>(keys, validity, &rows, base, span, &mut slots)
+                    || matches!(keys, PackedInts::Signed(keys)
+                        if range_slots_beside_zero(keys, validity, &rows, (base, span, zero), &mut slots))
+            }
+        };
+        if !inside {
             return Some(start);
         }
         match (&inputs, &readers) {
@@ -3664,7 +3798,7 @@ fn fold_range_morsels(
     lanes: &[TwoPassLane],
     packed: &[Option<PackedLane>],
 ) -> Result<MorselRanges, ExecError> {
-    let range = (active.base, active.span, active.signed);
+    let range = (active.base, active.span, active.signed, active.zero);
     let slot_count = active.slot_count;
     let seats = RangeSeats::take(active)?;
     let fresh = || PackedFold::sharing(slot_count, packed, lanes);
@@ -3783,7 +3917,7 @@ fn fused_range_round(
     let TwoPassKeySource::Int { column, .. } = shape.keys else {
         return Ok(FusedRound::Unavailable);
     };
-    let range = (active.base, active.span, active.signed);
+    let range = (active.base, active.span, active.signed, active.zero);
     let slot_count = active.slot_count;
     let seats = RangeSeats::take(active)?;
     let fresh = || PackedFold::sharing(slot_count, shape.packed, shape.lanes);
@@ -4454,6 +4588,14 @@ fn fold_int_range_window(
             rows: rows.clone(),
         })
         .collect();
+    // A DATE or DATETIME key keeps the zero date beside the range.
+    let zero = match range {
+        IntRange::Active(active) => active.zero,
+        _ => window
+            .first()
+            .and_then(|(batch, _)| batch.column(column))
+            .and_then(|key| zero_key_unit(key.data_type())),
+    };
     // The key bounds and signedness of what is left, read in parallel.
     let bounds = morsels
         .par_iter()
@@ -4462,7 +4604,7 @@ fn fold_int_range_window(
             let mut selected = Vec::new();
             let rows = fold_rows(morsel.batch, morsel.rows.clone(), &mut selected);
             let signed = matches!(keys, PackedInts::Signed(_));
-            Some((signed, key_bounds(keys, validity, &rows)))
+            Some((signed, key_bounds_beside_zero(keys, validity, &rows, zero)))
         })
         .collect::<Option<Vec<_>>>();
     let Some(bounds) = bounds else {
@@ -4513,7 +4655,8 @@ fn fold_int_range_window(
         give_up(range, maps, group_reserved)?;
         return Ok(Some(pending));
     }
-    let slot_count = span + 1;
+    let first = first_key_slot(zero);
+    let slot_count = span + first;
     let workers = rayon::current_num_threads().max(1);
     let fold_bytes = PackedFold::bytes(slot_count, &packed);
     let needed = fold_bytes.saturating_mul(workers + 1);
@@ -4533,7 +4676,8 @@ fn fold_int_range_window(
         let mut folds = Vec::new();
         let mut rows = 0;
         if let IntRange::Active(old) = std::mem::replace(range, IntRange::Off) {
-            // An old range of no keys holds only the NULL slot.
+            // An old range of no keys holds only the NULL slot (and the zero
+            // date's, which stays where it is).
             let shift = if old.span == 0 {
                 0
             } else {
@@ -4541,7 +4685,10 @@ fn fold_int_range_window(
             };
             let mut fold = PackedFold::sharing(slot_count, &packed, lanes);
             for partial in &old.folds {
-                fold.merge_from(partial, |slot| if slot == 0 { 0 } else { slot + shift });
+                fold.merge_from(
+                    partial,
+                    |slot| if slot < first { slot } else { slot + shift },
+                );
             }
             folds.push(fold);
             rows = old.rows;
@@ -4551,6 +4698,8 @@ fn fold_int_range_window(
             base,
             span,
             signed,
+            zero,
+            first,
             slot_count,
             seats: (0..folds.len()).collect(),
             folds,
@@ -5670,6 +5819,7 @@ fn dense_date_parts_window(
 /// Two calendar parts of one DATE column - the YEAR/MONTH grouping - are
 /// tabled over the batch's span of days: one civil conversion per distinct
 /// day instead of one per row, then a lookup per row.
+#[allow(clippy::too_many_lines)]
 fn date_part_slots(
     batch: &RecordBatch,
     parts: [Option<(DatePart, usize)>; 2],
@@ -5717,8 +5867,13 @@ fn date_part_slots(
             .fold(None, |bounds: Option<(i64, i64)>, day| {
                 Some(bounds.map_or((day, day), |(low, high)| (low.min(day), high.max(day))))
             });
+        // The zero date packs below every real day and has no calendar
+        // fields to read here; a batch holding one takes the per-row reading
+        // below, which spells it as the scalar does.
+        let zero = bounds.is_some_and(|(low, _)| low <= pintail_types::ZERO_DATE_DAYS);
         let span = bounds.and_then(|(low, high)| usize::try_from(high.checked_sub(low)?).ok());
-        if let (Some((low, _)), Some(span)) = (bounds, span)
+        if !zero
+            && let (Some((low, _)), Some(span)) = (bounds, span)
             && span < DENSE_DATE_SLOT_CAP
         {
             let table = (0..=span)
@@ -5741,15 +5896,17 @@ fn date_part_slots(
             }
             return Ok(slots);
         }
-        for row in batch.selection().selected_rows() {
-            let key_bits = if validity.is_valid(row) {
-                key_of(units[row])
-            } else {
-                0
-            };
-            slots.push(slot_of(key_bits)?);
+        if !zero {
+            for row in batch.selection().selected_rows() {
+                let key_bits = if validity.is_valid(row) {
+                    key_of(units[row])
+                } else {
+                    0
+                };
+                slots.push(slot_of(key_bits)?);
+            }
+            return Ok(slots);
         }
-        return Ok(slots);
     }
     for row in batch.selection().selected_rows() {
         let mut key_bits = 0_u64;
@@ -5766,7 +5923,10 @@ fn date_part_slots(
                 },
                 Some(Ok(Value::Null)) => 0,
                 Some(Err(error)) => return Err(DenseFold::Exec(error)),
-                _ => {
+                // The zero date: its parts are the scalar's, which the
+                // scatter reads.
+                None => return Err(DenseFold::OutOfDomain),
+                Some(Ok(_)) => {
                     return Err(DenseFold::Exec(ExecError::InvalidBatch(
                         "date-part group key column lost its packed units",
                     )));
@@ -6031,6 +6191,12 @@ fn two_pass_dense_date_parts_batch(
         && let Some(vector) = batch.column(first_column)
         && vector.data_type() == DataType::Date32
         && let Some((crate::batch::TypedValues::Temporal { units, .. }, validity)) = vector.typed()
+        // The zero date packs as the day before 0000-01-01, whose year has
+        // no slot, so a key with a year leaves the table on it by itself.
+        // Without one, a batch holding it reads each row below instead.
+        && (first_part == DatePart::Year
+            || second_part == DatePart::Year
+            || pintail_simd::min_i64(units).is_none_or(|least| least > pintail_types::ZERO_DATE_DAYS))
     {
         let pick = |part: DatePart, year: i64, month: i64, day: i64| -> u64 {
             let value = match part {
@@ -6083,7 +6249,10 @@ fn two_pass_dense_date_parts_batch(
                 },
                 Some(Ok(Value::Null)) => 0,
                 Some(Err(error)) => return Err(DenseFold::Exec(error)),
-                _ => {
+                // The zero date: its parts are the scalar's, which the
+                // scatter reads.
+                None => return Err(DenseFold::OutOfDomain),
+                Some(Ok(_)) => {
                     return Err(DenseFold::Exec(ExecError::InvalidBatch(
                         "date-part group key column lost its packed units",
                     )));
@@ -6386,6 +6555,80 @@ fn two_pass_flush_sets(
     *group_reserved = group_reserved.saturating_add(memory.used().saturating_sub(used_before));
     let failure = added.into_iter().find_map(Result::err);
     failure.map_or(Ok(()), Err)
+}
+
+#[cfg(test)]
+mod zero_date_range_tests {
+    use super::{
+        FoldRows, IntRangeFold, PackedInts, key_bounds_beside_zero, range_slots,
+        range_slots_beside_zero,
+    };
+    use crate::array::ValidityMask;
+
+    const ZERO: i64 = pintail_types::ZERO_DATE_DAYS;
+
+    #[test]
+    fn the_zero_date_takes_its_own_slot_beside_the_range_of_days() {
+        let keys = [19_000, ZERO, 19_002, 19_001, 0, ZERO];
+        let validity = ValidityMask::from_bools(&[true, true, true, true, false, true]);
+        let rows = FoldRows::Span(0..keys.len());
+        // The bounds leave the zero date out, so the range is three days.
+        assert_eq!(
+            key_bounds_beside_zero(PackedInts::Signed(&keys), &validity, &rows, Some(ZERO)),
+            Some((19_000, 19_002))
+        );
+        assert_eq!(
+            key_bounds_beside_zero(PackedInts::Signed(&keys), &validity, &rows, None),
+            Some((i128::from(ZERO), 19_002))
+        );
+        // The one pass refuses the zero date as outside; the second gives it
+        // slot 1 and the days slots from 2.
+        let mut slots = Vec::new();
+        assert!(!range_slots::<2>(
+            PackedInts::Signed(&keys),
+            &validity,
+            &rows,
+            19_000,
+            3,
+            &mut slots
+        ));
+        assert!(range_slots_beside_zero(
+            &keys,
+            &validity,
+            &rows,
+            (19_000, 3, ZERO),
+            &mut slots
+        ));
+        assert_eq!(slots, [2, 1, 4, 3, 0, 1]);
+        // Any other key outside the range still stops the fold.
+        let outside = [19_000, ZERO, 19_003];
+        let validity = ValidityMask::from_bools(&[true; 3]);
+        assert!(!range_slots_beside_zero(
+            &outside,
+            &validity,
+            &FoldRows::Span(0..3),
+            (19_000, 3, ZERO),
+            &mut slots
+        ));
+        // Slot 1 spells the zero date back; the days follow it.
+        let range = IntRangeFold {
+            base: 19_000,
+            span: 3,
+            signed: true,
+            zero: Some(ZERO),
+            first: 2,
+            slot_count: 5,
+            folds: Vec::new(),
+            seats: Vec::new(),
+            rows: 0,
+            reserved: 0,
+        };
+        let bits = |key: i64| u64::from_ne_bytes(key.to_ne_bytes());
+        assert_eq!(range.key_bits(0), (0, true));
+        assert_eq!(range.key_bits(1), (bits(ZERO), false));
+        assert_eq!(range.key_bits(2), (bits(19_000), false));
+        assert_eq!(range.key_bits(4), (bits(19_002), false));
+    }
 }
 
 #[cfg(test)]

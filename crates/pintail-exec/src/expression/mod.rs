@@ -2332,9 +2332,45 @@ fn scalar_string_upper_bound(value: &Value) -> usize {
     }
 }
 
+/// A date part of a packed column's zero date, which
+/// [`evaluate_units_date_part`] leaves out: what the scalar reads from the
+/// zero date's text for an argument typed as the column, as the binder
+/// types a column argument. `None` for any other row. A date-part key reads
+/// each row's units first and asks this only where they gave no answer.
+#[cold]
+#[inline(never)]
+pub(crate) fn zero_date_part_at(
+    batch: &RecordBatch,
+    column: usize,
+    row: usize,
+    part: DatePart,
+) -> Option<Result<Value, ExecError>> {
+    let vector = batch.column(column)?;
+    let (crate::batch::TypedValues::Temporal { units, .. }, validity) = vector.typed()? else {
+        return None;
+    };
+    let unit = *units.get(row)?;
+    let zero = match vector.data_type() {
+        DataType::Date32 => pintail_types::ZERO_DATE_DAYS,
+        DataType::DateTime64 { .. } => pintail_types::ZERO_DATETIME_MICROS,
+        _ => return None,
+    };
+    if !validity.is_valid(row) || unit != zero {
+        return None;
+    }
+    Some(evaluate_eager_scalar_typed(
+        ScalarFunction::DatePart(part),
+        &[vector.value_owned(row)?],
+        &[Some(vector.data_type())],
+        None,
+        Some(DataType::Int64),
+        Collation::default(),
+    ))
+}
+
 /// Date-part extraction straight from packed temporal units. Returns
-/// `None` when the column does not carry units (the caller falls back to
-/// the text paths).
+/// `None` when the column does not carry units, or for a calendar part of
+/// the zero date (the caller falls back to the text paths).
 pub(crate) fn evaluate_units_date_part(
     batch: &RecordBatch,
     column: usize,
@@ -2365,6 +2401,12 @@ pub(crate) fn evaluate_units_date_part(
     let value = match part {
         DatePart::Year | DatePart::Month | DatePart::Day => {
             let (year, month, day) = pintail_types::civil_from_days(days);
+            // Only the zero date, packed as the day before 0000-01-01, has
+            // a year before 0. It has no calendar fields: the scalar reads
+            // it from its text (see `zero_date_part_at`).
+            if year < 0 {
+                return None;
+            }
             match part {
                 DatePart::Year => u64::try_from(year).unwrap_or(0),
                 DatePart::Month => u64::try_from(month).unwrap_or(0),
@@ -2373,7 +2415,8 @@ pub(crate) fn evaluate_units_date_part(
             }
         }
         DatePart::Hour | DatePart::Minute | DatePart::Second => {
-            // MySQL's HOUR/MINUTE/SECOND of a plain DATE are 0.
+            // MySQL's HOUR/MINUTE/SECOND of a plain DATE are 0, and the
+            // zero datetime's clock is midnight.
             let second_of_day = second_of_day.unwrap_or(0);
             let value = match part {
                 DatePart::Hour => second_of_day / 3600,

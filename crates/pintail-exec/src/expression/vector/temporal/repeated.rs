@@ -89,8 +89,17 @@ pub(in super::super) fn repeated_column(
     {
         return None;
     }
-    let (TypedValues::Utf8(text), validity) = source.typed()? else {
-        return None;
+    let (typed, validity) = source.typed()?;
+    let text = match typed {
+        TypedValues::Utf8(text) => text,
+        // A packed column holding the zero date, which the packed kernels
+        // declined: its text repeats as a column the store kept as text.
+        TypedValues::Temporal { .. }
+            if super::temporal_column(source).is_some_and(|units| units.holds_zero()) =>
+        {
+            typed.text_column(validity)?
+        }
+        _ => return None,
     };
     if text.declared_enum_labels().is_some() || text.declared_set_members().is_some() {
         return None;
