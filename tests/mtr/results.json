@@ -5,18 +5,18 @@
   "ref": "99960bf74fa919347e4f4e3ca47672f333d6e91f",
   "mysqlVersion": "8.4.11",
   "provenance": {
-    "sourceCommit": "35e620c721a1b08b614aaf4ab945835324106f9d",
+    "sourceCommit": "3213a8259d24227313c106431a9ca3a3dd076202",
     "sourceDirty": false,
-    "binarySha256": "37be0b786ce7b17252b437605780091ee2ed4e7332bb443dbd67da22a86ce1df"
+    "binarySha256": "32b0fc72cb4955ffa4eea34b52e0aed0893d917090325fd8e08f4ddb8f4f61ba"
   },
-  "artifacts": "validate-out/mtr/runs/mus0v70c-108559",
-  "measuredAt": "2026-10-03T06:45:14.310Z",
+  "artifacts": "validate-out/mtr/runs/muui131m-75428",
+  "measuredAt": "2026-10-05T00:18:02.706Z",
   "totals": {
-    "exact": 9279,
-    "compared": 9385,
+    "exact": 9299,
+    "compared": 9405,
     "queries": 20617,
     "replayed": 23119,
-    "notCompared": 13734
+    "notCompared": 13714
   },
   "results": [
     {
@@ -2955,10 +2955,10 @@
       "file": "ctype_utf8",
       "statements": 1816,
       "counts": {
-        "exact": 314,
+        "exact": 316,
         "mismatch": 2,
         "name-mismatch": 0,
-        "pintail-error": 42,
+        "pintail-error": 40,
         "mysql-error": 0,
         "tainted": 119,
         "setup": 567,
@@ -2984,7 +2984,6 @@
         "Error: sql parser error: Expected: ), found: USING at Line: _, Column: _": 2,
         "Error: sql parser error: Expected: ), found: using at Line: _, Column: _": 12,
         "Error: unsupported expression: BINARY(name)": 1,
-        "Error: numeric expression overflow": 2,
         "Error: unsupported expression: COLLATE utf8mb3_sinhala_ci is unsupported; supported: utf8m": 1,
         "Error: unsupported expression: text collation utf8mb3_sinhala_ci is unsupported; supported": 2,
         "Error: unsupported expression: charset(concat(_ + _))": 1,
@@ -5481,10 +5480,10 @@
       "file": "func_str",
       "statements": 834,
       "counts": {
-        "exact": 373,
+        "exact": 385,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 158,
+        "pintail-error": 146,
         "mysql-error": 0,
         "tainted": 12,
         "setup": 147,
@@ -5516,10 +5515,9 @@
         "Error: unsupported expression: quote(concat(char(_), _))": 1,
         "Error: unsupported expression: quote(concat(char(_), char(_), char(_), char(_), char(_), c": 1,
         "Error: unsupported expression: quote(NULL)": 1,
-        "Error: numeric expression overflow": 38,
+        "Error: query engine failed: query memory limit exceeded: _ bytes used, _ requested, _ limi": 28,
         "Error: unsupported expression: POSITION(_ IN _ IN (_))": 1,
         "Error: unsupported expression: POSITION((_ IN (_, _, _)) IN _)": 1,
-        "Error: query engine failed: query memory limit exceeded: _ bytes used, _ requested, _ limi": 2,
         "Error: unsupported expression: quote(a)": 1,
         "Error: unsupported expression: ltrim(concat(_, _))": 1,
         "Error: unsupported expression: quote(TRIM(concat(_, _)))": 1,
@@ -8306,10 +8304,10 @@
       "file": "lpad",
       "statements": 25,
       "counts": {
-        "exact": 20,
+        "exact": 23,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 5,
+        "pintail-error": 2,
         "mysql-error": 0,
         "tainted": 0,
         "setup": 0,
@@ -8322,7 +8320,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: numeric expression overflow": 5
+        "Error: numeric expression overflow": 2
       }
     },
     {
@@ -11127,10 +11125,10 @@
       "file": "rpad",
       "statements": 25,
       "counts": {
-        "exact": 20,
+        "exact": 23,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 5,
+        "pintail-error": 2,
         "mysql-error": 0,
         "tainted": 0,
         "setup": 0,
@@ -11143,7 +11141,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: numeric expression overflow": 5
+        "Error: numeric expression overflow": 2
       }
     },
     {

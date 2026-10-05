@@ -1,10 +1,10 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-10-03T06:45:14.298Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-10-05T00:18:02.701Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: 35e620c721a1b08b614aaf4ab945835324106f9d; source dirty: false. Binary SHA-256: 37be0b786ce7b17252b437605780091ee2ed4e7332bb443dbd67da22a86ce1df.
+Replay mode: local. Source commit: 3213a8259d24227313c106431a9ca3a3dd076202; source dirty: false. Binary SHA-256: 32b0fc72cb4955ffa4eea34b52e0aed0893d917090325fd8e08f4ddb8f4f61ba.
 
-**9,279 of 9,385 compared SELECTs match MySQL byte-for-byte** (98.9%), **out of 23,119 SELECTs replayed** - 13,734 never reached a comparison, so this is a share of what could be compared and not of the suite. 106 differ in rows, 0 in column names only. 5,139 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
+**9,299 of 9,405 compared SELECTs match MySQL byte-for-byte** (98.9%), **out of 23,119 SELECTs replayed** - 13,714 never reached a comparison, so this is a share of what could be compared and not of the suite. 106 differ in rows, 0 in column names only. 5,119 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -121,7 +121,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | ctype_utf16le | 566 | 53 | 0 | 0 | 102 | 80 | 0 | 67 | 32 | 152 | 45 | 24 |
 | ctype_utf32 | 551 | 72 | 0 | 0 | 104 | 68 | 0 | 52 | 34 | 122 | 59 | 32 |
 | ctype_utf32_uca | 455 | 21 | 0 | 0 | 98 | 46 | 0 | 28 | 6 | 213 | 29 | 8 |
-| ctype_utf8 | 1816 | 314 | 2 | 0 | 42 | 119 | 0 | 567 | 27 | 345 | 74 | 314 |
+| ctype_utf8 | 1816 | 316 | 2 | 0 | 40 | 119 | 0 | 567 | 27 | 345 | 74 | 314 |
 | ctype_utf8mb4 | 1034 | 152 | 2 | 0 | 79 | 97 | 0 | 314 | 13 | 176 | 90 | 100 |
 | ctype_utf8mb4_uca | 217 | 0 | 0 | 0 | 2 | 32 | 0 | 33 | 2 | 140 | 6 | 0 |
 | datadir_permission | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -222,7 +222,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 |
 | func_sapdb | 88 | 74 | 0 | 0 | 3 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
 | func_set | 77 | 23 | 0 | 0 | 15 | 0 | 2 | 25 | 0 | 1 | 2 | 5 |
-| func_str | 834 | 373 | 0 | 0 | 158 | 12 | 0 | 147 | 2 | 16 | 18 | 94 |
+| func_str | 834 | 385 | 0 | 0 | 146 | 12 | 0 | 147 | 2 | 16 | 18 | 94 |
 | func_test | 221 | 109 | 0 | 0 | 19 | 3 | 0 | 43 | 3 | 8 | 11 | 25 |
 | func_time | 599 | 335 | 0 | 0 | 27 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
 | func_timestamp | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 |
@@ -338,7 +338,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | lowercase_table5 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 3 | 6 |
 | lowercase_utf8 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 3 |
 | lowercase_view | 90 | 1 | 0 | 0 | 0 | 1 | 3 | 11 | 0 | 8 | 2 | 62 |
-| lpad | 25 | 20 | 0 | 0 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| lpad | 25 | 23 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | materialize_cost | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 6 |
 | materialize_cost_hypergraph | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 6 |
 | max_statement_time | 122 | 10 | 3 | 0 | 1 | 1 | 0 | 9 | 0 | 40 | 29 | 15 |
@@ -461,7 +461,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | rollback | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 2 |
 | round | 133 | 1 | 0 | 0 | 0 | 9 | 0 | 30 | 8 | 83 | 2 | 0 |
 | row | 189 | 82 | 0 | 0 | 8 | 7 | 0 | 44 | 3 | 2 | 1 | 41 |
-| rpad | 25 | 20 | 0 | 0 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| rpad | 25 | 23 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | schema | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | schema_read_only_ci | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 |
 | schema_read_only_cs | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 |
@@ -660,7 +660,6 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 90 | Error: query engine failed: bound expression has an invalid physical type |
 | 89 | INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied |
 | 70 | Error: unsupported expression: AES_ENCRYPT(_, @KEY1, @IVA) |
-| 69 | Error: numeric expression overflow |
 | 60 | PREPARED: Error: Unknown prepared statement handler (p_less) |
 | 60 | PREPARED: Error: Unknown prepared statement handler (p_less_eq) |
 | 60 | PREPARED: Error: Unknown prepared statement handler (p_greater) |
@@ -675,5 +674,6 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 48 | PREPARED: Error: Unknown prepared statement handler (p_n_eq) |
 | 48 | Error: sql parser error: Expected: joined table, found: , at Line: _, Column: _ |
 | 45 | INSERT: Error: Incorrect value _ for column _: expected a datetime |
+| 44 | Error: unsupported expression: ExtractValue(_, _) |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mus0v70c-108559/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/muui131m-75428/diffs/` (not committed).

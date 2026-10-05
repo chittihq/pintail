@@ -5,18 +5,18 @@
   "ref": "170b1d70737be6f134448f51713cdc1ae215b420",
   "mysqlVersion": "8.4.11",
   "provenance": {
-    "sourceCommit": "35e620c721a1b08b614aaf4ab945835324106f9d",
+    "sourceCommit": "3213a8259d24227313c106431a9ca3a3dd076202",
     "sourceDirty": false,
-    "binarySha256": "37be0b786ce7b17252b437605780091ee2ed4e7332bb443dbd67da22a86ce1df"
+    "binarySha256": "32b0fc72cb4955ffa4eea34b52e0aed0893d917090325fd8e08f4ddb8f4f61ba"
   },
-  "artifacts": "validate-out/mtr/runs/mus0v70d-108560",
-  "measuredAt": "2026-10-03T06:56:12.942Z",
+  "artifacts": "validate-out/mtr/runs/muui131m-75429",
+  "measuredAt": "2026-10-05T00:25:40.667Z",
   "totals": {
-    "exact": 8761,
-    "compared": 9132,
+    "exact": 8797,
+    "compared": 9155,
     "queries": 24004,
     "replayed": 30174,
-    "notCompared": 21042
+    "notCompared": 21019
   },
   "results": [
     {
@@ -3896,10 +3896,10 @@
       "file": "ctype_utf8",
       "statements": 1845,
       "counts": {
-        "exact": 315,
+        "exact": 317,
         "mismatch": 2,
         "name-mismatch": 0,
-        "pintail-error": 46,
+        "pintail-error": 44,
         "mysql-error": 24,
         "tainted": 120,
         "setup": 562,
@@ -3928,7 +3928,6 @@
         "Error: sql parser error: Expected: ), found: USING at Line: _, Column: _": 2,
         "Error: sql parser error: Expected: ), found: using at Line: _, Column: _": 12,
         "Error: unsupported expression: BINARY(name)": 1,
-        "Error: numeric expression overflow": 2,
         "Error: unsupported expression: COLLATE utf8_sinhala_ci is unsupported; supported: utf8mb4_": 1,
         "Error: unsupported expression: text collation utf8_sinhala_ci is unsupported; supported: u": 2,
         "Error: unsupported expression: charset(concat(_ + _))": 1,
@@ -4021,10 +4020,10 @@
       "file": "ctype_utf8mb4",
       "statements": 1460,
       "counts": {
-        "exact": 180,
+        "exact": 189,
         "mismatch": 2,
         "name-mismatch": 0,
-        "pintail-error": 136,
+        "pintail-error": 127,
         "mysql-error": 31,
         "tainted": 161,
         "setup": 430,
@@ -4055,7 +4054,6 @@
         "Error: unsupported expression: COLLATE utf8mb4_sinhala_ci is unsupported; supported: utf8m": 1,
         "Error: unsupported expression: CHARSET(CONCAT(_utf8mb4 _, _utf8 _))": 1,
         "Error: unsupported expression: octet_length(subject)": 1,
-        "Error: numeric expression overflow": 9,
         "Error: unsupported expression: weight_string(_)": 6,
         "Error: sql parser error: Expected: ), found: as at Line: _, Column: _": 12,
         "Error: unsupported expression: weight_string(_, _, _, X_)": 36,
@@ -6294,8 +6292,8 @@
       "file": "func_json_notembedded",
       "statements": 38,
       "counts": {
-        "exact": 1,
-        "mismatch": 13,
+        "exact": 14,
+        "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 5,
         "mysql-error": 8,
@@ -6655,10 +6653,10 @@
       "file": "func_str",
       "statements": 955,
       "counts": {
-        "exact": 373,
+        "exact": 385,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 150,
+        "pintail-error": 138,
         "mysql-error": 64,
         "tainted": 19,
         "setup": 185,
@@ -6688,10 +6686,9 @@
         "Error: unsupported expression: quote(concat(char(_), _))": 1,
         "Error: unsupported expression: quote(concat(char(_), char(_), char(_), char(_), char(_), c": 1,
         "Error: unsupported expression: quote(NULL)": 1,
-        "Error: numeric expression overflow": 38,
+        "Error: query engine failed: query memory limit exceeded: _ bytes used, _ requested, _ limi": 28,
         "Error: unsupported expression: POSITION(_ IN _ IN (_))": 1,
         "Error: unsupported expression: POSITION((_ IN (_, _, _)) IN _)": 1,
-        "Error: query engine failed: query memory limit exceeded: _ bytes used, _ requested, _ limi": 2,
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 1,
         "Error: unsupported expression: AES_DECRYPT(tmp, _)": 1,
         "Error: unsupported expression: quote(a)": 1,
