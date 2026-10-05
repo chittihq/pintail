@@ -62,3 +62,55 @@ Whether storage needs a new encoding for this, or whether only the batch
 decode does, has not been examined. A cheaper interim step is a single
 vectorized pass of the check over text batches, with no per-row `Value`
 round trip. That targets the CPU doubling.
+
+## After: the zero date kept packed
+
+The zero date now packs as the day before 0000-01-01 (the zero datetime
+as that day's midnight). That unit orders before every real date, as
+MySQL orders the zero date. Two changes use it:
+
+- **Decode only.** The executor packs a stored text column that holds
+  the zero date, and the integer-range fold gives the zero date a slot of
+  its own. Without that slot, the zero date would widen a range of days
+  by about 740,000 days. The copy check passes a packed batch whole. It
+  reads a batch still held as text in one pass over its bytes.
+- **Format 8.** The segment writer stores such a column as native units,
+  zero date included. The decoder does no text parse and no copy.
+
+Same data, same queries and same method as above. The arms are base
+`3213a825`, the decode-only build on base's format 7 replica, and head
+(format 8) on a replica that head snapshotted. head2, a second copy of
+head, gives the same-commit floor. Host: 8-vCPU cloud host (AMD Ryzen 9
+9950X). n = 90 per cell, and every answer agreed across the arms.
+
+| query | var | base median / min / cpu ms | decode-only median / min / cpu | head median / min / cpu | head b vs head a | head2 vs head |
+|---|---|---|---|---|---|---|
+| `GROUP BY d` with COUNT, SUM | a | 12.7 / 10.0 / 70 | 12.7 / 10.6 / 70 | 12.7 / 9.9 / 70 | | -2% |
+| | b | 2,060 / 1,803 / 11,135 | 262 / 233 / 1,795 | **15.3** / 11.8 / 90 | **1.20×** | -1% |
+| `GROUP BY DATE(dt)` | a | 15.0 / 12.7 / 90 | 14.9 / 12.7 / 80 | 15.3 / 12.9 / 90 | | -2% |
+| | b | 1,925 / 1,641 / 10,855 | 139 / 118 / 945 | **19.9** / 16.4 / 120 | **1.30×** | -4% |
+| `COUNT(DISTINCT d)` | a | 74.1 / 67.5 / 110 | 77.2 / 68.8 / 110 | 75.9 / 69.6 / 110 | | -2% |
+| | b | 7,443 / 7,077 / 8,795 | 343 / 280 / 1,960 | **76.3** / 67.6 / 110 | **1.01×** | -1% |
+| derived `GROUP BY d` with `x > 0` | a | 15.0 / 11.0 / 80 | 14.4 / 11.6 / 80 | 14.2 / 11.6 / 80 | | -2% |
+| | b | 1,738 / 1,487 / 9,760 | 273 / 235 / 1,840 | **13.9** / 11.4 / 80 | **0.98×** | +1% |
+
+- Variant b is now within 1.3× of variant a on every query, against
+  70-115× before. Base itself measured somewhat slower here than in the
+  run above (`GROUP BY d`, b: 2,060 ms against 1,470 ms), because the box
+  ran in its slower CPU state. The arms were measured together, so the
+  ratios stand.
+- Variant a moves by -5% to +2% against base, inside the ±4% floor (the
+  smallest same-binary difference above is 1-4%).
+- Decode-only gets variant b 6-22× faster than base, but it stays 4-21×
+  slower than variant a. Each scan still parses 20M stored strings, which
+  is 950-1,960 ms of CPU against 80-110 ms. Format 8 removes the parse,
+  and with it a further 4.5-20× (`GROUP BY d` 262 → 15.3 ms, `DATE(dt)`
+  139 → 19.9 ms, `COUNT(DISTINCT d)` 343 → 76.3 ms, derived 273 → 13.9
+  ms).
+- The replica is also smaller: 415 MB against 505 MB for the same data,
+  because both calendar columns of the zero-date table are stored as
+  units.
+- Before the range fold had its zero slot, head's b variant still took
+  the hash path on `GROUP BY d` and `GROUP BY DATE(dt)` (112 and 95 ms,
+  7-10× of variant a). The range of days then spanned the zero date and
+  went past the fold's bound.
