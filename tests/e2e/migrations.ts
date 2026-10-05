@@ -437,6 +437,204 @@ const generatedCases = [
   },
 ]
 
+/// Columns added to a table the mirror already holds. The source fills every
+/// row it has - with the default, the type's implicit value, or the time the
+/// statement ran - and sends no row event for any of it. `inPlace` says how
+/// the mirror is expected to take the change: by recording the fill and
+/// evolving the table where it can reproduce the value exactly, by recopying
+/// the table where it cannot. Either way the table has to match the source.
+type AddedCase = {
+  name: string
+  /// Statements run before the ALTERs on the same session, such as its
+  /// time zone; the session is put back to UTC afterwards.
+  session?: string[]
+  /// One or more `ALTER TABLE` bodies, run back to back.
+  alters: string[]
+  /// Compared columns; the table starts as `(id, d)`.
+  projection: string
+  inPlace: boolean
+}
+
+const addedCases: AddedCase[] = [
+  {
+    name: 'text defaults placed first and after a column',
+    alters: [
+      "ADD COLUMN scope VARCHAR(10) NOT NULL DEFAULT 'all' AFTER d, " +
+        "ADD COLUMN note VARCHAR(10) NULL DEFAULT 'none ', " +
+        "ADD COLUMN code CHAR(6) NOT NULL DEFAULT 'ab' FIRST",
+    ],
+    projection: 'id, d, scope, note, code',
+    inPlace: true,
+  },
+  {
+    name: 'a latin1 text default',
+    alters: ["ADD COLUMN label VARCHAR(10) CHARACTER SET latin1 DEFAULT 'café'"],
+    projection: 'id, d, label',
+    inPlace: true,
+  },
+  {
+    name: 'enum and set defaults',
+    alters: [
+      "ADD COLUMN tier ENUM('low','mid','high') NOT NULL DEFAULT 'mid', " +
+        "ADD COLUMN flags SET('a','b','c') DEFAULT 'c,a', " +
+        "ADD COLUMN kind ENUM('p','q') NOT NULL",
+    ],
+    projection: 'id, d, tier, flags, kind',
+    inPlace: true,
+  },
+  {
+    name: 'numeric defaults',
+    alters: [
+      'ADD COLUMN price DECIMAL(8,3) DEFAULT 1.5, ADD COLUMN small TINYINT DEFAULT -5, ' +
+        'ADD COLUMN big BIGINT UNSIGNED DEFAULT 18446744073709551615, ' +
+        'ADD COLUMN ratio DOUBLE DEFAULT 0.0025, ADD COLUMN weight FLOAT DEFAULT 1.5, ' +
+        'ADD COLUMN flag BOOL NOT NULL DEFAULT TRUE, ADD COLUMN zero INT NOT NULL',
+    ],
+    projection: 'id, d, price, small, big, ratio, weight, flag, zero',
+    inPlace: true,
+  },
+  {
+    // The catalogue prints this default as 1.12346; only the statement says
+    // which single-precision value was stored.
+    name: 'a float default with more digits than the catalogue prints',
+    alters: ['ADD COLUMN weight FLOAT DEFAULT 1.123456789'],
+    projection: 'id, d, ROUND(weight, 7)',
+    inPlace: true,
+  },
+  {
+    name: 'bit and binary defaults',
+    alters: [
+      "ADD COLUMN mask BIT(5) DEFAULT b'101', ADD COLUMN tag BINARY(4) DEFAULT 'ab', " +
+        "ADD COLUMN raw VARBINARY(8) DEFAULT 'xy', ADD COLUMN blank VARBINARY(8) NOT NULL",
+    ],
+    projection: 'id, d, mask + 0, HEX(tag), HEX(raw), HEX(blank)',
+    inPlace: true,
+  },
+  {
+    name: 'calendar and clock literal defaults',
+    alters: [
+      "ADD COLUMN due DATE DEFAULT '2020-02-29', " +
+        "ADD COLUMN at DATETIME(3) DEFAULT '2020-01-02 03:04:05.123456', " +
+        "ADD COLUMN span TIME(2) DEFAULT '-12:34:56.789', ADD COLUMN yr YEAR DEFAULT 1999",
+    ],
+    projection: 'id, d, due, at, span, yr',
+    inPlace: true,
+  },
+  {
+    // The source's sql_mode here admits the zero date.
+    name: 'zero-date defaults and implicit zero dates',
+    alters: [
+      "ADD COLUMN z DATE NOT NULL DEFAULT '0000-00-00', " +
+        "ADD COLUMN zt DATETIME(2) DEFAULT '0000-00-00 00:00:00', " +
+        'ADD COLUMN day DATE NOT NULL, ADD COLUMN tick TIMESTAMP NOT NULL',
+    ],
+    projection: 'id, d, z, zt, day, tick',
+    inPlace: true,
+  },
+  {
+    // Read in the statement's zone, across a repeated hour.
+    name: 'timestamp literal defaults in a daylight-saving zone',
+    session: ["SET time_zone = 'America/New_York'"],
+    alters: [
+      "ADD COLUMN opened TIMESTAMP NULL DEFAULT '2021-11-07 01:30:00', " +
+        "ADD COLUMN closed TIMESTAMP NULL DEFAULT '2021-07-01 12:00:00'",
+    ],
+    projection: 'id, d, opened, closed',
+    inPlace: true,
+  },
+  {
+    name: 'current timestamp defaults in UTC',
+    session: ["SET time_zone = '+00:00'"],
+    alters: [
+      'ADD COLUMN c0 TIMESTAMP DEFAULT CURRENT_TIMESTAMP, ' +
+        'ADD COLUMN c3 TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3), ' +
+        'ADD COLUMN l0 DATETIME DEFAULT CURRENT_TIMESTAMP, ' +
+        'ADD COLUMN l6 DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)',
+    ],
+    projection: 'id, d, c0, c3, l0, l6',
+    inPlace: true,
+  },
+  {
+    name: 'current timestamp defaults in a daylight-saving zone',
+    session: ["SET time_zone = 'America/New_York'"],
+    alters: [
+      'ADD COLUMN c6 TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6), ' +
+        'ADD COLUMN l0 DATETIME DEFAULT NOW(), ' +
+        'ADD COLUMN l3 DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)',
+    ],
+    projection: 'id, d, c6, l0, l3',
+    inPlace: true,
+  },
+  {
+    name: 'a column added and dropped again',
+    alters: ["ADD COLUMN gone INT NOT NULL DEFAULT 7", 'DROP COLUMN gone'],
+    projection: 'id, d',
+    inPlace: true,
+  },
+  {
+    // The source keeps the first default in the rows the ADD filled; the
+    // mirror usually reads the ADD after the second ALTER has run.
+    name: 'a column added and given a new default',
+    alters: [
+      "ADD COLUMN state VARCHAR(8) NOT NULL DEFAULT 'new'",
+      "ALTER COLUMN state SET DEFAULT 'old'",
+    ],
+    projection: 'id, d, state',
+    inPlace: true,
+  },
+  {
+    name: 'columns added in turn, first and after',
+    alters: [
+      'ADD COLUMN p1 INT NOT NULL DEFAULT 1',
+      "ADD COLUMN p2 VARCHAR(4) DEFAULT 'two' FIRST",
+      'ADD COLUMN p3 INT DEFAULT 3 AFTER id',
+    ],
+    projection: 'id, d, p1, p2, p3',
+    inPlace: true,
+  },
+  {
+    name: 'an expression default',
+    alters: ["ADD COLUMN token VARCHAR(40) DEFAULT (CONCAT('a', 'b'))"],
+    projection: 'id, d, token',
+    inPlace: false,
+  },
+  {
+    name: 'a json expression default',
+    alters: ['ADD COLUMN doc JSON DEFAULT (JSON_ARRAY())'],
+    projection: 'id, d, doc',
+    inPlace: false,
+  },
+  {
+    name: 'a stored generated column',
+    alters: ['ADD COLUMN twice INT AS (d * 2) STORED'],
+    projection: 'id, d, twice',
+    inPlace: false,
+  },
+  {
+    name: 'a virtual generated column',
+    alters: ['ADD COLUMN half INT AS (d DIV 2) VIRTUAL'],
+    projection: 'id, d, half',
+    inPlace: false,
+  },
+]
+
+function addedTable(index: number) {
+  return `a_${String(index).padStart(2, '0')}`
+}
+
+/// Everything the replica printed, so a check can ask what it decided.
+const pintailOutput: string[] = []
+
+function relay(stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream) {
+  void (async () => {
+    const decoder = new TextDecoder()
+    for await (const chunk of stream) {
+      sink.write(chunk)
+      pintailOutput.push(decoder.decode(chunk, { stream: true }))
+    }
+  })()
+}
+
 type Check = { table: string; family: string; check: string; status: 'PASS' | 'FAIL'; detail?: string }
 const results: Check[] = []
 const started = Date.now()
@@ -592,11 +790,13 @@ async function startPintail() {
     [pintailBinary, '--data-dir', pintailDataDir, '--http-bind', `127.0.0.1:${pintailHttpPort}`, '--wire-bind', `127.0.0.1:${pintailWirePort}`],
     {
       cwd: repository,
-      stdout: 'inherit',
-      stderr: 'inherit',
+      stdout: 'pipe',
+      stderr: 'pipe',
       env: { ...process.env, PINTAIL_SUPERVISOR_INTERVAL_MS: SUPERVISOR_MS, _RJEM_MALLOC_CONF: 'dirty_decay_ms:0,muzzy_decay_ms:0' },
     },
   )
+  relay(pintailProcess.stdout as ReadableStream<Uint8Array>, process.stdout)
+  relay(pintailProcess.stderr as ReadableStream<Uint8Array>, process.stderr)
   for (let attempt = 0; attempt < 240; attempt += 1) {
     try {
       if ((await fetch(`${pintailUrl}/health`)).ok) return
@@ -647,6 +847,11 @@ async function main() {
   mysqlStarted = true
   const mysqlPort = await publishedPort(CONTAINER, 3306)
   mysqlConnection = await waitForMysql(host, mysqlPort)
+  // Named zones, for the added-column cases that read a time through one.
+  await docker(
+    'exec', CONTAINER, 'sh', '-c',
+    'mysql_tzinfo_to_sql /usr/share/zoneinfo 2>/dev/null | mysql -uroot -ppintail-root mysql',
+  )
   await sql(`USE ${DATABASE}`)
   await sql(`CREATE USER IF NOT EXISTS 'pintail'@'%' IDENTIFIED BY 'pintail'`)
   await sql(`GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'`)
@@ -676,6 +881,11 @@ async function main() {
         `v INT GENERATED ALWAYS AS ${generated.before} ${generated.kind}) DEFAULT CHARACTER SET utf8mb4`,
     )
     await sql(`INSERT INTO ${table} (id, base) VALUES (1, 10), (2, 20)`)
+  }
+  for (const index of addedCases.keys()) {
+    const table = addedTable(index)
+    await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, d INT NULL) DEFAULT CHARACTER SET utf8mb4`)
+    await sql(`INSERT INTO ${table} (id, d) VALUES (1, 10), (2, 20), (3, 30)`)
   }
 
   pintailBinary = process.env.PINTAIL_E2E_BINARY
@@ -783,6 +993,15 @@ async function main() {
     await sql(`INSERT INTO ${table} (id, base) VALUES (3, 30)`)
     await sql(`UPDATE ${table} SET base = 21 WHERE id = 2`)
   }
+  for (const [index, added] of addedCases.entries()) {
+    const table = addedTable(index)
+    untouched.set(table, [1, 3])
+    for (const statement of added.session ?? []) await sql(statement)
+    for (const alter of added.alters) await sql(`ALTER TABLE ${table} ${alter}`)
+    if (added.session) await sql("SET time_zone = '+00:00'")
+    await sql(`INSERT INTO ${table} (id, d) VALUES (90, 900)`)
+    await sql(`UPDATE ${table} SET d = 21 WHERE id = 2`)
+  }
 
   const families = [
     ...cases.map((testCase, index) => ({
@@ -795,6 +1014,11 @@ async function main() {
       name: generated.name,
       columns: 'id, base, v',
     })),
+    ...addedCases.map((added, index) => ({
+      table: addedTable(index),
+      name: added.name,
+      columns: added.projection,
+    })),
   ]
   log('checking every table against the source after its migration')
   for (const family of families) {
@@ -802,6 +1026,25 @@ async function main() {
     record(family.table, family.name, 'the whole table matches the source after the migration', difference ? 'FAIL' : 'PASS', difference)
     const stale = await compareUntouched(family.table, family.columns, untouched.get(family.table)!)
     record(family.table, family.name, 'rows the migration never wrote to are not stale', stale ? 'FAIL' : 'PASS', stale)
+  }
+  // How the replica took each added column, from the reason it printed: a
+  // quarantine names the table and why it is recopied, an in-place change
+  // names each column it filled.
+  const output = pintailOutput.join('')
+  for (const [index, added] of addedCases.entries()) {
+    const table = addedTable(index)
+    const quarantine = output
+      .split('\n')
+      .find((line) => line.includes(`table quarantined db=${databaseId} table=${table}:`))
+    const filled = output.includes(`cdc column added in place db=${databaseId} table=${table} `)
+    const ok = added.inPlace ? !quarantine && filled : Boolean(quarantine)
+    record(
+      table,
+      added.name,
+      added.inPlace ? 'evolved in place, never quarantined' : 'recopied, with the reason given',
+      ok ? 'PASS' : 'FAIL',
+      ok ? undefined : quarantine ?? 'no quarantine line and no in-place line',
+    )
   }
 
   log('restarting the replica and reading every table back from disk')
