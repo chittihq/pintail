@@ -726,6 +726,27 @@ impl NativeUnits {
         }
     }
 
+    /// [`Self::parse_exact`], or for a calendar column the zero date it
+    /// spells (`0000-00-00`, or the zero datetime with exactly the declared
+    /// fraction digits): the unit the executor packs it as, below every
+    /// real date, which [`Self::format`] spells back. A scan reading changed
+    /// rows into a packed column takes these units; statistics, which
+    /// prove a column holds only real dates, keep to [`Self::parse_exact`].
+    #[must_use]
+    pub fn parse_units(self, text: &str) -> Option<i64> {
+        match self.parse_exact(text) {
+            Some(units) => Some(units),
+            None => match self {
+                Self::Date => (text == "0000-00-00").then_some(pintail_types::ZERO_DATE_DAYS),
+                Self::DateTime { .. } => {
+                    (self.format(pintail_types::ZERO_DATETIME_MICROS).as_deref() == Some(text))
+                        .then_some(pintail_types::ZERO_DATETIME_MICROS)
+                }
+                Self::Decimal { .. } => None,
+            },
+        }
+    }
+
     /// [`Self::parse_exact`] as it is defined: the units, when formatting
     /// them regenerates the text.
     #[cfg(test)]
@@ -749,13 +770,14 @@ impl NativeUnits {
         }
     }
 
-    /// Regenerates the canonical text for stored units. `None` indicates
-    /// corruption: the writer only stores units that round-trip.
+    /// Regenerates the canonical text for stored units, the zero date's
+    /// unit included. `None` indicates corruption: the writer only stores
+    /// units that round-trip.
     #[must_use]
     pub fn format(self, units: i64) -> Option<String> {
         match self {
-            Self::Date => pintail_types::format_date_days(units),
-            Self::DateTime { fsp } => pintail_types::format_datetime_micros(units, fsp),
+            Self::Date => pintail_types::format_date_units(units),
+            Self::DateTime { fsp } => pintail_types::format_datetime_units(units, fsp),
             Self::Decimal { scale } => Some(pintail_types::format_decimal_scaled(
                 i128::from(units),
                 scale,
@@ -8564,6 +8586,50 @@ mod native_units_tests {
             None
         );
         assert_eq!(NativeUnits::for_data_type(DataType::Utf8), None);
+    }
+
+    #[test]
+    fn the_zero_date_has_units_that_spell_it_back() {
+        let date = NativeUnits::Date;
+        assert_eq!(date.parse_exact("0000-00-00"), None);
+        assert_eq!(
+            date.parse_units("0000-00-00"),
+            Some(pintail_types::ZERO_DATE_DAYS)
+        );
+        assert_eq!(
+            date.format(pintail_types::ZERO_DATE_DAYS).as_deref(),
+            Some("0000-00-00")
+        );
+        assert_eq!(
+            date.parse_units("2024-02-29"),
+            date.parse_exact("2024-02-29")
+        );
+        for partial in ["2024-00-15", "2024-01-00", "2023-02-29"] {
+            assert_eq!(date.parse_units(partial), None, "{partial}");
+        }
+        let datetime = NativeUnits::DateTime { fsp: 3 };
+        assert_eq!(
+            datetime.parse_units("0000-00-00 00:00:00.000"),
+            Some(pintail_types::ZERO_DATETIME_MICROS)
+        );
+        // Only at the column's own precision, as every other value.
+        for other in [
+            "0000-00-00 00:00:00",
+            "0000-00-00 00:00:00.0",
+            "0000-00-00 00:00:01.000",
+        ] {
+            assert_eq!(datetime.parse_units(other), None, "{other}");
+        }
+        assert_eq!(
+            datetime
+                .format(pintail_types::ZERO_DATETIME_MICROS)
+                .as_deref(),
+            Some("0000-00-00 00:00:00.000")
+        );
+        assert_eq!(
+            NativeUnits::Decimal { scale: 2 }.parse_units("0000-00-00"),
+            None
+        );
     }
 
     #[test]

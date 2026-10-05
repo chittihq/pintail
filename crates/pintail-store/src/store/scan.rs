@@ -408,14 +408,14 @@ impl DecodedColumn {
             } => {
                 match typed_inserts(inserts, |cell| match cell {
                     Cell::Value(pintail_types::Value::Utf8(text)) => {
-                        units.parse_exact(text).map(Some)
+                        units.parse_units(text).map(Some)
                     }
                     // Units read from a column of the same type are the
                     // units this one holds.
                     Cell::Units(theirs, value) if theirs == units => Some(Some(value)),
                     Cell::Text(bytes) => std::str::from_utf8(bytes)
                         .ok()
-                        .and_then(|text| units.parse_exact(text))
+                        .and_then(|text| units.parse_units(text))
                         .map(Some),
                     Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
@@ -1173,14 +1173,14 @@ impl DecodedColumn {
             } => {
                 match typed_inserts(patches, |cell| match cell {
                     Cell::Value(pintail_types::Value::Utf8(text)) => {
-                        units.parse_exact(text).map(Some)
+                        units.parse_units(text).map(Some)
                     }
                     // Units read from a column of the same type are the
                     // units this one holds.
                     Cell::Units(theirs, value) if theirs == units => Some(Some(value)),
                     Cell::Text(bytes) => std::str::from_utf8(bytes)
                         .ok()
-                        .and_then(|text| units.parse_exact(text))
+                        .and_then(|text| units.parse_units(text))
                         .map(Some),
                     Cell::Value(pintail_types::Value::Null) | Cell::Null => Some(None),
                     _ => None,
