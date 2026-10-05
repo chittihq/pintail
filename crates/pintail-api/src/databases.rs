@@ -65,6 +65,18 @@ fn validate_keyless_policy(policy: &str) -> Result<(), ApiError> {
     }
 }
 
+/// Rejects intervals the control plane's own constraint refuses, so a zero
+/// is a client error naming the field rather than a failed update.
+fn validate_intervals(poll_seconds: u64, reconcile_seconds: u64) -> Result<(), ApiError> {
+    if poll_seconds == 0 || reconcile_seconds == 0 {
+        Err(ApiError::bad_request(
+            "poll_interval_seconds and reconcile_interval_seconds must be at least 1",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Included tables that fall back to append-row-id identity (no primary or
 /// usable unique key), honoring the include/exclude lists.
 fn included_keyless_tables(
@@ -161,6 +173,10 @@ pub(crate) async fn create(
     let workspace_id = principal.require_workspace()?;
     validate_database_request(&request.name, &request.dsn, &request.mode)?;
     validate_keyless_policy(&request.keyless_policy)?;
+    validate_intervals(
+        request.poll_interval_seconds,
+        request.reconcile_interval_seconds,
+    )?;
     let id = random_identifier("db_", 16);
     let now = Utc::now().to_rfc3339();
     let encrypted = state.encrypt_dsn(request.dsn.trim())?;
@@ -314,6 +330,10 @@ pub(crate) async fn update(
         .as_deref()
         .unwrap_or(existing.keyless_policy.as_str());
     validate_keyless_policy(keyless_policy)?;
+    validate_intervals(
+        request.poll_interval_seconds,
+        request.reconcile_interval_seconds,
+    )?;
     // Switching to reject with keyless tables already probed is refused so
     // the policy always reflects an enforceable state.
     if keyless_policy == "reject"
