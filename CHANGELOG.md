@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Segment files are written as format version 8: a DATE or DATETIME column
+  holding the zero date (`0000-00-00`) is stored as native units instead of
+  text. Versions 1-7 remain readable; merging and the background segment
+  upgrade rewrite them into version 8. **Downgrade:** a binary older than
+  this release refuses any version 8 segment, so a replica written by this
+  release cannot be opened by an older one; re-snapshot after a downgrade.
+- DATE and DATETIME groupings, `GROUP BY DATE(...)`, `COUNT(DISTINCT ...)`
+  and derived groupings over columns holding the zero date are no longer
+  70-115x slower than over clean data: batches with zero dates stay packed
+  (the zero date sorts before every real date, as in MySQL) and run within
+  1.3x of clean data. The calendar copy check passes packed batches whole
+  and checks text batches in one pass.
+
 ### Added
 
 - Segments an older build wrote are rewritten into the current segment
