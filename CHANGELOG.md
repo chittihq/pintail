@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.8-rc1] - 2026-10-05
+
+Fixes for twelve defects an external review found in 0.1.7 - two wrong
+answers (EXISTS over a HAVING that aggregates nothing, and a descending key
+limit under unique-key visibility), the spelling a case-insensitive group
+shows after a parallel fold, and memory accounting in the block cache,
+date-part folds and batched subqueries; MySQL's packet limit on string
+results and deadlines inside long matching loops; temporal functions
+evaluated once per distinct value (the calendar corpus families 4-20x
+faster) and named session zones level with MySQL; faster row-constructor
+and dependent subqueries; TIMESTAMP grouping that follows sql_mode and the
+source's indexes; audit-log and dead-letter retention; and a profile-guided
+release image.
+
 ### Removed
 
 - The optional x86-64-v3 second binary and its launcher
