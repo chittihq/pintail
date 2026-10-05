@@ -64,6 +64,46 @@ fn reopening_an_initialized_control_plane_is_idempotent() {
     assert_eq!(reopened.schema_version().expect("schema version"), 25);
 }
 
+/// An older binary started on a directory a newer release migrated must stop
+/// at the metadata, not open it as its own and fail later table by table.
+#[test]
+fn a_control_plane_from_a_newer_release_is_refused_and_left_untouched() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let database_path = data_dir.path().join("pintail-meta.db");
+    let metadata = pintail_meta::MetaStore::open(&database_path).expect("first open");
+    metadata
+        .upsert_database("db-1", "inventory", b"secret", "2026-10-05T00:00:00Z")
+        .expect("database row");
+    drop(metadata);
+
+    // What a release one migration ahead leaves behind.
+    let connection = rusqlite::Connection::open(&database_path).expect("raw connection");
+    connection
+        .execute_batch("PRAGMA user_version = 26;")
+        .expect("set the schema ahead");
+    drop(connection);
+
+    for attempt in ["kept connection", "fresh connection"] {
+        let error = pintail_meta::MetaStore::open(&database_path)
+            .err()
+            .unwrap_or_else(|| panic!("{attempt}: a newer schema must be refused"));
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("metadata schema version 26 is newer than this binary supports (25)"),
+            "{attempt}: {message}"
+        );
+    }
+
+    let connection = rusqlite::Connection::open(&database_path).expect("raw connection");
+    let version: u32 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("schema version");
+    let databases: i64 = connection
+        .query_row("SELECT COUNT(*) FROM databases", [], |row| row.get(0))
+        .expect("database rows");
+    assert_eq!((version, databases), (26, 1));
+}
+
 #[test]
 fn version_one_control_plane_upgrades_polling_state_in_place() {
     let data_dir = tempfile::tempdir().expect("temporary data directory");

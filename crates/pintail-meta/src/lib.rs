@@ -475,6 +475,12 @@ impl MetaStore {
             let version = read_version(&connection)?;
             (connection, version)
         };
+        // A file a newer release migrated is refused here, before anything
+        // reads or writes it. Only a file behind the current schema reaches
+        // `migrate`, so the check there never saw one ahead: an older
+        // binary started on an upgraded directory opened the metadata as
+        // if it were its own, ran, and failed later table by table.
+        refuse_newer_schema(version)?;
         if version < CURRENT_SCHEMA_VERSION {
             // One opener migrates at a time. Each migration reads the
             // version and then writes inside a transaction that starts as a
@@ -2716,15 +2722,24 @@ fn prepare_private_database_file(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Refuses a metadata file whose schema is ahead of this binary's.
+fn refuse_newer_schema(found: u32) -> Result<()> {
+    if found > CURRENT_SCHEMA_VERSION {
+        bail!(
+            "metadata schema version {found} is newer than this binary supports \
+             ({CURRENT_SCHEMA_VERSION}): a newer Pintail release has upgraded this data \
+             directory, and an older one cannot run on it; start the newer release, or \
+             restore a copy of the data directory taken before the upgrade"
+        );
+    }
+    Ok(())
+}
+
 fn migrate(connection: &mut Connection) -> Result<()> {
     let found: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .context("failed to read metadata schema version")?;
-    if found > CURRENT_SCHEMA_VERSION {
-        bail!(
-            "metadata schema version {found} is newer than this binary supports ({CURRENT_SCHEMA_VERSION})"
-        );
-    }
+    refuse_newer_schema(found)?;
 
     if found == 0 {
         migration_v1(connection.transaction()?)?;
