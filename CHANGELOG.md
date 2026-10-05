@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `/metrics` exposes `pintail_settled_memo_{hits,misses,stores,delta_merges}_total`,
+  so a settled-memo answer can be proved a cache hit.
+- A benchmark cache study (`BENCHMARK_CACHE_STUDY=1`) that compares
+  Pintail's settled memo with ClickHouse's query cache, both warm, with
+  every hit proved and every answer checked against MySQL, and measures
+  freshness after inserts, updates and deletes under ClickHouse's TTL
+  expiry and under an explicit cache drop, separating replication delay
+  from cache staleness (`benchmark/evidence/cache-freshness.md`, #36).
+
 ### Fixed
 
 - Re-running the installer to upgrade now moves the generated
