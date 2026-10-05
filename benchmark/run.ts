@@ -7,6 +7,19 @@ import mysql from 'mysql2/promise'
 import { benchmarkQueries } from './queries'
 import { waitForPublishedEndpoint } from './reconnect'
 import { pintailSpecificMinimumRegressions, type ComparableReport } from './evidence'
+import {
+  PINTAIL_MEMO_MAX_ENTRIES,
+  PINTAIL_MEMO_MAX_ROWS,
+  clickhouseCacheSettings,
+  clickhouseQueryCacheServerSettings,
+  prometheusValue,
+  renderCacheStudyMarkdown,
+  runFreshnessCacheStudy,
+  runStaticCacheStudy,
+  type CacheStudy,
+  type CacheStudyContext,
+  type CacheStudyOptions,
+} from './cache-study'
 
 type CommandResult = { stdout: string; stderr: string }
 type EngineTiming = {
@@ -52,7 +65,11 @@ const orderRows = batches * 10_000
 const fullGate = orderRows === 20_000_000
 const runId = `pintail-m9-bench-${process.pid}-${Date.now()}`
 const auditorRun = process.env.PINTAIL_BENCHMARK_AUDIT === '1'
-const pintailImage = auditorRun ? `${runId}:audit` : 'pintail-benchmark:latest'
+// An image already built from this commit can stand in for the build, so a
+// study that changes only the harness does not pay for a profile-guided
+// image build. Never set for banked evidence.
+const prebuiltPintailImage = auditorRun ? undefined : process.env.PINTAIL_BENCHMARK_IMAGE?.trim() || undefined
+const pintailImage = auditorRun ? `${runId}:audit` : (prebuiltPintailImage ?? 'pintail-benchmark:latest')
 const mysqlName = `${runId}-mysql`
 const clickhouseName = `${runId}-clickhouse`
 const pintailName = `${runId}-pintail`
@@ -87,6 +104,23 @@ const CONCURRENCY_CLIENTS = (process.env.BENCHMARK_CONCURRENCY ?? '1,4,8,16')
   .map((value) => Number(value.trim()))
   .filter((value) => Number.isFinite(value) && value > 0)
 const CONCURRENCY_SECONDS = Number(process.env.BENCHMARK_CONCURRENCY_SECONDS ?? 10)
+
+// The cache study (issue #36, `cache-study.ts`): both result caches on, and
+// what each serves after the source changes. Off by default - the freshness
+// phase writes to the source, so it runs last and only when asked for.
+const CACHE_STUDY = process.env.BENCHMARK_CACHE_STUDY === '1'
+const CACHE_FRESHNESS_TTL_S = Number(process.env.BENCHMARK_CACHE_TTL_S ?? 60)
+const cacheStudyOptions: CacheStudyOptions = {
+  warmups: WARMUP_COUNT,
+  runs: RUN_COUNT,
+  // Longer than any timed phase, so no static entry expires mid-measurement.
+  staticTtlS: 3600,
+  freshnessTtlS: CACHE_FRESHNESS_TTL_S,
+  pollMs: Number(process.env.BENCHMARK_CACHE_POLL_MS ?? 100),
+  timeoutS: Number(process.env.BENCHMARK_CACHE_TIMEOUT_S ?? CACHE_FRESHNESS_TTL_S + 60),
+  afterSamples: 5,
+  pintailSettleS: Number(process.env.BENCHMARK_CACHE_SETTLE_S ?? 60),
+}
 const mysqlImage = 'mysql:8.4'
 const clickhouseImage = 'clickhouse/clickhouse-server:26.8'
 const mysqlServerArgs = [
@@ -148,6 +182,9 @@ let dockerHostName = ''
 let engineFingerprint = ''
 // Shared by both timing tracks and concurrency, including after a restart.
 let clickhouseUrl = ''
+/// MySQL's canonical answer per repeated query, recorded by the first track
+/// so later phases check against the same oracle without re-running it.
+const mysqlAnswers = new Map<string, string>()
 
 const hostFingerprint = () => createHash('sha256').update(dockerHostName).digest('hex')
 
@@ -392,6 +429,33 @@ async function seedSource(connection: mysql.Connection) {
   log(`source seed completed in ${Math.round(performance.now() - started).toLocaleString()} ms`)
 }
 
+/// Each source table as ClickHouse declares it, and the projection that reads
+/// it from MySQL's table function.
+const clickhouseTables: Record<string, { schema: string; projection: string }> = {
+  users: {
+    schema:
+      'id UInt32, name String, email String, region String, ' +
+      'created_at DateTime, updated_at DateTime',
+    projection: '*',
+  },
+  products: {
+    schema:
+      'id UInt32, name String, category String, price Decimal(10,2), ' +
+      'created_at DateTime, updated_at DateTime',
+    projection:
+      'id, name, category, toDecimal64(price, 2), created_at, updated_at',
+  },
+  orders: {
+    schema:
+      'id UInt64, user_id UInt32, product_id UInt32, quantity UInt32, ' +
+      'unit_price Decimal(10,2), total_amount Decimal(12,2), status String, ' +
+      'region String, order_date Date, created_at DateTime, updated_at DateTime',
+    projection:
+      'id, user_id, product_id, quantity, toDecimal64(unit_price, 2), ' +
+      'toDecimal64(total_amount, 2), status, region, order_date, created_at, updated_at',
+  },
+}
+
 async function importClickhouse(baseUrl: string) {
   log('importing the source tables into ClickHouse')
   const query = async (sql: string) => {
@@ -404,36 +468,12 @@ async function importClickhouse(baseUrl: string) {
     if (!response.ok) throw new Error(`ClickHouse import failed: ${text}`)
   }
   await query('CREATE DATABASE benchmark')
-  const tables = {
-    users: {
-      schema:
-        'id UInt32, name String, email String, region String, ' +
-        'created_at DateTime, updated_at DateTime',
-      projection: '*',
-    },
-    products: {
-      schema:
-        'id UInt32, name String, category String, price Decimal(10,2), ' +
-        'created_at DateTime, updated_at DateTime',
-      projection:
-        'id, name, category, toDecimal64(price, 2), created_at, updated_at',
-    },
-    orders: {
-      schema:
-        'id UInt64, user_id UInt32, product_id UInt32, quantity UInt32, ' +
-        'unit_price Decimal(10,2), total_amount Decimal(12,2), status String, ' +
-        'region String, order_date Date, created_at DateTime, updated_at DateTime',
-      projection:
-        'id, user_id, product_id, quantity, toDecimal64(unit_price, 2), ' +
-        'toDecimal64(total_amount, 2), status, region, order_date, created_at, updated_at',
-    },
-  }
   // benchmark:      plain MergeTree — the raw-speed ceiling reference.
   // benchmark_rmt:  ReplacingMergeTree read with final=1 — ClickHouse doing
   //                 the same always-correct merge-on-read duty pintail does
   //                 (issue #3 step 0: the apples-to-apples reference).
   await query('CREATE DATABASE benchmark_rmt')
-  for (const [table, definition] of Object.entries(tables)) {
+  for (const [table, definition] of Object.entries(clickhouseTables)) {
     for (const [database, engine] of [
       ['benchmark', 'MergeTree'],
       ['benchmark_rmt', 'ReplacingMergeTree'],
@@ -1115,6 +1155,7 @@ async function runQueries(
       // a crash later in the run never throws measured work away.
       await saveBaseline()
     }
+    if (!query.coldOnly) mysqlAnswers.set(query.name, mysqlCanonicals[0])
     const mysqlTiming = summarizeTimings(mysqlTimes)
     const mysqlMs = mysqlTiming.medianMs
     // Captured BEFORE the timed runs: a settled aggregate memoizes its
@@ -1265,10 +1306,94 @@ async function runQueries(
   return results
 }
 
+/// A ClickHouse read with an optional query id, for the cache study's
+/// `system.query_log` hit lookups.
+async function clickhouseRead(sql: string, queryId?: string): Promise<unknown[][]> {
+  const id = queryId ? `&query_id=${encodeURIComponent(queryId)}` : ''
+  const response = await fetch(`${clickhouseUrl}/?database=benchmark_rmt${id}`, {
+    method: 'POST',
+    headers: clickhouseHeaders,
+    body: `${sql} FORMAT JSONCompact`,
+  })
+  const text = await response.text()
+  if (!response.ok) throw new Error(`ClickHouse query failed: ${text}`)
+  return (JSON.parse(text) as { data: unknown[][] }).data
+}
+
+async function clickhouseStatement(sql: string): Promise<void> {
+  const response = await fetch(`${clickhouseUrl}/?database=benchmark_rmt`, {
+    method: 'POST',
+    headers: clickhouseHeaders,
+    body: sql,
+  })
+  const text = await response.text()
+  if (!response.ok) throw new Error(`ClickHouse statement failed: ${text}`)
+}
+
+function cacheStudyContext(pintailUrl: string, token: string, databaseId: string): CacheStudyContext {
+  return {
+    log,
+    canonical: canonicalRows,
+    mysql: mysqlColdQuery,
+    mysqlWrite: async (sql) => {
+      const [result] = await mysqlConnection!.query<mysql.ResultSetHeader>(sql)
+      return result.affectedRows
+    },
+    pintail: (sql) =>
+      api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
+        method: 'POST',
+        token,
+        body: { db: databaseId, sql },
+      }).then((response) => response.rows),
+    pintailMemoHits: async () => {
+      const response = await fetch(`${pintailUrl}/metrics`)
+      if (!response.ok) throw new Error(`Pintail /metrics returned ${response.status}`)
+      return prometheusValue(await response.text(), 'pintail_settled_memo_hits_total')
+    },
+    clickhouse: clickhouseRead,
+    clickhouseExec: clickhouseStatement,
+    clickhouseTables,
+    mysqlTableFunction: (table) =>
+      `mysql('${mysqlName}:3306', 'benchmark_db', '${table}', 'benchmark', 'benchmarkpass')`,
+    orderRows,
+    runTag: runId,
+  }
+}
+
+async function cacheStudyEnvelope(context: CacheStudyContext): Promise<Omit<CacheStudy, 'static' | 'freshness'>> {
+  return {
+    generatedAt: new Date().toISOString(),
+    settings: {
+      clickhouse: {
+        queryCacheTtlStaticS: cacheStudyOptions.staticTtlS,
+        queryCacheTtlFreshnessS: cacheStudyOptions.freshnessTtlS,
+        perQuery: clickhouseCacheSettings(cacheStudyOptions.staticTtlS),
+        server: await clickhouseQueryCacheServerSettings(context),
+      },
+      pintail: {
+        memo:
+          'settled aggregate memo keyed by (table, manifest generation, plan signature); ' +
+          'unreachable once ingest leaves rows in the memtable',
+        maxEntries: PINTAIL_MEMO_MAX_ENTRIES,
+        maxRows: PINTAIL_MEMO_MAX_ROWS,
+      },
+      warmups: cacheStudyOptions.warmups,
+      runs: cacheStudyOptions.runs,
+      pollMs: cacheStudyOptions.pollMs,
+      timeoutS: cacheStudyOptions.timeoutS,
+      afterSamples: cacheStudyOptions.afterSamples,
+      order:
+        'static: per query, Pintail warm+timed, then ClickHouse cached warm+timed, then ' +
+        'ClickHouse executed; freshness: both engines polled concurrently',
+    },
+  }
+}
+
 function publishResults(
   allResults: QueryResult[],
   engineResults: QueryResult[] = [],
   concurrency: ConcurrencyRow[] = [],
+  cacheStudy?: CacheStudy,
 ) {
   // Gate totals keep their original definition: repeat-query medians of
   // the canonical eight. Novel (cold) rows publish separately — they
@@ -1332,6 +1457,9 @@ function publishResults(
     engineQueries: engineResults.filter((row) => !row.coldOnly),
     /// Throughput and p95 at each client count, both engines computing.
     concurrency,
+    /// Both result caches on, and freshness after ingestion (issue #36).
+    /// Present only when the run set BENCHMARK_CACHE_STUDY=1.
+    ...(cacheStudy ? { cacheStudy } : {}),
     totals: {
       ...totals,
       speedup,
@@ -1489,6 +1617,7 @@ function publishResults(
           '',
         ]
       : []),
+    ...(cacheStudy ? [...renderCacheStudyMarkdown(cacheStudy), ''] : []),
     '## Novel queries (median of 5 memo-cold variants — RAW ENGINE SPEED)',
     '',
     'Both engines execute every run here. This is the comparison that speaks\n'
@@ -1582,6 +1711,34 @@ async function cleanup() {
     await docker('image', 'rm', pintailImage).catch(() => undefined)
   }
   rmSync(dataDir, { recursive: true, force: true })
+}
+
+/// Replaces the pintail container on the same named volume, so the replica
+/// survives and a restart costs seconds instead of another snapshot.
+async function restartPintail(host: string, memoDisabled: boolean): Promise<string> {
+  await docker('rm', '--force', pintailName).catch(() => undefined)
+  await docker(
+    'run',
+    '--detach',
+    '--name',
+    pintailName,
+    '--network',
+    networkName,
+    '--publish',
+    '0:8080',
+    '--publish',
+    '0:3306',
+    '--volume',
+    `${pintailVolumeName}:/var/lib/pintail`,
+    ...engineLimits,
+    '--env',
+    `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${4 * 1024 * 1024 * 1024}`,
+    ...(memoDisabled ? ['--env', 'PINTAIL_DISABLE_SETTLED_MEMO=1'] : []),
+    pintailImage,
+  )
+  const url = `http://${urlHost(host)}:${await publishedPort(pintailName, 8080)}`
+  await waitForHttp(url)
+  return url
 }
 
 async function main() {
@@ -1718,8 +1875,12 @@ async function main() {
   let dsn: string
   let pintailWireEndpoint: { host: string; port: number }
   if (containerizedPintail) {
-    log('building the pintail image on the docker host (same host + limits as MySQL/ClickHouse)')
-    await docker('build', '--tag', pintailImage, repository)
+    if (prebuiltPintailImage) {
+      log(`using the prebuilt pintail image ${prebuiltPintailImage}`)
+    } else {
+      log('building the pintail image on the docker host (same host + limits as MySQL/ClickHouse)')
+      await docker('build', '--tag', pintailImage, repository)
+    }
     await docker(
       'run',
       '--detach',
@@ -1797,6 +1958,25 @@ async function main() {
     { pintailWireQuery, pintailWireContainer: containerizedPintail ? pintailName : undefined },
   )
 
+  // Cache study, static phase: the memo-on server above, ClickHouse's query
+  // cache on. Read-only, so it runs here, before the restart below.
+  let staticCacheRows: CacheStudy['static'] | undefined
+  let studyEnvelope: Omit<CacheStudy, 'static' | 'freshness'> | undefined
+  if (CACHE_STUDY) {
+    const context = cacheStudyContext(pintailUrl, setup.token, databaseId)
+    studyEnvelope = await cacheStudyEnvelope(context)
+    staticCacheRows = await runStaticCacheStudy(
+      context,
+      cacheStudyOptions,
+      benchmarkQueries.filter((query) => !query.coldOnly),
+      (name) => {
+        const answer = mysqlAnswers.get(name)
+        if (answer === undefined) throw new Error(`no MySQL answer recorded for ${name}`)
+        return answer
+      },
+    )
+  }
+
   // The engine track. Everything above measures pintail with its settled
   // aggregate memo live, which for a repeated query reports the cost of a
   // cache hit - a real number, and not one that says anything about how fast
@@ -1810,30 +1990,7 @@ async function main() {
   const concurrency: ConcurrencyRow[] = []
   if (containerizedPintail) {
     log('restarting pintail with the result memo disabled (engine-speed track)')
-    await docker('rm', '--force', pintailName).catch(() => undefined)
-    await docker(
-      'run',
-      '--detach',
-      '--name',
-      pintailName,
-      '--network',
-      networkName,
-      '--publish',
-      '0:8080',
-      '--publish',
-      '0:3306',
-      '--volume',
-      `${pintailVolumeName}:/var/lib/pintail`,
-      ...engineLimits,
-      '--env',
-      `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${4 * 1024 * 1024 * 1024}`,
-      '--env',
-      'PINTAIL_DISABLE_SETTLED_MEMO=1',
-      pintailImage,
-    )
-    const enginePort = await publishedPort(pintailName, 8080)
-    const engineUrl = `http://${urlHost(host)}:${enginePort}`
-    await waitForHttp(engineUrl)
+    const engineUrl = await restartPintail(host, true)
     // The ephemeral wire port is re-published on every restart; the key
     // itself survives on the named volume, so only the connection is new.
     const engineWireQuery = makePintailWireQuery(
@@ -1931,7 +2088,25 @@ async function main() {
     log('SKIPPING the engine-speed track: it needs the containerized pintail')
   }
 
-  publishResults(results, engineResults, concurrency)
+  let cacheStudy: CacheStudy | undefined
+  if (staticCacheRows && studyEnvelope) {
+    let freshness: CacheStudy['freshness'] = []
+    if (containerizedPintail) {
+      // Last, because it writes to the source: every earlier track compares
+      // against MySQL answers taken before these changes.
+      log('restarting pintail with the result memo on (cache study, freshness)')
+      const freshUrl = await restartPintail(host, false)
+      freshness = await runFreshnessCacheStudy(
+        cacheStudyContext(freshUrl, setup.token, databaseId),
+        cacheStudyOptions,
+      )
+    } else {
+      log('SKIPPING the cache freshness phase: it needs the containerized pintail')
+    }
+    cacheStudy = { ...studyEnvelope, static: staticCacheRows, freshness }
+  }
+
+  publishResults(results, engineResults, concurrency, cacheStudy)
 }
 
 try {

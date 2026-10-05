@@ -18,6 +18,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { renderCacheStudyReadme, type CacheStudy } from './cache-study'
 
 const repository = join(import.meta.dir, '..')
 const artifactPath = join(repository, 'benchmark', 'results.json')
@@ -60,6 +61,9 @@ interface Artifact {
   /// before this field existed.
   engineQueries?: Row[]
   concurrency?: ConcurrencyRow[]
+  /// Both result caches on, and freshness after ingestion (issue #36).
+  /// Absent unless the run set BENCHMARK_CACHE_STUDY=1.
+  cacheStudy?: CacheStudy
   methodology: { pintailPlacement: string; iterations: string }
 }
 
@@ -140,8 +144,12 @@ function render(artifact: Artifact): string {
     "ClickHouse's query cache is off, so this compares Pintail's cache against",
     "ClickHouse's execution. It is neither a cache-against-cache comparison",
     "(ClickHouse's query cache would also answer a repeat) nor a measure of",
-    'engine speed; issue #36 tracks measuring both caches and their freshness',
-    'after ingestion.',
+    ...(artifact.cacheStudy
+      ? ['engine speed; the cache-against-cache comparison follows it.']
+      : [
+          'engine speed; issue #36 tracks measuring both caches and their freshness',
+          'after ingestion.',
+        ]),
     '',
     '| Query | MySQL | Pintail (memo) | CH RMT+FINAL |',
     '|---|---:|---:|---:|',
@@ -150,6 +158,7 @@ function render(artifact: Artifact): string {
         `| ${label(row.name)} | ${ms(row.mysqlMs)} | ${ms(row.pintailMs)} | ${ms(row.clickhouseFinalMs)} |`,
     ),
     '',
+    ...(artifact.cacheStudy ? renderCacheStudyReadme(artifact.cacheStudy) : []),
     '**Novel queries — memo-cold constants.** Distinct predicate variants the',
     'memo has never seen, run once per engine with no warmup, so neither the',
     'memo nor any plan cache is warm. A second, independent read on the same',
