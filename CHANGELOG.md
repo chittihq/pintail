@@ -20,6 +20,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (the zero date sorts before every real date, as in MySQL) and run within
   1.3x of clean data. The calendar copy check passes packed batches whole
   and checks text batches in one pass.
+- `ALTER TABLE ... ADD COLUMN` with a default no longer recopies the
+  table. The mirror records the value the source filled into existing rows
+  and evolves the table in place: literal defaults of every scalar type,
+  the implicit value of a `NOT NULL` column without a default, and
+  `CURRENT_TIMESTAMP` (taken from the statement's binlog event: its
+  seconds, microseconds and session time zone). Expression defaults,
+  generated columns, `AUTO_INCREMENT` and MariaDB sources still recopy,
+  with the reason logged (`docs/limitations.md` lists the shapes).
+- `ALTER COLUMN ... SET DEFAULT` and `DROP DEFAULT` no longer recopy the
+  table.
 
 ### Added
 
@@ -44,6 +54,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lines could also reach a registered log exporter out of order relative to
   an immediate line from another thread; the exporter now receives them in
   the order stderr shows. Introduced in 0.1.7.
+- A `NOT NULL` column added without a default read NULL in rows stored
+  before the `ADD COLUMN` instead of its type's implicit value (0, the
+  empty string, the first ENUM label, the zero date).
 
 ## [0.1.8-rc1] - 2026-10-05
 
