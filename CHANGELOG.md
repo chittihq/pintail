@@ -69,6 +69,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   value right after updates were flushed, until the next merge: the
   side-index narrowing trusted any k rows that came back. Introduced in
   0.1.7.
+- A process killed while it was still replaying a batch that an earlier
+  crash left unfinished no longer copies every table again on its next
+  start, with the mirror's rows missing until the copy finished. The
+  restart misread the unfinished rows as the source restarting its
+  transaction numbering. Introduced in 0.1.7.
 - A binary started on a data directory that a newer release migrated now
   refuses at startup ("metadata schema version N is newer than this binary
   supports"), and a segment in a newer format names that cause instead of
