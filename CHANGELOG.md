@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The per-statement query log line could stay unwritten indefinitely: if a
+  line logged at once flushed the queue just as the background writer was
+  woken, the writer went back to sleep still marked awake and ignored every
+  later deferred line until another immediate line flushed them. Deferred
+  lines could also reach a registered log exporter out of order relative to
+  an immediate line from another thread; the exporter now receives them in
+  the order stderr shows. Introduced in 0.1.7.
+
 ## [0.1.8-rc1] - 2026-10-05
 
 Fixes for twelve defects an external review found in 0.1.7 - two wrong
