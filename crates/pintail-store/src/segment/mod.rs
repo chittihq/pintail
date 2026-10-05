@@ -37,7 +37,7 @@ use crate::{
 
 const MAGIC: &[u8; 5] = b"PTSEG";
 const FOOTER_MAGIC: &[u8; 5] = b"PTFTR";
-const FORMAT_VERSION: u8 = 7;
+const FORMAT_VERSION: u8 = 8;
 
 /// The segment format version this build writes.
 pub const WRITTEN_SEGMENT_FORMAT: u8 = FORMAT_VERSION;
@@ -49,7 +49,9 @@ pub const WRITTEN_SEGMENT_FORMAT: u8 = FORMAT_VERSION;
 /// v5 stores wide plain text blocks as independently compressed frames;
 /// v6 adds a footer directory of optional side-index postings sections;
 /// v7 permits dictionary blocks whose indexes are one or two bytes wide
-/// and an empty null bitmap for a block with no NULL.
+/// and an empty null bitmap for a block with no NULL;
+/// v8 lets a native Date32/DateTime64 column hold the zero date, as the
+/// unit of the day before 0000-01-01.
 /// Header bytes after the magic: format version, schema version, schema
 /// fingerprint, row count, column count and target block rows.
 const HEADER_LENGTH: usize = MAGIC.len() + 1 + 4 + 8 + 8 + 4 + 4;
@@ -69,6 +71,11 @@ const POSTINGS_VERSION: u8 = 6;
 /// The first version whose dictionary blocks may carry indexes narrower
 /// than four bytes, and whose blocks with no NULL may omit their bitmap.
 const NARROW_DICTIONARY_VERSION: u8 = 7;
+/// The first version whose native calendar columns may hold the zero date
+/// (`pintail_types::ZERO_DATE_DAYS`, `pintail_types::ZERO_DATETIME_MICROS`).
+/// An older reader would take that unit for corruption, so a segment that
+/// may carry it says so by its version.
+const ZERO_DATE_UNITS_VERSION: u8 = 8;
 
 /// The digest a version 4 footer records over the fields no block checksum
 /// covers. Those fields decide how many rows a read allocates and which
@@ -111,7 +118,7 @@ fn written_format_version() -> u8 {
 }
 
 const fn format_version_supported(version: u8) -> bool {
-    matches!(version, 1..=7)
+    matches!(version, 1..=8)
 }
 
 fn read_format_version(path: &Path, decoder: &mut FileDecoder) -> Result<u8, StoreError> {
@@ -840,9 +847,21 @@ fn format_native_cells(
     Ok(())
 }
 
+/// The units the writer stores for one value of a native column: those of
+/// a value that round-trips exactly, and from format 8 the zero date's
+/// unit as well, so a calendar column holding the zero date stays native.
+fn stored_units(units: NativeUnits, text: &str) -> Option<i64> {
+    if written_format_version() >= ZERO_DATE_UNITS_VERSION {
+        units.parse_units(text)
+    } else {
+        units.parse_exact(text)
+    }
+}
+
 /// Decides whether every value of one projected column can be stored as
 /// fixed-width units: `Some(units)` (with `None` per null slot) only when
-/// each non-null value passes the exact round-trip check.
+/// each non-null value passes the exact round-trip check (or, from format
+/// 8, is the zero date).
 #[allow(dead_code)] // consumed by the v2 writer (task #10 step A)
 pub(crate) fn probe_native_column(
     units: NativeUnits,
@@ -853,7 +872,7 @@ pub(crate) fn probe_native_column(
     for row in rows {
         match &row.values()[value_index] {
             Value::Null => parsed.push(None),
-            Value::Utf8(text) => parsed.push(Some(units.parse_exact(text)?)),
+            Value::Utf8(text) => parsed.push(Some(stored_units(units, text)?)),
             _ => return None,
         }
     }
@@ -6935,7 +6954,7 @@ fn native_cell(spec: &ColumnSpec, text: &str) -> Result<Cell, StoreError> {
     let Some(units) = spec.native else {
         return Ok(Cell::Utf8(text.to_owned()));
     };
-    units.parse_exact(text).map(Cell::Int64).ok_or_else(|| {
+    stored_units(units, text).map(Cell::Int64).ok_or_else(|| {
         StoreError::FormatLimit(format!(
             "column {} was probed as {units:?} units, but one of its values \
              does not round-trip through them",

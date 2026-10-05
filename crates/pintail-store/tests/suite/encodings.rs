@@ -109,7 +109,7 @@ fn adaptive_compression_mixes_raw_and_lz4_blocks_and_reopens() {
 
     let bytes = std::fs::read(path).expect("segment bytes");
     assert_eq!(
-        bytes[5], 7,
+        bytes[5], 8,
         "adaptive compression is written as the current PTSEG version"
     );
     assert_eq!(

@@ -2358,6 +2358,175 @@ mod mixed_segment_versions {
     }
 }
 
+/// Calendar columns holding the zero date: format 7 stored them as text, and
+/// format 8 stores them as native units with the zero date's unit. Both read
+/// alike, and a merge of old and new segments writes native units.
+mod zero_date_units {
+    use super::*;
+    use crate::store::DecodedColumn;
+    use pintail_types::Value;
+
+    fn schema() -> TableSchema {
+        TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "day", DataType::Date32, true),
+                Column::new(3, "at", DataType::DateTime64 { fsp: 3 }, true),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn options() -> StoreOptions {
+        StoreOptions {
+            background_compaction: false,
+            block_rows: 256,
+            compaction_fan_in: 2,
+            ..StoreOptions::default()
+        }
+    }
+
+    fn row(id: u64, generation: u64, version: u64) -> StoredRow {
+        let day = (id * 7 + generation) % 300;
+        let day = if id.is_multiple_of(11) {
+            Value::Null
+        } else if id.is_multiple_of(7) {
+            Value::Utf8("0000-00-00".to_owned())
+        } else {
+            Value::Utf8(format!("2024-{:02}-{:02}", 1 + day / 28, 1 + day % 28))
+        };
+        let at = if id.is_multiple_of(5) {
+            Value::Utf8("0000-00-00 00:00:00.000".to_owned())
+        } else {
+            Value::Utf8(format!(
+                "2023-06-{:02} {:02}:{:02}:00.{:03}",
+                1 + id % 28,
+                id % 24,
+                (id + generation) % 60,
+                id % 1000
+            ))
+        };
+        StoredRow::new(
+            PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap(),
+            vec![Value::UInt64(id), day, at],
+            version,
+            false,
+        )
+    }
+
+    fn visible(table: &TableStore) -> Vec<StoredRow> {
+        table.snapshot().scan().unwrap()
+    }
+
+    /// Whether every live segment decodes both calendar columns as native
+    /// units (`Some(true)`), every one as text (`Some(false)`), or a mix.
+    fn native(table: &TableStore) -> Option<bool> {
+        let used = std::sync::atomic::AtomicUsize::new(0);
+        let budget = segment::ScanMemoryBudget::new(&used, usize::MAX);
+        let mut forms = Vec::new();
+        for meta in &table.manifest.segments {
+            let fetch = segment::read_projected_columns(
+                &table.directory,
+                meta,
+                &table.schema,
+                &[1, 2],
+                0,
+                usize::try_from(meta.row_count).unwrap(),
+                &budget,
+            )
+            .unwrap();
+            for column in &fetch.columns {
+                forms.push(matches!(column, DecodedColumn::NativeUnits { .. }));
+            }
+        }
+        let first = *forms.first()?;
+        forms.iter().all(|form| *form == first).then_some(first)
+    }
+
+    #[test]
+    fn zero_dates_written_by_format_7_and_8_read_merge_and_reopen_alike() {
+        let current = segment::CURRENT_FORMAT_VERSION;
+        assert!(current >= 8);
+        let directory = tempfile::tempdir().unwrap();
+        let mut table = TableStore::open(directory.path(), schema(), options()).unwrap();
+        // The earlier release's flushes keep the calendar columns as text.
+        segment::write_format_version_for_test(7);
+        table
+            .ingest((1..=2_000).map(|id| row(id, 0, 1)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        table
+            .ingest((1_500..=2_500).map(|id| row(id, 1, 2)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        segment::write_format_version_for_test(current);
+        assert_eq!(native(&table), Some(false), "format 7 keeps text");
+        // This build's flush stores units, zero dates included.
+        table
+            .ingest((1_900..=3_000).map(|id| row(id, 2, 3)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        assert_eq!(native(&table), None, "old text beside new units");
+        let generation = |id: u64| match id {
+            1_900.. => 2,
+            1_500.. => 1,
+            _ => 0,
+        };
+        let expected = (1..=3_000)
+            .map(|id| {
+                let generation = generation(id);
+                row(id, generation, generation + 1)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(visible(&table), expected, "mixed read");
+
+        drop(table);
+        let mut table = TableStore::open(directory.path(), schema(), options()).unwrap();
+        assert_eq!(visible(&table), expected, "mixed reopen");
+
+        // Merging old and new inputs writes units for every value.
+        while table.compact().unwrap().input_segments() > 0 {}
+        table.reclaim_obsolete_segments().unwrap();
+        assert_eq!(visible(&table), expected, "merged");
+        assert_eq!(native(&table), Some(true), "a merge writes units");
+
+        // Unflushed rows holding the zero date read through the units too.
+        table
+            .ingest((2_990..=3_100).map(|id| row(id, 3, 4)).collect())
+            .unwrap();
+        let mut expected = expected;
+        expected.truncate(2_989);
+        expected.extend((2_990..=3_100).map(|id| row(id, 3, 4)));
+        assert_eq!(visible(&table), expected, "units under writes");
+        drop(table);
+        let table = TableStore::open(directory.path(), schema(), options()).unwrap();
+        assert_eq!(visible(&table), expected, "reopened under writes");
+    }
+
+    /// Column statistics still prove a column holds only real dates by its
+    /// segments' temporal extremes, which a segment holding the zero date
+    /// does not record, whichever way it stores the column.
+    #[test]
+    fn statistics_do_not_take_zero_date_units_for_real_dates() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut table = TableStore::open(directory.path(), schema(), options()).unwrap();
+        table
+            .ingest((1..=1_000).map(|id| row(id, 0, 1)).collect())
+            .unwrap();
+        table.flush().unwrap();
+        assert_eq!(native(&table), Some(true));
+        let statistics = table.snapshot().column_statistics();
+        for column_id in [2, 3] {
+            let facts = statistics.column(column_id).expect("facts");
+            assert!(
+                !facts.calendar_exact,
+                "column {column_id} holds the zero date, so it is not proven calendar-exact"
+            );
+        }
+    }
+}
+
 /// Disjoint segments past the file-pressure bound merge for fewer files.
 /// A merge writes its rows back in bounded chunks, so once the neighbours
 /// fill their chunks there is nothing left to gain: the table must come to
