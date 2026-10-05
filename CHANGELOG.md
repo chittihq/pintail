@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Segments an older build wrote are rewritten into the current segment
+  format in the background (`PINTAIL_SEGMENT_UPGRADE`, on by default). When
+  a replication stream catches up and starts no merge, it rewrites up to
+  64 MiB of one table's old segments through the merge path, with the merge
+  slot, pacing and write budget; readers keep their snapshot, and nothing
+  starts while a table copy runs or for tables waiting for a resync.
+  `pintail paths:` reports `segment_upgrade`, and `GET /api/storage`
+  reports each table's segments by format version. The sweep needs free
+  disk for one group's rewrite at a time. On a 20M-row replica written by
+  0.1.6 it rewrote 202 segments in 59 s without moving query latency, and
+  the upgraded table answers Q2 in half the time.
+
 ### Fixed
 
 - The per-statement query log line could stay unwritten indefinitely: if a
