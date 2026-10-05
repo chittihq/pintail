@@ -13,6 +13,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   previous release. A compose file whose pintail image line the installer
   cannot find stops the upgrade with the manual step instead of restarting
   the old release (#45).
+- A scan that evaluates a pushed text predicate itself now compares under
+  the collation the statement resolved, the one the Filter above it uses,
+  rather than the server default. Under a non-default `collation_connection`
+  the two could otherwise disagree on a comparison with no column collation
+  of its own; no wrong answer was reproduced on the current tree (#42).
 
 ## [0.1.8-rc2] - 2026-10-05
 
