@@ -16,9 +16,24 @@ const wizard = reactive({
   probe: null as ProbeReport | null,
   includes: [] as string[],
   excludes: [] as string[],
+  /// Seconds between reconciliations; the server's default until edited.
+  reconcileInterval: 600 as number | '',
   working: false,
   error: '',
 })
+
+/// The interval as sent: an emptied or non-positive field keeps the default
+/// rather than reaching the server as zero.
+const reconcileSeconds = computed(() => {
+  const seconds = Number(wizard.reconcileInterval)
+  return Number.isFinite(seconds) && seconds >= 1 ? Math.round(seconds) : 600
+})
+
+/// Selected tables a source foreign key cascades into, which converge only
+/// on the reconcile interval.
+const cascadeTables = computed(() =>
+  (wizard.probe?.tables ?? []).filter((table) => table.requires_reconciliation && wizard.includes.includes(table.name)),
+)
 
 async function wizardConnection() {
   wizard.working = true
@@ -44,7 +59,7 @@ async function wizardConnection() {
           include_tables: [],
           exclude_tables: [],
           poll_interval_seconds: 5,
-          reconcile_interval_seconds: 600,
+          reconcile_interval_seconds: reconcileSeconds.value,
         }),
       })
     }
@@ -79,7 +94,7 @@ async function finishWizard() {
         include_tables: wizard.includes,
         exclude_tables: wizard.excludes,
         poll_interval_seconds: 5,
-        reconcile_interval_seconds: 600,
+        reconcile_interval_seconds: reconcileSeconds.value,
       }),
     })
     wizard.step = 4
@@ -192,6 +207,24 @@ function toggleInclude(name: string, on: boolean) {
             <Badge :class="table.key.mode === 'append_row_id' ? 'tone-warning' : 'tone-positive'">{{ table.key.mode.replace('_', ' ') }}</Badge>
             <AlertTriangle v-if="table.warnings.length" :size="16" class="text-amber" />
           </div>
+        </div>
+        <div class="grid content-start gap-1.5">
+          <Label for="wizard-reconcile">Reconcile interval</Label>
+          <div class="flex items-center gap-2">
+            <input
+              id="wizard-reconcile"
+              v-model.number="wizard.reconcileInterval"
+              type="number"
+              min="10"
+              step="10"
+              class="border-input bg-background w-24 rounded-md border px-2 py-1 text-sm"
+            >
+            <span class="text-muted-foreground text-sm">seconds</span>
+          </div>
+          <small class="text-muted-foreground text-xs">
+            Rows removed by a foreign-key cascade or SET NULL never arrive through CDC; they converge on this interval.
+            <template v-if="cascadeTables.length">Selected tables affected: {{ cascadeTables.map((table) => table.name).join(', ') }}.</template>
+          </small>
         </div>
         <p v-if="wizard.error" class="text-destructive text-sm">{{ wizard.error }}</p>
         <div class="flex justify-end gap-2"><Button variant="outline" @click="wizard.step = 2">Back</Button><Button :disabled="wizard.working || !wizard.includes.length" @click="finishWizard"><LoaderCircle v-if="wizard.working" class="animate-spin" /> Review & start <ArrowRight v-if="!wizard.working" /></Button></div>

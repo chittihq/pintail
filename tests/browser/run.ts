@@ -441,9 +441,22 @@ async function main() {
   await check('wizard selects tables and starts the snapshot', async () => {
     await page!.getByRole('button', { name: 'Choose tables' }).click()
     await page!.getByText('events', { exact: true }).waitFor()
+    // The interval is chosen here, not fixed at the default: the record
+    // must carry what was typed.
+    await page!.getByLabel('Reconcile interval').fill('300')
     await page!.getByRole('button', { name: 'Review & start' }).click()
     await page!.waitForURL(/\/databases\/[^/?]+\?tab=snapshot$/)
     await page!.getByRole('heading', { name: DATABASE }).waitFor()
+    const databaseId = new URL(page!.url()).pathname.split('/').pop() ?? ''
+    const interval = await page!.evaluate(async (id) => {
+      const token = window.localStorage.getItem('pintail.token')
+      const response = await fetch(`/api/databases/${id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!response.ok) return -1
+      return ((await response.json()) as { reconcile_interval_seconds: number }).reconcile_interval_seconds
+    }, databaseId)
+    if (interval !== 300) throw new Error(`the wizard saved reconcile interval ${interval}, not the 300 typed`)
   })
 
   await check('replication reaches streaming', async () => {
