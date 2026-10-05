@@ -196,7 +196,7 @@ export interface SnapshotStatus {
     /// hold values decoded wrong; a resync of the table clears it.
     resync_advised?: {
       reason: string
-      columns: Array<{ name: string, defect: 'negative_mediumint' | 'binary_trailing_zeros' }>
+      columns: Array<{ name: string, defect: 'negative_mediumint' | 'binary_trailing_zeros' | 'not_null_read_as_null' }>
     }
   }>
 }

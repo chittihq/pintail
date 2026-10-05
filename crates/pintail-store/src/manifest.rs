@@ -98,6 +98,36 @@ pub(crate) fn highest_version_at_rest(directory: &Path) -> Result<Option<u64>, S
     }))
 }
 
+/// Of `column_ids`, the ones a live row of a published segment reads as
+/// NULL: the segment's statistics count fewer non-NULL values than live
+/// rows, or it holds none for the column because it was written before the
+/// column existed. A segment recorded without statistics proves nothing
+/// and is passed over.
+pub(crate) fn columns_with_null_rows_at_rest(
+    directory: &Path,
+    column_ids: &[u32],
+) -> Result<Vec<u32>, StoreError> {
+    let Some(manifest) = read(directory)? else {
+        return Ok(Vec::new());
+    };
+    Ok(column_ids
+        .iter()
+        .copied()
+        .filter(|column_id| {
+            manifest.segments.iter().any(|segment| {
+                segment.smas.as_ref().is_some_and(|smas| {
+                    smas.live_rows > 0
+                        && smas
+                            .columns
+                            .iter()
+                            .find(|sma| sma.column_id == *column_id)
+                            .is_none_or(|sma| sma.non_null < smas.live_rows)
+                })
+            })
+        })
+        .collect())
+}
+
 /// The segment files the published manifest names, without reading the
 /// segments or holding the table's writer lock; empty when there is none.
 pub(crate) fn segment_files_at_rest(directory: &Path) -> Result<Vec<String>, StoreError> {

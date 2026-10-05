@@ -559,6 +559,22 @@ pub fn segment_formats_at_rest(directory: &Path) -> Result<BTreeMap<u8, usize>, 
     Ok(formats)
 }
 
+/// Of `column_ids`, the ones some live row of the segments the manifest at
+/// rest in `directory` names reads as NULL - a NULL stored, or a segment
+/// written before the column existed when it has no fill. Reads only the
+/// manifest's segment statistics; the log's unflushed rows are not looked
+/// at.
+///
+/// # Errors
+///
+/// Returns an error when the manifest is corrupt or cannot be read.
+pub fn columns_with_null_rows_at_rest(
+    directory: &Path,
+    column_ids: &[u32],
+) -> Result<Vec<u32>, StoreError> {
+    manifest::columns_with_null_rows_at_rest(directory, column_ids)
+}
+
 /// A table's log is cut back only after a manifest naming the flushed rows is
 /// published, so a log that no longer starts at the first write proves a
 /// manifest existed. Without it the open used to start an empty table, sweep

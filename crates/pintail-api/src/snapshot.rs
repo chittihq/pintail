@@ -78,9 +78,10 @@ struct TableSnapshotStatus {
     completed_chunks: usize,
     total_chunks: usize,
     last_error: Option<String>,
-    /// Present when rows change capture applied under an earlier binary
-    /// may hold values decoded wrong: which columns, and why. A resync of
-    /// the table clears it.
+    /// Present when rows an earlier binary stored may hold wrong values
+    /// (decoded wrong by change capture, or read as NULL in a `NOT NULL`
+    /// column added in place without a recorded fill): which columns, and
+    /// why. A resync of the table clears it.
     #[serde(skip_serializing_if = "Option::is_none")]
     resync_advised: Option<crate::value_audit::ResyncAdvice>,
 }

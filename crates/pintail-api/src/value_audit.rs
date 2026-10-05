@@ -20,6 +20,15 @@
 //!
 //! The remedy is a resync of the table; nothing here starts one. A resync
 //! records the current generation, which is what clears the advice.
+//!
+//! A second shape is named the same way. A `NOT NULL` column added in
+//! place without a default holds the type's implicit value (0, the empty
+//! string, the zero date) in every row the source already had; a binary
+//! older than 0.1.8 recorded no fill for it, so those rows read NULL, and
+//! merges since have stored that NULL. A table is a candidate when its
+//! schema has a `NOT NULL` column with no recorded fill that its first
+//! recorded schema lacked, and a published segment holds a live row that
+//! reads NULL for it. A resync stores the source's values, which clears it.
 
 use std::path::Path;
 
@@ -30,6 +39,10 @@ use serde::Serialize;
 /// The release whose binary first records a copy's generation.
 const FIXED_IN: &str = "0.1.7-rc3";
 
+/// The release whose binary first records the fill of a column added in
+/// place.
+const FILL_RECORDED_IN: &str = "0.1.8";
+
 /// One decoding defect a column's declared type exposed it to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +51,9 @@ pub(crate) enum ValueDefect {
     NegativeMediumint,
     /// A `BINARY(n)` value stored without its trailing zero bytes.
     BinaryTrailingZeros,
+    /// A `NOT NULL` column added in place before fills were recorded: rows
+    /// stored before it read NULL instead of the type's implicit value.
+    NotNullReadAsNull,
 }
 
 impl ValueDefect {
@@ -59,6 +75,7 @@ impl ValueDefect {
         match self {
             Self::NegativeMediumint => "signed MEDIUMINT",
             Self::BinaryTrailingZeros => "BINARY(n)",
+            Self::NotNullReadAsNull => "NOT NULL, added in place",
         }
     }
 
@@ -66,7 +83,12 @@ impl ValueDefect {
         match self {
             Self::NegativeMediumint => "a negative signed MEDIUMINT was stored 16777216 too high",
             Self::BinaryTrailingZeros => "a BINARY(n) value lost its trailing zero bytes",
+            Self::NotNullReadAsNull => "",
         }
+    }
+
+    const fn streamed(self) -> bool {
+        !matches!(self, Self::NotNullReadAsNull)
     }
 }
 
@@ -95,8 +117,14 @@ pub(crate) struct ResyncAdvice {
 
 impl SuspectTable {
     pub(crate) fn advice(&self) -> ResyncAdvice {
+        let streamed = self.columns.iter().any(|column| column.defect.streamed());
+        let unfilled = self.columns.iter().any(|column| !column.defect.streamed());
         ResyncAdvice {
-            reason: "stream_values_before_decoder_fixes",
+            reason: match (streamed, unfilled) {
+                (true, false) => "stream_values_before_decoder_fixes",
+                (false, _) => "added_column_read_as_null",
+                (true, true) => "values_stored_wrong_before_upgrade",
+            },
             columns: self.columns.clone(),
         }
     }
@@ -111,20 +139,34 @@ impl SuspectTable {
             .join(", ");
         let mut effects = Vec::new();
         for column in &self.columns {
-            if !effects.contains(&column.defect.effect()) {
+            if column.defect.streamed() && !effects.contains(&column.defect.effect()) {
                 effects.push(column.defect.effect());
             }
         }
+        let mut causes = Vec::new();
+        if !effects.is_empty() {
+            causes.push(format!(
+                "rows inserted or updated through change capture by a binary older than \
+                 {FIXED_IN} may be stored wrong ({}); rows copied by a snapshot are right",
+                effects.join("; ")
+            ));
+        }
+        if self.columns.iter().any(|column| !column.defect.streamed()) {
+            causes.push(format!(
+                "rows the source held when a NOT NULL column was added without a default \
+                 hold the type's implicit value there (0, the empty string, the zero date), \
+                 but a binary older than {FILL_RECORDED_IN} recorded no fill for it and they \
+                 read NULL"
+            ));
+        }
         format!(
-            "replication.resync_advised database={} ({}) table={} columns={columns}: \
-             rows inserted or updated through change capture by a binary older than \
-             {FIXED_IN} may be stored wrong ({}); rows copied by a snapshot are right. \
+            "replication.resync_advised database={} ({}) table={} columns={columns}: {}. \
              Resync this table to repair it: its Resync action in the dashboard, or \
              POST /api/databases/{}/tables/{}/resync",
             self.database_name,
             self.database_id,
             self.table,
-            effects.join("; "),
+            causes.join("; "),
             self.database_id,
             self.table,
         )
@@ -134,10 +176,10 @@ impl SuspectTable {
 /// The summary logged after the per-table warnings, when there are any.
 pub(crate) fn summary(count: usize) -> String {
     format!(
-        "replication.resync_advised {count} replicated table(s) may hold values change \
-         capture stored wrong before {FIXED_IN}, each named above; resync them to repair. \
-         A table warns until it is copied again, including one copied by {FIXED_IN} itself, \
-         which did not record the binary that copied it"
+        "replication.resync_advised {count} replicated table(s) may hold values an older \
+         binary stored wrong, each named above; resync them to repair. A table warns until \
+         it is copied again, including one copied by {FIXED_IN} itself, which did not record \
+         the binary that copied it"
     )
 }
 
@@ -164,13 +206,27 @@ pub(crate) fn suspect_tables(
     let root = data_dir.join("databases").join(&database.id).join("tables");
     let mut suspects = Vec::new();
     for table in metadata.tables(&database.id)? {
-        if !may_hold_stream_values(&table) {
+        if !may_hold_wrong_values(&table) {
             continue;
         }
-        let columns = match metadata.schema_history(&database.id, &table.name)?.last() {
+        let directory = crate::snapshot::table_directory(&root, &table.name);
+        let history = metadata.schema_history(&database.id, &table.name)?;
+        let mut affected = unfilled_columns_read_as_null(&history, &directory);
+        if !may_hold_stream_values(&table) {
+            if !affected.is_empty() {
+                suspects.push(SuspectTable {
+                    database_id: database.id.clone(),
+                    database_name: database.name.clone(),
+                    table: table.name,
+                    columns: affected,
+                });
+            }
+            continue;
+        }
+        let columns = match history.last() {
             // The status page asks this on every refresh: a schema that
             // names neither type anywhere is not decoded at all.
-            Some(record) if !mentions_affected_type(&record.columns_json) => continue,
+            Some(record) if !mentions_affected_type(&record.columns_json) => Some(Vec::new()),
             Some(record) => serde_json::from_str::<Vec<SourceColumn>>(&record.columns_json).ok(),
             None => probe
                 .get_or_insert_with(|| {
@@ -188,7 +244,7 @@ pub(crate) fn suspect_tables(
                         .map(|source| source.columns.clone())
                 }),
         };
-        let affected = columns
+        let streamed = columns
             .unwrap_or_default()
             .into_iter()
             .filter_map(|column| {
@@ -198,12 +254,13 @@ pub(crate) fn suspect_tables(
                 })
             })
             .collect::<Vec<_>>();
-        if affected.is_empty() {
-            continue;
-        }
         // A file that cannot be read cannot clear the table.
-        let directory = crate::snapshot::table_directory(&root, &table.name);
-        if !pintail_store::changes_applied_at_rest(&directory).unwrap_or(true) {
+        if !streamed.is_empty()
+            && pintail_store::changes_applied_at_rest(&directory).unwrap_or(true)
+        {
+            affected.splice(0..0, streamed);
+        }
+        if affected.is_empty() {
             continue;
         }
         suspects.push(SuspectTable {
@@ -221,17 +278,67 @@ fn mentions_affected_type(columns_json: &str) -> bool {
     lower.contains("mediumint") || lower.contains("binary")
 }
 
+/// Whether a table's rows can be advised at all: an owed copy replaces
+/// every row before the table answers again; excluded tables are not
+/// replicated and polled ones read text; a table whose source dropped it
+/// keeps its rows but cannot be resynced.
+fn may_hold_wrong_values(table: &TableRecord) -> bool {
+    !table.copy_pending
+        && !matches!(table.state.as_str(), "excluded" | "polling")
+        && table.orphaned_at.is_none()
+}
+
 /// Whether a table's rows may include ones a stream decoded before the
 /// fixes, as far as its control-plane record can say.
 fn may_hold_stream_values(table: &TableRecord) -> bool {
     table.copy_generation < pintail_meta::COPY_GENERATION
-        // An owed copy replaces every row before the table answers again.
-        && !table.copy_pending
-        // Excluded tables are not replicated; polled ones read text. A
-        // table whose source dropped it keeps its rows but cannot be
-        // resynced.
-        && !matches!(table.state.as_str(), "excluded" | "polling")
-        && table.orphaned_at.is_none()
+}
+
+/// The `NOT NULL` columns of the table's current schema that its first
+/// recorded schema lacked and that carry no fill, whose stored rows read
+/// NULL somewhere. A column a newer binary added in place carries its fill;
+/// one added before fills were recorded does not, and a NULL in it is a
+/// value the source cannot hold. A file that cannot be read proves nothing.
+fn unfilled_columns_read_as_null(
+    history: &[pintail_meta::SchemaHistoryRecord],
+    directory: &Path,
+) -> Vec<AffectedColumn> {
+    let (Some(first), Some(last)) = (history.first(), history.last()) else {
+        return Vec::new();
+    };
+    if first.version == last.version {
+        return Vec::new();
+    }
+    let parse = |json: &str| serde_json::from_str::<Vec<SourceColumn>>(json).ok();
+    let (Some(first), Some(last)) = (parse(&first.columns_json), parse(&last.columns_json)) else {
+        return Vec::new();
+    };
+    let candidates = last
+        .into_iter()
+        .filter(|column| {
+            !column.nullable
+                && column.absent_fill.is_none()
+                && !first.iter().any(|original| original.id == column.id)
+        })
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let ids = candidates
+        .iter()
+        .map(|column| column.id)
+        .collect::<Vec<_>>();
+    let Ok(holding_null) = pintail_store::columns_with_null_rows_at_rest(directory, &ids) else {
+        return Vec::new();
+    };
+    candidates
+        .into_iter()
+        .filter(|column| holding_null.contains(&column.id))
+        .map(|column| AffectedColumn {
+            name: column.name,
+            defect: ValueDefect::NotNullReadAsNull,
+        })
+        .collect()
 }
 
 /// Logs one warning per suspect table across every database, then a
@@ -498,6 +605,132 @@ mod tests {
         fixture
             .metadata
             .update_database_probe(DB, "{}", "polling", "2026-10-03T00:00:00Z")
+            .unwrap();
+        assert!(fixture.suspects().is_empty());
+    }
+
+    /// The store's schema once `rank` joined the table.
+    fn ranked_schema() -> TableSchema {
+        TableSchema::new(
+            2,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "rank", DataType::Int64, true),
+            ],
+        )
+        .unwrap()
+    }
+
+    /// Records schema `version` of `orders` with a `NOT NULL` column `rank`
+    /// added in place, carrying `fill` when one was recorded.
+    fn add_rank(fixture: &Fixture, version: u32, fill: Option<Value>) {
+        let mut rank = column(2, "rank", "int", "int");
+        rank.nullable = false;
+        rank.absent_fill = fill;
+        let columns = vec![column(1, "id", "int", "int"), rank];
+        let mut metadata =
+            MetaStore::open(&fixture.directory.path().join("pintail-meta.db")).unwrap();
+        metadata
+            .record_schema_history(
+                DB,
+                "orders",
+                version,
+                Some("ALTER TABLE orders ADD COLUMN rank INT NOT NULL"),
+                &serde_json::to_string(&columns).unwrap(),
+                "2026-10-03T00:00:01Z",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_not_null_column_added_without_a_recorded_fill_is_advised_until_resynced() {
+        let fixture = Fixture::new();
+        fixture.copy("orders", &[column(1, "id", "int", "int")]);
+        // The copy's segment predates the column, and nothing fills it.
+        add_rank(&fixture, 2, None);
+
+        let suspects = fixture.suspects();
+        assert_eq!(suspects.len(), 1);
+        assert_eq!(
+            suspects[0].columns,
+            vec![AffectedColumn {
+                name: "rank".to_owned(),
+                defect: ValueDefect::NotNullReadAsNull,
+            }]
+        );
+        assert_eq!(suspects[0].advice().reason, "added_column_read_as_null");
+        let warning = suspects[0].warning();
+        assert!(warning.contains("table=orders columns=rank (NOT NULL, added in place):"));
+        assert!(warning.contains("recorded no fill for it and they read NULL"));
+        assert!(!warning.contains("change capture"));
+        assert!(warning.contains("POST /api/databases/db-1/tables/orders/resync"));
+
+        // A merge that stored the NULL leaves it named.
+        let mut store = TableStore::open(
+            fixture.store_directory("orders"),
+            ranked_schema(),
+            StoreOptions::default(),
+        )
+        .unwrap();
+        store
+            .ingest_cdc_in_order(vec![StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::UInt64(2)]).unwrap(),
+                vec![Value::UInt64(2), Value::Null],
+                5,
+                false,
+            )])
+            .unwrap();
+        store.flush().unwrap();
+        assert_eq!(fixture.suspects().len(), 1);
+
+        // The resync stores the source's values in every row.
+        store.reset_for_resnapshot().unwrap();
+        store
+            .bulk_ingest_snapshot(
+                (1..=2)
+                    .map(|id| {
+                        StoredRow::new(
+                            PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap(),
+                            vec![Value::UInt64(id), Value::Int64(0)],
+                            0,
+                            false,
+                        )
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        drop(store);
+        assert!(fixture.suspects().is_empty());
+        assert_eq!(
+            warn_at_startup(fixture.directory.path(), &fixture.metadata),
+            0
+        );
+    }
+
+    #[test]
+    fn a_column_with_its_fill_recorded_or_nullable_is_not_advised() {
+        let fixture = Fixture::new();
+        fixture.copy("orders", &[column(1, "id", "int", "int")]);
+        add_rank(&fixture, 2, Some(Value::Int64(0)));
+        assert!(fixture.suspects().is_empty());
+
+        let fixture = Fixture::new();
+        fixture.copy("orders", &[column(1, "id", "int", "int")]);
+        let columns = vec![
+            column(1, "id", "int", "int"),
+            column(2, "rank", "int", "int"),
+        ];
+        let mut metadata =
+            MetaStore::open(&fixture.directory.path().join("pintail-meta.db")).unwrap();
+        metadata
+            .record_schema_history(
+                DB,
+                "orders",
+                2,
+                None,
+                &serde_json::to_string(&columns).unwrap(),
+                "2026-10-03T00:00:01Z",
+            )
             .unwrap();
         assert!(fixture.suspects().is_empty());
     }
