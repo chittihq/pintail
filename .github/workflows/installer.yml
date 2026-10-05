@@ -118,6 +118,27 @@ jobs:
           [ "$before" = "$after" ] || { echo "the installer rewrote an existing configuration"; exit 1; }
           curl --fail --silent "http://127.0.0.1:${PINTAIL_HTTP_PORT}/health"
 
+      - name: An upgrade moves the image and its build label together
+        run: |
+          version=$(sudo sed -n 's|^    image: ghcr.io/chittihq/pintail:\([^[:space:]]*\).*|\1|p' "$COMPOSE")
+          [ -n "$version" ] || { echo "no installed version in $COMPOSE"; exit 1; }
+          # Stand the file at an older release, with an operator's comment on the label.
+          sudo sed -i -e 's|^\(    image: ghcr.io/chittihq/pintail:\).*|\1old|' \
+            -e 's|^\(      PINTAIL_BUILD_VERSION: \).*|\1"old"  # set by the operator|' "$COMPOSE"
+          cat scripts/install.sh | PINTAIL_VERSION="$version" sh
+          sudo grep -q "^    image: ghcr.io/chittihq/pintail:${version}$" "$COMPOSE"
+          sudo grep -q "^      PINTAIL_BUILD_VERSION: \"${version}\"  # set by the operator$" "$COMPOSE"
+          curl --fail --silent "http://127.0.0.1:${PINTAIL_HTTP_PORT}/health"
+
+      - name: An image line the installer cannot find stops the upgrade
+        run: |
+          sudo cp "$COMPOSE" compose.bak
+          sudo sed -i 's/^  pintail:$/  database:/' "$COMPOSE"
+          if cat scripts/install.sh | sh; then
+            echo "the installer reported success on a file it could not update"; exit 1
+          fi
+          sudo cp compose.bak "$COMPOSE"
+
       - name: Server log on failure
         if: failure()
         run: sudo docker compose -f "$COMPOSE" logs pintail || true
