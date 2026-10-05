@@ -218,8 +218,10 @@ and joined shapes.
 memo for aggregates over a settled snapshot, invalidated by any ingest, so
 re-running the same query on an unchanged replica is served from it.
 ClickHouse's query cache is off, so this compares Pintail's cache against
-ClickHouse's execution — a fair measure of what a dashboard refresh costs,
-and not a measure of engine speed.
+ClickHouse's execution. It is neither a cache-against-cache comparison
+(ClickHouse's query cache would also answer a repeat) nor a measure of
+engine speed; issue #36 tracks measuring both caches and their freshness
+after ingestion.
 
 | Query | MySQL | Pintail (memo) | CH RMT+FINAL |
 |---|---:|---:|---:|
