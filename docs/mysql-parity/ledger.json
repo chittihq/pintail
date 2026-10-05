@@ -2,18 +2,18 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "94a32f0c68f5e4318397254e62f7093709f59565",
-    "measuredAt": "2026-10-05T00:44:37.009Z",
+    "commit": "4606bc63a536e89588783d395a77d5c0d4df470d",
+    "measuredAt": "2026-10-05T16:06:48.077Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "e6d305d3d90df98803828d4921d8fc2641e1cee34cf6dc08eaaa67836a2624ca",
+    "ledgerSha256": "82693e6d2d9f9c862d49270c3b0cd7d444980ed42d9ddc222c463d5a5bfe8f6f",
     "corpusSha256": "0b8a6f9f4d1e3ce04fc47920d09c20410ea066ebdc9f41f0d33e09728d154b1c",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "94a32f0c68f5e4318397254e62f7093709f59565",
-      "sourceCommit": "3213a8259d24227313c106431a9ca3a3dd076202",
-      "measuredAt": "2026-10-05T00:03:41.178462468+00:00",
+      "commit": "4606bc63a536e89588783d395a77d5c0d4df470d",
+      "sourceCommit": "018db757197ba7075a0bbfb03fa8faf2cbc7a39e",
+      "measuredAt": "2026-10-05T16:01:45.388065498+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242)",
-      "ledgerSha256": "674a80b1be126e80c079f31f72aaab017a6f3c37dff9398a6642f3cf12d63af3",
+      "ledgerSha256": "90d2da452044db1e6594ba42cfb094bebfff0cad31d1061256fc9ea0bb1d826a",
       "corpusSha256": "23a1c870d2afc19b5fe1d6e27c470110a441c78726ba611fa5fc7554f9da3fb3"
     }
   },
@@ -3247,10 +3247,10 @@
         "any arity"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/added_column_fill.rs:229",
         "crates/pintail-exec/tests/integration/admission.rs:72",
         "crates/pintail-exec/tests/integration/adopt_filter.rs:176",
-        "crates/pintail-exec/tests/integration/aggregate_path_survey.rs:8",
-        "crates/pintail-exec/tests/integration/block_skip_bench.rs:175"
+        "crates/pintail-exec/tests/integration/aggregate_path_survey.rs:8"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4924,10 +4924,10 @@
       "pintailEvidence": [],
       "binderGuards": [],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/added_column_fill.rs:107",
         "crates/pintail-exec/tests/integration/admission.rs:23",
         "crates/pintail-exec/tests/integration/adopt_filter.rs:47",
-        "crates/pintail-exec/tests/integration/aggregate_path_survey.rs:124",
-        "crates/pintail-exec/tests/integration/binary_bit_aggregates.rs:22"
+        "crates/pintail-exec/tests/integration/aggregate_path_survey.rs:124"
       ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
@@ -7128,10 +7128,10 @@
         "if args.len() == 4"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/added_column_fill.rs:41",
         "crates/pintail-exec/tests/integration/block_value_skipping.rs:176",
         "crates/pintail-exec/tests/integration/bounded_scan.rs:101",
-        "crates/pintail-exec/tests/integration/column_fold_edges.rs:318",
-        "crates/pintail-exec/tests/integration/dependent_set_shapes.rs:321"
+        "crates/pintail-exec/tests/integration/column_fold_edges.rs:318"
       ],
       "verification": "not-run",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11808,10 +11808,10 @@
         "any arity"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/added_column_fill.rs:232",
         "crates/pintail-exec/tests/integration/aggregate_path_survey.rs:191",
         "crates/pintail-exec/tests/integration/block_skip_bench.rs:222",
-        "crates/pintail-exec/tests/integration/clustered_build_keys.rs:180",
-        "crates/pintail-exec/tests/integration/column_fold_edges.rs:206"
+        "crates/pintail-exec/tests/integration/clustered_build_keys.rs:180"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -12425,10 +12425,10 @@
         "any arity"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/added_column_fill.rs:232",
         "crates/pintail-exec/tests/integration/adopt_filter.rs:50",
         "crates/pintail-exec/tests/integration/aggregate_path_survey.rs:127",
-        "crates/pintail-exec/tests/integration/block_skip_bench.rs:143",
-        "crates/pintail-exec/tests/integration/column_fold_edges.rs:127"
+        "crates/pintail-exec/tests/integration/block_skip_bench.rs:143"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -14853,10 +14853,10 @@
       "pintailEvidence": [],
       "binderGuards": [],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/added_column_fill.rs:172",
         "crates/pintail-exec/tests/integration/adopt_filter.rs:19",
         "crates/pintail-exec/tests/integration/block_skip_bench.rs:30",
-        "crates/pintail-exec/tests/integration/block_value_skipping.rs:28",
-        "crates/pintail-exec/tests/integration/bounded_scan.rs:37"
+        "crates/pintail-exec/tests/integration/block_value_skipping.rs:28"
       ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
@@ -19505,10 +19505,10 @@
         "any arity"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/added_column_fill.rs:232",
         "crates/pintail-exec/tests/integration/aggregate_path_survey.rs:188",
         "crates/pintail-exec/tests/integration/block_skip_bench.rs:175",
-        "crates/pintail-exec/tests/integration/block_value_skipping.rs:452",
-        "crates/pintail-exec/tests/integration/clustered_build_keys.rs:180"
+        "crates/pintail-exec/tests/integration/block_value_skipping.rs:452"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -21064,10 +21064,10 @@
       "pintailEvidence": [],
       "binderGuards": [],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/added_column_fill.rs:346",
         "crates/pintail-exec/tests/integration/block_value_skipping.rs:514",
         "crates/pintail-exec/tests/integration/bounded_scan.rs:66",
-        "crates/pintail-exec/tests/integration/column_fold_edges.rs:4",
-        "crates/pintail-exec/tests/integration/live_replication_queries.rs:79"
+        "crates/pintail-exec/tests/integration/column_fold_edges.rs:4"
       ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
