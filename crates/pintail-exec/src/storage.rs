@@ -26,9 +26,11 @@ use crate::{
 
 /// Storage scan provider backed by reader-pinned table snapshots.
 pub struct SnapshotScanProvider<'snapshot> {
-    /// The plan's collation, used by prewhere: pushing a text predicate into
-    /// the scan must decide equality the same way the operators above it do,
-    /// or a row filtered here would have survived there.
+    /// The collation a bare [`ScanProvider::open_scan`] compiles pushed text
+    /// predicates under. An [`crate::Execution`] ignores it and hands each
+    /// scan its own plan's collation: pushing a text predicate into the scan
+    /// must decide equality the same way the operators above it do, or a row
+    /// filtered here would have survived there.
     collation: Collation,
     snapshots: BTreeMap<(DatabaseId, TableId), &'snapshot TableSnapshot>,
     unique_visibility: BTreeMap<(DatabaseId, TableId), Vec<Vec<u32>>>,
@@ -59,8 +61,17 @@ impl ScanProvider for OwnedTableProvider {
         scan: &Scan,
         memory_limit: usize,
     ) -> Result<Box<dyn BatchStream>, ExecError> {
+        self.open_scan_collated(scan, memory_limit, self.collation)
+    }
+
+    fn open_scan_collated(
+        &self,
+        scan: &Scan,
+        memory_limit: usize,
+        collation: Collation,
+    ) -> Result<Box<dyn BatchStream>, ExecError> {
         let provider = SnapshotScanProvider {
-            collation: self.collation,
+            collation,
             snapshots: BTreeMap::from([(self.key, &self.snapshot)]),
             unique_visibility: self
                 .unique_visibility
@@ -70,7 +81,7 @@ impl ScanProvider for OwnedTableProvider {
             not_ready: BTreeMap::new(),
             stats: Arc::clone(&self.stats),
         };
-        provider.open_scan(scan, memory_limit)
+        provider.open_scan_collated(scan, memory_limit, collation)
     }
 }
 
@@ -183,8 +194,8 @@ impl<'snapshot> SnapshotScanProvider<'snapshot> {
         Some((crate::AdmissionCost { rows, bytes }, start == end))
     }
 
-    /// Sets the collation the plan resolved, so a predicate pushed into the
-    /// scan decides equality the way the operators above it do.
+    /// Sets the collation a scan opened directly, outside an execution,
+    /// compiles its pushed predicates under. An execution passes its own.
     #[must_use]
     pub fn with_collation(mut self, collation: Collation) -> Self {
         self.collation = collation;
@@ -326,11 +337,20 @@ impl ScanProvider for SnapshotScanProvider<'_> {
         }))
     }
 
-    #[allow(clippy::too_many_lines)]
     fn open_scan(
         &self,
         scan: &Scan,
         memory_limit: usize,
+    ) -> Result<Box<dyn BatchStream>, ExecError> {
+        self.open_scan_collated(scan, memory_limit, self.collation)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn open_scan_collated(
+        &self,
+        scan: &Scan,
+        memory_limit: usize,
+        collation: Collation,
     ) -> Result<Box<dyn BatchStream>, ExecError> {
         let key = (scan.table.database_id, scan.table.table_id);
         if let Some((table, reason)) = self.not_ready.get(&key) {
@@ -597,9 +617,8 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             // memtable overlaps be decoded directly with the superseded rows
             // masked by those columns, instead of merged row by row.
             stream.enable_memtable_overlay(&scan.table.key_column_ids);
-            let text_filters = text_value_filters(scan, snapshot, self.collation);
-            let prewhere =
-                build_prewhere_spec(scan, snapshot, self.collation, !text_filters.is_empty());
+            let text_filters = text_value_filters(scan, snapshot, collation);
+            let prewhere = build_prewhere_spec(scan, snapshot, collation, !text_filters.is_empty());
             if let Some(spec) = &prewhere {
                 stream.set_text_filters(text_filters);
                 stream.set_filter_only(spec.filter_only);
@@ -610,13 +629,13 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     scan.table.table_name,
                     scan.predicates.len(),
                     prewhere.is_some(),
-                    predicate_index_lookup(scan, snapshot, self.collation)
+                    predicate_index_lookup(scan, snapshot, collation)
                         .map(|lookup| lookup.column_id)
                 )
             });
             if prewhere.is_some()
                 && pintail_store::side_index_enabled()
-                && let Some(lookup) = predicate_index_lookup(scan, snapshot, self.collation)
+                && let Some(lookup) = predicate_index_lookup(scan, snapshot, collation)
             {
                 stream.set_index_lookup(lookup);
             }
@@ -642,7 +661,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 prefetched: VecDeque::new(),
                 stream: Some(stream),
                 prewhere,
-                adopt_filter: build_adopt_filter(scan, self.collation),
+                adopt_filter: build_adopt_filter(scan, collation),
                 key_position,
                 started: false,
                 types,

@@ -16,6 +16,7 @@ mod column_fold_edges;
 mod column_statistics;
 mod computed_aggregate_arguments;
 mod conditional_count_windows;
+mod connection_collation_scan;
 mod constant_predicate_folds;
 mod correlated_self_join;
 mod date_literal_fold;

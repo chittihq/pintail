@@ -2088,6 +2088,25 @@ pub trait ScanProvider {
         memory_limit: usize,
     ) -> Result<Box<dyn BatchStream>, ExecError>;
 
+    /// Opens one scan for an execution whose plan resolved `collation`: a
+    /// text predicate the source evaluates itself must compare the way the
+    /// operators above it do, or it drops a row they would keep. A source
+    /// that evaluates no predicate opens the scan as [`Self::open_scan`]
+    /// does.
+    ///
+    /// # Errors
+    ///
+    /// Returns a source-specific execution error.
+    fn open_scan_collated(
+        &self,
+        scan: &Scan,
+        memory_limit: usize,
+        collation: Collation,
+    ) -> Result<Box<dyn BatchStream>, ExecError> {
+        let _ = collation;
+        self.open_scan(scan, memory_limit)
+    }
+
     /// A provider for one table that the caller may keep for the rest of
     /// the query, so an operator can open ranged scans of that table while
     /// it runs rather than all at build time. `None` when this provider
@@ -2098,6 +2117,54 @@ pub trait ScanProvider {
         _table_id: TableId,
     ) -> Option<Box<dyn ScanProvider + Send + Sync>> {
         None
+    }
+}
+
+/// A provider whose scans compare pushed text under one execution's plan
+/// collation, as are the per-table providers it hands out. Carried per
+/// execution rather than set on the shared provider, so a provider built
+/// before the statement was bound, or reused by another statement, cannot
+/// lend a scan some other collation.
+struct PlanCollated<P> {
+    inner: P,
+    collation: Collation,
+}
+
+impl<P, T> ScanProvider for PlanCollated<P>
+where
+    P: std::ops::Deref<Target = T>,
+    T: ScanProvider + ?Sized,
+{
+    fn open_scan(
+        &self,
+        scan: &Scan,
+        memory_limit: usize,
+    ) -> Result<Box<dyn BatchStream>, ExecError> {
+        self.inner
+            .open_scan_collated(scan, memory_limit, self.collation)
+    }
+
+    // An execution nested inside this one passes its own plan's collation,
+    // and that is the one its scans compare under.
+    fn open_scan_collated(
+        &self,
+        scan: &Scan,
+        memory_limit: usize,
+        collation: Collation,
+    ) -> Result<Box<dyn BatchStream>, ExecError> {
+        self.inner.open_scan_collated(scan, memory_limit, collation)
+    }
+
+    fn table_provider(
+        &self,
+        database_id: DatabaseId,
+        table_id: TableId,
+    ) -> Option<Box<dyn ScanProvider + Send + Sync>> {
+        let inner = self.inner.table_provider(database_id, table_id)?;
+        Some(Box::new(PlanCollated {
+            inner,
+            collation: self.collation,
+        }))
     }
 }
 
@@ -3324,6 +3391,13 @@ impl Execution {
         profiled: bool,
     ) -> Result<Self, ExecError> {
         let started = Instant::now();
+        // Every scan this execution opens, its subqueries' and the ones an
+        // operator opens while it runs included, compares pushed text under
+        // this plan's collation, whatever the provider was built with.
+        let provider = &PlanCollated {
+            inner: provider,
+            collation,
+        };
         // Taken before anything reserves: subquery resolution charges the
         // budget too, and a lock taken after it would leave that charge
         // outside the window a measuring test believes it owns.
