@@ -1,8 +1,8 @@
 # Pintail schema-migration differential gate
 
-Measured 2026-10-05T00:05:38.435Z against `mysql:8.4`.
+Measured 2026-10-05T16:07:05.407Z against `mysql:8.4`.
 
-**158 passed, 0 failed.**
+**230 passed, 0 failed.**
 
 | Family | Check | Status | Detail |
 |---|---|---|---|
@@ -132,6 +132,60 @@ Measured 2026-10-05T00:05:38.435Z against `mysql:8.4`.
 | stored generated expression changes | rows the migration never wrote to are not stale | PASS |  |
 | virtual generated expression changes | the whole table matches the source after the migration | PASS |  |
 | virtual generated expression changes | rows the migration never wrote to are not stale | PASS |  |
+| text defaults placed first and after a column | the whole table matches the source after the migration | PASS |  |
+| text defaults placed first and after a column | rows the migration never wrote to are not stale | PASS |  |
+| a latin1 text default | the whole table matches the source after the migration | PASS |  |
+| a latin1 text default | rows the migration never wrote to are not stale | PASS |  |
+| enum and set defaults | the whole table matches the source after the migration | PASS |  |
+| enum and set defaults | rows the migration never wrote to are not stale | PASS |  |
+| numeric defaults | the whole table matches the source after the migration | PASS |  |
+| numeric defaults | rows the migration never wrote to are not stale | PASS |  |
+| a float default with more digits than the catalogue prints | the whole table matches the source after the migration | PASS |  |
+| a float default with more digits than the catalogue prints | rows the migration never wrote to are not stale | PASS |  |
+| bit and binary defaults | the whole table matches the source after the migration | PASS |  |
+| bit and binary defaults | rows the migration never wrote to are not stale | PASS |  |
+| calendar and clock literal defaults | the whole table matches the source after the migration | PASS |  |
+| calendar and clock literal defaults | rows the migration never wrote to are not stale | PASS |  |
+| zero-date defaults and implicit zero dates | the whole table matches the source after the migration | PASS |  |
+| zero-date defaults and implicit zero dates | rows the migration never wrote to are not stale | PASS |  |
+| timestamp literal defaults in a daylight-saving zone | the whole table matches the source after the migration | PASS |  |
+| timestamp literal defaults in a daylight-saving zone | rows the migration never wrote to are not stale | PASS |  |
+| current timestamp defaults in UTC | the whole table matches the source after the migration | PASS |  |
+| current timestamp defaults in UTC | rows the migration never wrote to are not stale | PASS |  |
+| current timestamp defaults in a daylight-saving zone | the whole table matches the source after the migration | PASS |  |
+| current timestamp defaults in a daylight-saving zone | rows the migration never wrote to are not stale | PASS |  |
+| a column added and dropped again | the whole table matches the source after the migration | PASS |  |
+| a column added and dropped again | rows the migration never wrote to are not stale | PASS |  |
+| a column added and given a new default | the whole table matches the source after the migration | PASS |  |
+| a column added and given a new default | rows the migration never wrote to are not stale | PASS |  |
+| columns added in turn, first and after | the whole table matches the source after the migration | PASS |  |
+| columns added in turn, first and after | rows the migration never wrote to are not stale | PASS |  |
+| an expression default | the whole table matches the source after the migration | PASS |  |
+| an expression default | rows the migration never wrote to are not stale | PASS |  |
+| a json expression default | the whole table matches the source after the migration | PASS |  |
+| a json expression default | rows the migration never wrote to are not stale | PASS |  |
+| a stored generated column | the whole table matches the source after the migration | PASS |  |
+| a stored generated column | rows the migration never wrote to are not stale | PASS |  |
+| a virtual generated column | the whole table matches the source after the migration | PASS |  |
+| a virtual generated column | rows the migration never wrote to are not stale | PASS |  |
+| text defaults placed first and after a column | evolved in place, never quarantined | PASS |  |
+| a latin1 text default | evolved in place, never quarantined | PASS |  |
+| enum and set defaults | evolved in place, never quarantined | PASS |  |
+| numeric defaults | evolved in place, never quarantined | PASS |  |
+| a float default with more digits than the catalogue prints | evolved in place, never quarantined | PASS |  |
+| bit and binary defaults | evolved in place, never quarantined | PASS |  |
+| calendar and clock literal defaults | evolved in place, never quarantined | PASS |  |
+| zero-date defaults and implicit zero dates | evolved in place, never quarantined | PASS |  |
+| timestamp literal defaults in a daylight-saving zone | evolved in place, never quarantined | PASS |  |
+| current timestamp defaults in UTC | evolved in place, never quarantined | PASS |  |
+| current timestamp defaults in a daylight-saving zone | evolved in place, never quarantined | PASS |  |
+| a column added and dropped again | evolved in place, never quarantined | PASS |  |
+| a column added and given a new default | evolved in place, never quarantined | PASS |  |
+| columns added in turn, first and after | evolved in place, never quarantined | PASS |  |
+| an expression default | recopied, with the reason given | PASS |  |
+| a json expression default | recopied, with the reason given | PASS |  |
+| a stored generated column | recopied, with the reason given | PASS |  |
+| a virtual generated column | recopied, with the reason given | PASS |  |
 | integer width narrows | the table still matches the source after a restart | PASS |  |
 | integer width widens | the table still matches the source after a restart | PASS |  |
 | signedness changes | the table still matches the source after a restart | PASS |  |
@@ -164,3 +218,21 @@ Measured 2026-10-05T00:05:38.435Z against `mysql:8.4`.
 | varbinary capacity shrinks | the table still matches the source after a restart | PASS |  |
 | stored generated expression changes | the table still matches the source after a restart | PASS |  |
 | virtual generated expression changes | the table still matches the source after a restart | PASS |  |
+| text defaults placed first and after a column | the table still matches the source after a restart | PASS |  |
+| a latin1 text default | the table still matches the source after a restart | PASS |  |
+| enum and set defaults | the table still matches the source after a restart | PASS |  |
+| numeric defaults | the table still matches the source after a restart | PASS |  |
+| a float default with more digits than the catalogue prints | the table still matches the source after a restart | PASS |  |
+| bit and binary defaults | the table still matches the source after a restart | PASS |  |
+| calendar and clock literal defaults | the table still matches the source after a restart | PASS |  |
+| zero-date defaults and implicit zero dates | the table still matches the source after a restart | PASS |  |
+| timestamp literal defaults in a daylight-saving zone | the table still matches the source after a restart | PASS |  |
+| current timestamp defaults in UTC | the table still matches the source after a restart | PASS |  |
+| current timestamp defaults in a daylight-saving zone | the table still matches the source after a restart | PASS |  |
+| a column added and dropped again | the table still matches the source after a restart | PASS |  |
+| a column added and given a new default | the table still matches the source after a restart | PASS |  |
+| columns added in turn, first and after | the table still matches the source after a restart | PASS |  |
+| an expression default | the table still matches the source after a restart | PASS |  |
+| a json expression default | the table still matches the source after a restart | PASS |  |
+| a stored generated column | the table still matches the source after a restart | PASS |  |
+| a virtual generated column | the table still matches the source after a restart | PASS |  |

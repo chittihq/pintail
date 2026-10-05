@@ -1,8 +1,8 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-10-05T00:25:40.665Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-10-05T16:06:58.557Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-Replay mode: local. Source commit: 3213a8259d24227313c106431a9ca3a3dd076202; source dirty: false. Binary SHA-256: 32b0fc72cb4955ffa4eea34b52e0aed0893d917090325fd8e08f4ddb8f4f61ba.
+Replay mode: local. Source commit: 018db757197ba7075a0bbfb03fa8faf2cbc7a39e; source dirty: false. Binary SHA-256: 76aa1c32eb63b952ad98ae40b2de9abd667e07d01ba949cd5a72f27df315d6d0.
 
 **8,797 of 9,155 compared SELECTs match MySQL byte-for-byte** (96.1%), **out of 30,174 SELECTs replayed** - 21,019 never reached a comparison, so this is a share of what could be compared and not of the suite. 352 differ in rows, 6 in column names only. 4,339 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
 
@@ -747,4 +747,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 41 | PREPARED: Error: expected a user variable |
 | 40 | DDL: Error: Invalid default value for _ |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/muui131m-75429/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/muvfl7n6-76710/diffs/` (not committed).

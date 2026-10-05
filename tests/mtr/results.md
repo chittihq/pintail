@@ -1,8 +1,8 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-10-05T00:18:02.701Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-10-05T15:59:36.881Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: 3213a8259d24227313c106431a9ca3a3dd076202; source dirty: false. Binary SHA-256: 32b0fc72cb4955ffa4eea34b52e0aed0893d917090325fd8e08f4ddb8f4f61ba.
+Replay mode: local. Source commit: 018db757197ba7075a0bbfb03fa8faf2cbc7a39e; source dirty: false. Binary SHA-256: 76aa1c32eb63b952ad98ae40b2de9abd667e07d01ba949cd5a72f27df315d6d0.
 
 **9,299 of 9,405 compared SELECTs match MySQL byte-for-byte** (98.9%), **out of 23,119 SELECTs replayed** - 13,714 never reached a comparison, so this is a share of what could be compared and not of the suite. 106 differ in rows, 0 in column names only. 5,119 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
@@ -676,4 +676,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 45 | INSERT: Error: Incorrect value _ for column _: expected a datetime |
 | 44 | Error: unsupported expression: ExtractValue(_, _) |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/muui131m-75428/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/muvfl7n6-76709/diffs/` (not committed).

@@ -16496,11 +16496,11 @@
     }
   ],
   "cleanTree": true,
-  "commit": "3213a8259d24227313c106431a9ca3a3dd076202",
+  "commit": "018db757197ba7075a0bbfb03fa8faf2cbc7a39e",
   "comparator": "typed NULL and bytes; approximate types on both sides only: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
   "corpusSha256": "23a1c870d2afc19b5fe1d6e27c470110a441c78726ba611fa5fc7554f9da3fb3",
   "expectedCases": 2749,
-  "measuredAt": "2026-10-05T00:03:41.178462468+00:00",
+  "measuredAt": "2026-10-05T16:01:45.388065498+00:00",
   "schemaVersion": 1,
   "source": "MySQL 8.4.11 (mysql@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242)",
   "verdict": "PASS"
