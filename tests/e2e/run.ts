@@ -2893,6 +2893,68 @@ async function phaseExecutionBudget() {
   }
 }
 
+/// Statements whose text comparisons have no column collation to inherit -
+/// a CAST, a CONCAT of numbers, an LPAD - compare under the connection's
+/// collation. The scan evaluates such a predicate itself to choose rows,
+/// and it used to compare under the server default whatever the session
+/// set, so under a PAD SPACE connection collation it dropped every row a
+/// trailing space separated from the literal. Each statement runs on a
+/// default connection, then under the named collation, then on the default
+/// connection again, so a plan kept for one session cannot answer another.
+async function phaseConnectionCollation() {
+  const phase = 'connection-collation'
+  const statements = [
+    "SELECT id, status, total FROM orders WHERE CAST(id AS CHAR) = '3 ' ORDER BY id",
+    "SELECT id, total FROM orders WHERE CAST(customer_id AS CHAR) IN ('1 ', '2  ') ORDER BY id",
+    "SELECT COUNT(*), SUM(total) FROM orders WHERE CAST(customer_id AS CHAR) = '1 '",
+    "SELECT id, placed_on FROM orders WHERE LPAD(id, 3, '0') = '007 ' ORDER BY id",
+    "SELECT id, status FROM orders WHERE CONCAT('A', customer_id) = 'a1' ORDER BY id",
+  ]
+  const connect = async (port: number, options: mysql.ConnectionOptions) =>
+    mysql.createConnection({
+      host: '127.0.0.1',
+      port,
+      database: DATABASE,
+      supportBigNumbers: true,
+      bigNumberStrings: true,
+      dateStrings: true,
+      ...options,
+    })
+  const rows = async (connection: mysql.Connection, sql: string) => {
+    const [result] = await connection.query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+    return result as unknown as unknown[][]
+  }
+  const sessions: Array<[string, string | undefined]> = [
+    ['default', undefined],
+    ['general_ci', 'SET NAMES utf8mb4 COLLATE utf8mb4_general_ci'],
+    ['unicode_ci', "SET collation_connection = 'utf8mb4_unicode_ci'"],
+    ['bin', 'SET NAMES utf8mb4 COLLATE utf8mb4_bin'],
+    ['default again', undefined],
+  ]
+  for (const [label, setup] of sessions) {
+    const source = await connect(mysqlEndpoint!.port, { host: mysqlEndpoint!.host, user: 'root', password: 'pintail-root' })
+    const replica = await connect(pintailWirePort, { user: DATABASE, password: wireSecret })
+    try {
+      if (setup) {
+        await source.query(setup)
+        await replica.query(setup)
+      }
+      for (const [index, sql] of statements.entries()) {
+        const check = `collation:${label} #${index + 1}`
+        try {
+          const diff = diffRows(await rows(source, sql), await rows(replica, sql))
+          record(phase, check, diff === undefined ? 'PASS' : 'FAIL', diff && `${sql}\n${diff}`)
+        } catch (error) {
+          record(phase, check, 'FAIL', `${sql}\n${error}`)
+        }
+      }
+    } finally {
+      await source.end().catch(() => {})
+      await replica.end().catch(() => {})
+    }
+  }
+}
+
 async function phaseSpill() {
   const phase = 'spill'
   const repeatedJoinInput = Array.from(
@@ -4512,6 +4574,7 @@ async function main() {
     ['churn', phaseChurn],
     ['contention', phaseContention],
     ['execution-budget', phaseExecutionBudget],
+    ['connection-collation', phaseConnectionCollation],
     ['spill', phaseSpill],
     ['pooling', phasePooling],
     ['local-database', phaseLocalDatabase],
