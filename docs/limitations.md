@@ -463,11 +463,29 @@ stays readable as a list of things to fix.
 - Rows removed by an invisible foreign-key cascade stay visible in the replica
   until that reconciliation runs, so the replica reads AHEAD of the source -
   more rows, larger sums - rather than behind it. A full production run with
-  eight writers issued 74 cascade deletes and left `shipment_items` 51 rows
-  and 173 units of `amountSum` above the source, still unconverged when the
-  phase ended. Ordinary replication lag resolves itself and reads low; this
-  does not resolve until reconciliation, and reads high, so the two cannot be
-  told apart by direction alone.
+  eight writers issued 74 cascade deletes and left a child table 51 rows
+  and 173 units of a summed column above the source, still unconverged when
+  the phase ended. Ordinary replication lag resolves itself and reads low;
+  this does not resolve until reconciliation, and reads high, so the two
+  cannot be told apart by direction alone
+  (`benchmark/evidence/fk-cascade-drift.md`).
+- The cascade repair finds a damaged child row only by its parent being
+  absent from the replica, so some invisible actions are never repaired by
+  any pass: a parent deleted and inserted again with the same key before
+  the pass, `REPLACE` on a parent (InnoDB deletes the parent and cascades
+  before inserting it again), a parent key moved by `ON UPDATE CASCADE` and
+  then reused, and `ON UPDATE CASCADE` into a child whose primary key holds
+  the referencing column (the old key is tombstoned, the row under the new
+  key is never fetched). A resnapshot of the child table repairs them.
+- A cascade-affected child table without a primary or unique key is never
+  repaired, and while it is flagged the pass fails before repairing the
+  other flagged tables of the same database.
+- The cascade pass runs inside the database's replication cycle: no change
+  reaches any table of that database while it runs. It looks up each
+  distinct parent key the child references in the parent replica, about
+  1.35-1.7 ms a key once the parent holds 100,000 rows or more, so a child
+  referencing 100,000 parents blocks the database's replication for two to
+  three minutes each interval.
 - Cursor-less keyed checksums can re-dump adjacent chunks when inserts or
   deletes shift chunk boundaries; correctness holds, but repair work can exceed
   the number of rows that changed.
