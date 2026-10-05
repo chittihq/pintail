@@ -11,9 +11,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Segment files are written as format version 8: a DATE or DATETIME column
   holding the zero date (`0000-00-00`) is stored as native units instead of
   text. Versions 1-7 remain readable; merging and the background segment
-  upgrade rewrite them into version 8. **Downgrade:** a binary older than
-  this release refuses any version 8 segment, so a replica written by this
-  release cannot be opened by an older one; re-snapshot after a downgrade.
+  upgrade rewrite them into version 8, for every table, not only those
+  holding zero dates. **Downgrade:** 0.1.7 and older start on an upgraded
+  data directory but report every table as `corrupt segment ...
+  unsupported format version` and modify nothing. A forced snapshot or a
+  table resync on the older release cannot repair it: run the older
+  release on a pre-upgrade copy of the data directory, or remove the
+  database and add it again. Releases from this one on refuse at startup
+  instead.
 - DATE and DATETIME groupings, `GROUP BY DATE(...)`, `COUNT(DISTINCT ...)`
   and derived groupings over columns holding the zero date are no longer
   70-115x slower than over clean data: batches with zero dates stay packed
@@ -44,6 +49,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   disk for one group's rewrite at a time. On a 20M-row replica written by
   0.1.6 it rewrote 202 segments in 59 s without moving query latency, and
   the upgraded table answers Q2 in half the time.
+- The startup resync advice and the snapshot status also name tables with
+  a `NOT NULL` column that an older binary added in place without a
+  default; their older rows read NULL until the table is resynced.
 
 ### Fixed
 
@@ -57,6 +65,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A `NOT NULL` column added without a default read NULL in rows stored
   before the `ADD COLUMN` instead of its type's implicit value (0, the
   empty string, the first ENUM label, the zero date).
+- `ORDER BY <integer column> LIMIT k` could answer with rows past the k-th
+  value right after updates were flushed, until the next merge: the
+  side-index narrowing trusted any k rows that came back. Introduced in
+  0.1.7.
+- A binary started on a data directory that a newer release migrated now
+  refuses at startup ("metadata schema version N is newer than this binary
+  supports"), and a segment in a newer format names that cause instead of
+  reporting only damage.
 
 ## [0.1.8-rc1] - 2026-10-05
 
