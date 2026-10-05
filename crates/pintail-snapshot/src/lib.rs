@@ -1892,6 +1892,7 @@ mod tests {
             auto_increment: false,
             default_value: None,
             default_generated: false,
+            absent_fill: None,
             ordinal: 0,
         }
     }

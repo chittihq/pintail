@@ -1853,6 +1853,7 @@ fn source_table() -> SourceTable {
                 auto_increment: true,
                 default_value: None,
                 default_generated: false,
+                absent_fill: None,
                 ordinal: 0,
             },
             SourceColumn {
@@ -1871,6 +1872,7 @@ fn source_table() -> SourceTable {
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,
+                absent_fill: None,
                 ordinal: 0,
             },
         ],
@@ -1951,6 +1953,7 @@ fn type_table() -> SourceTable {
         auto_increment: false,
         default_value: None,
         default_generated: false,
+        absent_fill: None,
         ordinal: 0,
     }];
     columns.extend(definitions.into_iter().enumerate().map(
@@ -1973,6 +1976,7 @@ fn type_table() -> SourceTable {
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,
+                absent_fill: None,
                 ordinal: 0,
             }
         },

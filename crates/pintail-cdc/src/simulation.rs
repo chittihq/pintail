@@ -155,6 +155,7 @@ fn column(id: u32, name: &str, pintail_type: DataType, nullable: bool) -> Source
         auto_increment: false,
         default_value: None,
         default_generated: false,
+        absent_fill: None,
         ordinal: id.saturating_sub(1),
     }
 }
@@ -634,6 +635,10 @@ impl Simulation {
                     self.sources[*table].clone(),
                     (added.as_slice(), &[]),
                     true,
+                    &crate::added_fill::FillContext {
+                        mysql_catalogue: true,
+                        ..crate::added_fill::FillContext::default()
+                    },
                 )?;
             }
             Change::Truncate(table) => {

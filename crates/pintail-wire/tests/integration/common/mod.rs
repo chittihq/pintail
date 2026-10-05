@@ -40,6 +40,7 @@ fn column(id: u32, name: &str, data_type: DataType) -> SourceColumn {
         auto_increment: false,
         default_value: None,
         default_generated: false,
+        absent_fill: None,
         ordinal: 0,
     }
 }

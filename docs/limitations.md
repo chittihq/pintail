@@ -502,6 +502,18 @@ stays readable as a list of things to fix.
   declaration is all the stream has to go on - it cannot see the source's
   rows - so the reading is the conservative one, and the cost is a full
   recopy of a table where an in-place adoption would have been correct.
+- An `ADD COLUMN` evolves in place only when the mirror can reproduce what
+  the source filled into the rows it already held. These still mark the
+  table `needs_resync`, with the reason logged: an expression default
+  (including every `JSON` and `BLOB`/`TEXT` default), a `STORED` or
+  `VIRTUAL` generated column, `AUTO_INCREMENT`, a `FLOAT(M,D)` default
+  written with more fractional digits than its scale, a `CURRENT_TIMESTAMP`
+  default with fractional seconds whose binlog event carries no
+  microseconds, a `TIMESTAMP` literal or `CURRENT_TIMESTAMP` default learned
+  without its statement (schema drift healed from a row image), a literal
+  the source normalised (rounded, re-cased) whose default has changed again
+  before the stream read the `ADD`, and on MariaDB sources any added column
+  with a default or `NOT NULL`.
 - Readers that opened a table's snapshot before a `RENAME TABLE` keep the
   old directory and fail their next read; a client retries and the new
   name answers. The window is the moment the rename applies.

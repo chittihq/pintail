@@ -251,6 +251,7 @@ impl SourceTable {
                                 _ => None,
                             },
                         )
+                        .with_absent_fill(column.absent_fill.clone())
                         // A SET sorts by its member bitmask; the members and
                         // their declaration order are that mask's bits.
                         .with_set_members(
@@ -342,6 +343,14 @@ pub struct SourceColumn {
     /// they cannot serve as positions.
     #[serde(default)]
     pub ordinal: u32,
+    /// The value the rows stored before this column joined the table read
+    /// for it, as the source filled it in when the column was added with a
+    /// default. Set once, when the column is added in place, and carried
+    /// across every later change: a later `SET DEFAULT` leaves the rows the
+    /// source already held alone, and so does this. Absent reads them as
+    /// NULL, which is also what every probe and every older record says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub absent_fill: Option<pintail_types::Value>,
 }
 
 impl SourceColumn {
@@ -933,6 +942,7 @@ async fn probe_table(
             auto_increment,
             default_value: raw.default_value,
             default_generated,
+            absent_fill: None,
             ordinal: raw.ordinal,
         });
     }
@@ -1302,6 +1312,7 @@ pub fn declared_column(column: &DeclaredColumn<'_>) -> Result<SourceColumn, Prob
         auto_increment: false,
         default_value: None,
         default_generated: false,
+        absent_fill: None,
         ordinal: raw.ordinal,
     })
 }
@@ -1486,6 +1497,11 @@ fn stabilize(previous: &SourceTable, refreshed: &mut SourceTable) -> Result<(), 
                 return Err(reason);
             }
             column.id = existing.id;
+            // A probe never knows what the rows stored before the column
+            // existed hold; the record of it travels with the column.
+            if column.absent_fill.is_none() {
+                column.absent_fill.clone_from(&existing.absent_fill);
+            }
         } else {
             next_id = next_id
                 .checked_add(1)
@@ -1666,6 +1682,7 @@ mod tests {
             auto_increment: false,
             default_value: None,
             default_generated: false,
+            absent_fill: None,
             ordinal: 0,
         };
         assert!(column.virtual_generated());
@@ -1741,6 +1758,7 @@ mod tests {
                     auto_increment: true,
                     default_value: None,
                     default_generated: false,
+                    absent_fill: None,
                     ordinal: 0,
                 },
                 SourceColumn {
@@ -1759,6 +1777,7 @@ mod tests {
                     auto_increment: false,
                     default_value: None,
                     default_generated: false,
+                    absent_fill: None,
                     ordinal: 0,
                 },
             ],
@@ -1986,6 +2005,7 @@ mod stabilization_tests {
             auto_increment: false,
             default_value: None,
             default_generated: false,
+            absent_fill: None,
             ordinal: 1,
         }
     }

@@ -1,7 +1,7 @@
 use sqlparser::{
     ast::{
-        AlterTableOperation, ObjectName, ObjectType, RenameTableNameKind, Statement,
-        TableConstraint,
+        AlterColumnOperation, AlterTableOperation, ObjectName, ObjectType, RenameTableNameKind,
+        Statement, TableConstraint,
     },
     dialect::MySqlDialect,
     parser::Parser,
@@ -55,6 +55,7 @@ pub(crate) enum AddedPosition {
 
 /// One column an `ALTER TABLE` adds, as the statement itself declares it.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // independent facts of one declaration
 pub(crate) struct AddedColumn {
     pub(crate) name: String,
     /// The declared type as written, for example `DECIMAL(10,2)`.
@@ -62,9 +63,96 @@ pub(crate) struct AddedColumn {
     /// Nullable with nothing else declared but a comment: no default, no
     /// generated value, nothing the rows the table already holds would need.
     pub(crate) plain_nullable: bool,
+    /// Declared with nothing that decides the values of the rows already
+    /// stored but its nullability and its default: no generated value, no
+    /// `AUTO_INCREMENT`, no key. Such a column's fill follows from the
+    /// statement alone.
+    pub(crate) fill_declared: bool,
+    /// Declared without `NOT NULL`.
+    pub(crate) nullable: bool,
     /// Declared with a generated value that is computed on read, not stored.
     pub(crate) virtual_generated: bool,
     pub(crate) position: AddedPosition,
+    /// The `DEFAULT` clause as written.
+    pub(crate) default: DeclaredDefault,
+}
+
+/// The `DEFAULT` clause of a column an `ALTER TABLE` adds, as written.
+///
+/// The source's catalogue reports the default the column has NOW. A
+/// statement the stream reaches after the default has been changed again
+/// would take the newer one for the rows the column was added to, so the
+/// catalogue's answer is checked against this before it is used.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DeclaredDefault {
+    /// No `DEFAULT` clause.
+    Absent,
+    /// `DEFAULT NULL`.
+    Null,
+    /// A numeric literal, sign included, as written.
+    Number(String),
+    /// A quoted string literal, its escapes resolved.
+    Text(String),
+    /// `CURRENT_TIMESTAMP` or one of its synonyms: the time the row was
+    /// written, and for the rows already stored, the statement's time.
+    CurrentTimestamp,
+    /// Anything else: a function, an expression, a literal with an
+    /// introducer or in a form this does not read.
+    Other,
+}
+
+fn declared_default(options: &[sqlparser::ast::ColumnOptionDef]) -> DeclaredDefault {
+    use sqlparser::ast::{ColumnOption, Expr, UnaryOperator, Value};
+    let Some(expression) = options.iter().find_map(|option| match &option.option {
+        ColumnOption::Default(expression) => Some(expression),
+        _ => None,
+    }) else {
+        return DeclaredDefault::Absent;
+    };
+    match expression {
+        Expr::Value(value) => match &value.value {
+            Value::Null => DeclaredDefault::Null,
+            Value::Number(number, _) => DeclaredDefault::Number(number.clone()),
+            Value::Boolean(value) => DeclaredDefault::Number(u8::from(*value).to_string()),
+            Value::SingleQuotedString(text) | Value::DoubleQuotedString(text) => {
+                DeclaredDefault::Text(text.clone())
+            }
+            _ => DeclaredDefault::Other,
+        },
+        Expr::UnaryOp {
+            op: operator @ (UnaryOperator::Minus | UnaryOperator::Plus),
+            expr,
+        } => match expr.as_ref() {
+            Expr::Value(value) => match &value.value {
+                Value::Number(number, _) => {
+                    DeclaredDefault::Number(if matches!(operator, UnaryOperator::Minus) {
+                        format!("-{number}")
+                    } else {
+                        number.clone()
+                    })
+                }
+                _ => DeclaredDefault::Other,
+            },
+            _ => DeclaredDefault::Other,
+        },
+        Expr::Function(function)
+            if matches!(
+                function.name.to_string().to_ascii_uppercase().as_str(),
+                "CURRENT_TIMESTAMP" | "NOW" | "LOCALTIME" | "LOCALTIMESTAMP"
+            ) =>
+        {
+            DeclaredDefault::CurrentTimestamp
+        }
+        Expr::Identifier(identifier)
+            if matches!(
+                identifier.value.to_ascii_uppercase().as_str(),
+                "CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP"
+            ) =>
+        {
+            DeclaredDefault::CurrentTimestamp
+        }
+        _ => DeclaredDefault::Other,
+    }
 }
 
 /// The columns `statement` adds, read from its own text.
@@ -95,6 +183,20 @@ pub(crate) fn added_columns(statement: &str) -> Option<Vec<AddedColumn>> {
                 plain_nullable: column_def.options.iter().all(|option| {
                     matches!(option.option, ColumnOption::Null | ColumnOption::Comment(_))
                 }),
+                fill_declared: column_def.options.iter().all(|option| {
+                    matches!(
+                        option.option,
+                        ColumnOption::Null
+                            | ColumnOption::NotNull
+                            | ColumnOption::Default(_)
+                            | ColumnOption::Comment(_)
+                            | ColumnOption::OnUpdate(_)
+                    )
+                }),
+                nullable: !column_def
+                    .options
+                    .iter()
+                    .any(|option| matches!(option.option, ColumnOption::NotNull)),
                 virtual_generated: column_def.options.iter().any(|option| {
                     matches!(
                         &option.option,
@@ -110,6 +212,7 @@ pub(crate) fn added_columns(statement: &str) -> Option<Vec<AddedColumn>> {
                     Some(MySQLColumnPosition::After(column)) => AddedPosition::After(column.value),
                     None => AddedPosition::Last,
                 },
+                default: declared_default(&column_def.options),
             });
         }
     }
@@ -511,6 +614,16 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
                     )
                 } else if alter.operations.iter().all(|operation| {
                     matches!(operation, AlterTableOperation::ModifyColumn { .. })
+                        // A new default changes no stored row: the source
+                        // keeps every value it holds, and so does the mirror.
+                        || matches!(
+                            operation,
+                            AlterTableOperation::AlterColumn {
+                                op: AlterColumnOperation::SetDefault { .. }
+                                    | AlterColumnOperation::DropDefault,
+                                ..
+                            }
+                        )
                         || matches!(
                             operation,
                             AlterTableOperation::ChangeColumn {
@@ -530,6 +643,9 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
                                 }
                                 AlterTableOperation::ChangeColumn { old_name, .. } => {
                                     old_name.value.clone()
+                                }
+                                AlterTableOperation::AlterColumn { column_name, .. } => {
+                                    column_name.value.clone()
                                 }
                                 _ => unreachable!("all operations matched modify/change"),
                             })

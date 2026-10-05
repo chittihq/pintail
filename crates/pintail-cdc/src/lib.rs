@@ -7,6 +7,7 @@
 //! source position past all of them. A crash therefore replays at least once
 //! with deterministic versions.
 
+mod added_fill;
 mod ddl;
 mod decoder;
 mod event;
@@ -35,7 +36,7 @@ use std::{
 use chrono::Utc;
 use futures_util::{FutureExt as _, StreamExt as _};
 use mysql_async::{
-    BinlogStream, BinlogStreamRequest, Error as MysqlError, Pool,
+    BinlogStream, BinlogStreamRequest, Error as MysqlError, Pool, Value as MysqlValue,
     binlog::{
         EventFlags, RowsEventFlags,
         events::{EventData, RowsEventData},
@@ -1101,6 +1102,10 @@ async fn run_cdc_inner(
                         // transaction before it is stored and checkpointed
                         // under the schema it was written with.
                         flush!();
+                        let clock = added_fill::statement_clock(
+                            event.header().timestamp(),
+                            query.status_vars(),
+                        );
                         apply_ddl_actions(
                             pool,
                             metadata_path,
@@ -1113,6 +1118,7 @@ async fn run_cdc_inner(
                             &mut metadata,
                             &options,
                             &statement,
+                            &clock,
                             actions,
                         )
                         .await?;
@@ -1443,6 +1449,7 @@ async fn apply_ddl_actions(
     metadata: &mut MetaStore,
     options: &CdcOptions,
     statement: &str,
+    clock: &added_fill::StatementClock,
     actions: Vec<DdlAction>,
 ) -> Result<(), CdcError> {
     let refreshed = probe_source(pool, &report.database).await?;
@@ -1476,6 +1483,15 @@ async fn apply_ddl_actions(
                     )?;
                     continue;
                 };
+                let fills = added_fill_context(
+                    pool,
+                    &targets[index].source,
+                    &source,
+                    statement,
+                    clock,
+                    every_column_tracked,
+                )
+                .await;
                 apply_column_change(
                     metadata,
                     database_id,
@@ -1486,6 +1502,7 @@ async fn apply_ddl_actions(
                     source,
                     (added.as_slice(), dropped.as_slice()),
                     every_column_tracked,
+                    &fills,
                 )?;
             }
             DdlAction::Alter {
@@ -1703,7 +1720,7 @@ async fn apply_ddl_actions(
                 // Storage-compatible type changes evolve in place; anything
                 // else fails stabilization (or the store's segment re-read)
                 // and quarantines for resync exactly like before.
-                let source =
+                let mut source =
                     match pintail_probe::stabilize_source_table(&targets[index].source, source) {
                         Ok(source) => source,
                         Err(reason) => {
@@ -1719,6 +1736,28 @@ async fn apply_ddl_actions(
                             continue;
                         }
                     };
+                // A column the probe shows and the table lacks was added by a
+                // statement still ahead in the stream; its rows need the same
+                // fill that statement would have given them.
+                if let Err(reason) = added_fill::resolve_added_fills(
+                    &targets[index].source,
+                    &mut source,
+                    &added_fill::FillContext {
+                        mysql_catalogue: every_column_tracked,
+                        ..added_fill::FillContext::default()
+                    },
+                ) {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        &format!("{statement}; {reason}"),
+                        None,
+                    )?;
+                    continue;
+                }
                 let version = next_schema_version(targets[index].store.schema().version())?;
                 let schema = source.table_schema_with_version(version)?;
                 let name = targets[index].source.name.clone();
@@ -2208,10 +2247,55 @@ pub fn evolve_tracked_schema(
     Ok(Ok(()))
 }
 
+/// What the columns `statement` adds to `tracked` are filled from: the
+/// statement's own declarations and clock, and the times the source has to
+/// convert through the statement's session time zone. The source converts
+/// them because its time zone tables are the ones the statement used; one
+/// it cannot convert leaves the reason, and the table is recopied.
+async fn added_fill_context(
+    pool: &Pool,
+    tracked: &SourceTable,
+    probed: &SourceTable,
+    statement: &str,
+    clock: &added_fill::StatementClock,
+    mysql_catalogue: bool,
+) -> added_fill::FillContext {
+    let mut context = added_fill::FillContext {
+        mysql_catalogue,
+        declared: added_fill::declared_columns(statement),
+        clock: Some(clock.clone()),
+        converted: BTreeMap::new(),
+    };
+    for column in &probed.columns {
+        if tracked
+            .columns
+            .iter()
+            .any(|known| known.name.eq_ignore_ascii_case(&column.name))
+        {
+            continue;
+        }
+        let Some((sql, parameters)) = added_fill::source_conversion(column, &context) else {
+            continue;
+        };
+        let converted = match pool.get_conn().await {
+            Ok(mut connection) => connection
+                .exec_first::<MysqlValue, _, _>(sql, parameters)
+                .await
+                .map(|value| value.unwrap_or(MysqlValue::NULL))
+                .map_err(|error| format!("the source could not convert its default: {error}")),
+            Err(error) => Err(format!("the source could not convert its default: {error}")),
+        };
+        context
+            .converted
+            .insert(column.name.to_ascii_lowercase(), converted);
+    }
+    context
+}
+
 /// Adopts a column-level schema change for one tracked table, given the
 /// table as the source now declares it. A shape the tracked table cannot
 /// take without a copy quarantines the table instead.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn apply_column_change(
     metadata: &mut MetaStore,
     database_id: &str,
@@ -2222,6 +2306,7 @@ fn apply_column_change(
     source: SourceTable,
     (added, dropped): (&[String], &[String]),
     every_column_tracked: bool,
+    fills: &added_fill::FillContext,
 ) -> Result<(), CdcError> {
     // The probe reads the source as it is NOW, which can be past this
     // statement: a column dropped and then added back under its name reads
@@ -2244,12 +2329,13 @@ fn apply_column_change(
         (added, dropped),
         every_column_tracked,
     );
-    let source = match schema_as_of_statement(
+    let source = match schema_as_of(
         &targets[index].source,
         statement,
         added,
         dropped,
         every_column_tracked,
+        moved_past,
     ) {
         Ok(as_of) if as_of.columns == targets[index].source.columns => {
             // A replay of a statement already applied: a process that died
@@ -2300,18 +2386,22 @@ fn apply_column_change(
             );
         }
     };
-    let source = renumber_readded_columns(metadata, database_id, &targets[index].source, source)?;
-    if let Some(reason) = added_column_needs_values(&targets[index].source, &source) {
-        return quarantine_schema_change(
-            metadata,
-            database_id,
-            &targets[index],
-            index,
-            blocked_targets,
-            &format!("{statement}; {reason}"),
-            Some(&source),
-        );
-    }
+    let mut source =
+        renumber_readded_columns(metadata, database_id, &targets[index].source, source)?;
+    let fills = match added_fill::resolve_added_fills(&targets[index].source, &mut source, fills) {
+        Ok(fills) => fills,
+        Err(reason) => {
+            return quarantine_schema_change(
+                metadata,
+                database_id,
+                &targets[index],
+                index,
+                blocked_targets,
+                &format!("{statement}; {reason}"),
+                Some(&source),
+            );
+        }
+    };
     let version = next_schema_version(targets[index].store.schema().version())?;
     let schema = source.table_schema_with_version(version)?;
     let name = targets[index].source.name.clone();
@@ -2334,6 +2424,7 @@ fn apply_column_change(
             Some(&source),
         );
     }
+    log_added_fills(database_id, &name, &fills);
     targets[index].source = source;
     Ok(())
 }
@@ -2397,20 +2488,42 @@ fn added_columns_the_probe_skips(
         .collect()
 }
 
-/// The table as one `ADD COLUMN` / `DROP COLUMN` statement left it, worked
-/// out from the tracked table and the statement's own text.
-///
-/// Returns the reason when the statement alone does not decide the result:
-/// the tracked table skips source columns, so the statement cannot say where
-/// in a row image its columns sit; a dropped column is part of the key; or
-/// an added column carries a default, a generated value, `NOT NULL`, or a
-/// type whose catalogue entry depends on defaults the statement lacks.
+/// [`schema_as_of`] for a source that has not moved past the statement.
+#[cfg(test)]
 fn schema_as_of_statement(
     tracked: &SourceTable,
     statement: &str,
     added: &[String],
     dropped: &[String],
     every_column_tracked: bool,
+) -> Result<SourceTable, String> {
+    schema_as_of(
+        tracked,
+        statement,
+        added,
+        dropped,
+        every_column_tracked,
+        false,
+    )
+}
+
+/// The table as one `ADD COLUMN` / `DROP COLUMN` statement left it, worked
+/// out from the tracked table and the statement's own text.
+///
+/// Returns the reason when the statement alone does not decide the result:
+/// the tracked table skips source columns, so the statement cannot say where
+/// in a row image its columns sit; a dropped column is part of the key; or
+/// an added column carries a generated value, `AUTO_INCREMENT`, a key, or a
+/// type whose catalogue entry depends on defaults the statement lacks - or,
+/// while the source has not moved past the statement, a default or
+/// `NOT NULL`, which its catalogue describes better.
+fn schema_as_of(
+    tracked: &SourceTable,
+    statement: &str,
+    added: &[String],
+    dropped: &[String],
+    every_column_tracked: bool,
+    moved_past: bool,
 ) -> Result<SourceTable, String> {
     // The tracked table's own column count and ordinals are no evidence
     // here: they come from the last probe, which is exactly what has moved
@@ -2444,11 +2557,31 @@ fn schema_as_of_statement(
             .iter()
             .find(|declaration| declaration.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| format!("the definition of column {name} cannot be read"))?;
-        if !declaration.plain_nullable {
+        // A default or NOT NULL decides what the rows already copied hold,
+        // and the statement says which; the fill is worked out from it once
+        // the table as of the statement is known. Anything else - a
+        // generated value, AUTO_INCREMENT, a key - is not the statement's
+        // to say.
+        //
+        // Only once the source has moved past the statement, though: until
+        // then the catalogue describes this very column, collation and
+        // default included, and is the better record of it.
+        if !(declaration.plain_nullable || moved_past && declaration.fill_declared) {
             return Err(format!(
                 "column {name} is declared with more than a nullable type, which the rows \
                  already copied may need values for"
             ));
+        }
+        // Already tracked: the statement is replayed, or the column was
+        // adopted early from a catalogue that already showed it. Either way
+        // the tracked column, fill included, is the one this statement added.
+        if !declaration.plain_nullable
+            && as_of
+                .columns
+                .iter()
+                .any(|existing| existing.name.eq_ignore_ascii_case(name))
+        {
+            continue;
         }
         let terms = ddl::declared_terms(&declaration.declared_type).ok_or_else(|| {
             format!(
@@ -2464,7 +2597,7 @@ fn schema_as_of_statement(
             numeric_precision: terms.precision,
             numeric_scale: terms.scale,
             datetime_precision: terms.fraction,
-            nullable: true,
+            nullable: declaration.nullable,
             collation: None,
         })
         .map_err(|error| error.to_string())?;
@@ -2473,7 +2606,9 @@ fn schema_as_of_statement(
             .iter()
             .find(|existing| existing.name.eq_ignore_ascii_case(name))
         {
-            if existing.mysql_column_type == column.mysql_column_type && existing.nullable {
+            if existing.mysql_column_type == column.mysql_column_type
+                && existing.nullable == column.nullable
+            {
                 continue;
             }
             return Err(format!(
@@ -2985,34 +3120,6 @@ fn renumber_readded_columns(
     Ok(source)
 }
 
-/// A column that joins the schema with values the stream cannot supply for
-/// the rows already copied: a VIRTUAL generated column, or one with a
-/// default. The source filled its default into every existing row - a literal
-/// or an expression evaluated when the ALTER ran - but an ALTER carries no row
-/// events, so evolved in place those rows would read NULL. The table is
-/// recopied instead. A nullable column with no default needs nothing.
-fn added_column_needs_values(previous: &SourceTable, refreshed: &SourceTable) -> Option<String> {
-    refreshed
-        .columns
-        .iter()
-        .find(|column| {
-            (column.virtual_generated()
-                || column.default_value.is_some()
-                || column.default_generated)
-                && !previous
-                    .columns
-                    .iter()
-                    .any(|known| known.name.eq_ignore_ascii_case(&column.name))
-        })
-        .map(|added| {
-            format!(
-                "column {} joined the schema with values the rows already copied need; the \
-                 table is recopied instead of evolved in place",
-                added.name
-            )
-        })
-}
-
 async fn adopt_drifted_schema(
     pool: &Pool,
     database: &str,
@@ -3028,13 +3135,20 @@ async fn adopt_drifted_schema(
         .cloned()
         .ok_or_else(|| "table is absent from the refreshed probe".to_owned())?;
     let source = pintail_probe::stabilize_source_table(&target.source, source)?;
-    let source = renumber_readded_columns(metadata, database_id, &target.source, source)
+    let mut source = renumber_readded_columns(metadata, database_id, &target.source, source)
         .map_err(|error| error.to_string())?;
     // Declining leaves the event to the quarantine path, and the resync
     // that follows copies the column's values with the refreshed schema.
-    if let Some(reason) = added_column_needs_values(&target.source, &source) {
-        return Err(reason);
-    }
+    // No statement is in hand, so only a fill the catalogue alone decides
+    // is taken: a literal default or a type's implicit one.
+    let fills = added_fill::resolve_added_fills(
+        &target.source,
+        &mut source,
+        &added_fill::FillContext {
+            mysql_catalogue: matches!(refreshed.server.flavor, SourceFlavor::Mysql),
+            ..added_fill::FillContext::default()
+        },
+    )?;
     // Only adopt a schema that actually explains the row in hand. A probe the
     // row still cannot be placed against means the drift is something else - a
     // rename, a table swapped underneath - and guessing would silently corrupt
@@ -3067,8 +3181,21 @@ async fn adopt_drifted_schema(
     )
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
+    log_added_fills(database_id, &source.name, &fills);
     target.source = source;
     Ok(())
+}
+
+/// Says how each column a schema change added in place was filled for the
+/// rows stored before it: the line that tells an operator the table was not
+/// recopied, and with what its old rows now read.
+fn log_added_fills(database_id: &str, table: &str, fills: &[(String, added_fill::FillKind)]) {
+    for (column, kind) in fills {
+        pintail_log::log_info!(
+            "cdc column added in place db={database_id} table={table} column={column} \
+             fill={kind:?}"
+        );
+    }
 }
 
 /// One rows event and everything its rows are staged with.
@@ -5002,6 +5129,7 @@ mod tests {
             auto_increment: false,
             default_value: None,
             default_generated: false,
+            absent_fill: None,
             ordinal: 0,
         });
 
@@ -5144,6 +5272,7 @@ mod tests {
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,
+                absent_fill: None,
                 ordinal: 0,
             }],
             key: SourceKey {
