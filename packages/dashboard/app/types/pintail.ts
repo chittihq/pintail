@@ -166,6 +166,8 @@ export interface TableSummary {
    *  inside InnoDB without writing row events, so they are invisible to CDC
    *  and repaired by scheduled reconciliation instead of arriving in seconds. */
   cascade_reconciled: boolean
+  /** When reconciliation last finished for this table (RFC 3339), if ever. */
+  last_reconcile_at?: string | null
   /** Physical source identity. append_row_id cannot target UPDATE/DELETE. */
   key_mode: 'primary' | 'unique' | 'append_row_id' | null
   mutation_guarantee: 'row_level_cdc' | 'reconciled_polling' | 'generation_replacement' | 'insert_only' | 'quarantined'

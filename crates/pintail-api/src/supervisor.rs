@@ -592,6 +592,7 @@ async fn run_cycle(
                                 Vec::new()
                             }
                         };
+                        let repair_started = std::time::Instant::now();
                         match run_cdc_reconciliation(
                             &pool,
                             &metadata_path,
@@ -604,13 +605,39 @@ async fn run_cycle(
                         .await
                         {
                             Ok(outcome) => {
-                                let repaired: usize =
+                                let elapsed = elapsed_ms(repair_started);
+                                // What the pass cost and found, per table:
+                                // the interval is a trade between this and
+                                // how long a cascade stays visible, and the
+                                // trade cannot be judged without it.
+                                for table in &outcome.tables {
+                                    pintail_log::log_info!(
+                                        "cascade reconcile db={} table={} rows_compared={} source_verified={} tombstoned={} refreshed={} elapsed_ms={}",
+                                        database.id,
+                                        table.table,
+                                        table.rows_compared,
+                                        table.source_verified,
+                                        table.tombstones,
+                                        table.ingested,
+                                        table.elapsed_ms
+                                    );
+                                }
+                                let tombstoned: usize =
                                     outcome.tables.iter().map(|table| table.tombstones).sum();
+                                let refreshed: usize =
+                                    outcome.tables.iter().map(|table| table.ingested).sum();
+                                let compared: u64 =
+                                    outcome.tables.iter().map(|table| table.rows_compared).sum();
+                                pintail_log::log_info!(
+                                    "cascade reconcile db={} tables={} rows_compared={compared} tombstoned={tombstoned} refreshed={refreshed} elapsed_ms={elapsed}",
+                                    database.id,
+                                    outcome.tables.len()
+                                );
                                 state.publish(ApiEvent::database(
                                         "replication.cascade-reconcile",
                                         &database.id,
                                         format!(
-                                            "reconciled cascade-affected tables ({names}); {repaired} rows tombstoned"
+                                            "reconciled cascade-affected tables ({names}); {tombstoned} rows tombstoned, {refreshed} refreshed, {compared} compared in {elapsed}ms"
                                         ),
                                     ));
                             }

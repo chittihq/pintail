@@ -161,6 +161,15 @@ pub struct CdcReconcileOutcome {
     pub tombstones: usize,
     /// Source keys observed.
     pub source_count: u64,
+    /// Replica rows the pass read: the whole table for either scope, since
+    /// a cascade pass streams every child row to look up its parent.
+    pub rows_compared: u64,
+    /// Rows the pass asked the source about. A cascade pass asks only
+    /// for children whose parent the replica no longer holds; a full
+    /// compare reads every source row.
+    pub source_verified: u64,
+    /// Wall time this table's pass took.
+    pub elapsed_ms: u64,
     /// Version assigned above all currently visible CDC rows.
     pub version: u64,
 }
@@ -357,7 +366,8 @@ pub async fn run_cdc_reconciliation(
             CdcReconcileScope::Cascade(_) => cascade_parents(&targets, index),
         };
         let target = &mut targets[index];
-        let outcome = match parents {
+        let started = std::time::Instant::now();
+        let mut outcome = match parents {
             Some(parents) => {
                 reconcile_cascade_target(
                     &mut connection,
@@ -381,6 +391,7 @@ pub async fn run_cdc_reconciliation(
                 .await?
             }
         };
+        outcome.elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         outcomes.push(outcome);
     }
     Ok(CdcReconcileResult {
@@ -714,6 +725,7 @@ async fn reconcile_cascade_target(
     let parent_positions = &projection.parent_positions;
 
     let mut streamed = 0_u64;
+    let mut verified = 0_u64;
     let mut ingested = 0;
     let mut tombstones = 0;
     // Children share parents, so a parent's presence is remembered while
@@ -749,6 +761,8 @@ async fn reconcile_cascade_target(
                 }
             }
             if !candidates.is_empty() {
+                verified =
+                    verified.saturating_add(u64::try_from(candidates.len()).unwrap_or(u64::MAX));
                 let (fresh, gone) = repair_candidates(
                     connection,
                     source_database,
@@ -779,6 +793,9 @@ async fn reconcile_cascade_target(
         ingested,
         tombstones,
         source_count,
+        rows_compared: streamed,
+        source_verified: verified,
+        elapsed_ms: 0,
         version,
     })
 }
@@ -851,6 +868,9 @@ async fn reconcile_cdc_target(
         ingested,
         tombstones: tombstone_count,
         source_count,
+        rows_compared: source_count,
+        source_verified: source_count,
+        elapsed_ms: 0,
         version,
     })
 }

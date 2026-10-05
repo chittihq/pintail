@@ -189,6 +189,10 @@ pub(crate) struct TableSummary {
     /// Surfaced per row because an operator reading a stale child table needs
     /// to know it is a known mechanism, not a replication fault.
     cascade_reconciled: bool,
+    /// When reconciliation last finished for this table (RFC 3339), so a
+    /// stale cascade child can be told apart from one whose repair has not
+    /// run yet.
+    last_reconcile_at: Option<String>,
     /// Physical identity selected by the source probe. `append_row_id` means
     /// source UPDATE/DELETE events cannot identify one replica row safely.
     key_mode: Option<KeyMode>,
@@ -682,6 +686,7 @@ impl TableSummary {
             schema_version: record.schema_version,
             last_error: record.last_error,
             cascade_reconciled,
+            last_reconcile_at: record.last_reconcile_at,
             key_mode,
             mutation_guarantee,
             remediation,
