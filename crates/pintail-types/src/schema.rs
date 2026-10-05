@@ -101,6 +101,15 @@ pub struct Column {
     bit_width: Option<u8>,
     /// Declared fractional digits for fixed-decimal floating columns.
     float_decimals: Option<u8>,
+    /// The value a row stored before this column existed reads for it.
+    ///
+    /// A column added with a default is added the way the source adds it:
+    /// the rows it already holds take the default without being rewritten.
+    /// Those rows sit in segments written before the column existed, so a
+    /// read fills this value wherever a segment, or a logged row, lacks the
+    /// column. `None` reads such rows as NULL. Outside the schema
+    /// fingerprint: it describes old data, not the layout of new data.
+    absent_fill: Option<crate::Value>,
 }
 
 impl Column {
@@ -120,7 +129,29 @@ impl Column {
             binary_width: None,
             bit_width: None,
             float_decimals: None,
+            absent_fill: None,
         }
+    }
+
+    /// Attaches the value rows stored before the column existed read for it.
+    #[must_use]
+    pub fn with_absent_fill(mut self, fill: Option<crate::Value>) -> Self {
+        self.absent_fill = fill.filter(|value| !matches!(value, crate::Value::Null));
+        self
+    }
+
+    /// The value rows stored before the column existed read for it, when
+    /// it is not NULL.
+    #[must_use]
+    pub fn absent_fill(&self) -> Option<&crate::Value> {
+        self.absent_fill.as_ref()
+    }
+
+    /// Whether a segment or logged row that lacks this column can still be
+    /// read: the column is nullable, or it has a fill for such rows.
+    #[must_use]
+    pub fn readable_when_absent(&self) -> bool {
+        self.nullable || self.absent_fill.is_some()
     }
 
     /// Attaches fixed-decimal floating comparison precision from source metadata.

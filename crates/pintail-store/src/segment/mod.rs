@@ -1256,7 +1256,9 @@ struct StreamColumn {
 pub(crate) struct SegmentRowStream {
     path: PathBuf,
     columns: Vec<StreamColumn>,
-    nullable_absent: Vec<usize>,
+    /// Schema columns the segment lacks, with the cell each of its rows
+    /// reads for them: NULL, or the fill of a column added with a default.
+    absent: Vec<(usize, Cell)>,
     /// Per schema column: the native-unit mapping its type is eligible for,
     /// used to rewrite v2 unit cells back into canonical text.
     native_values: Vec<Option<NativeUnits>>,
@@ -1486,12 +1488,12 @@ impl SegmentRowStream {
                 "segment is missing a system column",
             ));
         }
-        let mut nullable_absent = Vec::new();
+        let mut absent = Vec::new();
         for (index, (column, found)) in schema.columns().iter().zip(found_values).enumerate() {
             if found {
                 continue;
             }
-            if !column.is_nullable() {
+            if !column.readable_when_absent() {
                 return Err(StoreError::IncompatibleSchema(format!(
                     "required column {} ({}) is absent from schema version {schema_version}",
                     column.name(),
@@ -1499,13 +1501,13 @@ impl SegmentRowStream {
                 )));
             }
             if include_values {
-                nullable_absent.push(index);
+                absent.push((index, absent_cell(column)));
             }
         }
         Ok(Self {
             path,
             columns,
-            nullable_absent,
+            absent,
             native_values: schema
                 .columns()
                 .iter()
@@ -1676,8 +1678,8 @@ impl SegmentRowStream {
                 "invalid streamed block row count",
             ));
         }
-        for index in &self.nullable_absent {
-            values[*index] = Some(vec![Cell::Null; block_rows]);
+        for (index, cell) in &self.absent {
+            values[*index] = Some(vec![cell.clone(); block_rows]);
         }
         let decoded = DecodedColumns {
             keys: keys.ok_or_else(|| corrupt(&self.path, decode_position, "missing key block"))?,
@@ -1784,14 +1786,14 @@ fn read_file_segment_columns(
     }
     for (column, cells) in schema.columns().iter().zip(&mut values) {
         if cells.is_none() {
-            if !column.is_nullable() {
+            if !column.readable_when_absent() {
                 return Err(StoreError::IncompatibleSchema(format!(
                     "required column {} ({}) is absent from schema version {schema_version}",
                     column.name(),
                     column.id()
                 )));
             }
-            *cells = Some(vec![Cell::Null; row_count]);
+            *cells = Some(vec![absent_cell(column); row_count]);
         }
     }
     Ok(DecodedColumns {
@@ -2894,12 +2896,20 @@ pub(crate) fn read_projected_rows(
             continue;
         }
         let column = &schema.columns()[schema_index];
-        if !column.is_nullable() {
+        if !column.readable_when_absent() {
             return Err(StoreError::IncompatibleSchema(format!(
                 "required projected column {} ({}) is absent",
                 column.name(),
                 column.id()
             )));
+        }
+        if let Some(fill) = column.absent_fill() {
+            let fill_bytes = absent_cell(column)
+                .heap_bytes()
+                .saturating_mul(row_indices.len());
+            memory.reserve(fill_bytes)?;
+            reserved_bytes = reserved_bytes.saturating_add(fill_bytes);
+            columns[position].fill(fill.clone());
         }
     }
     Ok(ProjectedValueFetch {
@@ -4721,17 +4731,17 @@ fn read_projected_pick(
             continue;
         }
         let column = &schema.columns()[schema_index];
-        if !column.is_nullable() {
+        if !column.readable_when_absent() {
             return Err(StoreError::IncompatibleSchema(format!(
                 "required projected column {} ({}) is absent",
                 column.name(),
                 column.id()
             )));
         }
-        let null_bytes = selected_rows.saturating_mul(std::mem::size_of::<Value>());
-        memory.reserve(null_bytes)?;
-        reserved_bytes = reserved_bytes.saturating_add(null_bytes);
-        columns.push(DecodedColumn::Values(vec![Value::Null; selected_rows]));
+        let (absent, absent_bytes) = absent_column(column, selected_rows);
+        memory.reserve(absent_bytes)?;
+        reserved_bytes = reserved_bytes.saturating_add(absent_bytes);
+        columns.push(absent);
     }
     Ok(ProjectedColumnFetch {
         columns,
@@ -6938,6 +6948,86 @@ impl Cell {
         let mut encoder = Encoder::new();
         encode_cell(&mut encoder, self)?;
         Ok(encoder.finish())
+    }
+}
+
+/// The cell every row of a segment written before `column` existed reads
+/// for it: the column's fill when it was added with a default, NULL
+/// otherwise. Text stays text; a row read this way is a value, not storage.
+fn absent_cell(column: &pintail_types::Column) -> Cell {
+    match column.absent_fill() {
+        None | Some(Value::Null) => Cell::Null,
+        Some(Value::Boolean(value)) => Cell::Boolean(*value),
+        Some(Value::Int64(value)) => Cell::Int64(*value),
+        Some(Value::UInt64(value)) => Cell::UInt64(*value),
+        Some(Value::Float64(value)) => Cell::Float64(value.to_bits()),
+        Some(Value::Utf8(value) | Value::Enum { label: value, .. }) => Cell::Utf8(value.clone()),
+        Some(Value::DecimalAverage(average)) => Cell::Utf8(average.label.clone()),
+        Some(Value::Binary(value)) => Cell::Binary(value.clone()),
+    }
+}
+
+/// `rows` rows of `column` read from a segment written before it existed,
+/// packed the way a block of the column written today decodes, and the
+/// bytes they hold. A text fill is a one-entry dictionary, so a scan of a
+/// million old rows carries one string and a million codes; a calendar or
+/// decimal fill is the units a segment stores it in.
+fn absent_column(column: &pintail_types::Column, rows: usize) -> (DecodedColumn, usize) {
+    let all_valid = || crate::ColumnValidity::AllValid(rows);
+    let word = rows.saturating_mul(8);
+    match column.absent_fill() {
+        None | Some(Value::Null) => (
+            DecodedColumn::Values(vec![Value::Null; rows]),
+            rows.saturating_mul(std::mem::size_of::<Value>()),
+        ),
+        Some(Value::Int64(value)) => (
+            DecodedColumn::Int64 {
+                values: vec![*value; rows],
+                validity: all_valid(),
+            },
+            word,
+        ),
+        Some(Value::UInt64(value)) => (
+            DecodedColumn::UInt64 {
+                values: vec![*value; rows],
+                validity: all_valid(),
+            },
+            word,
+        ),
+        Some(Value::Float64(value)) => (
+            DecodedColumn::Float64 {
+                bits: vec![value.to_bits(); rows],
+                validity: all_valid(),
+            },
+            word,
+        ),
+        Some(Value::Utf8(text) | Value::Enum { label: text, .. }) => {
+            if let Some(units) = NativeUnits::for_data_type(column.data_type())
+                && let Some(unit) = stored_units(units, text)
+            {
+                return (
+                    DecodedColumn::NativeUnits {
+                        units,
+                        values: vec![unit; rows],
+                        validity: all_valid(),
+                    },
+                    word,
+                );
+            }
+            (
+                DecodedColumn::DictionaryUtf8 {
+                    dict_heap: text.as_bytes().to_vec(),
+                    dict_offsets: vec![0, text.len()],
+                    codes: vec![0; rows],
+                    validity: all_valid(),
+                },
+                rows.saturating_mul(4).saturating_add(text.len()),
+            )
+        }
+        Some(fill) => (
+            DecodedColumn::Values(vec![fill.clone(); rows]),
+            rows.saturating_mul(std::mem::size_of::<Value>().saturating_add(fill.heap_bytes())),
+        ),
     }
 }
 

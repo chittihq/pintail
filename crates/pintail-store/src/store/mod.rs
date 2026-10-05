@@ -3381,6 +3381,10 @@ fn adapt_recovered_row(
                 )));
             }
             values.push(row.values()[index].clone());
+        } else if let Some(fill) = column.absent_fill() {
+            // Logged before the column was added with a default: the row
+            // reads the default, as it does once it is in a segment.
+            values.push(fill.clone());
         } else if column.is_nullable() {
             values.push(pintail_types::Value::Null);
         } else {

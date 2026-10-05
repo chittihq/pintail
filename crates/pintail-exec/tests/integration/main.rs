@@ -2,6 +2,7 @@
 //! binary, and every one of them linked the whole engine; nextest still runs
 //! each test in its own process, so the merge shares no state between them.
 
+mod added_column_fill;
 mod admission;
 mod adopt_filter;
 mod aggregate_path_survey;

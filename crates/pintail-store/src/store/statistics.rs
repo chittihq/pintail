@@ -51,11 +51,21 @@ impl TableSnapshot {
             rows = rows.saturating_add(smas.live_rows);
             for (index, column) in columns.iter().enumerate() {
                 let Some(sma) = smas.columns.iter().find(|sma| sma.column_id == column.id()) else {
-                    // Added after this segment was written: its rows hold
-                    // the column's default, which no sketch here counted.
-                    sketches[index] = None;
-                    ranges[index] = Some(None);
-                    exact[index] = false;
+                    // Added after this segment was written: every one of
+                    // its rows reads the column's fill, or NULL.
+                    if let Some(fill) = column.absent_fill() {
+                        non_null[index] = non_null[index].saturating_add(smas.live_rows);
+                        if let Some(sketch) = &mut sketches[index] {
+                            sketch.insert(fill);
+                        }
+                        ranges[index] = Some(widened(ranges[index], fill_range(fill)));
+                        if let (Some(units), pintail_types::Value::Utf8(text)) =
+                            (calendars[index], fill)
+                            && units.parse_exact(text).is_none()
+                        {
+                            exact[index] = false;
+                        }
+                    }
                     continue;
                 };
                 if sma.non_null > 0 && sma.extremes.is_none() {
@@ -67,18 +77,7 @@ impl TableSnapshot {
                     (sketch, _) => *sketch = None,
                 }
                 if sma.non_null > 0 {
-                    let range = sma.extremes.and_then(range_of);
-                    ranges[index] = Some(match (ranges[index], range) {
-                        (None, range) => range,
-                        (Some(Some(known)), Some(range)) if known.domain == range.domain => {
-                            Some(ColumnRange {
-                                domain: known.domain,
-                                low: known.low.min(range.low),
-                                high: known.high.max(range.high),
-                            })
-                        }
-                        _ => None,
-                    });
+                    ranges[index] = Some(widened(ranges[index], sma.extremes.and_then(range_of)));
                 }
             }
         }
@@ -127,6 +126,35 @@ impl TableSnapshot {
                 .collect(),
         }
     }
+}
+
+/// The range known so far (`None` when nothing is known yet, `Some(None)`
+/// when it cannot be known) widened by one more segment's.
+#[allow(clippy::option_option)] // the shape the caller keeps its ranges in
+fn widened(known: Option<Option<ColumnRange>>, range: Option<ColumnRange>) -> Option<ColumnRange> {
+    match (known, range) {
+        (None, range) => range,
+        (Some(Some(known)), Some(range)) if known.domain == range.domain => Some(ColumnRange {
+            domain: known.domain,
+            low: known.low.min(range.low),
+            high: known.high.max(range.high),
+        }),
+        _ => None,
+    }
+}
+
+/// The range of a segment whose every row reads one integer fill.
+fn fill_range(fill: &pintail_types::Value) -> Option<ColumnRange> {
+    let (domain, value) = match fill {
+        pintail_types::Value::Int64(value) => (RangeDomain::Int, i128::from(*value)),
+        pintail_types::Value::UInt64(value) => (RangeDomain::UInt, i128::from(*value)),
+        _ => return None,
+    };
+    Some(ColumnRange {
+        domain,
+        low: value,
+        high: value,
+    })
 }
 
 fn range_of(extremes: SmaExtremes) -> Option<ColumnRange> {

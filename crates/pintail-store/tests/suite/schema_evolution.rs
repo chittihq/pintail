@@ -51,6 +51,53 @@ fn nullable_additions_are_metadata_only_for_old_segments_and_wal_rows() {
 }
 
 #[test]
+fn filled_additions_read_their_fill_in_old_segments_and_wal_rows() {
+    // A column added with a default, even one storage holds as required:
+    // every row written before it existed reads the fill, whether it sits in
+    // a segment or is replayed from the log.
+    let filled = || {
+        TableSchema::new(
+            2,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(3, "required", DataType::UInt64, false)
+                    .with_absent_fill(Some(Value::UInt64(9))),
+                Column::new(2, "label", DataType::Utf8, false),
+            ],
+        )
+        .expect("v2 filled schema")
+    };
+    for flush_old_rows in [false, true] {
+        let directory = tempfile::tempdir().expect("temporary table directory");
+        {
+            let mut table =
+                TableStore::open(directory.path(), schema_v1(), StoreOptions::default())
+                    .expect("open v1");
+            table.ingest(vec![row_v1(1, "old", 1)]).expect("v1 ingest");
+            if flush_old_rows {
+                table.flush().expect("v1 flush");
+            } else {
+                table.checkpoint().expect("v1 checkpoint");
+            }
+        }
+        let mut table = TableStore::open(directory.path(), filled(), StoreOptions::default())
+            .expect("upgrade to the filled schema");
+        table
+            .ingest(vec![row_v2(2, "new", Value::UInt64(4), 2)])
+            .expect("v2 ingest");
+        table.flush().expect("v2 flush");
+        assert_eq!(
+            table.snapshot().scan().expect("scan mixed schemas"),
+            vec![
+                row_v2(1, "old", Value::UInt64(9), 1),
+                row_v2(2, "new", Value::UInt64(4), 2)
+            ],
+            "flushed before the change: {flush_old_rows}"
+        );
+    }
+}
+
+#[test]
 fn required_additions_and_physical_type_changes_are_rejected() {
     for incompatible in [schema_v2_required(), schema_v2_type_change()] {
         let directory = tempfile::tempdir().expect("temporary table directory");
