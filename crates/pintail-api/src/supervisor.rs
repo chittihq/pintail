@@ -1,11 +1,17 @@
-use std::{collections::BTreeSet, path::Path, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    path::Path,
+    sync::{LazyLock, Mutex, PoisonError},
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use mysql_async::Pool;
 use pintail_cdc::{CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 use pintail_poll::{
-    CdcReconcileScope, PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle,
+    CascadePlan, CascadeTable, PollOptions, PollTarget, apply_cascade_plan, plan_cascade_pass,
+    read_cascade_queues, run_poll_cycle,
 };
 use pintail_probe::ProbeReport;
 use pintail_store::StoreOptions;
@@ -495,6 +501,13 @@ async fn run_cycle(
         "cdc" => {
             let includes = decode_names(database.include_tables.as_deref())?;
             let excludes = decode_names(database.exclude_tables.as_deref())?;
+            // MySQL executes `ON DELETE/UPDATE CASCADE` and `SET NULL` inside
+            // InnoDB without writing row events, so those child rows are
+            // invisible to any CDC reader. The probe flags the affected
+            // tables; the cascade pass repairs them. Its planning half reads
+            // snapshots taken here, at the stream position the cycle starts
+            // from, and runs beside the stream.
+            start_cascade_plan(&metadata_path, database, &report, &targets);
             let streamed = run_cdc(
                 &pool,
                 &metadata_path,
@@ -560,104 +573,19 @@ async fn run_cycle(
                 },
             };
 
-            // MySQL executes `ON DELETE/UPDATE CASCADE` inside InnoDB without
-            // writing row events, so those child rows are invisible to any CDC
-            // reader and survive in the replica forever. The probe flags the
-            // affected tables; this is what actually repairs them, on the same
-            // cadence polling mode uses for its reconciler.
-            if let Ok(due) = cascade_reconciliation_due(&metadata_path, database, &report)
-                && !due.is_empty()
-            {
-                let names = due.join(", ");
-                match open_targets(&metadata_path, &database.id, &root, &report, &records) {
-                    Ok(all) => {
-                        // Every target is opened: the due tables are
-                        // repaired through their parents, so the parents
-                        // ride along as read-only replicas.
-                        let cascade = all
-                            .into_iter()
-                            .map(|target| {
-                                let source = target.source().clone();
-                                PollTarget::new(source, target.into_store())
-                            })
-                            .collect::<Result<Vec<_>, _>>();
-                        let cascade = match cascade {
-                            Ok(cascade) => cascade,
-                            Err(error) => {
-                                state.publish(ApiEvent::database(
-                                    "replication.cascade-reconcile.error",
-                                    &database.id,
-                                    format!("could not build cascade targets: {error}"),
-                                ));
-                                Vec::new()
-                            }
-                        };
-                        let repair_started = std::time::Instant::now();
-                        match run_cdc_reconciliation(
-                            &pool,
-                            &metadata_path,
-                            &database.id,
-                            &report,
-                            cascade,
-                            CdcReconcileScope::Cascade(&due),
-                            10_000,
-                        )
-                        .await
-                        {
-                            Ok(outcome) => {
-                                let elapsed = elapsed_ms(repair_started);
-                                // What the pass cost and found, per table:
-                                // the interval is a trade between this and
-                                // how long a cascade stays visible, and the
-                                // trade cannot be judged without it.
-                                for table in &outcome.tables {
-                                    pintail_log::log_info!(
-                                        "cascade reconcile db={} table={} rows_compared={} source_verified={} tombstoned={} refreshed={} elapsed_ms={}",
-                                        database.id,
-                                        table.table,
-                                        table.rows_compared,
-                                        table.source_verified,
-                                        table.tombstones,
-                                        table.ingested,
-                                        table.elapsed_ms
-                                    );
-                                }
-                                let tombstoned: usize =
-                                    outcome.tables.iter().map(|table| table.tombstones).sum();
-                                let refreshed: usize =
-                                    outcome.tables.iter().map(|table| table.ingested).sum();
-                                let compared: u64 =
-                                    outcome.tables.iter().map(|table| table.rows_compared).sum();
-                                pintail_log::log_info!(
-                                    "cascade reconcile db={} tables={} rows_compared={compared} tombstoned={tombstoned} refreshed={refreshed} elapsed_ms={elapsed}",
-                                    database.id,
-                                    outcome.tables.len()
-                                );
-                                state.publish(ApiEvent::database(
-                                        "replication.cascade-reconcile",
-                                        &database.id,
-                                        format!(
-                                            "reconciled cascade-affected tables ({names}); {tombstoned} rows tombstoned, {refreshed} refreshed, {compared} compared in {elapsed}ms"
-                                        ),
-                                    ));
-                            }
-                            // A failed repair must not fail the CDC cycle:
-                            // streaming is still correct for everything
-                            // cascades do not touch.
-                            Err(error) => state.publish(ApiEvent::database(
-                                "replication.cascade-reconcile.error",
-                                &database.id,
-                                format!("cascade reconciliation failed for {names}: {error}"),
-                            )),
-                        }
-                    }
-                    Err(error) => state.publish(ApiEvent::database(
-                        "replication.cascade-reconcile.error",
-                        &database.id,
-                        format!("could not open cascade targets: {error}"),
-                    )),
-                }
-            }
+            // A pass planned during an earlier cycle (or this one) whose
+            // planning has finished is applied here, between this cycle's
+            // last checkpoint and the next cycle's first event.
+            finish_cascade_pass(
+                state,
+                &pool,
+                &metadata_path,
+                database,
+                &report,
+                &root,
+                &records,
+            )
+            .await;
             result
         }
         "polling" => {
@@ -924,13 +852,101 @@ fn store_layout_refused(error: &pintail_cdc::CdcError) -> bool {
     }
 }
 
-/// Tables the probe flagged as cascade-affected whose last reconcile is older
-/// than the database's interval. Returns names, because the caller reopens
-/// targets rather than holding stores across the CDC run.
+/// The cascade passes this process runs: one in flight per database at
+/// most, and what the last pass of each table cost.
+#[derive(Default)]
+struct CascadeSchedule {
+    in_flight: HashMap<String, CascadeInFlight>,
+    /// Work time of each table's last pass, by (database, lower-case table).
+    last_ms: HashMap<(String, String), u64>,
+    /// Tables swept since the process started, by (database, lower-case
+    /// table): the first pass of each also looks for children whose parent
+    /// the replica no longer holds, which covers parent changes from before
+    /// the queue of parent keys existed or while it was not being written.
+    swept: HashSet<(String, String)>,
+}
+
+/// A pass whose planning half is running off the replication cycle.
+struct CascadeInFlight {
+    handle: tokio::task::JoinHandle<CascadePlan>,
+    sweep: BTreeSet<String>,
+    started: std::time::Instant,
+}
+
+static CASCADE: LazyLock<Mutex<CascadeSchedule>> = LazyLock::new(Mutex::default);
+
+fn cascade_schedule() -> std::sync::MutexGuard<'static, CascadeSchedule> {
+    CASCADE.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The shortest a flagged table's repair interval adapts down to.
+const CASCADE_MIN_INTERVAL_S: u64 = 30;
+
+/// How often a flagged table is repaired: four times its last pass, so a
+/// pass never takes more than a quarter of the time, and at least every
+/// thirty seconds - capped by the database's own reconcile interval, which
+/// stays the operator's upper bound. A table whose pass must compare it in
+/// full (its cascading key references something other than a replicated
+/// parent's primary key) keeps the database's interval: that pass reads the
+/// whole table from the source and runs inside the cycle.
+fn cascade_interval_seconds(
+    database: &DatabaseRecord,
+    report: &ProbeReport,
+    table: &str,
+    last_ms: Option<u64>,
+) -> u64 {
+    let operator = database.reconcile_interval_seconds;
+    if !cascade_targeted(report, table) {
+        return operator;
+    }
+    let adaptive = last_ms
+        .map_or(0, |ms| ms.saturating_mul(4).div_ceil(1000))
+        .max(CASCADE_MIN_INTERVAL_S);
+    adaptive.min(operator)
+}
+
+/// Whether `table`'s cascading keys all reference a replicated, keyed
+/// parent's primary key, so its pass is a targeted repair rather than a
+/// full compare.
+fn cascade_targeted(report: &ProbeReport, table: &str) -> bool {
+    let Some(child) = report
+        .tables
+        .iter()
+        .find(|source| source.name.eq_ignore_ascii_case(table))
+    else {
+        return false;
+    };
+    let invisible =
+        |rule: &str| rule.eq_ignore_ascii_case("CASCADE") || rule.eq_ignore_ascii_case("SET NULL");
+    child
+        .foreign_keys
+        .iter()
+        .filter(|key| invisible(&key.delete_rule) || invisible(&key.update_rule))
+        .all(|key| {
+            report
+                .tables
+                .iter()
+                .find(|parent| parent.name.eq_ignore_ascii_case(&key.referenced_table))
+                .is_some_and(|parent| {
+                    parent.key.mode != pintail_types::KeyMode::AppendRowId
+                        && parent.key.columns.len() == key.referenced_columns.len()
+                        && parent.key.columns.iter().all(|column| {
+                            key.referenced_columns
+                                .iter()
+                                .any(|referenced| referenced.eq_ignore_ascii_case(column))
+                        })
+                })
+        })
+}
+
+/// Tables the probe flagged as cascade-affected whose last pass is older
+/// than their interval. Returns names, because the caller reopens targets
+/// rather than holding stores across the CDC run.
 fn cascade_reconciliation_due(
     metadata_path: &Path,
     database: &DatabaseRecord,
     report: &ProbeReport,
+    last_ms: &HashMap<(String, String), u64>,
 ) -> Result<Vec<String>, String> {
     let flagged = report
         .tables
@@ -946,7 +962,16 @@ fn cascade_reconciliation_due(
     Ok(records
         .into_iter()
         .filter(|record| {
+            let interval = cascade_interval_seconds(
+                database,
+                report,
+                &record.name,
+                last_ms
+                    .get(&(database.id.clone(), record.name.to_ascii_lowercase()))
+                    .copied(),
+            );
             record.paused.is_none()
+                && record.state != "needs_resync"
                 && flagged
                     .iter()
                     .any(|name| name.eq_ignore_ascii_case(&record.name))
@@ -958,12 +983,259 @@ fn cascade_reconciliation_due(
                         Utc::now()
                             .signed_duration_since(last.with_timezone(&Utc))
                             .num_seconds()
-                            >= i64::try_from(database.reconcile_interval_seconds)
-                                .unwrap_or(i64::MAX)
+                            >= i64::try_from(interval).unwrap_or(i64::MAX)
                     })
         })
         .map(|record| record.name)
         .collect())
+}
+
+/// Starts planning a cascade pass over the database's due tables, unless one
+/// is already in flight. The queues of parent keys are read and the replica
+/// snapshots pinned here, before the cycle's stream runs, so both describe
+/// the same stream position; the planning itself - reading the children and
+/// merging their references with the parents - runs on a blocking thread
+/// while the stream applies events.
+fn start_cascade_plan(
+    metadata_path: &Path,
+    database: &DatabaseRecord,
+    report: &ProbeReport,
+    targets: &[CdcTarget],
+) {
+    let mut schedule = cascade_schedule();
+    if schedule.in_flight.contains_key(&database.id) {
+        return;
+    }
+    let due = match cascade_reconciliation_due(metadata_path, database, report, &schedule.last_ms) {
+        Ok(due) if !due.is_empty() => due,
+        Ok(_) => return,
+        Err(error) => {
+            pintail_log::log_error!(
+                "cascade reconcile db={} could not read its schedule: {error}",
+                database.id
+            );
+            return;
+        }
+    };
+    let queues = match read_cascade_queues(metadata_path, &database.id, &due) {
+        Ok(queues) => queues,
+        Err(error) => {
+            pintail_log::log_error!(
+                "cascade reconcile db={} could not read its queues: {error}",
+                database.id
+            );
+            return;
+        }
+    };
+    let sweep = due
+        .iter()
+        .filter(|name| {
+            !schedule
+                .swept
+                .contains(&(database.id.clone(), name.to_ascii_lowercase()))
+        })
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    // The due children and the tables they reference.
+    let wanted = |name: &str| {
+        due.iter().any(|due| {
+            due.eq_ignore_ascii_case(name)
+                || report
+                    .tables
+                    .iter()
+                    .find(|source| source.name.eq_ignore_ascii_case(due))
+                    .is_some_and(|child| {
+                        child
+                            .foreign_keys
+                            .iter()
+                            .any(|key| key.referenced_table.eq_ignore_ascii_case(name))
+                    })
+        })
+    };
+    let tables = targets
+        .iter()
+        .filter(|target| wanted(&target.source().name))
+        .map(|target| CascadeTable {
+            source: target.source().clone(),
+            snapshot: target.store().snapshot(),
+        })
+        .collect::<Vec<_>>();
+    let planned_sweep = sweep.clone();
+    let handle = tokio::task::spawn_blocking(move || {
+        plan_cascade_pass(&tables, &queues, &due, &planned_sweep)
+    });
+    schedule.in_flight.insert(
+        database.id.clone(),
+        CascadeInFlight {
+            handle,
+            sweep,
+            started: std::time::Instant::now(),
+        },
+    );
+}
+
+/// How long a cycle waits for a plan that has not finished when its stream
+/// is done: a small plan is applied in the cycle that started it, and a
+/// large one in a later cycle, without holding this one up.
+const CASCADE_PLAN_WAIT: Duration = Duration::from_millis(200);
+
+/// Applies the database's planned cascade pass if its planning finished.
+/// The apply runs on stores opened by this cycle, after the stream's last
+/// checkpoint, so the repair is serialized with the tables' own ingest.
+#[allow(clippy::too_many_lines)]
+async fn finish_cascade_pass(
+    state: &ApiState,
+    pool: &Pool,
+    metadata_path: &Path,
+    database: &DatabaseRecord,
+    report: &ProbeReport,
+    root: &Path,
+    records: &[TableRecord],
+) {
+    let Some(mut in_flight) = cascade_schedule().in_flight.remove(&database.id) else {
+        return;
+    };
+    let plan = match tokio::time::timeout(CASCADE_PLAN_WAIT, &mut in_flight.handle).await {
+        Err(_) => {
+            cascade_schedule()
+                .in_flight
+                .insert(database.id.clone(), in_flight);
+            return;
+        }
+        Ok(Err(error)) => {
+            state.publish(ApiEvent::database(
+                "replication.cascade-reconcile.error",
+                &database.id,
+                format!("cascade planning failed: {error}"),
+            ));
+            return;
+        }
+        Ok(Ok(plan)) => plan,
+    };
+    let names = plan.tables().join(", ");
+    let targets = match open_targets(metadata_path, &database.id, root, report, records) {
+        Ok(targets) => targets,
+        Err(error) => {
+            state.publish(ApiEvent::database(
+                "replication.cascade-reconcile.error",
+                &database.id,
+                format!("could not open cascade targets: {error}"),
+            ));
+            return;
+        }
+    };
+    // Every target is opened: the due tables are repaired through their
+    // parents, so the parents ride along.
+    let targets = match targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            PollTarget::new(source, target.into_store())
+        })
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(targets) => targets,
+        Err(error) => {
+            state.publish(ApiEvent::database(
+                "replication.cascade-reconcile.error",
+                &database.id,
+                format!("could not build cascade targets: {error}"),
+            ));
+            return;
+        }
+    };
+    let applying = std::time::Instant::now();
+    match apply_cascade_plan(
+        pool,
+        metadata_path,
+        &database.id,
+        report,
+        targets,
+        plan,
+        10_000,
+    )
+    .await
+    {
+        Ok(outcome) => {
+            let applied_ms = elapsed_ms(applying);
+            // What the pass cost and found, per table: the interval is a
+            // trade between this and how long a cascade stays visible, and
+            // the trade cannot be judged without it.
+            let mut schedule = cascade_schedule();
+            for table in &outcome.tables {
+                pintail_log::log_info!(
+                    "cascade reconcile db={} table={} rows_compared={} source_verified={} tombstoned={} refreshed={} elapsed_ms={} skipped={} resync={}{}",
+                    database.id,
+                    table.table,
+                    table.rows_compared,
+                    table.source_verified,
+                    table.tombstones,
+                    table.ingested,
+                    table.elapsed_ms,
+                    table.skipped,
+                    table.resync,
+                    table
+                        .error
+                        .as_deref()
+                        .map_or_else(String::new, |error| format!(" error={error}"))
+                );
+                if table.error.is_none() {
+                    let key = (database.id.clone(), table.table.to_ascii_lowercase());
+                    schedule.last_ms.insert(key.clone(), table.elapsed_ms);
+                    if in_flight
+                        .sweep
+                        .iter()
+                        .any(|swept| swept.eq_ignore_ascii_case(&table.table))
+                    {
+                        schedule.swept.insert(key);
+                    }
+                }
+            }
+            drop(schedule);
+            let tombstoned: usize = outcome.tables.iter().map(|table| table.tombstones).sum();
+            let refreshed: usize = outcome.tables.iter().map(|table| table.ingested).sum();
+            let compared: u64 = outcome.tables.iter().map(|table| table.rows_compared).sum();
+            let work: u64 = outcome.tables.iter().map(|table| table.elapsed_ms).sum();
+            let failed = outcome
+                .tables
+                .iter()
+                .filter(|table| table.error.is_some())
+                .count();
+            // elapsed_ms is the work the pass did - planning plus applying -
+            // and apply_ms the part of it the replication cycle waited for.
+            pintail_log::log_info!(
+                "cascade reconcile db={} tables={} rows_compared={compared} tombstoned={tombstoned} refreshed={refreshed} elapsed_ms={work} apply_ms={applied_ms} wall_ms={} failed={failed}",
+                database.id,
+                outcome.tables.len(),
+                elapsed_ms(in_flight.started)
+            );
+            state.publish(ApiEvent::database(
+                "replication.cascade-reconcile",
+                &database.id,
+                format!(
+                    "reconciled cascade-affected tables ({names}); {tombstoned} rows tombstoned, {refreshed} refreshed, {compared} compared in {work}ms"
+                ),
+            ));
+            for table in outcome.tables.iter().filter(|table| table.error.is_some()) {
+                state.publish(ApiEvent::database(
+                    "replication.cascade-reconcile.error",
+                    &database.id,
+                    format!(
+                        "cascade reconciliation failed for {}: {}",
+                        table.table,
+                        table.error.as_deref().unwrap_or_default()
+                    ),
+                ));
+            }
+        }
+        // A failed repair must not fail the CDC cycle: streaming is still
+        // correct for everything cascades do not touch.
+        Err(error) => state.publish(ApiEvent::database(
+            "replication.cascade-reconcile.error",
+            &database.id,
+            format!("cascade reconciliation failed for {names}: {error}"),
+        )),
+    }
 }
 
 fn reconciliation_due(database: &DatabaseRecord, records: &[TableRecord]) -> bool {

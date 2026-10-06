@@ -251,11 +251,69 @@ semantics.
 `pintail-poll` executes one deterministic cycle and accepts explicit requests
 for full reconciliation or CDC-side cascade repair. It does not spawn timers.
 The M8 per-database supervised task tree owns the 1-second probe, 5-second sync,
-10-minute delete-reconcile, and 10-minute CDC-cascade defaults so pause,
-shutdown, backoff, and blast-radius behavior have one lifetime owner. This
-entry said "hourly" for the cascade repair while the code shipped
+10-minute delete-reconcile, and CDC-cascade cadences so pause, shutdown,
+backoff, and blast-radius behavior have one lifetime owner. This entry said
+"hourly" for the cascade repair while the code shipped
 `reconcile_interval_seconds` at 600 seconds; the code is what runs, so the
 sentence is corrected to it rather than the other way round.
+
+`reconcile_interval_seconds` (600 by default) is the polling reconciler's
+interval and the upper bound of a flagged CDC table's cascade interval.
+Below that bound a flagged table's interval adapts to what its pass costs:
+`max(30 s, 4 x the last pass)`, so a pass never fills more than a quarter of
+the time and a pass with nothing queued (which reads nothing) runs every 30
+seconds. A flagged table whose cascading key does not reference a replicated
+parent's primary key is compared in full and keeps the database's interval.
+An operator who sets the interval below 30 seconds gets that interval.
+
+### Cascade repair follows the parent's events, beside the stream
+
+`MySQL` applies `ON DELETE/UPDATE CASCADE` and `SET NULL` inside InnoDB and
+writes no row event for the child. The first repair found a damaged child by
+its parent being absent from the replica, which misses every shape where the
+parent key exists again (deleted and inserted, `REPLACE`, moved and reused)
+and never fetched a row an `ON UPDATE CASCADE` moved into a child's primary
+key; it also looked every referenced parent up one key at a time inside the
+replication cycle.
+
+The stream now queues, per flagged child, the old key of every parent row it
+deletes and both keys of every parent row whose key moves (a tombstone and the
+live row one ordinal after it: a key-moving `UPDATE` or a `REPLACE`), in the
+metadata transaction that moves its checkpoint past those events. A crash
+before that commit replays the events and queues them again; none is lost
+after it. A queue past a million keys collapses into one marker that compares
+the child in full.
+
+A pass has two halves. Planning reads pinned replica snapshots taken, with
+the queues, at the position the cycle starts from, and runs on a blocking
+thread beside the stream: a child row referencing a queued key (or, on a
+table's first pass in a process, a parent the replica lacks, found by merging
+the sorted references with one key-ordered read of the parent) is a
+candidate. A parent's candidates are also candidates' parents for its own
+flagged children in the same plan, so a two-level cascade converges in one
+pass. Applying runs inside a later cycle on the stores that cycle opened,
+after the stream's last checkpoint: each candidate is verified against the
+source by its own key and refreshed or tombstoned, and the source's children
+of each queued key that the replica lacks are fetched and ingested. Repairs
+are stamped above every version the replica holds.
+
+Why the order is safe. The source is read after the stream's position, and
+every later row event comes from after that position and versions above the
+repair, so an event re-inserting a row the repair tombstoned (or deleting one
+it refreshed) wins. An event between the stream's position and the source
+read replays an older state over the repair only when an action changed the
+row after that event; that action's parent event is itself after the stream's
+position, so it is queued and the next pass repairs the row. Candidates from
+the planning snapshot are never too few: a child row the stream wrote after
+the snapshot reflects the source after every queued parent event, so it needs
+no repair.
+
+A child without a primary or unique key cannot be verified a row at a time,
+and a multiset diff cannot tell an action from an insert the stream has not
+applied yet; a queued key marks such a child `needs_resync`, which the
+keyless policy then repairs (`auto_resync`) or leaves to the operator. A
+table's failure is its own: logged with its reason, its queue kept, and the
+other flagged tables repaired.
 
 ### Operator resync preserves the database-wide handoff
 
