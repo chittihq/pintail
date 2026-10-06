@@ -6250,7 +6250,30 @@ impl PullOperator {
                     } else {
                         None
                     };
+                    let memo_key = match (*top_k, &fallback) {
+                        (Some(k), None) => sort::settled_top_k_key(
+                            input,
+                            keys,
+                            k,
+                            trim_to,
+                            column_types,
+                            *collation,
+                        ),
+                        _ => None,
+                    };
+                    if let Some(key) = &memo_key
+                        && let Some(kept) = sort::settled_top_k(key, memory)?
+                    {
+                        *state = Some(kept);
+                        return state
+                            .as_mut()
+                            .expect("initialized above")
+                            .next_batch(column_types, memory);
+                    }
                     let mut sorted = build_sort(input, keys, *top_k, trim_to, memory, *collation)?;
+                    if let Some(key) = memo_key {
+                        sorted = sort::keep_settled_top_k(key, sorted);
+                    }
                     // Superseded and deleted rows count toward the side
                     // index's bound but not toward the answer, and rows from
                     // outside the bound can still arrive: unless the `k`-th

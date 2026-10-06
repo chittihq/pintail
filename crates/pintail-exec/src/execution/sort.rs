@@ -53,6 +53,27 @@ impl SortedRows {
         }
     }
 
+    /// Every row a limited sort kept, in order, when it holds them in
+    /// memory; `Err(self)` hands back a result it cannot give up as rows
+    /// without reading it.
+    pub(super) fn into_kept_rows(self) -> Result<Vec<Vec<Value>>, Box<Self>> {
+        match self {
+            Self::Memory(rows) if rows.spilled.is_none() && rows.ready.is_none() => {
+                let mut kept = rows.rows;
+                kept.drain(..rows.position.min(kept.len()));
+                Ok(kept)
+            }
+            Self::Columnar(mut sorted) => {
+                let mut kept = Vec::with_capacity(sorted.len());
+                while let Some(row) = sorted.next_row() {
+                    kept.push(row);
+                }
+                Ok(kept)
+            }
+            other => Err(Box::new(other)),
+        }
+    }
+
     fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
         match self {
             Self::Memory(rows) => {
@@ -441,6 +462,129 @@ fn groupable_distinct(
             _ => None,
         })
         .collect()
+}
+
+/// The memo key of a limited sort over a settled aggregate: the aggregate's
+/// own key, plus everything between it and the sort and the sort itself.
+///
+/// A memo hit on a grouped aggregate replays every group, and a limited
+/// sort above it then ordered them all again on every hit to keep ten: the
+/// cost of a hit grew with the number of groups. The answer the sort gives
+/// is as fixed as the groups beneath it. Ties keep arrival order, and a
+/// replay serves the groups in the order the entry kept them, so the same
+/// key always gives the same rows in the same order - which lets the sort's
+/// own answer be kept beside the aggregate's, under the aggregate's key.
+/// The aggregate's key is the data's identity, so the two are invalidated
+/// together.
+///
+/// Projections and filters between them join the key by their deterministic
+/// signatures; anything else, or anything volatile, gives `None`.
+pub(super) fn settled_top_k_key(
+    input: &PullOperator,
+    keys: &[BoundOrderKey],
+    top_k: usize,
+    trim_to: Option<usize>,
+    column_types: &[DataType],
+    collation: Collation,
+) -> Option<super::aggregate::SettledMemoKey> {
+    use std::fmt::Write as _;
+    let mut above = String::new();
+    let mut operator = input;
+    loop {
+        match operator {
+            PullOperator::Profiled { input, .. } => operator = input,
+            PullOperator::Project { input, expressions } => {
+                above.push_str("P(");
+                for (expression, data_type) in expressions {
+                    write!(
+                        above,
+                        "{}:{data_type:?};",
+                        expression.deterministic_signature()?
+                    )
+                    .ok()?;
+                }
+                above.push(')');
+                operator = input;
+            }
+            PullOperator::Filter {
+                input, predicate, ..
+            } => {
+                write!(above, "F({})", predicate.deterministic_signature()?).ok()?;
+                operator = input;
+            }
+            PullOperator::HashAggregate {
+                input,
+                group_by,
+                aggregates,
+                state: None,
+                collation: group_collation,
+                key_collations,
+                ..
+            } => {
+                let (directory, generation, signature) = super::aggregate::settled_aggregate_key(
+                    input,
+                    group_by,
+                    aggregates,
+                    *group_collation,
+                    key_collations,
+                )?;
+                return Some((
+                    directory,
+                    generation,
+                    format!(
+                        "{signature}|T{above}|{keys:?}|{top_k}|{trim_to:?}|{column_types:?}|{collation:?}"
+                    ),
+                ));
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// A limited sort's answer from the settled memo, served as the rows it
+/// kept, or `None` on a miss.
+pub(super) fn settled_top_k(
+    key: &super::aggregate::SettledMemoKey,
+    memory: &MemoryTracker,
+) -> Result<Option<SortedRows>, ExecError> {
+    let Some(entry) = super::aggregate::SETTLED_AGGREGATE_MEMO
+        .lock()
+        .expect("settled memo lock")
+        .get(key)
+    else {
+        return Ok(None);
+    };
+    memory.reserve(entry.payload())?;
+    super::aggregate::count_settled_top_k_hit();
+    Ok(Some(SortedRows::Memory(MaterializedRows {
+        rows: Vec::new(),
+        position: 0,
+        spilled: None,
+        ready: Some(super::two_pass::ReadyColumns::settled(entry)),
+    })))
+}
+
+/// Keeps a limited sort's answer under `key` when it holds it as rows, and
+/// hands back what serves it.
+pub(super) fn keep_settled_top_k(
+    key: super::aggregate::SettledMemoKey,
+    sorted: SortedRows,
+) -> SortedRows {
+    match sorted.into_kept_rows() {
+        Ok(rows) => {
+            super::aggregate::SETTLED_AGGREGATE_MEMO
+                .lock()
+                .expect("settled memo lock")
+                .insert(key, rows.clone());
+            SortedRows::Memory(MaterializedRows {
+                rows,
+                position: 0,
+                spilled: None,
+                ready: None,
+            })
+        }
+        Err(sorted) => *sorted,
+    }
 }
 
 pub(super) fn build_sort(
