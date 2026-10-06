@@ -22,9 +22,14 @@ pub struct ExecCounters {
     pub rows_sorted: u64,
     /// Cells copied from rows back into columns.
     pub cells_regathered: u64,
+    /// Aggregates answered from a settled-memo entry without reading a row.
+    pub settled_memo_hits: u64,
     /// Aggregates answered by merging an insert-only memtable delta onto a
     /// memoized settled result, rather than reading the table.
     pub settled_delta_merges: u64,
+    /// Limited sorts over a settled aggregate answered from the rows the
+    /// memo kept for them, without replaying the groups or ordering them.
+    pub settled_top_k_hits: u64,
     /// Segment spans a grouped aggregate folded because no cached fold
     /// could be reused.
     pub grouped_spans_folded: u64,
@@ -78,7 +83,9 @@ thread_local! {
             temporal_values_evaluated: 0,
             rows_sorted: 0,
             cells_regathered: 0,
+            settled_memo_hits: 0,
             settled_delta_merges: 0,
+            settled_top_k_hits: 0,
             grouped_spans_folded: 0,
             grouped_spans_reused: 0,
             sort_keys_prepared: 0,

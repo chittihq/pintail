@@ -686,15 +686,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 // much a pure function of the data version as a bare one —
                 // the predicates and limit simply join the memo key (issue
                 // #6: Q2/Q5/Q7 were excluded for no sound reason).
-                settled: snapshot
-                    .settled_identity()
-                    .map(|(directory, instance, generation)| {
-                        (
-                            directory.to_path_buf(),
-                            generation,
-                            scan_signature(instance, scan),
-                        )
-                    }),
+                settled: data_identity(snapshot, scan),
                 delta,
                 sma,
                 grouped,
@@ -1559,6 +1551,37 @@ fn planned_scan_rows(types: &[pintail_types::DataType], budget: usize) -> usize 
 /// store instance leads it. A directory can be reclaimed and its successor
 /// walks the same generations, so the path and generation alone would let
 /// one table be answered from another's rows.
+/// The memo identity of the rows `scan` reads from `snapshot`: the table,
+/// its manifest generation and the scan, plus the memtable's identity when
+/// it holds rows.
+///
+/// The memo used to serve only a memtable-empty table, and a replicated
+/// table keeps the rows of its last change in the memtable until a flush,
+/// which can be minutes or never for a quiet table: after any change the
+/// memo stopped answering for it. A memtable named by the store is as much
+/// a fixed set of rows as a segment, so the answer over it is kept too, and
+/// stays good until the next change gives the memtable another name. The
+/// memtable-empty spelling is kept unchanged, because the insert-only delta
+/// looks that entry up to merge the memtable onto it.
+fn data_identity(
+    snapshot: &pintail_store::TableSnapshot,
+    scan: &Scan,
+) -> Option<(std::path::PathBuf, u64, String)> {
+    if let Some((directory, instance, generation)) = snapshot.settled_identity() {
+        return Some((
+            directory.to_path_buf(),
+            generation,
+            scan_signature(instance, scan),
+        ));
+    }
+    let memtable = snapshot.memtable_identity()?;
+    Some((
+        snapshot.directory().to_path_buf(),
+        snapshot.manifest_generation(),
+        format!("m{memtable}|{}", scan_signature(snapshot.instance(), scan)),
+    ))
+}
+
 fn scan_signature(instance: u64, scan: &Scan) -> String {
     format!(
         "i{instance}|{:?}|{:?}|{:?}|{}",

@@ -2594,11 +2594,64 @@ fn replace_retained_value(
 /// engine's own exact result and is unreachable the moment any ingest
 /// makes the snapshot unsettled, so served rows are provably fresh —
 /// unlike TTL query caches. Persistent per-block SMAs remain follow-up.
-type SettledMemoKey = (std::path::PathBuf, u64, String);
-type SettledMemo =
-    std::sync::Mutex<HashMap<SettledMemoKey, std::sync::Arc<super::two_pass::SettledRows>>>;
-static SETTLED_AGGREGATE_MEMO: std::sync::LazyLock<SettledMemo> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+pub(super) type SettledMemoKey = (std::path::PathBuf, u64, String);
+
+/// The memo's entries, each with the tick it was last used at.
+#[derive(Default)]
+pub(super) struct SettledMemo {
+    entries: HashMap<SettledMemoKey, (std::sync::Arc<super::two_pass::SettledRows>, u64)>,
+    tick: u64,
+}
+
+impl SettledMemo {
+    /// The entry at `key`, marked used.
+    pub(super) fn get(
+        &mut self,
+        key: &SettledMemoKey,
+    ) -> Option<std::sync::Arc<super::two_pass::SettledRows>> {
+        self.tick += 1;
+        let tick = self.tick;
+        self.entries.get_mut(key).map(|(entry, used)| {
+            *used = tick;
+            std::sync::Arc::clone(entry)
+        })
+    }
+
+    /// Keeps `rows` at `key`, making room by letting go of the entry used
+    /// longest ago.
+    ///
+    /// The memo used to empty itself whenever it filled. That was harmless
+    /// while an entry named only a table with an empty memtable. Once an
+    /// entry can name a memtable too, every change to a replicated table
+    /// leaves the answers over its previous memtable behind, never to be
+    /// asked for again, and clearing on overflow threw the answers of the
+    /// unchanged tables out with them every few changes. The stale entries
+    /// are the ones nobody uses, so they are the ones that go.
+    pub(super) fn insert(&mut self, key: SettledMemoKey, rows: Vec<Vec<Value>>) {
+        if self.entries.len() >= SETTLED_MEMO_MAX_ENTRIES
+            && !self.entries.contains_key(&key)
+            && let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(key, _)| key.clone())
+        {
+            self.entries.remove(&oldest);
+        }
+        self.tick += 1;
+        self.entries.insert(
+            key,
+            (
+                std::sync::Arc::new(super::two_pass::SettledRows::new(rows)),
+                self.tick,
+            ),
+        );
+        SETTLED_MEMO_STORES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+pub(super) static SETTLED_AGGREGATE_MEMO: std::sync::LazyLock<std::sync::Mutex<SettledMemo>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(SettledMemo::default()));
 
 const SETTLED_MEMO_MAX_ENTRIES: usize = 32;
 
@@ -2616,7 +2669,8 @@ static SETTLED_MEMO_DELTA_MERGES: std::sync::atomic::AtomicU64 =
 /// queries on worker threads.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SettledMemoStats {
-    /// Aggregates answered from a memo entry without reading a row.
+    /// Aggregates answered from a memo entry without reading a row, and
+    /// limited sorts over one answered from the rows they kept.
     pub hits: u64,
     /// Memo-eligible aggregates (a settled plan with a deterministic
     /// signature) that found no entry and executed.
@@ -2625,6 +2679,16 @@ pub struct SettledMemoStats {
     pub stores: u64,
     /// Answers built from a memo entry plus insert-only memtable rows.
     pub delta_merges: u64,
+}
+
+/// Records a limited sort answered from the memo: a hit like any other,
+/// and on this thread's counters, so a test can tell it from a replay the
+/// sort ordered again.
+pub(super) fn count_settled_top_k_hit() {
+    SETTLED_MEMO_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    crate::counters::count(|counters| {
+        counters.settled_top_k_hits = counters.settled_top_k_hits.saturating_add(1);
+    });
 }
 
 #[must_use]
@@ -2638,19 +2702,8 @@ pub fn settled_memo_stats() -> SettledMemoStats {
     }
 }
 
-fn store_settled(
-    memo: &mut HashMap<SettledMemoKey, std::sync::Arc<super::two_pass::SettledRows>>,
-    key: SettledMemoKey,
-    rows: Vec<Vec<Value>>,
-) {
-    if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
-        memo.clear();
-    }
-    memo.insert(
-        key,
-        std::sync::Arc::new(super::two_pass::SettledRows::new(rows)),
-    );
-    SETTLED_MEMO_STORES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+fn store_settled(memo: &mut SettledMemo, key: SettledMemoKey, rows: Vec<Vec<Value>>) {
+    memo.insert(key, rows);
 }
 const SETTLED_MEMO_MAX_ROWS: usize = 1 << 17;
 
@@ -3379,29 +3432,15 @@ fn merge_finished_value(
     }
 }
 
-#[allow(clippy::too_many_lines)]
-pub(super) fn build_hash_aggregate(
-    input: &mut PullOperator,
-    input_width: usize,
+/// The settled memo's key for an aggregate over `input`, or `None` when the
+/// memo is off or the plan below is not a fixed set of rows.
+pub(super) fn settled_aggregate_key(
+    input: &PullOperator,
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],
-    memory: &MemoryTracker,
     collation: Collation,
     key_collations: &[Collation],
-) -> Result<MaterializedRows, ExecError> {
-    // Storage predicates are ALSO compiled into Filter operators above the
-    // scan (belt and braces), so a filtered plan is Filter(..(Scan)). Those
-    // filters are exactly scan.predicates, which the scan signature already
-    // covers — walking through them keeps the key sound.
-    fn settled_scan(operator: &PullOperator) -> Option<&PullOperator> {
-        match operator {
-            PullOperator::Scan { .. } => Some(operator),
-            PullOperator::Filter { input, .. } | PullOperator::Profiled { input, .. } => {
-                settled_scan(input)
-            }
-            _ => None,
-        }
-    }
+) -> Option<SettledMemoKey> {
     /// Data-version identity of a whole settled plan: scans directly,
     /// filters by their own predicate, and fresh inner joins when BOTH
     /// sides are settled — either table's ingest or flush changes its
@@ -3485,19 +3524,42 @@ pub(super) fn build_hash_aggregate(
     }
     // Profiling escape hatch: with the memo on, every settled re-run is a
     // replay and a sampling profiler only ever sees the first execution.
-    let memo_key = if super::switches::settled_memo_disabled() {
-        None
-    } else {
-        settled_plan_key(input).and_then(|(directory, generation, scan)| {
-            settled_signature(group_by, aggregates).map(|signature| {
-                (
-                    directory,
-                    generation,
-                    format!("p{scan:?};{signature}k{collation:?}{key_collations:?}"),
-                )
-            })
-        })
-    };
+    if super::switches::settled_memo_disabled() {
+        return None;
+    }
+    let (directory, generation, scan) = settled_plan_key(input)?;
+    let signature = settled_signature(group_by, aggregates)?;
+    Some((
+        directory,
+        generation,
+        format!("p{scan:?};{signature}k{collation:?}{key_collations:?}"),
+    ))
+}
+
+#[allow(clippy::too_many_lines)]
+pub(super) fn build_hash_aggregate(
+    input: &mut PullOperator,
+    input_width: usize,
+    group_by: &[CompiledExpr],
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+    collation: Collation,
+    key_collations: &[Collation],
+) -> Result<MaterializedRows, ExecError> {
+    // Storage predicates are ALSO compiled into Filter operators above the
+    // scan (belt and braces), so a filtered plan is Filter(..(Scan)). Those
+    // filters are exactly scan.predicates, which the scan signature already
+    // covers — walking through them keeps the key sound.
+    fn settled_scan(operator: &PullOperator) -> Option<&PullOperator> {
+        match operator {
+            PullOperator::Scan { .. } => Some(operator),
+            PullOperator::Filter { input, .. } | PullOperator::Profiled { input, .. } => {
+                settled_scan(input)
+            }
+            _ => None,
+        }
+    }
+    let memo_key = settled_aggregate_key(input, group_by, aggregates, collation, key_collations);
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
         eprintln!(
             "[agg] memo key: {:?} (scan found: {})",
@@ -3513,10 +3575,12 @@ pub(super) fn build_hash_aggregate(
             .lock()
             .expect("settled memo lock")
             .get(key)
-            .cloned()
     {
         memory.reserve(entry.payload())?;
         SETTLED_MEMO_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::counters::count(|counters| {
+            counters.settled_memo_hits = counters.settled_memo_hits.saturating_add(1);
+        });
         return Ok(MaterializedRows {
             rows: Vec::new(),
             position: 0,
@@ -3527,11 +3591,12 @@ pub(super) fn build_hash_aggregate(
     if memo_key.is_some() {
         SETTLED_MEMO_MISSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-    if memo_key.is_none()
-        // A bare scan only: the delta rows are raw inserts, and a Filter
-        // above the scan (the delta exists only for a predicate-free scan,
-        // so any Filter is residual) would be skipped by the merge.
-        && let PullOperator::Scan { stream, .. } = super::unprofiled_ref(input)
+    // A bare scan only: the delta rows are raw inserts, and a Filter above
+    // the scan (the delta exists only for a predicate-free scan, so any
+    // Filter is residual) would be skipped by the merge. Tried after a miss
+    // on the memtable's own entry: the merge is kept under that entry, so
+    // the next run over the same memtable is a hit rather than a merge.
+    if let PullOperator::Scan { stream, .. } = super::unprofiled_ref(input)
         && let Some(delta) = stream.insert_only_delta()
         && let Some(signature) = settled_signature(group_by, aggregates)
         && aggregates.iter().all(mergeable_across_disjoint_rows)
@@ -3549,8 +3614,8 @@ pub(super) fn build_hash_aggregate(
         let base = SETTLED_AGGREGATE_MEMO
             .lock()
             .expect("settled memo lock")
-            .get(&key)
-            .map(|entry| entry.rows().to_vec());
+            .get(&key);
+        let base = base.map(|entry| entry.rows().to_vec());
         if let Some(base) = base {
             let row_count = delta.rows.len();
             let columns = (0..delta.types.len())
@@ -3593,6 +3658,12 @@ pub(super) fn build_hash_aggregate(
                 counters.settled_delta_merges = counters.settled_delta_merges.saturating_add(1);
             });
             SETTLED_MEMO_DELTA_MERGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Some(key) = memo_key
+                && merged.len() <= SETTLED_MEMO_MAX_ROWS
+            {
+                let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
+                store_settled(&mut memo, key, merged.clone());
+            }
             return Ok(MaterializedRows {
                 rows: merged,
                 position: 0,
