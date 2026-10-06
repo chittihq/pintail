@@ -5478,6 +5478,7 @@ impl ProjectedScanStream {
         manifest.segments = vec![segment];
         let chunk = TableSnapshot {
             instance: self.snapshot.instance,
+            memtable_changes: 0,
             memtable: Arc::new(BTreeMap::new()),
             memtable_image: Arc::default(),
             memtable_oldest: None,

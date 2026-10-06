@@ -2545,6 +2545,7 @@ impl TableStore {
         register_pinned_manifest(&self.directory, &self.manifest);
         TableSnapshot {
             instance: self.instance,
+            memtable_changes: self.memtable.changes(),
             memtable: self.memtable.snapshot(),
             memtable_image: self.memtable.image(),
             memtable_oldest: self.memtable.oldest_version(),

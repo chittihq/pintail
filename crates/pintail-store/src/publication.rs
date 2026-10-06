@@ -49,6 +49,33 @@ struct Entry {
     /// The table's writer lock, kept by the process while no writer is
     /// open, with when it was released for choosing which lease goes first.
     lease: Option<(File, u64)>,
+    /// Names the run of the table's history this entry has vouched for
+    /// without a break: set when the entry is made, and replaced whenever
+    /// the files may have been swapped for another table's - see
+    /// [`lineage`]. Zero until set.
+    lineage: u64,
+}
+
+impl Entry {
+    fn begin_lineage(&mut self) {
+        self.lineage = crate::store::STORE_INSTANCE.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The table at `directory`'s lineage, while this process holds its lock.
+///
+/// Within one lineage the table's files have changed only through writers
+/// in this process: every change to its segment set published a manifest
+/// of a higher generation, and the directory was never removed, replaced
+/// or moved. A reader that takes the lineage before it opens the table and
+/// finds it unchanged afterwards knows the manifest generation it pinned
+/// names one segment set, the same one any other open of that lineage and
+/// generation pinned. `None` when this process does not hold the lock.
+pub(crate) fn lineage(directory: &Path) -> Option<u64> {
+    registry_read()
+        .get(directory)
+        .filter(|entry| entry.writers > 0 || entry.lease.is_some())
+        .map(|entry| entry.lineage)
 }
 
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Entry>>> = LazyLock::new(Mutex::default);
@@ -186,14 +213,14 @@ fn lease_unwritten(directory: &Path) -> Option<u64> {
         .ok()?;
     fs2::FileExt::try_lock_exclusive(&lock).ok()?;
     let generation = next_generation();
-    registry.insert(
-        directory.to_path_buf(),
-        Entry {
-            writers: 0,
-            generation,
-            lease: Some((lock, generation)),
-        },
-    );
+    let mut entry = Entry {
+        writers: 0,
+        generation,
+        lease: Some((lock, generation)),
+        lineage: 0,
+    };
+    entry.begin_lineage();
+    registry.insert(directory.to_path_buf(), entry);
     PUBLICATION_EPOCH.fetch_add(1, Ordering::AcqRel);
     directories_changed();
     evict_leases(&mut registry);
@@ -219,6 +246,7 @@ pub fn publish_changes_under(path: &Path) {
             return true;
         }
         entry.generation = next_generation();
+        entry.begin_lineage();
         entry.writers > 0
     });
     directories_changed();
@@ -260,6 +288,10 @@ impl Publisher {
                 }
                 if entry.writers == 0 {
                     registry.remove(directory.as_ref());
+                } else {
+                    // The lock file was replaced under an open writer: the
+                    // files are not the ones the lineage vouched for.
+                    entry.begin_lineage();
                 }
             }
         }
@@ -279,6 +311,8 @@ impl Publisher {
                 if !same_file(&leased, lock_path) {
                     if entry.writers == 0 {
                         registry.remove(directory.as_ref());
+                    } else {
+                        entry.begin_lineage();
                     }
                     return Err(error);
                 }
@@ -294,6 +328,10 @@ impl Publisher {
             directories_changed();
         }
         let entry = registry.entry(directory.to_path_buf()).or_default();
+        if entry.writers == 0 {
+            // Nothing vouched for the files before this lock was taken.
+            entry.begin_lineage();
+        }
         entry.writers += 1;
         entry.generation = next_generation();
         Ok(Self {
@@ -326,6 +364,8 @@ impl Publisher {
         let entry = registry.entry(directory.to_path_buf()).or_default();
         entry.writers += 1;
         entry.generation = next_generation();
+        // The files moved here: whatever the path held before is not them.
+        entry.begin_lineage();
         directories_changed();
         self.directory = Arc::from(directory);
     }

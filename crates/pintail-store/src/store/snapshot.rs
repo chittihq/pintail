@@ -31,6 +31,10 @@ use crate::{
 pub struct TableSnapshot {
     /// The opening this snapshot came from; see `TableStore::instance`.
     pub(super) instance: u64,
+    /// Names the memtable's rows within this instance: equal for two
+    /// snapshots of one instance only when their memtables hold the same
+    /// rows. See [`Self::memtable_identity`].
+    pub(super) memtable_changes: u64,
     pub(super) memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>,
     /// The image scans build of `memtable` and share (see
     /// [`super::MemtableImage`]).
@@ -45,6 +49,49 @@ pub struct TableSnapshot {
     /// Bytes the replayed memtable holds, so whoever keeps this snapshot
     /// resident can charge it to a budget.
     pub(super) estimated_bytes: usize,
+}
+
+/// The instance a reader open of `directory` under `schema` carries.
+///
+/// An instance used to be new for every open, so a reader that reopened a
+/// table after any change - a replica reloads one per replicated batch -
+/// could not recognize anything cached against the open before it, even
+/// where the segments it reads are the same files. While this process
+/// holds the table's writer lock, though, the table's files change only
+/// through its writers, which move the manifest generation with every
+/// change to the segment set, and a replacement of the directory moves the
+/// table's lineage ([`crate::publication::lineage`]). So two opens of one
+/// lineage under one schema that pin the same generation read the same
+/// segment rows, and they share the instance. `lineage` is the one taken
+/// before the open read its files; a lineage that moved since, or none at
+/// all, gives the open an instance of its own, as before.
+fn reader_instance(directory: &Path, lineage: Option<u64>, schema: &TableSchema) -> u64 {
+    type Shared = std::collections::HashMap<PathBuf, (u64, TableSchema, u64)>;
+    static SHARED: std::sync::LazyLock<std::sync::Mutex<Shared>> =
+        std::sync::LazyLock::new(std::sync::Mutex::default);
+    let fresh = || super::STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let Some(lineage) =
+        lineage.filter(|lineage| crate::publication::lineage(directory) == Some(*lineage))
+    else {
+        return fresh();
+    };
+    let mut shared = SHARED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // One entry per directory, replaced when its lineage or schema moves:
+    // an open under anything else only goes without the reuse.
+    match shared.get(directory) {
+        Some((held_lineage, held_schema, instance))
+            if *held_lineage == lineage && held_schema == schema =>
+        {
+            *instance
+        }
+        _ => {
+            let instance = fresh();
+            shared.insert(directory.to_path_buf(), (lineage, schema.clone(), instance));
+            instance
+        }
+    }
 }
 
 /// One segment's identity and key span for a grouped fold.
@@ -193,6 +240,23 @@ impl TableSnapshot {
                 self.manifest.generation,
             )
         })
+    }
+
+    /// Names the memtable's rows when it holds any: two snapshots with the
+    /// same instance, manifest generation and memtable identity see the
+    /// same rows. With [`Self::settled_identity`] this lets an exact cache
+    /// keep an answer over a table whose changes have not been flushed yet,
+    /// for as long as no further change arrives. `None` for an empty
+    /// memtable, which the settled identity names on its own.
+    #[must_use]
+    pub fn memtable_identity(&self) -> Option<u64> {
+        (!self.memtable.is_empty()).then_some(self.memtable_changes)
+    }
+
+    /// The generation of the manifest this snapshot pinned.
+    #[must_use]
+    pub fn manifest_generation(&self) -> u64 {
+        self.manifest.generation
     }
 
     /// Per-segment SMAs plus residual memtable rows, when the fold is
@@ -362,6 +426,10 @@ impl TableSnapshot {
     pub fn open(directory: impl AsRef<Path>, schema: TableSchema) -> Result<Self, StoreError> {
         let directory = std::fs::canonicalize(directory.as_ref())
             .map_err(|error| StoreError::io("canonicalize table reader directory", error))?;
+        // Taken before the files are read: a replacement of the directory
+        // published while they are read moves it, and the open then keeps
+        // an instance of its own.
+        let lineage = crate::publication::lineage(&directory);
         for _ in 0..8 {
             let manifest = Arc::new(manifest::load(&directory, &schema)?);
             register_pinned_manifest(&directory, &manifest);
@@ -395,8 +463,14 @@ impl TableSnapshot {
                 return Err(error);
             }
             let estimated_bytes = memtable.estimated_bytes();
+            let instance = reader_instance(&directory, lineage, &schema);
             return Ok(Self {
-                instance: super::STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                instance,
+                // Each open replays the WAL for itself, so two opens agree
+                // on their rows only by accident: the memtable is named by
+                // the open, never shared.
+                memtable_changes: super::STORE_INSTANCE
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 memtable: memtable.snapshot(),
                 memtable_image: memtable.image(),
                 memtable_oldest: memtable.oldest_version(),
@@ -418,6 +492,7 @@ impl TableSnapshot {
     pub fn empty(directory: impl Into<PathBuf>, schema: TableSchema) -> Self {
         Self {
             instance: super::STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            memtable_changes: 0,
             memtable: Arc::new(BTreeMap::new()),
             memtable_image: Arc::default(),
             memtable_oldest: None,

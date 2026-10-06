@@ -15,6 +15,10 @@ pub(crate) struct Memtable {
     /// The image scans build of the rows as they are now; replaced when a
     /// write changes rows a scan has read through it or may yet.
     image: Arc<crate::store::MemtableImage>,
+    /// Moves with every change to the rows - an applied row or a clear -
+    /// and never goes back, so two moments of one memtable that report the
+    /// same count hold the same rows.
+    changes: u64,
 }
 
 impl Memtable {
@@ -46,6 +50,7 @@ impl Memtable {
         if Arc::strong_count(&self.image) > 1 || self.image.is_built() {
             self.image = Arc::default();
         }
+        self.changes = self.changes.wrapping_add(1);
         self.oldest_version = Some(
             self.oldest_version
                 .map_or(version, |oldest| oldest.min(version)),
@@ -101,7 +106,13 @@ impl Memtable {
         self.newest_version
     }
 
+    /// How many times the rows have changed; see `changes`.
+    pub(crate) fn changes(&self) -> u64 {
+        self.changes
+    }
+
     pub(crate) fn clear(&mut self) {
+        self.changes = self.changes.wrapping_add(1);
         self.rows = Arc::new(BTreeMap::new());
         self.image = Arc::default();
         self.estimated_bytes = 0;
