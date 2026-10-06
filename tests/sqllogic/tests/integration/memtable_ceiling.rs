@@ -137,9 +137,13 @@ const CASES: [(&str, &str, u64); 4] = [
 #[test]
 fn a_wide_memtable_table_answers_under_every_ceiling() {
     let (_directory, table) = table(GROUPS);
+    // The same rows in another directory: the settled memo names a memtable
+    // by its table, so the reference run over the twin leaves no entry the
+    // ceiling runs below could replay instead of executing.
+    let (_twin_directory, twin) = self::table(GROUPS);
     let mut failures = Vec::new();
     for (family, sql, expected) in CASES {
-        let (reference, _) = run(&table, 256 * MIB, sql).expect("roomy run");
+        let (reference, _) = run(&twin, 256 * MIB, sql).expect("roomy run");
         assert_eq!(
             reference.len(),
             usize::try_from(expected).expect("rows"),
@@ -160,6 +164,23 @@ fn a_wide_memtable_table_answers_under_every_ceiling() {
                     }
                 }
                 Err(error) => failures.push(format!("{family} at {limit}: {error}")),
+            }
+        }
+        // Once a roomy run over this table has kept its answer, every
+        // ceiling still answers: a replay is taken only where it fits, and
+        // the operators above it are not charged for its rows twice.
+        run(&table, 256 * MIB, sql).expect("roomy run over the table");
+        for limit in [12 * MIB, 16 * MIB, 24 * MIB, 64 * MIB] {
+            match run(&table, limit, sql) {
+                Ok((rows, _)) if rows != reference => {
+                    failures.push(format!(
+                        "{family} at {limit} after a kept answer: rows differ"
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    failures.push(format!("{family} at {limit} after a kept answer: {error}"));
+                }
             }
         }
     }
