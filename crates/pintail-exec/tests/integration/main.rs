@@ -122,6 +122,7 @@ mod settled_delta_memo;
 mod settled_memo_filter;
 mod settled_memo_group_concat;
 mod settled_memo_identity;
+mod settled_memo_memtable;
 mod settled_memo_scale;
 mod shared_or_join_condition;
 mod side_index;
