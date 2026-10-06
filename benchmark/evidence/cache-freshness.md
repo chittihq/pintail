@@ -149,3 +149,58 @@ ClickHouse drop-mode coordination, charged to that mode:
   a floor. The freshness rows compare a Pintail that was mostly executing
   with a ClickHouse that was caching; the *cache warm before* column says
   which, per event.
+
+## After: the memo over a changed memtable, and kept top-k answers
+
+The two weaknesses above, fixed and measured again with the same command,
+scale and image recipe (a plain release build in a runtime image), on the
+same kind of host (8-vCPU cloud host, AMD Ryzen 9 9950X). The machine-readable
+data of this run is not banked; `cache-freshness.json` is the run above.
+
+- **Why the memo did not come back.** Partly by design and partly a defect.
+  The memo keyed an entry by the table's manifest generation and served
+  only a snapshot whose memtable was empty, so after an update or a delete
+  it could not answer until a flush, and the replicated table did not flush
+  within the 60 s the harness waited. The insert-only delta merge, meant to
+  cover inserts, could not help these queries (it does not merge a DECIMAL
+  SUM or an AVG), and in the server it could not run at all: the replica
+  reopens its reader after every change, each open was a new store
+  instance, and the base entry the merge extends was keyed by the old one.
+- **What changed.** The store names a memtable's rows (a writer counts its
+  changes; a reader open is named by the open), and a scan over a non-empty
+  memtable carries that name in its memo key: the first aggregate after a
+  change executes and the next ones are hits, until the next change. While
+  the process holds a table's lock, reader opens of one lineage share an
+  instance, so the delta merge finds its base after a reload. A limited
+  sort over a memoized aggregate keeps its own answer under the aggregate's
+  key, so a hit serves the kept rows instead of ordering every group again.
+
+Static phase, memo hits (15/15 hits on every shape, all exact):
+
+| Query | Before | After |
+|---|---:|---:|
+| Top 10 spenders | 11 ms | 0.5 ms |
+| Other seven shapes | 1-1.9 ms | 0.4-0.7 ms |
+
+The other shapes' hits did not change in code, so their own drop (about
+2.5×) is the run-to-run state of the host; the Top 10 spenders hit moved
+from about 8× the other shapes to the same as them.
+
+Freshness phase, Pintail only (count-and-total / group-by-status):
+
+| Mode | Change | Warm hit before | Warm-up took | First correct took | Steady after (hits) |
+|---|---|:-:|---:|---:|---:|
+| TTL | insert | yes | 283 ms | 1.2 / 4.6 ms | 1.2 / 1.2 ms (5/5, 5/5) |
+| TTL | update | yes | 13 ms | 2.3 / 3.6 ms | 0.7 / 0.7 ms (5/5, 5/5) |
+| TTL | delete | yes | 14 ms | 2.5 / 4.5 ms | 0.7 / 0.8 ms (5/5, 5/5) |
+| drop | insert | yes | 12 ms | 2.7 / 4.3 ms | 1 / 0.9 ms (5/5, 5/5) |
+| drop | update | yes | 15 ms | 4.4 / 6 ms | 1.1 / 1 ms (5/5, 5/5) |
+| drop | delete | yes | 14 ms | 4.1 / 5.3 ms | 0.8 / 0.8 ms (5/5, 5/5) |
+
+Before, the memo was warm going into 1 of 6 changes and served 0 of the
+answers after any change. After, it was warm going into all 6 - within
+15 ms of the warm-up starting, one execution and then a hit - and served
+every steady-state answer after every change. The first correct answer
+after a change is still an execution (1.2-6 ms), as ClickHouse's is.
+Pintail served no stale and no wrong answer; its visibility delay (0.5-4 s)
+is its CDC cycle, as before.
