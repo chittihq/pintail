@@ -15,7 +15,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   insert-only delta merge now works in the server. An `ORDER BY ... LIMIT`
   over a memoized aggregate is answered from its kept rows (a top-10 over
   100,000 groups went from 11 ms to 0.5 ms per hit). The memo evicts its
-  least recently used entry instead of clearing itself when full.
+  least recently used entry instead of clearing itself when full. A kept
+  answer is replayed only when it fits the statement's memory ceiling, and
+  is otherwise executed and spilled; a replay gives back its reservation
+  as it hands rows on.
 - Foreign-key cascade repair follows the parent's delete and key-change
   events: it repairs parent keys that were reused or `REPLACE`d and
   `ON UPDATE CASCADE` into a child's key, isolates each table's failure,
