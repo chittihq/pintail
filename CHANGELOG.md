@@ -16,6 +16,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   freshness after inserts, updates and deletes under ClickHouse's TTL
   expiry and under an explicit cache drop, separating replication delay
   from cache staleness (`benchmark/evidence/cache-freshness.md`, #36).
+- The new-database wizard sets the reconcile interval and names the
+  selected tables a foreign-key action reaches. Each cascade reconciliation
+  pass logs, per table, the rows it compared, verified, tombstoned and
+  refreshed and its elapsed time, and the table list reports
+  `last_reconcile_at`. `MTR_CASCADE=1` replays MySQL's own foreign-key
+  action tests through change capture, and `benchmark/evidence/fk-cascade-drift.md`
+  measures how far cascades drift and what their repair costs (#29).
 
 ### Fixed
 
@@ -29,6 +36,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rather than the server default. Under a non-default `collation_connection`
   the two could otherwise disagree on a comparison with no column collation
   of its own; no wrong answer was reproduced on the current tree (#42).
+- A zero poll or reconcile interval is refused as a client error (400)
+  instead of failing as a server error (500).
 
 ## [0.1.8-rc2] - 2026-10-05
 
