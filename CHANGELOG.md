@@ -16,6 +16,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   over a memoized aggregate is answered from its kept rows (a top-10 over
   100,000 groups went from 11 ms to 0.5 ms per hit). The memo evicts its
   least recently used entry instead of clearing itself when full.
+- Foreign-key cascade repair follows the parent's delete and key-change
+  events: it repairs parent keys that were reused or `REPLACE`d and
+  `ON UPDATE CASCADE` into a child's key, isolates each table's failure,
+  and recopies a keyless child under `auto_resync`. The pass plans beside
+  replication instead of blocking it (135 s to 1.5 s at 10M child rows, a
+  pass with nothing queued reads nothing), and flagged tables repair every
+  max(30 s, 4 x the last pass), capped by `reconcile_interval_seconds`.
+  Stale cascade rows now last 25 s at the median instead of 375 s. The
+  metadata schema moves to version 26 (#29).
 
 ### Added
 
