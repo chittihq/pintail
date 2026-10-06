@@ -18,10 +18,12 @@
 ///   cost   - one cascade pass over child tables of each size, on an idle
 ///            server: wall time (from the server's own log line), process
 ///            CPU, peak resident memory, rows compared and verified.
-///   checks - shapes the repair must get right or provably gets wrong:
-///            `foreign_key_checks = 0` deletes (no cascade at the source),
-///            a parent key deleted and inserted again before a pass, REPLACE
-///            on a parent, and a composite parent key moved then reused.
+///   checks - shapes the repair must get right: `foreign_key_checks = 0`
+///            deletes (no cascade at the source), a parent key deleted and
+///            inserted again before a pass, REPLACE on a parent (also
+///            through two levels), a composite parent key moved then reused,
+///            `ON UPDATE CASCADE` into a child's primary key (then the old
+///            key reused), and a child without a key beside keyed ones.
 ///
 /// Linux only: it reads the server's CPU and memory from /proc.
 ///
@@ -127,15 +129,21 @@ interface PassLine {
   tombstoned: number
   refreshed: number
   elapsedMs: number
+  /// The part of the pass the replication cycle waited for (absent before
+  /// the pass moved off the cycle, when all of it was).
+  applyMs?: number
 }
 function passes(db: string, since: number): PassLine[] {
   readLog()
   const out: PassLine[] = []
   for (const { at, line } of logLines) {
     if (at < since) continue
-    const m = /cascade reconcile db=(\S+) tables=(\d+) rows_compared=(\d+) tombstoned=(\d+) refreshed=(\d+) elapsed_ms=(\d+)/.exec(line)
+    const m = /cascade reconcile db=(\S+) tables=(\d+) rows_compared=(\d+) tombstoned=(\d+) refreshed=(\d+) elapsed_ms=(\d+)(?: apply_ms=(\d+))?/.exec(line)
     if (m && m[1] === db) {
-      out.push({ at, db, tables: Number(m[2]), rowsCompared: Number(m[3]), tombstoned: Number(m[4]), refreshed: Number(m[5]), elapsedMs: Number(m[6]) })
+      out.push({
+        at, db, tables: Number(m[2]), rowsCompared: Number(m[3]), tombstoned: Number(m[4]), refreshed: Number(m[5]), elapsedMs: Number(m[6]),
+        applyMs: m[7] === undefined ? undefined : Number(m[7]),
+      })
     }
   }
   return out
@@ -217,9 +225,12 @@ interface Mirror {
   id: string
   schema: string
   wire: mysql.Connection
+  /// What a keyless table the stream cannot follow gets: kept quarantined
+  /// for an operator (the default) or recopied automatically.
+  keylessPolicy: string
 }
 
-async function mirror(schema: string, intervalS: number): Promise<Mirror> {
+async function mirror(schema: string, intervalS: number, keylessPolicy = 'quarantine'): Promise<Mirror> {
   const created = await api<{ id: string }>('/api/databases', {
     method: 'POST',
     body: {
@@ -227,6 +238,7 @@ async function mirror(schema: string, intervalS: number): Promise<Mirror> {
       dsn: `mysql://root:pintail-root@${dsnHost(mysqlHost)}:${mysqlPort}/${schema}`,
       mode: 'cdc',
       reconcile_interval_seconds: intervalS,
+      keyless_policy: keylessPolicy,
     },
   })
   // The snapshot copies what the probe found.
@@ -247,11 +259,11 @@ async function mirror(schema: string, intervalS: number): Promise<Mirror> {
     host: '127.0.0.1', port: wirePort, user: schema, password: key.secret, database: schema,
     supportBigNumbers: true, bigNumberStrings: true, dateStrings: true,
   })
-  return { id: created.id, schema, wire }
+  return { id: created.id, schema, wire, keylessPolicy }
 }
 
 async function setInterval_(m: Mirror, seconds: number) {
-  await api(`/api/databases/${m.id}`, { method: 'PUT', body: { name: m.schema, mode: 'cdc', reconcile_interval_seconds: seconds } })
+  await api(`/api/databases/${m.id}`, { method: 'PUT', body: { name: m.schema, mode: 'cdc', reconcile_interval_seconds: seconds, keyless_policy: m.keylessPolicy } })
 }
 
 /// Writes a marker on the source and waits for the mirror to show it:
@@ -278,13 +290,36 @@ const CHILDREN: Record<string, { sql: string; keyColumns: number }> = {
   stock_slot: { sql: 'SELECT id, region, code, qty FROM stock_slot', keyColumns: 1 },
 }
 
+/// Children only the checks phase creates: an `ON UPDATE CASCADE` into a
+/// child's primary key, and a cascade-affected child without any key
+/// (compared as a multiset: keyColumns 0).
+const CHECK_CHILDREN: Record<string, { sql: string; keyColumns: number }> = {
+  ...CHILDREN,
+  slot_lot: { sql: 'SELECT region, code, lot, qty FROM slot_lot', keyColumns: 3 },
+  item_note: { sql: 'SELECT item_id, body FROM item_note', keyColumns: 0 },
+}
+const CHECK_SCHEMA = [
+  'CREATE TABLE slot_lot (region CHAR(2) NOT NULL, code INT NOT NULL, lot INT NOT NULL, qty INT NOT NULL, PRIMARY KEY (region, code, lot), ' +
+    'FOREIGN KEY (region, code) REFERENCES depot (region, code) ON DELETE CASCADE ON UPDATE CASCADE)',
+  'CREATE TABLE item_note (item_id BIGINT NOT NULL, body VARCHAR(16) NOT NULL, FOREIGN KEY (item_id) REFERENCES catalog_item (id) ON DELETE CASCADE)',
+]
+
 async function dump(connection: mysql.Connection, table: string): Promise<Map<string, string>> {
-  const [rows] = await connection.query({ sql: CHILDREN[table]!.sql, rowsAsArray: true })
-  const k = CHILDREN[table]!.keyColumns
+  const spec = CHECK_CHILDREN[table]!
+  const [rows] = await connection.query({ sql: spec.sql, rowsAsArray: true })
+  const k = spec.keyColumns
   const out = new Map<string, string>()
   for (const row of rows as unknown[][]) {
     const text = row.map((v) => (v === null ? 'NULL' : String(v)))
-    out.set(text.slice(0, k).join('|'), text.slice(k).join('|'))
+    if (k === 0) {
+      // No key: each distinct row is a key, numbered by occurrence.
+      const whole = text.join('|')
+      let n = 0
+      while (out.has(`${whole}#${n}`)) n += 1
+      out.set(`${whole}#${n}`, '')
+    } else {
+      out.set(text.slice(0, k).join('|'), text.slice(k).join('|'))
+    }
   }
   return out
 }
@@ -688,6 +723,14 @@ async function phaseCost() {
     log(`cost ${size}: copied and first pass done in ${((Date.now() - copying) / 1000).toFixed(0)}s`)
     const idleRate = await waitIdle()
     const measured: Record<string, unknown>[] = []
+    // The first pass a process runs on a table also sweeps it for children
+    // whose parent the replica lacks; later passes read only what the stream
+    // queued.
+    const first = passes(m.id, copying)[0]
+    if (first) {
+      measured.push({ label: 'first pass (sweep)', elapsedMs: first.elapsedMs, applyMs: first.applyMs, rowsCompared: first.rowsCompared, tombstoned: first.tombstoned })
+      log(`cost ${size} (first pass, sweep): ${first.elapsedMs}ms work, ${first.applyMs ?? first.elapsedMs}ms in the cycle, ${first.rowsCompared} rows compared`)
+    }
     // Pass 1 repairs a cascade over 1% of the vendors (1% of the items and
     // their tags); pass 2 finds nothing to repair.
     const doomed = Math.max(1, Math.floor(vendors / 100))
@@ -709,6 +752,7 @@ async function phaseCost() {
       measured.push({
         label,
         elapsedMs: pass.elapsedMs,
+        applyMs: pass.applyMs,
         cpuS: Number(cpuS.toFixed(2)),
         rssBeforeMb: Number(before.rssMb.toFixed(0)),
         peakRssMb: Number(w.peakRssMb.toFixed(0)),
@@ -718,7 +762,7 @@ async function phaseCost() {
         refreshed: pass.refreshed,
         perTable,
       })
-      log(`cost ${size} (${label}): ${pass.elapsedMs}ms, ${cpuS.toFixed(2)} CPU-s, peak RSS +${(w.peakRssMb - before.rssMb).toFixed(0)}MB, ${pass.rowsCompared} rows compared, ${pass.tombstoned} tombstoned`)
+      log(`cost ${size} (${label}): ${pass.elapsedMs}ms (${pass.applyMs ?? pass.elapsedMs}ms in the cycle), ${cpuS.toFixed(2)} CPU-s, peak RSS +${(w.peakRssMb - before.rssMb).toFixed(0)}MB, ${pass.rowsCompared} rows compared, ${pass.tombstoned} tombstoned`)
       await waitIdle()
     }
     const [[sourceItems]] = (await source.query({ sql: 'SELECT COUNT(*) FROM catalog_item', rowsAsArray: true })) as unknown as [[[string]]]
@@ -740,7 +784,12 @@ async function phaseChecks() {
   const schema = 'fk_checks'
   await createSchema(schema)
   await seed(schema, 2_000, 20, 2, 40, 10)
-  const m = await mirror(schema, IDLE_INTERVAL_S)
+  for (const statement of CHECK_SCHEMA) {
+    await sql(statement.replace(/^CREATE TABLE /, `CREATE TABLE ${schema}.`).replace(/REFERENCES (\w+)/, `REFERENCES ${schema}.$1`))
+  }
+  await sql(`INSERT INTO ${schema}.slot_lot SELECT d.region, d.code, s.n, s.n + 1 FROM ${schema}.depot d, ${schema}.seed s WHERE s.n < 3`)
+  await sql(`INSERT INTO ${schema}.item_note SELECT id, CONCAT('n', id % 7) FROM ${schema}.catalog_item WHERE id % 5 = 0`)
+  const m = await mirror(schema, IDLE_INTERVAL_S, 'auto_resync')
   const source = await connect(schema)
   const checks: Record<string, unknown>[] = []
 
@@ -759,7 +808,7 @@ async function phaseChecks() {
   const compare = async () => {
     const out: Record<string, { ahead: number; behind: number; differing: number }> = {}
     lastKeys = new Set()
-    for (const table of Object.keys(CHILDREN)) {
+    for (const table of Object.keys(CHECK_CHILDREN)) {
       const d = diff(await dump(source, table), await dump(m.wire, table))
       const fresh = d.keys.filter((key) => !residual.has(`${table}:${key}`))
       for (const key of d.keys) lastKeys.add(`${table}:${key}`)
@@ -773,12 +822,32 @@ async function phaseChecks() {
   }
   const clean = (d: Record<string, { ahead: number; behind: number; differing: number }>) =>
     Object.values(d).every((x) => x.ahead + x.behind + x.differing === 0)
+  /// A keyless child is repaired by a recopy, which the supervisor starts
+  /// after the pass: give it a minute to land before comparing.
+  const settled = async () => {
+    const deadline = Date.now() + 60_000
+    for (;;) {
+      let out: Awaited<ReturnType<typeof compare>>
+      try {
+        out = await compare()
+      } catch (error) {
+        // The table being recopied may refuse reads until the copy lands.
+        if (Date.now() > deadline) throw error
+        await Bun.sleep(1_000)
+        continue
+      }
+      if (clean(out) || Date.now() > deadline) return out
+      const keyed = Object.entries(out).every(([table, x]) => table === 'item_note' || x.ahead + x.behind + x.differing === 0)
+      if (!keyed) return out
+      await Bun.sleep(1_000)
+    }
+  }
   const check = async (name: string, expectation: string, act: () => Promise<void>) => {
     await act()
     await catchUp(m, source)
     const beforePass = await compare()
     const first = await forcePass()
-    const afterPass = await compare()
+    const afterPass = await settled()
     const second = await forcePass()
     const afterSecond = await compare()
     residual = lastKeys
@@ -819,6 +888,19 @@ async function phaseChecks() {
   })
   await check('composite key moved', 'ON UPDATE CASCADE moves the slots to the new key', async () => {
     await source.query("UPDATE depot SET code = 9002 WHERE region = 'sa' AND code = 3")
+  })
+  await check('ON UPDATE CASCADE into a child key', 'the lots move to the new depot key, which is part of their own primary key', async () => {
+    await source.query("UPDATE depot SET code = 9003 WHERE region = 'na' AND code = 4")
+  })
+  await check('child key moved, then the old key reused', 'the lots move away and a new depot takes the old key without lots', async () => {
+    await source.query("UPDATE depot SET code = 9004 WHERE region = 'eu' AND code = 5")
+    await source.query("INSERT INTO depot VALUES ('eu', 5)")
+  })
+  await check('keyless child beside keyed ones', 'a cascade into a child without a key is recopied; its keyed siblings are repaired in the same pass', async () => {
+    await source.query('DELETE FROM vendor WHERE id IN (40, 41)')
+  })
+  await check('REPLACE through two levels', 'REPLACE on a vendor cascades to its items and their tags and notes', async () => {
+    await source.query("REPLACE INTO vendor VALUES (50, 'replaced')")
   })
   await source.end()
   await m.wire.end()

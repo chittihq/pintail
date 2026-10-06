@@ -75,6 +75,9 @@ await writer.query(`
   CREATE TABLE scratch (id INT PRIMARY KEY, v INT NOT NULL);
   CREATE TABLE shape (id INT PRIMARY KEY, v INT NOT NULL);
   CREATE TABLE epoch (id INT PRIMARY KEY, n BIGINT NOT NULL);
+  CREATE TABLE crate_box (id INT PRIMARY KEY, gen INT NOT NULL);
+  CREATE TABLE crate_item (id INT PRIMARY KEY, crate_id INT NOT NULL, v INT NOT NULL,
+    FOREIGN KEY (crate_id) REFERENCES crate_box (id) ON DELETE CASCADE);
   INSERT INTO epoch VALUES (1, 0);
   SET SESSION cte_max_recursion_depth = 10000000;
   INSERT INTO journal WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < ${journalSeed})
@@ -84,7 +87,11 @@ await writer.query(`
   INSERT INTO pairs WITH RECURSIVE s(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM s WHERE i < 39999)
     SELECT 1 + i DIV 20, 1 + i % 20, i, NULL FROM s;
   INSERT INTO shape WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < 5000)
-    SELECT i, i FROM s;`)
+    SELECT i, i FROM s;
+  INSERT INTO crate_box WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < 500)
+    SELECT i, 0 FROM s;
+  INSERT INTO crate_item WITH RECURSIVE s(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM s WHERE i < 2499)
+    SELECT 100 + i, 1 + i DIV 5, i FROM s;`)
 
 // ---------------------------------------------------------------- replica
 const httpPort = await freePort()
@@ -134,7 +141,9 @@ async function api<T>(path: string, body?: unknown, method = body === undefined 
 spawnServer('')
 if (!await healthy()) throw new Error('the replica did not start')
 token = (await api<{ token: string }>('/api/auth/setup', { email: 'chaos@example.invalid', password: 'chaos-lane-password' })).token
-const database = (await api<{ id: string }>('/api/databases', { name: schema, mode: 'cdc', keyless_policy: 'auto_resync',
+// A ten-second reconcile interval caps the cascade pass's adaptive interval,
+// so the items converge well inside the checker's deadline.
+const database = (await api<{ id: string }>('/api/databases', { name: schema, mode: 'cdc', keyless_policy: 'auto_resync', reconcile_interval_seconds: 10,
   dsn: `mysql://pintail:pintail@${dsnHost(source.host)}:${source.port}/${schema}` })).id
 await api(`/api/databases/${database}/probe`)
 const key = (await api<{ secret: string }>(`/api/databases/${database}/api-keys`, { name: 'chaos', scopes: ['read', 'query'] })).secret
@@ -215,6 +224,23 @@ function scratchOp(truncates = true): Op {
   const values = Array.from({ length: between(10, 200) }, () => `(${nextScratch++},${transactions})`).join(',')
   return { sql: `INSERT INTO scratch VALUES ${values}` }
 }
+/// Parents whose `ON DELETE CASCADE` reaches their items inside the source's
+/// storage engine, with no row event for the items: deleted, replaced and
+/// deleted-then-inserted under the same key. Only the cascade pass, running
+/// beside replication and through every kill, makes the items converge.
+let nextCrate = 501
+function cratesOp(): Op {
+  const roll = rand(), id = between(1, nextCrate - 1)
+  if (roll < 0.3) {
+    const crate = nextCrate++
+    const items = Array.from({ length: between(1, 12) }, (_, index) => `(${crate * 100 + index},${crate},${transactions})`).join(',')
+    return { sql: `INSERT INTO crate_box VALUES (${crate},${transactions}); INSERT INTO crate_item VALUES ${items}` }
+  }
+  if (roll < 0.5) return { sql: `DELETE FROM crate_box WHERE id BETWEEN ${id} AND ${id + between(0, 3)}` }
+  if (roll < 0.65) return { sql: `REPLACE INTO crate_box VALUES (${id},${transactions})` }
+  if (roll < 0.75) return { sql: `DELETE FROM crate_box WHERE id = ${id}; INSERT IGNORE INTO crate_box VALUES (${id},${transactions})` }
+  return { sql: `UPDATE crate_item SET v = v + 1 WHERE crate_id BETWEEN ${id} AND ${id + 5}` }
+}
 function shapeOp(): Op {
   const from = between(1, 4900)
   const set = shapeColumns.length ? `, ${pick(shapeColumns)} = id % 7` : ''
@@ -237,7 +263,7 @@ async function writeLoop() {
     transactions++
     const roll = rand()
     if (alterAllowed && roll < 0.004) { alterAllowed = false; await alterShape(); continue }
-    const op = (truncates = true) => { const r = rand(); return r < 0.5 ? journalOp() : r < 0.7 ? slotsOp() : r < 0.87 ? pairsOp() : r < 0.94 ? scratchOp(truncates) : shapeOp() }
+    const op = (truncates = true) => { const r = rand(); return r < 0.47 ? journalOp() : r < 0.67 ? slotsOp() : r < 0.84 ? pairsOp() : r < 0.89 ? cratesOp() : r < 0.95 ? scratchOp(truncates) : shapeOp() }
     if (roll < 0.04) {
       // Rolled back: nothing of it may reach the replica.
       await write(`START TRANSACTION; ${slotsOp().sql}; ${pairsOp().sql}; ${shapeOp().sql}; ROLLBACK`)
@@ -313,7 +339,7 @@ async function tableDiff(table: string): Promise<string | undefined> {
   const index = want.findIndex((row, i) => row !== got[i])
   return index < 0 ? undefined : `${table}: row ${index} source=${want[index]} replica=${got[index]}`
 }
-const tables = ['journal', 'slots', 'pairs', 'scratch', 'shape', 'epoch']
+const tables = ['journal', 'slots', 'pairs', 'scratch', 'shape', 'epoch', 'crate_box', 'crate_item']
 async function parity(): Promise<string[]> {
   const diffs: string[] = []
   for (const table of tables) {
