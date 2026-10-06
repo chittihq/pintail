@@ -864,12 +864,16 @@ struct CascadeSchedule {
     /// the replica no longer holds, which covers parent changes from before
     /// the queue of parent keys existed or while it was not being written.
     swept: HashSet<(String, String)>,
+    /// How many times each database's sweeps were forgotten: a pass planned
+    /// before one is not taken as the sweep that followed it.
+    forgotten: HashMap<String, u64>,
 }
 
 /// A pass whose planning half is running off the replication cycle.
 struct CascadeInFlight {
     handle: tokio::task::JoinHandle<CascadePlan>,
     sweep: BTreeSet<String>,
+    forgotten: u64,
     started: std::time::Instant,
 }
 
@@ -946,7 +950,7 @@ fn cascade_reconciliation_due(
     metadata_path: &Path,
     database: &DatabaseRecord,
     report: &ProbeReport,
-    last_ms: &HashMap<(String, String), u64>,
+    schedule: &mut CascadeSchedule,
 ) -> Result<Vec<String>, String> {
     let flagged = report
         .tables
@@ -959,6 +963,26 @@ fn cascade_reconciliation_due(
     }
     let metadata = MetaStore::open(metadata_path).map_err(display)?;
     let records = metadata.tables(&database.id).map_err(display)?;
+    // A parent the stream is not following - quarantined, paused, or being
+    // copied - has its deletes applied by a recopy, which queues no keys.
+    // Its children are swept again on the first pass after it is back.
+    for record in records.iter().filter(|record| {
+        record.state == "needs_resync" || record.paused.is_some() || !record.copy_complete
+    }) {
+        for child in report.tables.iter().filter(|child| {
+            child.requires_reconciliation
+                && child
+                    .foreign_keys
+                    .iter()
+                    .any(|key| key.referenced_table.eq_ignore_ascii_case(&record.name))
+        }) {
+            schedule
+                .swept
+                .remove(&(database.id.clone(), child.name.to_ascii_lowercase()));
+            *schedule.forgotten.entry(database.id.clone()).or_default() += 1;
+        }
+    }
+    let last_ms = &schedule.last_ms;
     Ok(records
         .into_iter()
         .filter(|record| {
@@ -1003,11 +1027,10 @@ fn start_cascade_plan(
     targets: &[CdcTarget],
 ) {
     let mut schedule = cascade_schedule();
-    if schedule.in_flight.contains_key(&database.id) {
-        return;
-    }
-    let due = match cascade_reconciliation_due(metadata_path, database, report, &schedule.last_ms) {
-        Ok(due) if !due.is_empty() => due,
+    // Read every cycle, even with a pass in flight: it also notices parents
+    // the stream stopped following.
+    let due = match cascade_reconciliation_due(metadata_path, database, report, &mut schedule) {
+        Ok(due) if !due.is_empty() && !schedule.in_flight.contains_key(&database.id) => due,
         Ok(_) => return,
         Err(error) => {
             pintail_log::log_error!(
@@ -1061,6 +1084,7 @@ fn start_cascade_plan(
         })
         .collect::<Vec<_>>();
     let planned_sweep = sweep.clone();
+    let forgotten = schedule.forgotten.get(&database.id).copied().unwrap_or(0);
     let handle = tokio::task::spawn_blocking(move || {
         plan_cascade_pass(&tables, &queues, &due, &planned_sweep)
     });
@@ -1069,6 +1093,7 @@ fn start_cascade_plan(
         CascadeInFlight {
             handle,
             sweep,
+            forgotten,
             started: std::time::Instant::now(),
         },
     );
@@ -1182,10 +1207,12 @@ async fn finish_cascade_pass(
                 if table.error.is_none() {
                     let key = (database.id.clone(), table.table.to_ascii_lowercase());
                     schedule.last_ms.insert(key.clone(), table.elapsed_ms);
-                    if in_flight
-                        .sweep
-                        .iter()
-                        .any(|swept| swept.eq_ignore_ascii_case(&table.table))
+                    if schedule.forgotten.get(&database.id).copied().unwrap_or(0)
+                        == in_flight.forgotten
+                        && in_flight
+                            .sweep
+                            .iter()
+                            .any(|swept| swept.eq_ignore_ascii_case(&table.table))
                     {
                         schedule.swept.insert(key);
                     }
