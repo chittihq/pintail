@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The settled-result memo now serves a table whose latest changes are
+  still in its memtable: after an insert, update or delete the first
+  aggregate executes and repeats are hits, instead of executing until the
+  next flush. Reopened replica readers keep their memo entries, so the
+  insert-only delta merge now works in the server. An `ORDER BY ... LIMIT`
+  over a memoized aggregate is answered from its kept rows (a top-10 over
+  100,000 groups went from 11 ms to 0.5 ms per hit). The memo evicts its
+  least recently used entry instead of clearing itself when full.
+
 ### Added
 
 - `/metrics` exposes `pintail_settled_memo_{hits,misses,stores,delta_merges}_total`,
