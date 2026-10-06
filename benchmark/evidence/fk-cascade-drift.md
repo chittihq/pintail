@@ -181,3 +181,85 @@ Options, in the order they pay back:
 
 Raw results (per-sample series, per-pass log lines) are written by the
 harness to `validate-out/fk-cascade-drift/<run>/` and are not committed.
+
+## After: repair from parent events, planned beside the stream
+
+Options 1(a)-(c), 2 and 3 above, implemented (`docs/decisions.md`, "Cascade
+repair follows the parent's events, beside the stream"). The stream queues
+the parent keys it deletes or moves per flagged child; a pass plans its
+candidates from them on a blocking thread beside the stream, and applies
+the repairs inside a later cycle. Flagged tables run at max(30 s, 4 x the
+last pass), capped by `reconcile_interval_seconds`. Same host and harness;
+the harness gained the shapes below and reports the part of each pass the
+replication cycle waited for (`apply_ms`).
+
+### Shapes (checks phase)
+
+Every shape is exact after one pass and after a second:
+
+| Shape | Before | After one pass |
+|---|---|---|
+| `foreign_key_checks = 0` delete, orphans through later passes | exact | exact |
+| Plain cascade, both levels, and `SET NULL` | exact | exact |
+| Parent deleted and inserted again with the same key | wrong | exact |
+| `REPLACE` on a parent, and through two levels | wrong | exact |
+| Two-column parent key moved then reused | wrong | exact |
+| `ON UPDATE CASCADE` into a child's primary key | wrong | exact |
+| The same, then the old parent key reused | - | exact |
+| A child without a key beside keyed ones | pass failed for all | keyed exact in the pass; keyless recopied (`keyless_policy` `auto_resync`) |
+
+### MySQL's tests (the same 101 compared SELECTs)
+
+| Outcome | Engine suite before / after | Main suite before / after |
+|---|---:|---:|
+| Exact right after catch-up | 88 / 89 | 6 / 7 |
+| Stale until one pass, then exact | 2 / 5 | 0 / 0 |
+| Still wrong after the pass | 2 / 0 | 0 / 0 |
+| Pass never completed | 2 / 0 | 1 / 0 |
+
+### Drift under concurrent writers
+
+`reconcile_interval_seconds` 600, which now caps the flagged tables'
+adaptive interval rather than setting it; their passes ran every 30 s.
+16 minutes, 65 samples, the same writer mix.
+
+| | Before (600 s) | Before (60 s) | After (600 s cap, adaptive) |
+|---|---:|---:|---:|
+| Stale child rows after catch-up: mean / max | 41,348 / 90,156 | 3,649 / 5,612 | 3,148 / 7,864 |
+| Stale-row lifetime p50 / p90 / max | 375 / 580 / 640 s | 70 / 100 / 170 s | 25 / 30 / 75 s |
+| Catch-up median / max | 4.7 / 49.7 s | 4.7 / 44.8 s | 4.7 / 5.4 s |
+| One pass over all three children | - | 42-53 s | 82-153 ms (697 ms the first, which sweeps) |
+| ... of which the replication cycle waited | all of it | all of it | 23-88 ms (632 ms the first) |
+
+Nothing read behind after catch-up (0 rows). No sample waited longer than
+5.4 s to catch up. What staleness remains is the 30-second floor of the
+interval, not the pass.
+
+### Cost of one pass, idle server
+
+100 items per vendor, a tenth of them tagged, as in the first table.
+"Work" is planning plus applying; "in the cycle" is the part replication
+waited for.
+
+| Items | First pass (sweep): work / in the cycle | Repairs 1%: work / in the cycle | Nothing queued |
+|---:|---:|---:|---:|
+| 100,000 (+10,000 tags) | 39 / 11 ms | 23 / 9 ms | 1 ms |
+| 1,000,000 (+100,000 tags) | 323 / 126 ms | 267 / 48 ms | 0 ms |
+| 10,000,000 (no tags) | 1,259 / 2 ms | 1,482 / 175 ms | 0 ms |
+
+Before, the same passes took 16.5-16.7 s, 178-181 s and 134.5-135.5 s,
+all of it inside the cycle, whether or not anything was repaired. A pass
+with nothing queued reads no rows. At 10,000,000 items the 1% repair
+(100,000 tombstones) used 1.4 CPU-s and 180 MB of peak RSS growth, against
+139 CPU-s before.
+
+### What a pass still does not repair
+
+- A parent change the stream did not follow (the parent quarantined,
+  paused or being copied, or the change older than the queue) is found only
+  by a sweep, which sees absent parents, not reused keys.
+- A child without a key is recopied, not repaired in place, and only under
+  the `auto_resync` keyless policy; otherwise it stays quarantined.
+- A cascading key on something other than a replicated parent's primary
+  key still takes the full compare, in the cycle, at the database's
+  interval.

@@ -459,7 +459,9 @@ stays readable as a list of things to fix.
   the parent's primary key sends its child table through the full compare:
   every source row is read again, in pages, and every replica key is
   verified against the source a thousand at a time. Memory stays bounded,
-  but the pass takes as long as reading the table.
+  but the pass takes as long as reading the table, runs inside the
+  database's replication cycle, and keeps the database's reconcile
+  interval rather than the adaptive one.
 - Rows removed by an invisible foreign-key cascade stay visible in the replica
   until that reconciliation runs, so the replica reads AHEAD of the source -
   more rows, larger sums - rather than behind it. A full production run with
@@ -469,23 +471,26 @@ stays readable as a list of things to fix.
   this does not resolve until reconciliation, and reads high, so the two
   cannot be told apart by direction alone
   (`benchmark/evidence/fk-cascade-drift.md`).
-- The cascade repair finds a damaged child row only by its parent being
-  absent from the replica, so some invisible actions are never repaired by
-  any pass: a parent deleted and inserted again with the same key before
-  the pass, `REPLACE` on a parent (InnoDB deletes the parent and cascades
-  before inserting it again), a parent key moved by `ON UPDATE CASCADE` and
-  then reused, and `ON UPDATE CASCADE` into a child whose primary key holds
-  the referencing column (the old key is tombstoned, the row under the new
-  key is never fetched). A resnapshot of the child table repairs them.
-- A cascade-affected child table without a primary or unique key is never
-  repaired, and while it is flagged the pass fails before repairing the
-  other flagged tables of the same database.
-- The cascade pass runs inside the database's replication cycle: no change
-  reaches any table of that database while it runs. It looks up each
-  distinct parent key the child references in the parent replica, about
-  1.35-1.7 ms a key once the parent holds 100,000 rows or more, so a child
-  referencing 100,000 parents blocks the database's replication for two to
-  three minutes each interval.
+- The cascade pass learns of parent changes from the parent's own row
+  events. A parent change the stream did not follow - while the parent
+  table was quarantined, paused or being copied, or before the stream
+  queued parent keys at all - is found only by the sweep a child gets on
+  its first pass in a process and after such a parent is followed again,
+  and the sweep finds children whose parent the replica no longer holds,
+  not the children of a parent key that exists again (deleted and inserted,
+  `REPLACE`d, or moved and reused). A resnapshot of the child table
+  repairs those.
+- A cascade-affected child table without a primary or unique key cannot be
+  repaired a row at a time: any delete or key change of a parent it
+  references marks it `needs_resync`, and it stays quarantined until the
+  `auto_resync` keyless policy or an operator recopies it.
+- The apply half of a cascade pass runs inside the database's replication
+  cycle: while it verifies the candidate children against the source and
+  stores the repairs, no change reaches any table of that database. Its
+  time grows with the candidates - the children of the parents deleted or
+  re-keyed since the last pass - not with the table: 48 ms for the 11,000
+  children of 100 deleted parents in a 1,000,000-row child
+  (`benchmark/evidence/fk-cascade-drift.md`).
 - Cursor-less keyed checksums can re-dump adjacent chunks when inserts or
   deletes shift chunk boundaries; correctness holds, but repair work can exceed
   the number of rows that changed.
