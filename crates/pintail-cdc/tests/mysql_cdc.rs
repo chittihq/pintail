@@ -823,6 +823,247 @@ async fn cdc_cascade_negative_control_and_scheduled_repair() {
     pool.disconnect().await.expect("disconnect cascade pool");
 }
 
+/// The replica's rows of `table` as text, one line per row in key order,
+/// the way the `MySQL` client prints them.
+fn replica_text(targets: &[PollTarget], table: &str) -> String {
+    let target = targets
+        .iter()
+        .find(|target| target.source().name == table)
+        .expect("reconciled target");
+    let mut lines = target
+        .store()
+        .snapshot()
+        .scan()
+        .expect("replica scan")
+        .iter()
+        .map(|row| {
+            row.values()
+                .iter()
+                .map(|value| match value {
+                    Value::Null => "NULL".to_owned(),
+                    Value::Int64(value) => value.to_string(),
+                    Value::UInt64(value) => value.to_string(),
+                    Value::Utf8(value) => value.clone(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>();
+    lines.sort();
+    lines.join("\n")
+}
+
+fn source_text(mysql: &MysqlContainer, sql: &str) -> String {
+    let mut lines = mysql
+        .query_batch(sql)
+        .expect("source rows")
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    lines.sort();
+    lines.join("\n")
+}
+
+/// Parent-key shapes a repair driven by absent parents never saw: a parent
+/// deleted and inserted again with the same key, `REPLACE` on a parent, and
+/// `ON UPDATE CASCADE` into a child's primary key. The stream queues the
+/// parent keys it saw deleted or moved, and one pass repairs all three. A
+/// cascade-affected child without a key is marked for a recopy instead, and
+/// does not stop its siblings' repair.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn cdc_cascade_parent_key_reuse_replace_and_child_key_moves() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE shelf (id INT PRIMARY KEY, label VARCHAR(16) NOT NULL);\
+             CREATE TABLE book (\
+               id INT PRIMARY KEY, shelf_id INT NULL, title VARCHAR(16) NOT NULL,\
+               FOREIGN KEY (shelf_id) REFERENCES shelf(id) ON DELETE CASCADE\
+             );\
+             CREATE TABLE loose_note (\
+               shelf_id INT NOT NULL, body VARCHAR(16) NOT NULL,\
+               FOREIGN KEY (shelf_id) REFERENCES shelf(id) ON DELETE CASCADE\
+             );\
+             CREATE TABLE bin (zone CHAR(2) NOT NULL, slot INT NOT NULL, PRIMARY KEY (zone, slot));\
+             CREATE TABLE bin_item (\
+               zone CHAR(2) NOT NULL, slot INT NOT NULL, item INT NOT NULL, qty INT NOT NULL,\
+               PRIMARY KEY (zone, slot, item),\
+               FOREIGN KEY (zone, slot) REFERENCES bin(zone, slot) \
+                 ON DELETE CASCADE ON UPDATE CASCADE\
+             );\
+             INSERT INTO shelf VALUES (1,'one'),(2,'two'),(3,'three');\
+             INSERT INTO book VALUES (10,1,'a'),(11,1,'b'),(20,2,'c'),(30,3,'d');\
+             INSERT INTO loose_note VALUES (1,'x'),(2,'y');\
+             INSERT INTO bin VALUES ('aa',1),('aa',2);\
+             INSERT INTO bin_item VALUES ('aa',1,7,3),('aa',1,8,4),('aa',2,9,5);",
+        )
+        .expect("cascade source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("cascade DSN"));
+    let report = probe(&pool, "app").await.expect("probe cascade source");
+    let workspace = tempfile::tempdir().expect("cascade workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("cascade metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register cascade source");
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.path().join(&source.name),
+                source.table_schema().expect("cascade schema"),
+                StoreOptions::default(),
+            )
+            .expect("cascade store");
+            SnapshotTarget::new(source.clone(), store).expect("cascade snapshot target")
+        })
+        .collect();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("cascade snapshot");
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("cascade CDC target")
+        })
+        .collect();
+    // Every shape leaves its parent key present in the replica again, so a
+    // child cannot be found by its parent's absence.
+    mysql
+        .query_batch(
+            "DELETE FROM shelf WHERE id=1;\
+             INSERT INTO shelf VALUES (1,'again');\
+             INSERT INTO book VALUES (12,1,'new');\
+             REPLACE INTO shelf VALUES (2,'replaced');\
+             UPDATE bin SET slot=5 WHERE zone='aa' AND slot=1;\
+             INSERT INTO bin VALUES ('aa',1);",
+        )
+        .expect("parent key reuse");
+    let caught_up = finite_catch_up(&pool, &metadata_path, &report, targets)
+        .await
+        .expect("cascade CDC catch-up");
+    let queued = MetaStore::open(&metadata_path)
+        .unwrap()
+        .cascade_pending(DATABASE_ID, "book")
+        .unwrap();
+    assert!(
+        queued.keys.len() >= 2,
+        "the stream queues the deleted and replaced shelf keys: {queued:?}"
+    );
+    let targets = caught_up
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            PollTarget::new(source, target.into_store()).expect("cascade reconciliation target")
+        })
+        .collect::<Vec<_>>();
+    let due = vec![
+        "book".to_owned(),
+        "loose_note".to_owned(),
+        "bin_item".to_owned(),
+    ];
+    let reconciliation = run_cdc_reconciliation(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        targets,
+        CdcReconcileScope::Cascade(&due),
+        1,
+    )
+    .await
+    .expect("scheduled cascade reconciliation");
+    for table in &reconciliation.tables {
+        assert!(table.error.is_none(), "{}: {:?}", table.table, table.error);
+    }
+    let keyless = reconciliation
+        .tables
+        .iter()
+        .find(|table| table.table == "loose_note")
+        .expect("keyless outcome");
+    assert!(keyless.resync, "the keyless child is marked for a recopy");
+    assert_eq!(
+        replica_text(&reconciliation.targets, "book"),
+        source_text(&mysql, "SELECT id, shelf_id, title FROM book;"),
+        "reused and replaced parents: their old children are gone, the new one stays"
+    );
+    assert_eq!(
+        replica_text(&reconciliation.targets, "bin_item"),
+        source_text(&mysql, "SELECT zone, slot, item, qty FROM bin_item;"),
+        "ON UPDATE CASCADE into the child's key: the rows are under the new key only"
+    );
+    let state: String = Connection::open(&metadata_path)
+        .unwrap()
+        .query_row(
+            "SELECT state FROM tables WHERE db_id = ?1 AND name = 'loose_note'",
+            [DATABASE_ID],
+            |row| row.get(0),
+        )
+        .expect("keyless table state");
+    assert_eq!(state, "needs_resync");
+    // A full compare of the repaired tables finds nothing left to change,
+    // and the pass consumed the keys it was queued.
+    let keyed = reconciliation
+        .targets
+        .into_iter()
+        .filter(|target| ["book", "bin_item"].contains(&target.source().name.as_str()))
+        .collect::<Vec<_>>();
+    let again = run_cdc_reconciliation(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        keyed,
+        CdcReconcileScope::Full,
+        1_000,
+    )
+    .await
+    .expect("full compare after the pass");
+    for table in again
+        .tables
+        .iter()
+        .filter(|table| table.table == "book" || table.table == "bin_item")
+    {
+        assert_eq!(
+            (table.ingested, table.tombstones),
+            (0, 0),
+            "{} was already exact",
+            table.table
+        );
+    }
+    assert!(
+        MetaStore::open(&metadata_path)
+            .unwrap()
+            .cascade_pending(DATABASE_ID, "book")
+            .unwrap()
+            .keys
+            .is_empty()
+    );
+    pool.disconnect().await.expect("disconnect cascade pool");
+}
+
 /// A table that exists only between two catch-up cycles - created and
 /// dropped, or created and renamed - is gone from the source by the time its
 /// CREATE is replayed. Neither may stop the stream, and a table renamed into

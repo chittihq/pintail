@@ -1,11 +1,12 @@
 //! Polling and primary-key reconciliation for Pintail.
 
+mod cascade;
 mod checksum;
 mod cursor;
 mod decoder;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     path::Path,
 };
 
@@ -20,6 +21,10 @@ use pintail_store::{StoreError, TableStore};
 use pintail_types::{KeyMode, PrimaryKey, SchemaError, StoredRow, Value};
 use thiserror::Error;
 
+pub use crate::cascade::{
+    CascadePlan, CascadeQueues, CascadeTable, apply_cascade_plan, plan_cascade_pass,
+    read_cascade_queues,
+};
 use crate::{
     checksum::{SourceChunk, replica_checksum, source_chunks},
     cursor::{CursorValue, ProbeToken},
@@ -172,6 +177,12 @@ pub struct CdcReconcileOutcome {
     pub elapsed_ms: u64,
     /// Version assigned above all currently visible CDC rows.
     pub version: u64,
+    /// A cascade pass found nothing queued for the table and read nothing.
+    pub skipped: bool,
+    /// The table has no key to repair rows by and was marked for a recopy.
+    pub resync: bool,
+    /// Why this table's repair failed; the other tables were still repaired.
+    pub error: Option<String>,
 }
 
 /// Successful reconciliation that preserves the CDC source checkpoint.
@@ -188,11 +199,11 @@ pub enum CdcReconcileScope<'a> {
     /// Every target, compared row by row against the source.
     Full,
     /// The named targets, repaired through their cascading foreign keys:
-    /// a child row whose parent the replica no longer holds is the only
-    /// kind of row an invisible cascade can have touched, so those are the
-    /// rows verified against the source. The remaining targets serve as
-    /// parents. A named table whose cascading keys do not all reference a
-    /// replicated parent's primary key is compared in full instead.
+    /// the children of every parent key the stream queued as deleted or
+    /// moved, and of every parent the replica no longer holds, are verified
+    /// against the source. The remaining targets serve as parents. A named
+    /// table whose cascading keys do not all reference a replicated
+    /// parent's primary key is compared in full instead.
     Cascade(&'a [String]),
 }
 
@@ -310,9 +321,15 @@ pub async fn run_poll_cycle(
 /// Table WALs are synchronized before reconcile metadata. The database's CDC
 /// mode and binlog checkpoint are left unchanged.
 ///
+/// A `Cascade` scope plans and applies one cascade pass in place, sweeping
+/// every named table (see [`plan_cascade_pass`]); a table's failure is
+/// reported in its outcome and does not stop the others.
+///
 /// # Errors
 ///
-/// Returns the first source, storage, schema, or metadata failure.
+/// Returns the first source, storage, schema, or metadata failure of a
+/// `Full` scope, and for a `Cascade` scope only a failure to reach the
+/// source or the metadata store.
 pub async fn run_cdc_reconciliation(
     pool: &Pool,
     metadata_path: &Path,
@@ -327,16 +344,36 @@ pub async fn run_cdc_reconciliation(
             "reconciliation chunk size must be non-zero".to_owned(),
         ));
     }
+    if let CdcReconcileScope::Cascade(names) = scope {
+        let queues = read_cascade_queues(metadata_path, database_id, names)?;
+        let tables = targets
+            .iter()
+            .map(|target| CascadeTable {
+                source: target.source.clone(),
+                snapshot: target.store.snapshot(),
+            })
+            .collect::<Vec<_>>();
+        let sweep = names.iter().cloned().collect::<BTreeSet<_>>();
+        let plan = plan_cascade_pass(&tables, &queues, names, &sweep);
+        drop(tables);
+        return apply_cascade_plan(
+            pool,
+            metadata_path,
+            database_id,
+            report,
+            targets,
+            plan,
+            chunk_rows,
+        )
+        .await;
+    }
     targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
     let mut metadata = MetaStore::open(metadata_path)?;
     let mut connection = pool.get_conn().await?;
-    let selected = match scope {
-        CdcReconcileScope::Full => targets
-            .iter()
-            .map(|target| target.source.name.clone())
-            .collect::<Vec<_>>(),
-        CdcReconcileScope::Cascade(names) => cascade_order(names, &targets),
-    };
+    let selected = targets
+        .iter()
+        .map(|target| target.source.name.clone())
+        .collect::<Vec<_>>();
     let mut outcomes = Vec::with_capacity(selected.len());
     for name in selected {
         let index = targets
@@ -361,36 +398,17 @@ pub async fn run_cdc_reconciliation(
                 "target {name} is absent from the probe report"
             )));
         }
-        let parents = match scope {
-            CdcReconcileScope::Full => None,
-            CdcReconcileScope::Cascade(_) => cascade_parents(&targets, index),
-        };
         let target = &mut targets[index];
         let started = std::time::Instant::now();
-        let mut outcome = match parents {
-            Some(parents) => {
-                reconcile_cascade_target(
-                    &mut connection,
-                    &mut metadata,
-                    database_id,
-                    &report.database,
-                    target,
-                    &parents,
-                )
-                .await?
-            }
-            None => {
-                reconcile_cdc_target(
-                    &mut connection,
-                    &mut metadata,
-                    database_id,
-                    &report.database,
-                    target,
-                    chunk_rows,
-                )
-                .await?
-            }
-        };
+        let mut outcome = reconcile_cdc_target(
+            &mut connection,
+            &mut metadata,
+            database_id,
+            &report.database,
+            target,
+            chunk_rows,
+        )
+        .await?;
         outcome.elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         outcomes.push(outcome);
     }
@@ -398,90 +416,6 @@ pub async fn run_cdc_reconciliation(
         tables: outcomes,
         targets,
     })
-}
-
-/// A replicated parent a child's cascading foreign key points at, resolved
-/// to the parent's primary key so a child row's reference is one point
-/// lookup in the parent replica.
-struct CascadeParent {
-    /// Referencing column names on the child, in the parent's key order.
-    columns: Vec<String>,
-    /// The parent replica.
-    snapshot: pintail_store::TableSnapshot,
-}
-
-/// Whether an `ON DELETE`/`ON UPDATE` rule changes child rows without a
-/// binlog row event, so `MySQL` never shows the change to a CDC reader.
-fn invisible_fk_rule(rule: &str) -> bool {
-    rule.eq_ignore_ascii_case("CASCADE") || rule.eq_ignore_ascii_case("SET NULL")
-}
-
-/// The parents for a targeted pass over `targets[child]`, or `None` when
-/// any cascading key of the child references something a point lookup
-/// cannot answer: an unreplicated table, a parent without a primary key,
-/// or a unique key that is not the parent's primary key.
-fn cascade_parents(targets: &[PollTarget], child: usize) -> Option<Vec<CascadeParent>> {
-    let source = &targets[child].source;
-    let mut parents = Vec::new();
-    for key in source
-        .foreign_keys
-        .iter()
-        .filter(|key| invisible_fk_rule(&key.delete_rule) || invisible_fk_rule(&key.update_rule))
-    {
-        let parent = targets.iter().find(|target| {
-            target
-                .source
-                .name
-                .eq_ignore_ascii_case(&key.referenced_table)
-        })?;
-        if parent.source.key.mode == KeyMode::AppendRowId
-            || parent.source.key.columns.len() != key.referenced_columns.len()
-        {
-            return None;
-        }
-        // The child's referencing columns, arranged in the parent's key
-        // order, so the parent key is built straight from a child row.
-        let mut columns = Vec::with_capacity(key.columns.len());
-        for parent_column in &parent.source.key.columns {
-            let position = key
-                .referenced_columns
-                .iter()
-                .position(|referenced| referenced.eq_ignore_ascii_case(parent_column))?;
-            columns.push(key.columns[position].clone());
-        }
-        parents.push(CascadeParent {
-            columns,
-            snapshot: parent.store.snapshot(),
-        });
-    }
-    (!parents.is_empty()).then_some(parents)
-}
-
-/// Orders the named tables so a parent is repaired before the children
-/// that reference it: a cascade removes rows at every level, and the child
-/// pass detects a missing parent, so the parent's tombstones must land
-/// first. A cycle keeps the remaining names in their given order.
-fn cascade_order(names: &[String], targets: &[PollTarget]) -> Vec<String> {
-    let mut remaining = names.to_vec();
-    let mut ordered = Vec::with_capacity(names.len());
-    while !remaining.is_empty() {
-        let independent = remaining.iter().position(|name| {
-            targets
-                .iter()
-                .find(|target| target.source.name.eq_ignore_ascii_case(name))
-                .is_none_or(|target| {
-                    !target.source.foreign_keys.iter().any(|key| {
-                        !key.referenced_table.eq_ignore_ascii_case(name)
-                            && remaining
-                                .iter()
-                                .any(|other| other.eq_ignore_ascii_case(&key.referenced_table))
-                    })
-                })
-        });
-        let next = independent.unwrap_or(0);
-        ordered.push(remaining.remove(next));
-    }
-    ordered
 }
 
 /// Keys a membership query verifies at once: five thousand keys keep the
@@ -493,9 +427,16 @@ const MEMBERSHIP_BATCH: usize = 5_000;
 /// The `WHERE` clause and parameters selecting exactly `keys` from a source
 /// table, as a single-column `IN` list or a row-constructor `IN` list.
 fn key_membership_condition(table: &SourceTable, keys: &[PrimaryKey]) -> (String, Vec<MysqlValue>) {
-    let columns = table
-        .key
-        .columns
+    column_membership_condition(&table.key.columns, keys)
+}
+
+/// The `WHERE` clause and parameters selecting the rows whose `columns`
+/// hold one of `keys`, each key's parts in `columns` order.
+fn column_membership_condition(
+    columns: &[String],
+    keys: &[PrimaryKey],
+) -> (String, Vec<MysqlValue>) {
+    let columns = columns
         .iter()
         .map(|column| quote_identifier(column))
         .collect::<Vec<_>>();
@@ -593,7 +534,8 @@ fn tombstone_values(
 
 /// Verifies `candidates` against the source: a candidate the source still
 /// holds is refreshed with the source's row, one it no longer holds is
-/// tombstoned. Returns (refreshed, tombstoned) after ingesting both.
+/// tombstoned. Returns (refreshed, tombstoned) after ingesting both, and
+/// adds every key it wrote to `written` when given one.
 async fn repair_candidates(
     connection: &mut Conn,
     source_database: &str,
@@ -601,6 +543,7 @@ async fn repair_candidates(
     snapshot: &pintail_store::TableSnapshot,
     candidates: &[PrimaryKey],
     version: u64,
+    mut written: Option<&mut Vec<PrimaryKey>>,
 ) -> Result<(usize, usize), PollError> {
     let mut refreshed = 0;
     let mut tombstoned = 0;
@@ -624,6 +567,9 @@ async fn repair_candidates(
         }
         let mut repairs = Vec::with_capacity(batch.len());
         for key in batch {
+            if let Some(written) = written.as_deref_mut() {
+                written.push(key.clone());
+            }
             if let Some(decoded) = present.remove(key) {
                 refreshed += 1;
                 repairs.push(decoded);
@@ -642,162 +588,6 @@ async fn repair_candidates(
         }
     }
     Ok((refreshed, tombstoned))
-}
-
-/// The one projection a targeted pass streams: the child's key, then every
-/// referencing column once, with the positions each key is built from.
-struct CascadeProjection {
-    names: Vec<String>,
-    key_positions: Vec<usize>,
-    parent_positions: Vec<Vec<usize>>,
-}
-
-impl CascadeProjection {
-    fn new(source: &SourceTable, parents: &[CascadeParent]) -> Self {
-        let mut names = source.key.columns.clone();
-        for parent in parents {
-            for column in &parent.columns {
-                if !names.iter().any(|name| name.eq_ignore_ascii_case(column)) {
-                    names.push(column.clone());
-                }
-            }
-        }
-        let position_of = |column: &str| {
-            names
-                .iter()
-                .position(|name| name.eq_ignore_ascii_case(column))
-                .expect("projected column")
-        };
-        let key_positions = source
-            .key
-            .columns
-            .iter()
-            .map(|column| position_of(column))
-            .collect();
-        let parent_positions = parents
-            .iter()
-            .map(|parent| {
-                parent
-                    .columns
-                    .iter()
-                    .map(|column| position_of(column))
-                    .collect()
-            })
-            .collect();
-        Self {
-            names,
-            key_positions,
-            parent_positions,
-        }
-    }
-}
-
-/// Repairs a cascade-affected child through its parents: the replica's
-/// child rows are streamed with only their key and referencing columns,
-/// each reference is one point lookup in the parent replica, and only the
-/// rows whose parent is gone are verified against the source. Parent
-/// deletes and updates are ordinary binlog events, so the parent replica
-/// is current; the source is read for the candidates alone, never the
-/// table, and memory holds one streamed chunk at a time.
-async fn reconcile_cascade_target(
-    connection: &mut Conn,
-    metadata: &mut MetaStore,
-    database_id: &str,
-    source_database: &str,
-    target: &mut PollTarget,
-    parents: &[CascadeParent],
-) -> Result<CdcReconcileOutcome, PollError> {
-    let snapshot = target.store.snapshot();
-    let durable_version = metadata
-        .poll_state(database_id, &target.source.name)?
-        .map_or(0, |state| state.version);
-    let version = snapshot
-        .max_row_version()
-        .unwrap_or(0)
-        .max(target.store.commit_version())
-        .max(durable_version)
-        .checked_add(1)
-        .ok_or_else(|| PollError::Decode("reconcile version exceeds UInt64".to_owned()))?;
-
-    let projection = CascadeProjection::new(&target.source, parents);
-    let column_ids = column_ids_named(&snapshot, &target.source.name, &projection.names)?;
-    let key_positions = &projection.key_positions;
-    let parent_positions = &projection.parent_positions;
-
-    let mut streamed = 0_u64;
-    let mut verified = 0_u64;
-    let mut ingested = 0;
-    let mut tombstones = 0;
-    // Children share parents, so a parent's presence is remembered while
-    // the cache stays small enough to be free.
-    let mut known = vec![HashMap::<PrimaryKey, bool>::new(); parents.len()];
-    if let Some((first, last)) = snapshot.key_bounds() {
-        let mut chunks = ProjectedChunks::open(&snapshot, &first, &last, &column_ids)?;
-        while let Some(rows) = chunks.next()? {
-            let mut candidates = Vec::new();
-            for values in rows {
-                streamed = streamed.saturating_add(1);
-                let Some(key) = key_at(&values, key_positions) else {
-                    continue;
-                };
-                for (index, parent) in parents.iter().enumerate() {
-                    let Some(parent_key) = key_at(&values, &parent_positions[index]) else {
-                        continue;
-                    };
-                    let present = if let Some(&present) = known[index].get(&parent_key) {
-                        present
-                    } else {
-                        let present = parent.snapshot.get(&parent_key)?.is_some();
-                        if known[index].len() >= 100_000 {
-                            known[index].clear();
-                        }
-                        known[index].insert(parent_key, present);
-                        present
-                    };
-                    if !present {
-                        candidates.push(key);
-                        break;
-                    }
-                }
-            }
-            if !candidates.is_empty() {
-                verified =
-                    verified.saturating_add(u64::try_from(candidates.len()).unwrap_or(u64::MAX));
-                let (fresh, gone) = repair_candidates(
-                    connection,
-                    source_database,
-                    target,
-                    &snapshot,
-                    &candidates,
-                    version,
-                )
-                .await?;
-                ingested += fresh;
-                tombstones += gone;
-            }
-        }
-    }
-    if ingested > 0 || tombstones > 0 {
-        target.store.checkpoint()?;
-    }
-    let source_count = streamed.saturating_sub(u64::try_from(tombstones).unwrap_or(u64::MAX));
-    metadata.commit_cdc_reconciliation(
-        database_id,
-        &target.source.name,
-        source_count,
-        version,
-        &Utc::now().to_rfc3339(),
-    )?;
-    Ok(CdcReconcileOutcome {
-        table: target.source.name.clone(),
-        ingested,
-        tombstones,
-        source_count,
-        rows_compared: streamed,
-        source_verified: verified,
-        elapsed_ms: 0,
-        version,
-    })
 }
 
 async fn reconcile_cdc_target(
@@ -872,6 +662,9 @@ async fn reconcile_cdc_target(
         source_verified: source_count,
         elapsed_ms: 0,
         version,
+        skipped: false,
+        resync: false,
+        error: None,
     })
 }
 
@@ -1815,6 +1608,7 @@ async fn tombstone_absent_keys(
             snapshot,
             &keys,
             version,
+            None,
         )
         .await?;
         count += tombstoned;
