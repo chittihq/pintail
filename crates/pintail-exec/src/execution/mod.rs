@@ -7534,7 +7534,7 @@ fn next_materialized_batch(
     column_types: &[DataType],
     memory: &MemoryTracker,
 ) -> Result<Option<RecordBatch>, ExecError> {
-    if let Some(ready) = &state.ready {
+    if let Some(ready) = &mut state.ready {
         if state.position >= ready.len() {
             return Ok(None);
         }
@@ -7544,6 +7544,7 @@ fn next_materialized_batch(
             .min(ready.len());
         memory.ensure_transient(ready.row_bytes().saturating_mul(end - state.position))?;
         let batch = ready.batch(state.position..end, column_types)?;
+        ready.release_served(state.position..end, memory);
         state.position = end;
         return Ok(Some(batch));
     }

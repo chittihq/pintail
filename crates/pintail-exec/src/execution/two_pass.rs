@@ -3460,6 +3460,9 @@ pub(super) struct ReadyColumns {
     /// A settled-memo answer served from the batches its entry keeps, in
     /// place of `columns`.
     settled: Option<std::sync::Arc<SettledRows>>,
+    /// What a settled replay still holds of the entry's payload, which the
+    /// query reserved when it took the entry.
+    held: usize,
 }
 
 impl ReadyColumns {
@@ -3469,16 +3472,46 @@ impl ReadyColumns {
             len,
             columns,
             settled: None,
+            held: 0,
         }
     }
 
-    /// A settled-memo entry's rows, served as the batches it keeps.
+    /// A settled-memo entry's rows, served as the batches it keeps. The
+    /// caller has reserved the entry's payload for this replay.
     pub(super) fn settled(entry: std::sync::Arc<SettledRows>) -> Self {
         Self {
             len: entry.rows.len(),
             columns: Vec::new(),
+            held: entry.payload,
             settled: Some(entry),
         }
+    }
+
+    /// Gives back a settled replay's share of its reservation for the rows
+    /// `served` it has just handed on.
+    ///
+    /// The entry's rows belong to the memo, not to the query: once a batch
+    /// of them is handed to the operator above, whatever that operator keeps
+    /// it charges itself. Holding the whole payload to the end as well
+    /// charged a sort above a replay for the rows twice over, and a replay
+    /// then needed several times the memory executing the statement would
+    /// have - failing a ceiling the execution answers under.
+    pub(super) fn release_served(
+        &mut self,
+        served: std::ops::Range<usize>,
+        memory: &MemoryTracker,
+    ) {
+        if self.held == 0 || served.is_empty() {
+            return;
+        }
+        let left = self.len.saturating_sub(served.start);
+        let share = if served.end >= self.len || left == 0 {
+            self.held
+        } else {
+            (self.held.saturating_mul(served.len()) / left).min(self.held)
+        };
+        memory.release(share);
+        self.held -= share;
     }
 
     pub(super) fn len(&self) -> usize {
@@ -3747,11 +3780,7 @@ fn finish_int_range(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let (len, columns) = joined_pieces(pieces);
-    Ok(ReadyColumns {
-        len,
-        columns,
-        settled: None,
-    })
+    Ok(ReadyColumns::from_columns(len, columns))
 }
 
 /// The pieces' columns end to end, and the groups they hold. Every piece's

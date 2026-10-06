@@ -2639,10 +2639,8 @@ impl SettledMemo {
             self.entries.remove(&oldest);
         }
         self.tick += 1;
-        self.entries.insert(
-            key,
-            (std::sync::Arc::new(rows), self.tick),
-        );
+        self.entries
+            .insert(key, (std::sync::Arc::new(rows), self.tick));
         SETTLED_MEMO_STORES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
