@@ -28,7 +28,7 @@ pub use control::{
 };
 pub use maintenance::AgePrune;
 
-const CURRENT_SCHEMA_VERSION: u32 = 25;
+const CURRENT_SCHEMA_VERSION: u32 = 26;
 
 /// The change-capture decoder generation a table copy completed by this
 /// binary records (`tables.copy_generation`).
@@ -395,6 +395,88 @@ impl StoredSetting {
 
 /// Serializes schema migration across the connections of one process.
 static MIGRATING: Mutex<()> = Mutex::new(());
+
+/// One parent key queued for a flagged child table's cascade pass.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CascadeKeyRecord {
+    /// The flagged child table whose rows may reference the key.
+    pub child: String,
+    /// The parent table the key belongs to.
+    pub parent: String,
+    /// The parent's primary key, as JSON. Empty asks for a full compare
+    /// of the child instead: its parent changed in ways no key list names.
+    pub key_json: String,
+}
+
+/// What a child table's cascade queue holds.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CascadePending {
+    /// The last queue position read; a completed pass consumes through it.
+    pub through: i64,
+    /// The queue outgrew its cap: the child must be compared in full.
+    pub full: bool,
+    /// (parent table, key JSON) pairs, oldest first, possibly repeated.
+    pub keys: Vec<(String, String)>,
+}
+
+/// Queued keys one child table may hold before its queue is replaced by a
+/// full compare: a mass delete of parents is cheaper to repair by reading
+/// the child than by looking up a million parents one batch at a time.
+const CASCADE_QUEUE_CAP: i64 = 1_000_000;
+
+/// Appends `cascade_keys` to their children's queues inside `transaction`,
+/// collapsing a queue that passes the cap into one full-compare marker.
+fn queue_cascade_keys(
+    transaction: &Transaction<'_>,
+    database_id: &str,
+    cascade_keys: &[CascadeKeyRecord],
+) -> Result<()> {
+    if cascade_keys.is_empty() {
+        return Ok(());
+    }
+    let mut children = BTreeSet::new();
+    {
+        let mut insert = transaction
+            .prepare_cached(
+                "INSERT INTO cascade_pending (db_id, child, parent, key_json) \
+                 SELECT ?1, ?2, ?3, NULLIF(?4, '') WHERE NOT EXISTS (\
+                   SELECT 1 FROM cascade_pending \
+                   WHERE db_id = ?1 AND child = ?2 AND key_json IS NULL)",
+            )
+            .context("failed to prepare the cascade key queue")?;
+        for record in cascade_keys {
+            insert
+                .execute((database_id, &record.child, &record.parent, &record.key_json))
+                .context("failed to queue a cascade key")?;
+            children.insert(record.child.as_str());
+        }
+    }
+    for child in children {
+        let queued: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM cascade_pending WHERE db_id = ?1 AND child = ?2",
+                (database_id, child),
+                |row| row.get(0),
+            )
+            .context("failed to count queued cascade keys")?;
+        if queued > CASCADE_QUEUE_CAP {
+            transaction
+                .execute(
+                    "DELETE FROM cascade_pending WHERE db_id = ?1 AND child = ?2",
+                    (database_id, child),
+                )
+                .context("failed to collapse a cascade queue")?;
+            transaction
+                .execute(
+                    "INSERT INTO cascade_pending (db_id, child, parent, key_json) \
+                     VALUES (?1, ?2, '', NULL)",
+                    (database_id, child),
+                )
+                .context("failed to mark a cascade queue for a full compare")?;
+        }
+    }
+    Ok(())
+}
 
 /// The row versions a CDC apply is writing past the durable checkpoint.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1449,6 +1531,38 @@ impl MetaStore {
         version_carry: Option<u64>,
         unfinished: Option<&CdcApplyIntent>,
     ) -> Result<()> {
+        self.commit_cdc_checkpoint_recording(
+            database_id,
+            checkpoint,
+            touched_tables,
+            now,
+            version_carry,
+            unfinished,
+            &[],
+        )
+    }
+
+    /// [`Self::commit_cdc_checkpoint_leaving`] that also queues the parent
+    /// keys the stored events deleted or moved for the cascade pass of the
+    /// child tables that reference them. They are queued in the checkpoint's
+    /// own transaction: a crash before it replays the events and queues them
+    /// again, and none is lost after it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the position is invalid or the control-plane
+    /// transaction cannot commit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_cdc_checkpoint_recording(
+        &mut self,
+        database_id: &str,
+        checkpoint: &SnapshotCheckpointRecord,
+        touched_tables: &[String],
+        now: &str,
+        version_carry: Option<u64>,
+        unfinished: Option<&CdcApplyIntent>,
+        cascade_keys: &[CascadeKeyRecord],
+    ) -> Result<()> {
         if !matches!(checkpoint.kind.as_str(), "gtid" | "filepos") {
             bail!("CDC checkpoint kind must be gtid or filepos");
         }
@@ -1529,10 +1643,95 @@ impl MetaStore {
                 )
                 .context("failed to persist the CDC version carry")?;
         }
+        queue_cascade_keys(&transaction, database_id, cascade_keys)?;
         pintail_failpoint::hit("meta.before_commit")?;
         transaction
             .commit()
             .context("failed to commit CDC checkpoint")
+    }
+
+    /// Queues parent keys for the cascade pass of their child tables, outside
+    /// a CDC checkpoint: the keys a cascade pass itself repaired in a table
+    /// that is in turn the parent of another flagged table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the keys cannot be stored.
+    pub fn queue_cascade_keys(
+        &mut self,
+        database_id: &str,
+        cascade_keys: &[CascadeKeyRecord],
+    ) -> Result<()> {
+        if cascade_keys.is_empty() {
+            return Ok(());
+        }
+        let transaction = self
+            .connection
+            .transaction()
+            .context("failed to begin queueing cascade keys")?;
+        queue_cascade_keys(&transaction, database_id, cascade_keys)?;
+        transaction
+            .commit()
+            .context("failed to commit queued cascade keys")
+    }
+
+    /// The parent keys queued for `child`'s cascade pass, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue cannot be read.
+    pub fn cascade_pending(&self, database_id: &str, child: &str) -> Result<CascadePending> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT seq, parent, key_json FROM cascade_pending \
+                 WHERE db_id = ?1 AND child = ?2 COLLATE NOCASE ORDER BY seq",
+            )
+            .context("failed to prepare the cascade queue read")?;
+        let rows = statement
+            .query_map((database_id, child), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .context("failed to read the cascade queue")?;
+        let mut pending = CascadePending::default();
+        for row in rows {
+            let (seq, parent, key) = row.context("failed to read a queued cascade key")?;
+            pending.through = pending.through.max(seq);
+            match key {
+                Some(key) => pending.keys.push((parent, key)),
+                None => pending.full = true,
+            }
+        }
+        if pending.full {
+            pending.keys.clear();
+        }
+        Ok(pending)
+    }
+
+    /// Deletes `child`'s queued keys up to and including `through`, the last
+    /// one a completed pass read.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the queue cannot be updated.
+    pub fn consume_cascade_pending(
+        &self,
+        database_id: &str,
+        child: &str,
+        through: i64,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM cascade_pending \
+                 WHERE db_id = ?1 AND child = ?2 COLLATE NOCASE AND seq <= ?3",
+                (database_id, child, through),
+            )
+            .context("failed to consume queued cascade keys")?;
+        Ok(())
     }
 
     /// Records, before a CDC apply writes any row, which row versions it is
@@ -2867,7 +3066,19 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 25 {
         migration_v25(connection.transaction()?)?;
     }
+    if found < 26 {
+        migration_v26(connection.transaction()?)?;
+    }
     Ok(())
+}
+
+fn migration_v26(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/026_cascade_pending.sql"))
+        .context("failed to apply metadata migration 26")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 26")
 }
 
 fn migration_v25(transaction: Transaction<'_>) -> Result<()> {

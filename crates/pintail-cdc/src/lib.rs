@@ -44,7 +44,7 @@ use mysql_async::{
     },
     prelude::Queryable as _,
 };
-use pintail_meta::{CdcApplyIntent, MetaStore, SnapshotCheckpointRecord};
+use pintail_meta::{CascadeKeyRecord, CdcApplyIntent, MetaStore, SnapshotCheckpointRecord};
 use pintail_probe::{ProbeReport, SourceFlavor, SourceTable, probe as probe_source};
 use pintail_snapshot::{
     SnapshotError, SnapshotOptions, SnapshotPosition, SnapshotTarget, run_snapshot,
@@ -3795,6 +3795,107 @@ struct ApplyBatch {
     /// Targets holding staged pieces of a spilled transaction. Storing the
     /// batch publishes them, and the batch is due as soon as it has any.
     staged: BTreeSet<usize>,
+    /// Parent keys this batch deleted or moved, queued with its checkpoint
+    /// for the cascade pass of the flagged children that reference them.
+    cascade_keys: Vec<CascadeKeyRecord>,
+    /// Per target, the flagged children whose foreign-key actions follow
+    /// its rows; computed once per batch.
+    cascade_watchers: Option<Vec<Vec<String>>>,
+}
+
+/// Whether an `ON DELETE`/`ON UPDATE` rule changes child rows without a
+/// row event of their own.
+fn invisible_fk_rule(rule: &str) -> bool {
+    rule.eq_ignore_ascii_case("CASCADE") || rule.eq_ignore_ascii_case("SET NULL")
+}
+
+/// Collects, while a transaction is sealed, the parent keys its rows deleted
+/// or moved on tables that flagged children watch.
+struct CascadeRecorder<'a> {
+    watchers: &'a [Vec<String>],
+    names: Vec<String>,
+    /// The version of the last tombstone each watched target took: a live
+    /// row one ordinal after it is the new key of a moved row (or a REPLACE
+    /// inserting again), whose children an `ON UPDATE CASCADE` may have
+    /// moved into it.
+    last_tombstone: HashMap<usize, u64>,
+    keys: Vec<CascadeKeyRecord>,
+}
+
+impl<'a> CascadeRecorder<'a> {
+    /// `None` when no target has a watching child, so the seal costs
+    /// nothing more.
+    fn new(watchers: &'a [Vec<String>], targets: &[CdcTarget]) -> Option<Self> {
+        watchers
+            .iter()
+            .any(|children| !children.is_empty())
+            .then(|| Self {
+                watchers,
+                names: targets
+                    .iter()
+                    .map(|target| target.source.name.clone())
+                    .collect(),
+                last_tombstone: HashMap::new(),
+                keys: Vec::new(),
+            })
+    }
+
+    fn observe(&mut self, target_index: usize, row: &StoredRow) -> Result<(), CdcError> {
+        let Some(children) = self.watchers.get(target_index) else {
+            return Ok(());
+        };
+        if children.is_empty() {
+            return Ok(());
+        }
+        let version = row.version();
+        let follows_tombstone = self
+            .last_tombstone
+            .get(&target_index)
+            .is_some_and(|tombstone| tombstone.checked_add(1) == Some(version));
+        if row.is_deleted() || follows_tombstone {
+            let key_json = serde_json::to_string(row.key())
+                .map_err(|error| CdcError::Decode(error.to_string()))?;
+            for child in children {
+                self.keys.push(CascadeKeyRecord {
+                    child: child.clone(),
+                    parent: self.names[target_index].clone(),
+                    key_json: key_json.clone(),
+                });
+            }
+        }
+        if row.is_deleted() {
+            self.last_tombstone.insert(target_index, version);
+        } else {
+            self.last_tombstone.remove(&target_index);
+        }
+        Ok(())
+    }
+}
+
+/// Per target, the flagged child tables with a `CASCADE` or `SET NULL`
+/// foreign key referencing it. `MySQL` applies those actions inside the
+/// storage engine and writes no row event for the children, so the parent's
+/// own delete and key-moving events are the only trace of them a stream
+/// sees.
+fn cascade_watchers(targets: &[CdcTarget]) -> Vec<Vec<String>> {
+    targets
+        .iter()
+        .map(|parent| {
+            targets
+                .iter()
+                .filter(|child| {
+                    child.source.requires_reconciliation
+                        && child.source.foreign_keys.iter().any(|key| {
+                            key.referenced_table
+                                .eq_ignore_ascii_case(&parent.source.name)
+                                && (invisible_fk_rule(&key.delete_rule)
+                                    || invisible_fk_rule(&key.update_rule))
+                        })
+                })
+                .map(|child| child.source.name.clone())
+                .collect()
+        })
+        .collect()
 }
 
 impl ApplyBatch {
@@ -3960,10 +4061,18 @@ fn seal_transaction(
     let mut highest_version = batch.highest_version;
     let mut mutations = 0_usize;
     let mut bytes = 0_usize;
+    let watchers = batch
+        .cascade_watchers
+        .take()
+        .unwrap_or_else(|| cascade_watchers(targets));
+    let mut recorder = CascadeRecorder::new(&watchers, targets);
     pending.for_each_mutation(|mutation| {
         let version = mutation.row.version();
         highest_version = Some(highest_version.map_or(version, |highest| highest.max(version)));
         mutations += 1;
+        if let Some(recorder) = recorder.as_mut() {
+            recorder.observe(mutation.target_index, &mutation.row)?;
+        }
         let row_bytes = mutation.row.estimated_bytes();
         if !spilled {
             bytes = bytes.saturating_add(row_bytes);
@@ -4003,6 +4112,10 @@ fn seal_transaction(
         recovery_point("cdc.after_stage")?;
     }
     batch.staged.append(&mut staged);
+    if let Some(recorder) = recorder {
+        batch.cascade_keys.extend(recorder.keys);
+    }
+    batch.cascade_watchers = Some(watchers);
     batch.highest_version = highest_version;
     batch.mutations += mutations;
     batch.bytes = batch.bytes.saturating_add(bytes);
@@ -4175,13 +4288,14 @@ fn flush_batch(
         .map_or(durable.floor, |highest| durable.floor.max(highest));
     let unfinished = durable.unfinished_past(floor, &batch.file, batch.pos);
     recovery_point("cdc.before_checkpoint_commit")?;
-    metadata.commit_cdc_checkpoint_leaving(
+    metadata.commit_cdc_checkpoint_recording(
         database_id,
         &checkpoint_record,
         &touched_names,
         &Utc::now().to_rfc3339(),
         (position.carry != durable.carry).then_some(position.carry),
         unfinished.as_ref(),
+        &batch.cascade_keys,
     )?;
     recovery_point("cdc.after_checkpoint_commit")?;
     phases.checkpoint += synchronized.elapsed();
