@@ -551,6 +551,7 @@ pub(super) fn settled_top_k(
         .lock()
         .expect("settled memo lock")
         .get(key)
+        .filter(|entry| super::aggregate::settled_answer_fits(memory, entry.payload()))
     else {
         return Ok(None);
     };
@@ -569,13 +570,11 @@ pub(super) fn settled_top_k(
 pub(super) fn keep_settled_top_k(
     key: super::aggregate::SettledMemoKey,
     sorted: SortedRows,
+    memory: &MemoryTracker,
 ) -> SortedRows {
     match sorted.into_kept_rows() {
         Ok(rows) => {
-            super::aggregate::SETTLED_AGGREGATE_MEMO
-                .lock()
-                .expect("settled memo lock")
-                .insert(key, rows.clone());
+            super::aggregate::store_settled(key, &rows, memory);
             SortedRows::Memory(MaterializedRows {
                 rows,
                 position: 0,

@@ -3597,11 +3597,15 @@ pub(super) struct SettledRows {
 }
 
 impl SettledRows {
-    pub(super) fn new(rows: Vec<Vec<Value>>) -> Self {
-        let payload = rows
-            .iter()
+    /// What replaying `rows` reserves: every row's payload.
+    pub(super) fn payload_of(rows: &[Vec<Value>]) -> usize {
+        rows.iter()
             .map(|row| super::estimated_row_payload_bytes(row))
-            .sum();
+            .sum()
+    }
+
+    /// `rows`, whose [`Self::payload_of`] the caller has already taken.
+    pub(super) fn with_payload(rows: Vec<Vec<Value>>, payload: usize) -> Self {
         let row_bytes = rows.first().map_or(1, |row| {
             super::estimated_record_batch_bytes(std::slice::from_ref(row), row.len()).max(1)
         });

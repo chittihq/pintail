@@ -6272,7 +6272,7 @@ impl PullOperator {
                     }
                     let mut sorted = build_sort(input, keys, *top_k, trim_to, memory, *collation)?;
                     if let Some(key) = memo_key {
-                        sorted = sort::keep_settled_top_k(key, sorted);
+                        sorted = sort::keep_settled_top_k(key, sorted, memory);
                     }
                     // Superseded and deleted rows count toward the side
                     // index's bound but not toward the answer, and rows from

@@ -2627,7 +2627,7 @@ impl SettledMemo {
     /// asked for again, and clearing on overflow threw the answers of the
     /// unchanged tables out with them every few changes. The stale entries
     /// are the ones nobody uses, so they are the ones that go.
-    pub(super) fn insert(&mut self, key: SettledMemoKey, rows: Vec<Vec<Value>>) {
+    pub(super) fn insert(&mut self, key: SettledMemoKey, rows: super::two_pass::SettledRows) {
         if self.entries.len() >= SETTLED_MEMO_MAX_ENTRIES
             && !self.entries.contains_key(&key)
             && let Some(oldest) = self
@@ -2641,10 +2641,7 @@ impl SettledMemo {
         self.tick += 1;
         self.entries.insert(
             key,
-            (
-                std::sync::Arc::new(super::two_pass::SettledRows::new(rows)),
-                self.tick,
-            ),
+            (std::sync::Arc::new(rows), self.tick),
         );
         SETTLED_MEMO_STORES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -2702,8 +2699,33 @@ pub fn settled_memo_stats() -> SettledMemoStats {
     }
 }
 
-fn store_settled(memo: &mut SettledMemo, key: SettledMemoKey, rows: Vec<Vec<Value>>) {
-    memo.insert(key, rows);
+/// Whether a memo answer of `payload` bytes may be served to the query
+/// `memory` charges.
+///
+/// The memo is a shortcut, never a requirement: whatever it serves, the
+/// query could have computed, and computing it spills where holding it
+/// whole would not fit. A replay holds every row in memory, so it is only
+/// taken where the computation would have held them too - within the half
+/// of the ceiling a grouped fold keeps its groups in before it spills.
+/// Past that line the query executes and spills as it would without an
+/// entry, rather than failing its limit on rows it did not need to hold.
+pub(super) fn settled_answer_fits(memory: &MemoryTracker, payload: usize) -> bool {
+    memory.used().saturating_add(payload) <= memory.limit() / 2
+}
+
+/// Keeps `rows` under `key` when a query at this one's ceiling could be
+/// served from them; an entry no replay at this ceiling may take is not
+/// worth its copy, so it is skipped rather than kept.
+pub(super) fn store_settled(key: SettledMemoKey, rows: &[Vec<Value>], memory: &MemoryTracker) {
+    let payload = super::two_pass::SettledRows::payload_of(rows);
+    if payload > memory.limit() / 2 {
+        return;
+    }
+    let entry = super::two_pass::SettledRows::with_payload(rows.to_vec(), payload);
+    SETTLED_AGGREGATE_MEMO
+        .lock()
+        .expect("settled memo lock")
+        .insert(key, entry);
 }
 const SETTLED_MEMO_MAX_ROWS: usize = 1 << 17;
 
@@ -3575,6 +3597,7 @@ pub(super) fn build_hash_aggregate(
             .lock()
             .expect("settled memo lock")
             .get(key)
+        && settled_answer_fits(memory, entry.payload())
     {
         memory.reserve(entry.payload())?;
         SETTLED_MEMO_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -3614,7 +3637,8 @@ pub(super) fn build_hash_aggregate(
         let base = SETTLED_AGGREGATE_MEMO
             .lock()
             .expect("settled memo lock")
-            .get(&key);
+            .get(&key)
+            .filter(|entry| settled_answer_fits(memory, entry.payload()));
         let base = base.map(|entry| entry.rows().to_vec());
         if let Some(base) = base {
             let row_count = delta.rows.len();
@@ -3661,8 +3685,7 @@ pub(super) fn build_hash_aggregate(
             if let Some(key) = memo_key
                 && merged.len() <= SETTLED_MEMO_MAX_ROWS
             {
-                let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
-                store_settled(&mut memo, key, merged.clone());
+                store_settled(key, &merged, memory);
             }
             return Ok(MaterializedRows {
                 rows: merged,
@@ -3678,8 +3701,7 @@ pub(super) fn build_hash_aggregate(
         && let Some(rows) = try_sma_fold(input, aggregates, memory)?
     {
         if let Some(key) = &memo_key {
-            let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
-            store_settled(&mut memo, key.clone(), rows.clone());
+            store_settled(key.clone(), &rows, memory);
         }
         return Ok(MaterializedRows {
             rows,
@@ -3709,8 +3731,7 @@ pub(super) fn build_hash_aggregate(
     };
     if let Some(rows) = segment_fold {
         if let Some(key) = &memo_key {
-            let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
-            store_settled(&mut memo, key.clone(), rows.clone());
+            store_settled(key.clone(), &rows, memory);
         }
         return Ok(MaterializedRows {
             rows,
@@ -3753,8 +3774,7 @@ pub(super) fn build_hash_aggregate(
         && result.spilled.is_none()
         && result.rows.len() <= SETTLED_MEMO_MAX_ROWS
     {
-        let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
-        store_settled(&mut memo, key, result.rows.clone());
+        store_settled(key, &result.rows, memory);
     }
     Ok(result)
 }

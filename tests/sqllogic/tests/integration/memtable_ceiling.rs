@@ -176,7 +176,14 @@ fn a_dense_integer_key_spills_when_its_groups_outgrow_the_ceiling() {
     const MANY: u64 = 40_000;
     let (_directory, table) = table(MANY);
     let sql = "SELECT k,COUNT(*),SUM(amount) FROM wide_rows GROUP BY k ORDER BY k";
+    // The roomy run keeps its groups in the settled memo: the memtable is a
+    // fixed set of rows the store names. The tight runs below find that
+    // entry, and the rows it holds do not fit their ceilings - they have to
+    // execute and spill as they would without it, not fail their limit.
+    let before = pintail_exec::settled_memo_stats();
     let (reference, _) = run(&table, 256 * MIB, sql).expect("roomy run");
+    let stored = pintail_exec::settled_memo_stats();
+    assert!(stored.stores > before.stores, "{before:?} -> {stored:?}");
     assert_eq!(reference.len(), usize::try_from(MANY).expect("groups"));
     let mut failures = Vec::new();
     for limit in (4..=32).step_by(2).map(|mib| mib * MIB) {
@@ -185,6 +192,9 @@ fn a_dense_integer_key_spills_when_its_groups_outgrow_the_ceiling() {
                 println!("dense key at {} MiB: {files} spill files", limit / MIB);
                 if rows != reference {
                     failures.push(format!("{limit}: rows differ"));
+                }
+                if limit == 4 * MIB && files == 0 {
+                    failures.push(format!("{limit}: nothing spilled"));
                 }
             }
             Err(error) => failures.push(format!("{limit}: {error}")),
