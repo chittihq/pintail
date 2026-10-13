@@ -1335,6 +1335,24 @@ impl MetaStore {
             .context("failed to commit replication-state update")
     }
 
+    /// Whether a failed job or replication cycle is still written on the
+    /// database or on any of its tables. A checkpoint lifts it from the
+    /// database and from the tables it touched, so the tables are asked too.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state cannot be read.
+    pub fn cycle_failure_recorded(&self, id: &str) -> Result<bool> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM databases WHERE id = ?1 AND state = 'error') \
+                     OR EXISTS (SELECT 1 FROM tables WHERE db_id = ?1 AND state = 'error')",
+                [id],
+                |row| row.get::<_, bool>(0),
+            )
+            .context("failed to read the recorded replication failure")
+    }
+
     /// Quarantines every table a dead process left mid-copy: no job
     /// survives a restart, so a table still in 'snapshotting' at boot holds
     /// a PARTIAL copy that must never answer queries as healthy. Returns

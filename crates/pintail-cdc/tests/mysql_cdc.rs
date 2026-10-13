@@ -3380,3 +3380,156 @@ async fn a_probe_leaves_out_tables_dropped_while_it_runs() {
     owner.disconnect().await.expect("disconnect churn owner");
     pool.disconnect().await.expect("disconnect churn pool");
 }
+
+/// A failed cycle writes its error onto every table of the database. The
+/// next cycle lifts it as soon as it has applied everything the source
+/// held, while it is still following the stream, not when its window ends.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn a_followed_catch_up_lifts_an_earlier_failure_once_it_has_caught_up() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE ledger (id BIGINT UNSIGNED PRIMARY KEY, note VARCHAR(32) NOT NULL);\
+             CREATE TABLE tally (id BIGINT UNSIGNED PRIMARY KEY, total BIGINT NOT NULL);\
+             INSERT INTO ledger VALUES (1,'seed');\
+             INSERT INTO tally VALUES (1,10);",
+        )
+        .expect("lift source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("lift DSN"));
+    let report = probe(&pool, "app").await.expect("probe lift source");
+    let workspace = tempfile::tempdir().expect("lift workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("lift metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register lift source");
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.path().join(&source.name),
+                source.table_schema().expect("lift schema"),
+                StoreOptions::default(),
+            )
+            .expect("lift store");
+            SnapshotTarget::new(source.clone(), store).expect("lift snapshot target")
+        })
+        .collect::<Vec<_>>();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("lift baseline snapshot");
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("lift CDC target")
+        })
+        .collect::<Vec<_>>();
+
+    // What a failed cycle leaves behind, and a write for the next to apply.
+    let states = |metadata_path: &Path| {
+        let metadata = MetaStore::open(metadata_path).expect("inspect lift states");
+        let database = metadata
+            .database(DATABASE_ID)
+            .expect("database row")
+            .expect("database exists")
+            .state;
+        let tables = metadata
+            .tables(DATABASE_ID)
+            .expect("table rows")
+            .into_iter()
+            .map(|table| (table.name, table.state, table.last_error))
+            .collect::<Vec<_>>();
+        (database, tables)
+    };
+    {
+        let metadata = MetaStore::open(&metadata_path).expect("lift metadata");
+        metadata
+            .set_database_replication_state(DATABASE_ID, "cdc", "2026-07-30T00:00:01Z")
+            .expect("streaming state");
+        metadata
+            .fail_database_job(
+                DATABASE_ID,
+                "the earlier cycle failed",
+                "2026-07-30T00:00:02Z",
+            )
+            .expect("record the earlier failure");
+    }
+    let (database, tables) = states(&metadata_path);
+    assert_eq!(database, "error");
+    assert_eq!(tables.len(), 2);
+    assert!(tables.iter().all(|(_, state, _)| state == "error"));
+    mysql
+        .query_batch("INSERT INTO ledger VALUES (2,'after');")
+        .expect("lift write");
+
+    let stop = pintail_cdc::CycleStop::new();
+    let cycle = run_cdc(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        targets,
+        CdcOptions {
+            blocking: false,
+            follow: Some(Duration::from_secs(600)),
+            stop: Some(stop.clone()),
+            ..CdcOptions::default()
+        },
+    );
+    // Watches the recorded state while the cycle is on its stream, and ends
+    // the cycle only after it has seen the answer.
+    let watch = async {
+        let waited = std::time::Instant::now();
+        let seen = loop {
+            let (database, tables) = states(&metadata_path);
+            // No write touches `tally`, so only the lift clears it.
+            let lifted = tables.iter().all(|(_, state, _)| state == "streaming");
+            if lifted || waited.elapsed() > Duration::from_secs(30) {
+                break (database, tables);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        stop.request();
+        seen
+    };
+    let (outcome, (database, tables)) = tokio::join!(cycle, watch);
+    let outcome = outcome.expect("followed lift catch-up");
+    assert_eq!(
+        database, "streaming",
+        "the cycle was still following and had not lifted the failure: {tables:?}"
+    );
+    for (name, state, last_error) in &tables {
+        assert_eq!(state, "streaming", "{name}");
+        assert_eq!(last_error, &None, "{name}");
+    }
+    assert_eq!(
+        cdc_target(&outcome.targets, "ledger")
+            .store()
+            .snapshot()
+            .scan()
+            .expect("lift scan")
+            .len(),
+        2
+    );
+    pool.disconnect().await.expect("disconnect lift pool");
+}

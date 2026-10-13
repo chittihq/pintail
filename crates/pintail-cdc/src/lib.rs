@@ -595,6 +595,10 @@ async fn run_cdc_inner(
         .follow
         .filter(|_| !options.blocking)
         .map(|window| cycle_started + window);
+    // Whether this cycle has looked for a failure an earlier one recorded,
+    // and the source position at which that failure is lifted.
+    let mut failure_checked = false;
+    let mut lift_failure_at: Option<(String, u64)> = None;
     let mut mutations = 0_usize;
     let mut events_read = 0_usize;
     let mut reconnect_attempts = 0_usize;
@@ -1039,6 +1043,50 @@ async fn run_cdc_inner(
                 // transaction is open, so the position is a whole
                 // transaction's end exactly as it is at the end of a log.
                 let quiet = !pending.has_mutations() && position.pending_gtid.is_none();
+                // A catch-up that returned at the end of the log told its
+                // caller there that the mirror was whole again, and a
+                // failure an earlier cycle had written onto every table was
+                // lifted with it. A followed one stays on the stream for its
+                // whole window, so it lifts the failure itself, once it has
+                // applied everything the source held when it looked:
+                // otherwise tables that are current keep reading as failed
+                // until the window ends. A quiet stream is not that proof by
+                // itself - it is quiet before its first event too - so the
+                // end of the source's log is read once and waited for.
+                if quiet && follow_until.is_some() {
+                    if !failure_checked {
+                        failure_checked = true;
+                        if metadata
+                            .cycle_failure_recorded(database_id)
+                            .unwrap_or(false)
+                        {
+                            lift_failure_at = source_log_end(pool).await;
+                        }
+                    }
+                    if lift_failure_at.as_ref().is_some_and(|(file, pos)| {
+                        (position.file.as_str(), position.pos) >= (file.as_str(), *pos)
+                    }) {
+                        lift_failure_at = None;
+                        match metadata.set_database_replication_state(
+                            database_id,
+                            "cdc",
+                            &Utc::now().to_rfc3339(),
+                        ) {
+                            Ok(()) => pintail_log::log_info!(
+                                "cdc db={database_id} caught up at {}:{}; the earlier \
+                                 cycle's failure is lifted",
+                                position.file,
+                                position.pos
+                            ),
+                            // Only the report is late: the cycle's end
+                            // writes the same state.
+                            Err(error) => pintail_log::log_error!(
+                                "cdc db={database_id} could not lift the earlier cycle's \
+                                 failure: {error:#}"
+                            ),
+                        }
+                    }
+                }
                 let arrived = match follow_until {
                     Some(until) if quiet => {
                         tokio::select! {
@@ -3201,6 +3249,21 @@ async fn follow_ended(until: Instant, stop: Option<&CycleStop>) {
         }
         None => deadline.await,
     }
+}
+
+/// The end of the source's log right now, as the file and position a stream
+/// reaches once it has read everything written so far. `None` when the
+/// source does not say.
+async fn source_log_end(pool: &Pool) -> Option<(String, u64)> {
+    let mut connection = pool.get_conn().await.ok()?;
+    for query in ["SHOW BINARY LOG STATUS", "SHOW MASTER STATUS"] {
+        if let Ok(Some(row)) = connection.query_first::<mysql_async::Row, _>(query).await {
+            let file = row.get::<String, _>(0)?;
+            let position = row.get::<u64, _>(1)?;
+            return Some((file, position));
+        }
+    }
+    None
 }
 
 async fn open_stream(
