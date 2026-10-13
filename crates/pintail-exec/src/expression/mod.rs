@@ -3962,7 +3962,11 @@ fn evaluate_eager_scalar_inner(
                     )
                 })
                 .ok_or(ExecError::NumericOverflow)?;
-            Ok(Value::Utf8(format_grouped(units, scale)))
+            let style = match values.get(2) {
+                Some(locale) => NumberStyle::of_locale(&scalar_string(locale)?),
+                None => NumberStyle::EN_US,
+            };
+            Ok(Value::Utf8(format_grouped(units, scale, style)))
         }
         ScalarFunction::ToBase64 => {
             let bytes = match &values[0] {
@@ -7689,7 +7693,7 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 /// Renders `units` scaled by `10^scale` with thousands separators, the way
 /// `FORMAT()` prints: sign, grouped integer digits, then exactly `scale`
 /// fraction digits.
-fn format_grouped(units: i128, scale: u8) -> String {
+fn format_grouped(units: i128, scale: u8, style: NumberStyle) -> String {
     let sign = if units < 0 { "-" } else { "" };
     let magnitude = units.unsigned_abs().to_string();
     let scale = usize::from(scale);
@@ -7699,17 +7703,89 @@ fn format_grouped(units: i128, scale: u8) -> String {
         magnitude
     };
     let (integer, fraction) = padded.split_at(padded.len() - scale);
-    let mut grouped = String::with_capacity(integer.len() + integer.len() / 3);
+    let mut grouped = String::with_capacity(integer.len() + integer.len() / 2);
     for (index, digit) in integer.chars().enumerate() {
-        if index > 0 && (integer.len() - index) % 3 == 0 {
-            grouped.push(',');
+        // Digits to the right of this one. The first separator stands three
+        // digits from the end; the rest follow every `later_group` digits.
+        let after = integer.len() - index;
+        if let Some(separator) = style.thousands
+            && index > 0
+            && after >= 3
+            && (after - 3) % style.later_group == 0
+        {
+            grouped.push(separator);
         }
         grouped.push(digit);
     }
     if fraction.is_empty() {
         format!("{sign}{grouped}")
     } else {
-        format!("{sign}{grouped}.{fraction}")
+        format!("{sign}{grouped}{}{fraction}", style.decimal)
+    }
+}
+
+/// How a locale writes a number in `FORMAT()`: its decimal point, the
+/// separator between digit groups when it groups at all, and the size of
+/// every group after the first three digits.
+#[derive(Clone, Copy)]
+struct NumberStyle {
+    decimal: char,
+    thousands: Option<char>,
+    later_group: usize,
+}
+
+impl NumberStyle {
+    const EN_US: Self = Self::new('.', Some(','), 3);
+
+    const fn new(decimal: char, thousands: Option<char>, later_group: usize) -> Self {
+        Self {
+            decimal,
+            thousands,
+            later_group,
+        }
+    }
+
+    /// The style of a locale by name, as measured from `MySQL` 8.4 for each
+    /// locale it knows. A name it does not know formats as `en_US`.
+    fn of_locale(name: &str) -> Self {
+        const COMMA_SPACE: &[&str] = &[
+            "sv_SE", "cs_CZ", "et_EE", "fi_FI", "lv_LV", "mk_MK", "ru_RU", "sk_SK", "es_CR",
+            "sv_FI",
+        ];
+        const COMMA_DOT: &[&str] = &[
+            "de_DE", "be_BY", "da_DK", "es_ES", "fo_FO", "hu_HU", "id_ID", "is_IS", "lt_LT",
+            "mn_MN", "nb_NO", "ro_RO", "ru_UA", "sq_AL", "tr_TR", "uk_UA", "vi_VN", "de_BE",
+            "de_LU", "es_AR", "es_BO", "es_CL", "es_CO", "es_EC", "es_PY", "es_UY", "es_VE",
+            "no_NO",
+        ];
+        const COMMA_UNGROUPED: &[&str] = &[
+            "fr_FR", "ca_ES", "de_AT", "eu_ES", "gl_ES", "hr_HR", "nl_NL", "pl_PL", "pt_BR",
+            "pt_PT", "sl_SI", "fr_BE", "fr_CA", "fr_CH", "fr_LU", "it_IT", "nl_BE", "el_GR",
+        ];
+        const DOT_UNGROUPED: &[&str] = &["ar_SA", "sr_RS"];
+        const COMMA_APOSTROPHE: &[&str] = &["it_CH", "rm_CH"];
+        const DOT_COMMA_BY_TWO: &[&str] = &["ta_IN", "te_IN", "en_IN"];
+        let among = |names: &[&str]| names.iter().any(|known| known.eq_ignore_ascii_case(name));
+        if among(COMMA_DOT) {
+            Self::new(',', Some('.'), 3)
+        } else if among(COMMA_UNGROUPED) {
+            Self::new(',', None, 3)
+        } else if among(COMMA_SPACE) {
+            Self::new(',', Some(' '), 3)
+        } else if among(DOT_UNGROUPED) {
+            Self::new('.', None, 3)
+        } else if among(COMMA_APOSTROPHE) {
+            Self::new(',', Some('\''), 3)
+        } else if among(DOT_COMMA_BY_TWO) {
+            Self::new('.', Some(','), 2)
+        } else if name.eq_ignore_ascii_case("de_CH") {
+            Self::new('.', Some('\''), 3)
+        } else if name.eq_ignore_ascii_case("bg_BG") {
+            // The separator this locale carries in `MySQL` is the NUL byte.
+            Self::new(',', Some('\0'), 3)
+        } else {
+            Self::EN_US
+        }
     }
 }
 

@@ -737,6 +737,27 @@ pub(super) fn bind_scalar_function(
         "ELT" if args.len() >= 2 => ScalarFunction::Elt,
         "FIELD" if args.len() >= 2 => ScalarFunction::Field,
         "FORMAT" if args.len() == 2 => ScalarFunction::Format,
+        // The third argument names the locale whose separators the number
+        // takes; a NULL one is `en_US`.
+        "FORMAT" if args.len() == 3 => {
+            let locale = args.pop().expect("three arguments");
+            args.push(if locale.nullable || locale.data_type.is_none() {
+                bind_scalar(
+                    ScalarFunction::Coalesce,
+                    vec![
+                        locale,
+                        BoundExpr {
+                            kind: BoundExprKind::Literal(Value::Utf8("en_US".into())),
+                            data_type: Some(DataType::Utf8),
+                            nullable: false,
+                        },
+                    ],
+                )?
+            } else {
+                locale
+            });
+            ScalarFunction::Format
+        }
         "TO_BASE64" if args.len() == 1 => ScalarFunction::ToBase64,
         "FROM_BASE64" if args.len() == 1 => ScalarFunction::FromBase64,
         "QUARTER" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Quarter),

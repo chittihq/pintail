@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2790;
+const EXPECTED_CASES: usize = 2793;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4629,11 +4629,71 @@ fn hand_written_cases() -> Vec<OracleCase> {
              CAST(CAST('-0.5' AS JSON) AS DOUBLE), CAST(CAST('[5]' AS JSON) AS DOUBLE), \
              CAST(JSON_OBJECT('a', 1) AS DOUBLE)",
         ),
+        // FORMAT's third argument; `format_locale_cases` covers every locale.
+        ordered(
+            "format locales",
+            "SELECT o.id, FORMAT(o.total, 1, 'de_DE'), FORMAT(o.total * 1000, 0, 'en_IN'), \
+             FORMAT(o.total, 2, NULL), FORMAT(o.total, 3, IF(o.id > 6, 'sv_SE', NULL)), \
+             FORMAT(NULL, 2, 'de_DE'), FORMAT(o.total, NULL, 'de_DE'), \
+             FORMAT(o.total, 2, o.status) FROM orders o ORDER BY o.id",
+        ),
     ]
     .into_iter()
     .chain(diversify_cases())
     .chain(relational_edge_cases())
+    .chain(format_locale_cases())
     .collect()
+}
+
+/// `FORMAT(number, decimals, locale)` for every locale `MySQL` knows, then
+/// the edges - zero, rounding into a new group, a short number, text, a
+/// name in another case, an unknown and an empty name - in each family of
+/// separators.
+fn format_locale_cases() -> Vec<OracleCase> {
+    const LOCALES: &[&str] = &[
+        "en_US", "en_GB", "ja_JP", "sv_SE", "de_DE", "fr_FR", "ar_AE", "ar_BH", "ar_JO",
+        "ar_SA", "ar_SY", "be_BY", "bg_BG", "ca_ES", "cs_CZ", "da_DK", "de_AT", "es_ES",
+        "et_EE", "eu_ES", "fi_FI", "fo_FO", "gl_ES", "gu_IN", "he_IL", "hi_IN", "hr_HR",
+        "hu_HU", "id_ID", "is_IS", "it_CH", "ko_KR", "lt_LT", "lv_LV", "mk_MK", "mn_MN",
+        "ms_MY", "nb_NO", "nl_NL", "pl_PL", "pt_BR", "pt_PT", "ro_RO", "ru_RU", "ru_UA",
+        "sk_SK", "sl_SI", "sq_AL", "sr_RS", "ta_IN", "te_IN", "th_TH", "tr_TR", "uk_UA",
+        "ur_PK", "vi_VN", "zh_CN", "zh_TW", "ar_DZ", "ar_EG", "ar_IN", "ar_IQ", "ar_KW",
+        "ar_LB", "ar_LY", "ar_MA", "ar_OM", "ar_QA", "ar_SD", "ar_TN", "ar_YE", "de_BE",
+        "de_CH", "de_LU", "en_AU", "en_CA", "en_IN", "en_NZ", "en_PH", "en_ZA", "en_ZW",
+        "es_AR", "es_BO", "es_CL", "es_CO", "es_CR", "es_DO", "es_EC", "es_GT", "es_HN",
+        "es_MX", "es_NI", "es_PA", "es_PE", "es_PR", "es_PY", "es_SV", "es_US", "es_UY",
+        "es_VE", "fr_BE", "fr_CA", "fr_CH", "fr_LU", "it_IT", "nl_BE", "no_NO", "sv_FI",
+        "zh_HK", "el_GR", "rm_CH",
+    ];
+    let every = LOCALES
+        .iter()
+        .map(|locale| format!("HEX(FORMAT(-1234567890123.5, 1, '{locale}'))"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut edges = Vec::new();
+    for locale in [
+        "de_DE", "fr_FR", "en_IN", "sv_SE", "de_CH", "DE_de", "xx_XX", "",
+    ] {
+        for (number, decimals) in [
+            ("0", 2),
+            ("999.999", 2),
+            ("-99999.5", 0),
+            ("12345678", 0),
+            ("'1234.5678'", 1),
+            ("0.004", 2),
+        ] {
+            edges.push(format!("FORMAT({number}, {decimals}, '{locale}')"));
+        }
+    }
+    [every, edges.join(", ")]
+        .into_iter()
+        .map(|projection| OracleCase {
+            sql_mode: "",
+            family: "format locales",
+            sql: format!("SELECT {projection}"),
+            ordered: true,
+        })
+        .collect()
 }
 
 /// Typed multi-table cases on the `orders` seed — DECIMAL / DATETIME / JSON
