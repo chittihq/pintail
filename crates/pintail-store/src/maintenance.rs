@@ -448,13 +448,9 @@ impl MergeTicket {
                 u64::try_from(micros).unwrap_or(u64::MAX),
             ));
         }
-        // Never asleep longer than at work: a merge under statements that
-        // never stop still ends in twice its own time.
-        let allowed = self.worked.saturating_sub(self.slept);
-        let nap = self.owed.min(allowed).min(LONGEST_NAP);
-        if nap < SHORTEST_NAP {
+        let Some(nap) = next_nap(self.owed, self.worked, self.slept) else {
             return;
-        }
+        };
         YIELDING.fetch_add(1, Ordering::AcqRel);
         std::thread::sleep(nap);
         YIELDING.fetch_sub(1, Ordering::AcqRel);
@@ -467,6 +463,17 @@ impl MergeTicket {
         );
         self.last = Instant::now();
     }
+}
+
+/// The sleep a pacing merge takes next: what it owes, but never more than
+/// the work it has done beyond the sleep it has already taken, so a merge
+/// under statements that never stop still ends in twice its own time. One
+/// sleep is at most [`LONGEST_NAP`], and a debt under [`SHORTEST_NAP`]
+/// waits for more.
+fn next_nap(owed: Duration, worked: Duration, slept: Duration) -> Option<Duration> {
+    let allowed = worked.saturating_sub(slept);
+    let nap = owed.min(allowed).min(LONGEST_NAP);
+    (nap >= SHORTEST_NAP).then_some(nap)
 }
 
 impl Drop for MergeTicket {
@@ -495,25 +502,65 @@ mod tests {
 
     #[test]
     fn a_pacing_merge_never_sleeps_longer_than_it_worked() {
+        // The budget is arithmetic over three durations, so it is checked
+        // against durations the test chooses, not ones a clock returned.
+        let stretch = Duration::from_millis(3);
+        let (mut worked, mut slept, mut owed) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        let mut naps = 0;
+        for _ in 0..200 {
+            worked += stretch;
+            // A write far past the rate asks for more sleep than is allowed.
+            owed += Duration::from_secs(1);
+            let Some(nap) = next_nap(owed, worked, slept) else {
+                continue;
+            };
+            assert!(nap >= SHORTEST_NAP && nap <= LONGEST_NAP, "{nap:?}");
+            assert!(
+                slept + nap <= worked,
+                "asked for {nap:?} after sleeping {slept:?} of {worked:?} worked"
+            );
+            slept += nap;
+            owed -= nap;
+            naps += 1;
+        }
+        assert!(naps > 0, "a paced merge gives way");
+        assert_eq!(
+            slept, worked,
+            "debt past the budget is slept as it is earned"
+        );
+
+        // A sleep the scheduler stretched is charged in full: nothing more
+        // is asked until work has covered it.
+        let overslept = worked + Duration::from_millis(50);
+        assert_eq!(next_nap(owed, worked, overslept), None);
+        assert_eq!(
+            next_nap(owed, overslept + SHORTEST_NAP, overslept),
+            Some(SHORTEST_NAP)
+        );
+        // A debt too small to be worth a sleep waits.
+        assert_eq!(next_nap(SHORTEST_NAP / 2, worked, Duration::ZERO), None);
+        // One sleep is bounded however much is owed and allowed.
+        assert_eq!(
+            next_nap(
+                Duration::from_secs(9),
+                Duration::from_secs(9),
+                Duration::ZERO
+            ),
+            Some(LONGEST_NAP)
+        );
+    }
+
+    #[test]
+    fn a_merge_gives_way_while_a_statement_runs() {
         let mut ticket = MergeTicket::queue(1024, false);
         assert!(ticket.admit(&AtomicBool::new(false)));
         ticket.cooperative = true;
         statement_started();
-        for _ in 0..20 {
-            std::thread::sleep(Duration::from_millis(3));
-            // A write far past the rate asks for more sleep than is allowed.
-            ticket.pace(merge_write_rate());
-        }
+        // Work the clock cannot shorten, so the budget has room for a sleep.
+        ticket.worked = Duration::from_secs(1);
+        ticket.pace(merge_write_rate());
         statement_finished();
         assert!(ticket.slept > Duration::ZERO, "a paced merge gives way");
-        // Each sleep is asked for within what the merge has worked; the
-        // clock may overshoot one by a scheduler tick.
-        assert!(
-            ticket.slept <= ticket.worked + Duration::from_millis(20),
-            "slept {:?} for {:?} of work",
-            ticket.slept,
-            ticket.worked
-        );
     }
 
     #[test]
