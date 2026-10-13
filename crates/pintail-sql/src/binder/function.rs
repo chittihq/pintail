@@ -157,6 +157,27 @@ fn literal_datetime_without_offset(text: &str) -> &str {
     }
 }
 
+/// The date and time a literal begins with when other text follows it, as
+/// execution reads it: `2024-01-05T10:11:12Z` is its first nineteen
+/// characters. Text with nothing after its date is returned whole.
+fn leading_datetime_text(text: &str) -> &str {
+    let end = text
+        .bytes()
+        .position(|byte| {
+            !(byte.is_ascii_digit() || byte.is_ascii_punctuation() || byte == b' ' || byte == b'T')
+        })
+        .unwrap_or(text.len());
+    if end == text.len() {
+        return text;
+    }
+    let leading = text[..end].trim_end_matches(|ch: char| !ch.is_ascii_digit());
+    if leading.bytes().all(|byte| byte.is_ascii_digit()) {
+        text
+    } else {
+        leading
+    }
+}
+
 fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
     match argument.data_type {
         Some(DataType::Decimal { scale, .. }) => scale.min(6),
@@ -170,7 +191,7 @@ fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
                 && let Some(value) = crate::text_charset::literal_value(argument)
                 && let Some(text) = literal_text(value.as_ref())
             {
-                let text = literal_datetime_without_offset(text);
+                let text = leading_datetime_text(literal_datetime_without_offset(text));
                 if super::TemporalLiteral::parse(text).is_some() {
                     return text.rsplit_once('.').map_or(0, |(_, fraction)| {
                         u8::try_from(fraction.len().min(6)).unwrap_or(6)

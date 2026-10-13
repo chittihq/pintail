@@ -162,7 +162,16 @@ stays readable as a list of things to fix.
 - Locale-specific collation profiles remain unsupported, and so do the `NONE`
   and `SYSCONST` coercibility rungs: an expression mixing collations carries
   its resolved one rather than `NONE` (#10).
-- Date parsing is limited to canonical date and date-time forms.
+- Date and time text is read in MySQL's delimited and digits-only forms,
+  with these measured exceptions. The digits-only form with a `T` between
+  date and time (`'20240105T101112'`) is NULL. A time written with `.`
+  between its fields (`'2024-01-05 10.11.12'`) reads the instant but
+  declares the last field as a fraction, so it prints with extra digits.
+  `HOUR`, `MINUTE`, `SECOND` and `TIME` over a `T`-separated date and time
+  with text after it follow MySQL's TIME reading only where that text is a
+  single zone letter. `CONVERT_TZ` and a comparison of computed text with a
+  DATE or DATETIME column do not read a date that other text follows
+  (`CONCAT(d, 'Z') = d` is 0 where MySQL answers 1).
 - `TIMESTAMPDIFF` does not take the `MICROSECOND` unit. Interval arithmetic
   (`INTERVAL n MICROSECOND`, `TIMESTAMPADD(MICROSECOND, ...)`) does.
 

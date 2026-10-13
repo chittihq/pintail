@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2808;
+const EXPECTED_CASES: usize = 2818;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4726,6 +4726,93 @@ fn hand_written_cases() -> Vec<OracleCase> {
              >= x'00000007000000000000000000000000' \
              ORDER BY BIN_TO_UUID(UUID_TO_BIN(CONCAT('0000000', id, '-0000-0000-0000-00000000000', \
              10 - id))) DESC",
+        ),
+        // A date followed by other text is read up to that text: the ISO
+        // form with a zone letter, a zone name, anything after the digits.
+        ordered(
+            "date text followed by other text",
+            "SELECT DATE('2024-01-05T10:11:12Z'), CAST('2024-01-05T10:11:12Z' AS DATETIME), \
+             CAST('2024-01-05T10:11:12.123Z' AS DATETIME(3)), TIMESTAMP('2024-01-05T10:11:12Z'), \
+             YEAR('2024-01-05T10:11:12Z'), DATE_FORMAT('2024-01-05T10:11:12Z', '%Y-%m'), \
+             '2024-01-05T10:11:12Z' + INTERVAL 1 DAY, DATEDIFF('2024-01-05T10:11:12Z', '2024-01-01'), \
+             UNIX_TIMESTAMP('2024-01-05T10:11:12Z'), DATE('2024-01-05 10:11:12 UTC'), \
+             TIMESTAMPDIFF(DAY, '2024-01-01T00:00:00Z', '2024-01-05T10:11:12Z'), \
+             MONTH('2024-01-05Z'), DATE('2024-01-05 10:11:12.5Z')",
+        ),
+        ordered(
+            "date text followed by other text",
+            "SELECT DATE('2024-01-05abc'), CAST('2024-01-05abc' AS DATETIME), DATE('2024-01-05 abc'), \
+             TIMESTAMP('2024-01-05 10:11:12abc'), CAST('2024-01-05 10:11:12 abc' AS DATETIME), \
+             YEAR('2024-01-05abc'), DATE_ADD('2024-01-05abc', INTERVAL 1 DAY), \
+             DATEDIFF('2024-01-05abc', '2024-01-01'), DATE('2024-01-05T'), \
+             CAST('2024-01-05T' AS DATETIME), CAST('2024-01-05abc' AS DATE)",
+        ),
+        ordered(
+            "date text followed by other text",
+            "SELECT DATE('abc'), DATE('2024-01'), DATE('x2024-01-05'), DATE('2024-01-05 xyz9'), \
+             DATE('2024-13-05Z'), DATE('20240105Z'), TIMESTAMP('20240105101112Z'), \
+             DATE('2024-01-05-abc'), DATE(''), DATE('Z'), \
+             DATE('2024-01-05 10:11:12.123456789Z'), CAST('2024-01-05T10:11Z' AS DATETIME), \
+             LAST_DAY('2024-02-10T00:00:00Z'), WEEK('2024-01-05T10:11:12Z'), \
+             DAYNAME('2024-01-05 UTC'), TO_DAYS('2024-01-05Z'), QUARTER('2024-05-05T00:00:00.000Z'), \
+             DATE_SUB('2024-01-05T10:11:12Z', INTERVAL 1 HOUR)",
+        ),
+        ordered(
+            "date text followed by other text",
+            "SELECT UNIX_TIMESTAMP('2024-01-05T10:11:12.5Z'), \
+             UNIX_TIMESTAMP('2024-01-05 10:11:12.250 UTC'), UNIX_TIMESTAMP('2024-01-05Z'), \
+             '2024-01-05T10:11:12.5Z' + INTERVAL 1 SECOND, \
+             '2024-01-05T10:11:12Z' - INTERVAL 1 MICROSECOND, TIMESTAMP('2024-01-05T10:11:12.25Z'), \
+             CAST('2024-01-05T10:11:12.25Z' AS DATETIME(6)), \
+             TIMEDIFF('2024-01-05 10:11:12Z', '2024-01-05 09:00:00Z'), \
+             DATE_FORMAT('2024-01-05T10:11:12.5Z', '%f'), FROM_DAYS(TO_DAYS('2024-01-05Z')), \
+             TIMESTAMPADD(DAY, 1, '2024-01-05T10:11:12Z')",
+        ),
+        ordered(
+            "date text followed by other text",
+            "SELECT id, DATE(CONCAT(placed_at, 'Z')), YEAR(CONCAT(DATE(placed_at), 'T00:00:00Z')), \
+             DATEDIFF(CONCAT(DATE(placed_at), ' UTC'), '2024-01-01'), \
+             CAST(CONCAT(status, placed_at) AS DATE), \
+             CAST(JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('t', CONCAT(DATE(placed_at), 'T08:00:00Z')), \
+             '$.t')) AS DATETIME) FROM orders ORDER BY id",
+        ),
+        // The forms of a date and of a date and time, as text and as numbers.
+        ordered(
+            "date text forms",
+            "SELECT DATE('2024-1-5'), DATE('20240105'), DATE('24-01-05'), DATE('2024/01/05'), \
+             DATE('2024.01.05 10:11:12'), DATE('240105'), DATE('70-1-5'), DATE('69-1-5'), \
+             DATE('2024-01-05T10:11:12'), DATE('2024-01-05 10'), DATE('2024@01@05'), \
+             DATE(20240105), DATE(240105), DATE(20240105101112)",
+        ),
+        ordered(
+            "date text forms",
+            "SELECT TIMESTAMP('20240105101112'), TIMESTAMP('240105101112'), \
+             TIMESTAMP('2024-1-5 3:4:5'), TIMESTAMP('2024-01-05 10:11'), TIMESTAMP('2024-01-05 10'), \
+             TIMESTAMP('2024-01-05T10:11:12.5'), TIMESTAMP('2024-01-05 10:11:12.1234567'), \
+             TIMESTAMP(20240105101112), TIMESTAMP('2024-01-05  10:11:12'), \
+             TIMESTAMP('  2024-01-05 10:11:12')",
+        ),
+        ordered(
+            "date text forms",
+            "SELECT CAST('2024-1-5 3:4:5' AS DATETIME), CAST(20240105 AS DATE), \
+             CAST('2024-01-05 10:11:12+02:00' AS DATETIME), CAST('2024-13-05' AS DATE), \
+             CAST('10:11' AS TIME), CAST('1 10:11:12' AS TIME), CAST('101112' AS TIME), \
+             CAST(101112 AS TIME), CAST('10:11:12.5' AS TIME(1)), CAST('-1:2:3' AS TIME), \
+             CAST('2024-01-05 10:11:12' AS TIME)",
+        ),
+        ordered(
+            "date text forms",
+            "SELECT DATEDIFF('2024-1-5', '2023-12-31'), DATEDIFF('20240105', '231231'), \
+             YEAR('24-1-5'), MONTH('20240105'), DAYOFWEEK('2024/01/05'), \
+             DATE_FORMAT('2024-1-5 3:4:5', '%Y-%m-%d %H:%i:%s'), LAST_DAY('2024-2-1'), \
+             '2024-1-5' + INTERVAL 1 DAY, DATE_ADD('20240105', INTERVAL 1 MONTH), \
+             UNIX_TIMESTAMP('2024-1-5 3:4:5'), TO_DAYS('24-1-5'), WEEK('2024.01.05')",
+        ),
+        ordered(
+            "date text forms",
+            "SELECT id FROM orders WHERE placed_at > '2025-1-1' OR placed_at = '20240301' \
+             OR DATE(placed_at) = '24-2-29' OR placed_at BETWEEN '2024/06/01' AND '2024.06.30' \
+             ORDER BY id",
         ),
         // FORMAT's third argument; `format_locale_cases` covers every locale.
         ordered(

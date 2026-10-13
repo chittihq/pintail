@@ -4480,6 +4480,15 @@ fn evaluate_eager_scalar_inner(
                 values.get(2),
             )
             .map_or(Ok(input), |value| scalar_string(&value))?;
+            // A date that other text follows moves as the date alone, so
+            // it still answers a date where it moves by whole days.
+            let input = match temporal::leading_datetime_text(input.trim()) {
+                Some(leading) if parse_mysql_datetime(leading).is_ok() => {
+                    temporal::note_text_after_datetime(input.trim());
+                    leading.to_owned()
+                }
+                _ => input,
+            };
             let lenient = stored_temporal(argument_types, 0) || allows_invalid_dates(values.get(2));
             let by_month = matches!(unit, IntervalUnit::Year | IntervalUnit::Month);
             let date_only = input.len() <= 10

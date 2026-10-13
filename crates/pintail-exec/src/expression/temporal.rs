@@ -89,7 +89,43 @@ pub(super) fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecErr
         .ok()
         .and_then(|date| date.and_hms_opt(0, 0, 0))
         .or_else(|| parse_relaxed_datetime(value, false))
+        .or_else(|| leading_datetime(value))
         .ok_or(ExecError::InvalidDateTime)
+}
+
+/// The date, or date and time, that `value` begins with when other text
+/// follows it: `2024-01-05T10:11:12Z` is its first nineteen characters and
+/// `2024-01-05 UTC` its date. `MySQL` reads the value up to the first
+/// character a date cannot hold and warns that it stopped there. Text that
+/// does not begin with a date stays unreadable, and so does a date written
+/// as digits alone with text after it.
+fn leading_datetime(value: &str) -> Option<NaiveDateTime> {
+    let parsed = parse_mysql_datetime(leading_datetime_text(value)?).ok()?;
+    note_text_after_datetime(value);
+    Some(parsed)
+}
+
+/// The part of `value` [`leading_datetime`] reads, when `value` is longer
+/// than it.
+pub(super) fn leading_datetime_text(value: &str) -> Option<&str> {
+    let end = value
+        .bytes()
+        .position(|byte| {
+            !(byte.is_ascii_digit() || byte.is_ascii_punctuation() || byte == b' ' || byte == b'T')
+        })
+        .unwrap_or(value.len());
+    let leading = value[..end].trim_end_matches(|ch: char| !ch.is_ascii_digit());
+    // Only a date written with separators is read this way: digits alone
+    // followed by other text are not a date.
+    (leading.len() < value.len() && !leading.bytes().all(|byte| byte.is_ascii_digit()))
+        .then_some(leading)
+}
+
+/// `MySQL`'s warning 1292 for a date read from the start of longer text.
+pub(super) fn note_text_after_datetime(value: &str) {
+    crate::execution::record_conversion_warning(format!(
+        "Truncated incorrect datetime value: '{value}'"
+    ));
 }
 
 pub(super) fn parse_calendar_cast(text: &str) -> Result<NaiveDateTime, ExecError> {
