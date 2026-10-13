@@ -375,8 +375,8 @@ impl Fixture {
     /// `ROW_NUMBER()` over partitions of a text column must number the rows
     /// of every spelling the collation folds together as one partition, in
     /// the window's order: `canonical` gives the partition a value belongs
-    /// to under the plan's collation (case and accents fold, a trailing
-    /// space does not).
+    /// to under the column's own collation (case and accents fold under
+    /// both; a trailing space folds only under a PAD SPACE one).
     fn check_window(
         &self,
         stage: &str,
@@ -430,12 +430,13 @@ impl Fixture {
             |parcel| parcel.hub_ref.as_ref(),
             str::to_lowercase,
         );
-        // An accented spelling among them: it joins its base letter's.
+        // An accented spelling among them: it joins its base letter's. The
+        // column is PAD SPACE, so a trailing space joins too.
         self.check_window(
             stage,
             "carrier",
             |parcel| parcel.carrier.as_ref(),
-            |value| value.to_lowercase().replace('\u{f3}', "o"),
+            |value| value.trim_end_matches(' ').to_lowercase().replace('\u{f3}', "o"),
         );
         let pair_rows = |pairs: &[(u64, u64)]| -> Rows {
             pairs

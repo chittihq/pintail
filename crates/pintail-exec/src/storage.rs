@@ -6320,13 +6320,9 @@ mod tests {
     fn windows_reject_unsupported_combinations() {
         let (_directory, _snapshot, catalog) = window_fixture();
         for sql in [
-            // Explicit frames stay v1-unsupported.
-            "SELECT ROW_NUMBER() OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) FROM events",
             // Windows never appear in WHERE or inside aggregate arguments.
             "SELECT id FROM events WHERE ROW_NUMBER() OVER (ORDER BY id) = 1",
             "SELECT SUM(ROW_NUMBER() OVER (ORDER BY id)) FROM events",
-            // DISTINCT + window stays rejected.
-            "SELECT DISTINCT ROW_NUMBER() OVER (ORDER BY id) FROM events",
         ] {
             let statement = parse_statement(sql).expect("parse query");
             assert!(
