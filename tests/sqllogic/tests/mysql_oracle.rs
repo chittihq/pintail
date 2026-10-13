@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2897;
+const EXPECTED_CASES: usize = 2900;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5174,6 +5174,19 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "microsecond differences",
             "SELECT user_id, SUM(TIMESTAMPDIFF(MICROSECOND, '2024-01-01', placed_at)) DIV 1000000, MAX(TIMESTAMPDIFF(SECOND, '2024-01-01', placed_at)) FROM orders WHERE TIMESTAMPDIFF(MICROSECOND, placed_at, '2025-01-01') > 0 GROUP BY user_id ORDER BY user_id",
+        ),
+        // A hex or bit literal bounds BETWEEN as the number it spells.
+        ordered(
+            "bit literals bounding a range",
+            "SELECT id FROM events WHERE score BETWEEN 0x14 AND 0x32 ORDER BY id",
+        ),
+        ordered(
+            "bit literals bounding a range",
+            "SELECT id, score BETWEEN b'1' AND b'101000', score NOT BETWEEN 0x01 AND 0x20, score BETWEEN 0x1E AND 60, 0x41 BETWEEN 'A' AND 'B', name BETWEEN 0x6576656E742D3032 AND 0x6576656E742D3034 FROM events ORDER BY id",
+        ),
+        ordered(
+            "bit literals bounding a range",
+            "SELECT o.id FROM orders o WHERE o.total BETWEEN 0x0A AND 0x64 ORDER BY o.id",
         ),
     ]
     .into_iter()

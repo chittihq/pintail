@@ -1956,11 +1956,25 @@ pub(super) fn bind_between(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let args = super::unify_temporal_list(vec![
-        bind_expr_inner(expr, tables, aggregates, windows, subqueries)?,
-        bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
-        bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
-    ]);
+    let subject = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
+    // Against a numeric subject a hex or bit literal is the number its
+    // bytes spell, as in `=` and `IN`; left as bytes, no number lay
+    // between two of them.
+    let numeric_subject = super::exact_numeric_type(subject.data_type)
+        || matches!(
+            subject.data_type,
+            Some(DataType::Float32 | DataType::Float64)
+        );
+    let mut bound = |written: &Expr| {
+        let bound = bind_expr_inner(written, tables, aggregates, windows, subqueries)?;
+        if numeric_subject && super::unintroduced_bit_literal(written) {
+            super::numeric_bit_input(bound, written)
+        } else {
+            Ok(bound)
+        }
+    };
+    let (low, high) = (bound(low)?, bound(high)?);
+    let args = super::unify_temporal_list(vec![subject, low, high]);
     let args = super::unify_time_list(args);
     let [subject, low, high]: [BoundExpr; 3] = args
         .try_into()
