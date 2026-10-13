@@ -105,10 +105,13 @@ pub(crate) fn rewrite_temporal_predicates(plan: LogicalPlan) -> LogicalPlan {
             kind,
             condition: condition.map(rewrite_predicate),
         },
-        LogicalPlan::Filter { input, predicate } => LogicalPlan::Filter {
-            input: Box::new(rewrite_temporal_predicates(*input)),
-            predicate: rewrite_predicate(predicate),
-        },
+        // A rewrite can decide a predicate outright - a TIMESTAMP compared
+        // with a constant outside the type's range - and constants were
+        // folded before this pass, so the filter is settled again here.
+        LogicalPlan::Filter { input, predicate } => crate::optimizer::filter_over(
+            rewrite_temporal_predicates(*input),
+            rewrite_predicate(predicate),
+        ),
         LogicalPlan::Aggregate {
             input,
             group_by,
@@ -821,7 +824,8 @@ mod tests {
     };
     use pintail_types::{DataType, Value};
 
-    use super::rewrite_predicate;
+    use super::{rewrite_predicate, rewrite_temporal_predicates};
+    use crate::LogicalPlan;
 
     fn column(data_type: DataType) -> BoundColumn {
         BoundColumn {
@@ -930,6 +934,85 @@ mod tests {
                 ],
             },
         }
+    }
+
+    /// A filter the rewrite decides is settled where it is decided: a
+    /// TIMESTAMP compared with a constant past the type's last instant
+    /// keeps no row, and the plan is then the empty limit, with no
+    /// predicate left for a scan to evaluate row by row. The opposite
+    /// comparison keeps every present value and is the plain `IS NOT NULL`.
+    #[test]
+    fn a_filter_decided_by_the_timestamp_range_reads_no_row() {
+        let stamp = || {
+            let mut column = column(datetime());
+            column.timestamp = true;
+            BoundExpr {
+                data_type: Some(datetime()),
+                nullable: true,
+                kind: BoundExprKind::Column(column),
+            }
+        };
+        let filtered = |predicate: BoundExpr| {
+            rewrite_temporal_predicates(LogicalPlan::Filter {
+                input: Box::new(LogicalPlan::OneRow),
+                predicate,
+            })
+        };
+        let past = || literal(Value::Utf8("2040-01-01 00:00:00".into()));
+        let nothing = LogicalPlan::Limit {
+            input: Box::new(LogicalPlan::OneRow),
+            limit: pintail_sql::BoundLimit {
+                offset: 0,
+                count: 0,
+            },
+        };
+        for op in [BinaryOp::Greater, BinaryOp::GreaterOrEqual, BinaryOp::Equal] {
+            assert_eq!(filtered(binary(op, stamp(), past())), nothing, "{op:?}");
+        }
+        // Beside another conjunct the filter still keeps nothing, and
+        // beside a disjunct it is the disjunct alone.
+        let other = || {
+            binary(
+                BinaryOp::Equal,
+                column_expr(DataType::Date32),
+                literal(Value::Utf8("2026-08-01".into())),
+            )
+        };
+        assert_eq!(
+            filtered(binary(
+                BinaryOp::And,
+                binary(BinaryOp::Greater, stamp(), past()),
+                other()
+            )),
+            nothing
+        );
+        let LogicalPlan::Filter { predicate, .. } = filtered(binary(
+            BinaryOp::Or,
+            binary(BinaryOp::Greater, stamp(), past()),
+            other(),
+        )) else {
+            panic!("a disjunct that can hold keeps its filter");
+        };
+        assert_eq!(render(&predicate), "(created_at Equal '2026-08-01')");
+        for op in [BinaryOp::Less, BinaryOp::LessOrEqual, BinaryOp::NotEqual] {
+            let LogicalPlan::Filter { predicate, .. } = filtered(binary(op, stamp(), past()))
+            else {
+                panic!("{op:?} keeps the rows whose value is present");
+            };
+            assert!(
+                matches!(predicate.kind, BoundExprKind::IsNull { negated: true, .. }),
+                "{op:?}: {predicate:?}"
+            );
+        }
+        // A constant inside the range is a comparison like any other.
+        assert!(matches!(
+            filtered(binary(
+                BinaryOp::Greater,
+                stamp(),
+                literal(Value::Utf8("2030-06-01 00:00:00".into()))
+            )),
+            LogicalPlan::Filter { .. }
+        ));
     }
 
     #[test]

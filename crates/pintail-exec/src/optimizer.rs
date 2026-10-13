@@ -1309,27 +1309,7 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
             condition: condition.map(fold_expr),
         },
         LogicalPlan::Filter { input, predicate } => {
-            let input = fold_constants(*input);
-            let predicate = fold_expr(predicate);
-            match literal_truth(&predicate) {
-                Some(true) => input,
-                // A constant-false filter must keep its input's SHAPE: the
-                // bare Empty node carries no columns, so a projection above
-                // it died with "physical input is missing <column>" (found
-                // by the grammar fuzzer - WHERE 'zz' IS NULL folds false).
-                // LIMIT 0 answers the empty set while the schema survives.
-                Some(false) => LogicalPlan::Limit {
-                    input: Box::new(input),
-                    limit: pintail_sql::BoundLimit {
-                        offset: 0,
-                        count: 0,
-                    },
-                },
-                None => LogicalPlan::Filter {
-                    input: Box::new(input),
-                    predicate,
-                },
-            }
+            filter_over(fold_constants(*input), fold_expr(predicate))
         }
         LogicalPlan::Project { input, expressions } => LogicalPlan::Project {
             input: Box::new(fold_constants(*input)),
@@ -1536,6 +1516,83 @@ fn statement_time_literal(function: ScalarFunction, now: StatementNow) -> Option
         ScalarFunction::UtcTime => Some(Value::Utf8(now.utc.format("%H:%M:%S").to_string())),
         ScalarFunction::UnixTimestamp => Some(Value::UInt64(u64::try_from(now.unix).unwrap_or(0))),
         _ => None,
+    }
+}
+
+/// `input` filtered by `predicate`, with a predicate a filter can decide
+/// without reading a row decided here: one that keeps every row is no
+/// filter, and one that keeps none is no rows.
+pub(crate) fn filter_over(input: LogicalPlan, predicate: BoundExpr) -> LogicalPlan {
+    let predicate = as_a_filter_reads(predicate);
+    match literal_truth(&predicate) {
+        Some(true) => input,
+        // A constant-false filter must keep its input's SHAPE: the
+        // bare Empty node carries no columns, so a projection above
+        // it died with "physical input is missing <column>" (found
+        // by the grammar fuzzer - WHERE 'zz' IS NULL folds false).
+        // LIMIT 0 answers the empty set while the schema survives.
+        Some(false) => LogicalPlan::Limit {
+            input: Box::new(input),
+            limit: pintail_sql::BoundLimit {
+                offset: 0,
+                count: 0,
+            },
+        },
+        None => LogicalPlan::Filter {
+            input: Box::new(input),
+            predicate,
+        },
+    }
+}
+
+/// `predicate` as a filter reads it. A filter keeps a row only where its
+/// predicate is true, so to a filter NULL and false are one answer, and a
+/// predicate may be exchanged for any other that is true on the same rows.
+/// A NULL operand of AND or OR is then false: `x AND NULL` keeps no row and
+/// `x OR NULL` keeps what `x` keeps. `COALESCE(x, FALSE)` keeps what `x`
+/// keeps. Nothing under a NOT or a comparison is touched, where NULL and
+/// false part ways again.
+///
+/// A comparison decided from a column's type alone is written in these
+/// forms - a TIMESTAMP compared with a constant past the type's last
+/// instant becomes `c IS NULL AND NULL`, false for a value and NULL for
+/// NULL, and the opposite comparison `c IS NOT NULL OR NULL`. Read as a
+/// filter the first keeps nothing, which the caller turns into no scan at
+/// all, and the second is the plain `c IS NOT NULL`.
+fn as_a_filter_reads(predicate: BoundExpr) -> BoundExpr {
+    let BoundExpr {
+        kind,
+        data_type,
+        nullable,
+    } = predicate;
+    match kind {
+        BoundExprKind::Literal(Value::Null) => BoundExpr {
+            kind: BoundExprKind::Literal(Value::Boolean(false)),
+            data_type: Some(DataType::Boolean),
+            nullable: false,
+        },
+        BoundExprKind::Binary {
+            op: op @ (BinaryOp::And | BinaryOp::Or),
+            left,
+            right,
+        } => fold_binary(
+            op,
+            as_a_filter_reads(*left),
+            as_a_filter_reads(*right),
+            data_type,
+            nullable,
+        ),
+        BoundExprKind::Scalar {
+            function: ScalarFunction::Coalesce,
+            mut args,
+        } if args.len() == 2 && literal_truth_of(&args[1]) == Some(false) => {
+            as_a_filter_reads(args.swap_remove(0))
+        }
+        kind => BoundExpr {
+            kind,
+            data_type,
+            nullable,
+        },
     }
 }
 

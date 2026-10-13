@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2900;
+const EXPECTED_CASES: usize = 2916;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5187,6 +5187,71 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "bit literals bounding a range",
             "SELECT o.id FROM orders o WHERE o.total BETWEEN 0x0A AND 0x64 ORDER BY o.id",
+        ),
+        // A filter that can keep no row, or loses a NULL operand, answers as it did row by row.
+        ordered(
+            "filters decided without a scan",
+            "SELECT COUNT(*), MIN(id) FROM calendar_edges WHERE ts > '2040-01-01'",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT COUNT(*), MIN(id) FROM calendar_edges WHERE ts < '2040-01-01'",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id FROM calendar_edges WHERE ts > '2040-01-01' OR id = 101 ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id FROM calendar_edges WHERE ts < '2040-01-01' AND id > 105 ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id FROM calendar_edges WHERE ts >= '2038-01-19 03:14:08' AND id > 105 ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id FROM calendar_edges WHERE ts <=> '2040-01-01' OR ts IS NULL ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id FROM calendar_edges WHERE NOT (ts > '2040-01-01') ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id FROM calendar_edges WHERE (ts > '2040-01-01') IS NULL ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id, ts > '2040-01-01', ts < '2040-01-01', ts = '2040-01-01' FROM calendar_edges ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT e.id, (SELECT COUNT(*) FROM calendar_edges c WHERE c.ts >= '2039-06-01' AND c.id > e.id) FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT c.id FROM calendar_edges c JOIN users u ON u.id = c.id - 100 WHERE c.ts < '1960-01-01' ORDER BY c.id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT COUNT(*) FROM calendar_edges HAVING MAX(ts) > '2040-01-01'",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id FROM events WHERE id > 5 AND NULL ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id FROM events WHERE id > 5 OR NULL ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id FROM events WHERE COALESCE(id > 5 AND NULL, FALSE) OR (note IS NULL AND (NULL OR id < 4)) ORDER BY id",
+        ),
+        ordered(
+            "filters decided without a scan",
+            "SELECT id, id > 5 AND NULL, id > 5 OR NULL, NOT (id > 5 AND NULL) FROM events WHERE NOT (id > 5 AND NULL) ORDER BY id",
         ),
     ]
     .into_iter()
