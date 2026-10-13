@@ -87,3 +87,117 @@ storing them and 0.3 s in fsync.
   one; at about 55 ms in 300 it is the smaller part.
 - CDC apply is single-threaded per database and paced by the five-second
   cycle.
+
+## After: replication lag and apply throughput
+
+Measured 2026-10-13 on an 8-vCPU cloud host (AMD Ryzen 9 9950X), 16 GB,
+same source and tables as above, with a rewritten harness; "before" is the
+binary the section above calls "after", measured again by this harness.
+Four release binaries, one per step, each on a fresh replica, three runs
+each in rotating order. Merges are held and the result memo is off, as
+above. The host runs in one of two speed states about a third apart, so
+each row gives the median and the best run.
+
+### What was measured
+
+- **Trickle**: 50 transactions a second for 30 seconds, each inserting one
+  row into a small probe table and updating one row of `orders` (100 row
+  changes a second). Lag is the time from the source's commit
+  acknowledgement to the first replica answer that includes the row; the
+  replica is asked every 2 ms.
+- **Burst**: the 1,344,678 row changes of the section above, written on
+  four connections (the source finishes in about 1.3 s).
+- **Drain**: two bursts (2,689,356 row changes) written while the replica
+  is stopped; the clock runs from process start until the replica matches.
+  This is the rate the mirror applies at with the source out of the way,
+  and so the most it keeps up with.
+- **Idle**: process CPU over 30 seconds with no source writes.
+
+The burst and drain figures include a query against the replica every
+20 ms, which is how the match is detected.
+
+### Where the lag came from
+
+1. **Waiting, not work.** A cycle read the source's log to its end and
+   returned; the next connected a cadence (five seconds) later. Under the
+   trickle the lag was uniform between zero and one cadence: median 2.5 s,
+   maximum 5.0 s, on a replica using under 1% of a core.
+2. **Decode and store took turns on one thread.** One profiled burst cycle
+   spent 1.7 s decoding row images, 3.8 s storing them, 0.4 s in log syncs
+   and 0.06 s in checkpoint commits; the stream was unread while a batch
+   was stored. Batches were also one transaction each, so two tables
+   written by different transactions were never stored side by side.
+3. **Serial passes inside a flush.** With column encoding already spread
+   over the ingest threads, about a third of the storing thread's samples
+   were the per-column statistics and the fixed-width probe of a flushed
+   segment, both of which parse every date, datetime and decimal from text.
+
+### The changes
+
+- **follow**: a cycle asks the source to hold the stream open and stays on
+  it for one cadence, storing each transaction as it arrives; it ends
+  where the stream is quiet and between transactions, and the next cycle
+  for that database starts at once. Checkpoint order is unchanged.
+- **read ahead**: a batch of 4,096 rows or more is stored on another
+  thread while the stream is read and decoded ahead of it into the next
+  batch. One batch is stored and checkpointed at a time.
+- **statistics**: a spread segment write computes its statistics and its
+  fixed-width probes a column to a thread.
+
+### Results
+
+Median of three runs (best run in brackets). Each column includes the
+steps to its left.
+
+| | before | follow | + read ahead | + statistics |
+|---|---|---|---|---|
+| trickle lag, p50 | 2,514 ms | 4.7 ms | 4.0 ms | 4.0 ms |
+| trickle lag, p95 | 4,760 ms | 10.2 ms | 6.5 ms | 7.2 ms |
+| trickle lag, p99 | 4,960 ms | 73 ms | 37 ms | 93 ms |
+| trickle lag, maximum (three runs) | 5,001, 5,033, 5,058 ms | 132, 233, 433 ms | 54, 94, 166 ms | 133, 155, 833 ms |
+| burst: replica matched after | 9.39 s (8.96) | 5.99 s (5.33) | 4.64 s (3.95) | 3.80 s (3.75) |
+| burst: lag after the last source write | 8.07 s (7.74) | 4.52 s (3.95) | 3.07 s (2.73) | 2.52 s (2.39) |
+| burst: process CPU | 17.6 s | 18.2 s | 14.9 s | 12.4 s |
+| drain: time to match | 11.96 s (11.82) | 15.25 s (12.03) | 10.02 s (8.86) | 8.60 s (8.25) |
+| drain: row changes per second | 224,950 (227,489) | 176,396 (223,622) | 268,509 (303,683) | 312,576 (326,194) |
+| idle CPU, share of one core | 0.80% | 0.83% | 0.77% | 0.77% |
+| peak resident memory | 1,036 MB | 1,256 MB | 1,134 MB | 1,217 MB |
+
+Every run ended with the replica equal to the source on `COUNT(*)`,
+`SUM(quantity)` and `SUM(id)` over `orders` and on the probe table.
+
+Reading it:
+
+- The trickle lag is now the cost of storing one transaction: a few
+  milliseconds. The tail is the gap between two cycles (close the stream,
+  reopen the tables, connect again), once per cadence; the largest single
+  figure, 833 ms, is one run's.
+- Following does not change how fast rows are applied, and the drain
+  shows it: its best run equals the baseline's and its median is two runs
+  in the host's slower state. The burst improves under it only because the
+  wait for the next cycle is gone.
+- Reading ahead and the statistics change raise the apply rate: the drain
+  takes 0.70 times as long at best (11.82 s to 8.25 s), about 1.4 times
+  the row changes per second, for less CPU.
+- Idle cost is unchanged: a followed stream waits on its socket.
+
+### Not done
+
+- The gap between cycles is still paid once per cadence. Holding the
+  tables and the connection across cycles, or following for longer than
+  one cadence, would remove most of the tail; the end of a cycle is also
+  where a database's cascade repair and automatic resync are scheduled,
+  so its cadence was left alone.
+- Storing one table's batch is still one thread apart from column
+  encoding: log encoding, the memtable insert and the pivot of rows into
+  columns. A burst on a single table is bounded by it.
+- Read-ahead stops at the first event that needs the tables or the
+  control plane, including any row for a paused, quarantined or fenced
+  table; a database with one such busy table applies as it did before.
+- A row change is still built as one heap value per cell, with dates,
+  datetimes and decimals as text that the flush parses back (three times
+  per value: probe, encode, statistics).
+- A transaction stored alone costs one apply-intent write, one log sync
+  per table and one checkpoint commit, about 4 ms here. Under a steady
+  stream of small transactions that arrive one at a time, that is the
+  ceiling on transactions per second.
