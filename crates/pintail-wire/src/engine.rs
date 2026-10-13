@@ -649,6 +649,23 @@ impl ReplicaEngine {
         }
     }
 
+    /// Gives this engine a replica cache of its own in place of the one the
+    /// process shares, so no database another engine loads can evict one
+    /// this engine has loaded. A reload gives a replica a new load, and a
+    /// plan is kept against the load it was prepared for: a test that
+    /// counts executions from a kept plan needs its database to stay
+    /// loaded, which the shared cache's bound does not promise once the
+    /// tests of a whole binary load theirs beside it.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_own_replica_cache(mut self) -> Self {
+        self.cache = Arc::new(ReplicaCache::new(
+            replica_cache::default_capacity(),
+            pintail_exec::shared_memory_budget(),
+        ));
+        self
+    }
+
     /// Gives this engine a plan cache of its own with the given bounds, in
     /// place of the one the process shares; zero for either turns the
     /// cache off for this engine.

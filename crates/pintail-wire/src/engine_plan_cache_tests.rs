@@ -49,7 +49,9 @@ fn pair(rows: u64) -> Pair {
             .execute(&pintail_sql::parse_statement(&sql).unwrap())
             .unwrap();
     }
-    let engine = ReplicaEngine::new(directory.path(), &metadata_path);
+    // Its own replica cache: these tests count executions from a kept plan,
+    // and a database another test evicts is reloaded as a new load.
+    let engine = ReplicaEngine::new(directory.path(), &metadata_path).with_own_replica_cache();
     Pair {
         kept: engine.clone().with_plan_cache(256, 1 << 22),
         fresh: engine.with_plan_cache(0, 0),
@@ -419,7 +421,9 @@ fn another_database_is_another_plan() {
         }
     }
     drop(meta);
-    let engine = ReplicaEngine::new(directory.path(), &metadata_path);
+    // Its own replica cache: these tests count executions from a kept plan,
+    // and a database another test evicts is reloaded as a new load.
+    let engine = ReplicaEngine::new(directory.path(), &metadata_path).with_own_replica_cache();
     let kept = engine.clone().with_plan_cache(64, 1 << 20);
     let fresh = engine.with_plan_cache(0, 0);
     let sql = "SELECT v FROM t WHERE id = 1";
