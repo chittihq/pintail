@@ -66,6 +66,7 @@ pub(crate) enum Preempt {
 pub(crate) struct JobSignal {
     stop: pintail_cdc::CycleStop,
     cancelled: Arc<AtomicBool>,
+    cancel_wake: Arc<tokio::sync::Notify>,
 }
 
 impl JobSignal {
@@ -77,6 +78,7 @@ impl JobSignal {
     fn cancel(&self) {
         self.stop.request();
         self.cancelled.store(true, Ordering::Release);
+        self.cancel_wake.notify_waiters();
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
@@ -88,9 +90,18 @@ impl JobSignal {
     /// leaves what a process stopped at the same point would leave, which
     /// every job here already recovers from.
     pub(crate) async fn until_cancelled<T>(&self, job: impl Future<Output = T>) -> Option<T> {
+        // Woken by the cancel rather than polling for it: a replication
+        // cycle now holds its slot for as long as it follows the stream, and
+        // a timer here would tick for all of that.
         let cancelled = async {
-            while !self.is_cancelled() {
-                tokio::time::sleep(Duration::from_millis(20)).await;
+            loop {
+                let woken = self.cancel_wake.notified();
+                tokio::pin!(woken);
+                woken.as_mut().enable();
+                if self.is_cancelled() {
+                    return;
+                }
+                woken.await;
             }
         };
         tokio::select! {

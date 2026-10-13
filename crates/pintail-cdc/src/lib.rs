@@ -197,6 +197,14 @@ pub struct CdcOptions {
     pub max_duration: Option<Duration>,
     /// Ends the catch-up at the next commit when someone outside asks.
     pub stop: Option<CycleStop>,
+    /// Keeps a finite catch-up on the stream once it has read everything
+    /// the source holds: the source is asked to hold the stream open, each
+    /// transaction is applied as it arrives, and the catch-up returns this
+    /// long after it started, at the first moment the stream is quiet and
+    /// between transactions - or as soon as `stop` is raised at such a
+    /// moment. `None` returns at the end of the source's log. Ignored when
+    /// `blocking` is set.
+    pub follow: Option<Duration>,
     /// Maximum in-memory bytes retained before an uncommitted transaction
     /// spills to an anonymous temporary file.
     pub max_transaction_bytes: usize,
@@ -230,6 +238,7 @@ impl Default for CdcOptions {
             max_commits: None,
             max_duration: None,
             stop: None,
+            follow: None,
             max_transaction_bytes: 256 * 1024 * 1024,
             max_reconnect_attempts: 8,
             reconnect_initial_delay: Duration::from_millis(100),
@@ -246,9 +255,13 @@ impl Default for CdcOptions {
 /// A request from outside the stream to end a catch-up early.
 ///
 /// The stream looks at it after each commit, so the position it returns is
-/// always the end of a whole source transaction.
+/// always the end of a whole source transaction. A stream waiting on a quiet
+/// source is woken by it rather than left to find out on its own.
 #[derive(Clone, Debug, Default)]
-pub struct CycleStop(Arc<AtomicBool>);
+pub struct CycleStop {
+    requested: Arc<AtomicBool>,
+    wake: Arc<tokio::sync::Notify>,
+}
 
 impl CycleStop {
     /// A signal nobody has raised yet.
@@ -259,19 +272,35 @@ impl CycleStop {
 
     /// Asks the stream holding this signal to return at its next commit.
     pub fn request(&self) {
-        self.0.store(true, Ordering::Release);
+        self.requested.store(true, Ordering::Release);
+        self.wake.notify_waiters();
     }
 
     /// Whether a stop has been asked for.
     #[must_use]
     pub fn requested(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        self.requested.load(Ordering::Acquire)
+    }
+
+    /// Returns once a stop has been asked for, however long ago.
+    pub async fn raised(&self) {
+        loop {
+            // Registered before the flag is read, so a request landing
+            // between the two is not missed.
+            let woken = self.wake.notified();
+            tokio::pin!(woken);
+            woken.as_mut().enable();
+            if self.requested() {
+                return;
+            }
+            woken.await;
+        }
     }
 }
 
 impl PartialEq for CycleStop {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.requested, &other.requested)
     }
 }
 
@@ -465,7 +494,7 @@ async fn run_cdc_inner(
     // merges its tables have running when they close.
     if let Some(stop) = &options.stop {
         for target in &mut targets {
-            target.store.yield_merges_to(Arc::clone(&stop.0));
+            target.store.yield_merges_to(Arc::clone(&stop.requested));
         }
     }
     targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
@@ -553,6 +582,12 @@ async fn run_cdc_inner(
     let mut phases = PhaseTimes::default();
     let mut commits = 0_usize;
     let cycle_started = Instant::now();
+    // A followed catch-up reads a stream the source holds open, and ends on
+    // its own clock instead of at the end of the log.
+    let follow_until = options
+        .follow
+        .filter(|_| !options.blocking)
+        .map(|window| cycle_started + window);
     let mut mutations = 0_usize;
     let mut events_read = 0_usize;
     let mut reconnect_attempts = 0_usize;
@@ -649,7 +684,7 @@ async fn run_cdc_inner(
             database_id,
             &position,
             server_id,
-            options.blocking,
+            options.blocking || follow_until.is_some(),
         )
         .await
         {
@@ -714,14 +749,52 @@ async fn run_cdc_inner(
             // before the wait, so a quiet source is mirrored as each
             // transaction arrives and only a busy one is batched.
             let mut waiting = Instant::now();
-            let next = if batch.is_empty() {
-                stream.next().await
-            } else if let Some(next) = stream.next().now_or_never() {
+            let ready = if batch.is_empty() {
+                None
+            } else {
+                stream.next().now_or_never()
+            };
+            let next = if let Some(next) = ready {
                 next
             } else {
                 flush!();
                 waiting = Instant::now();
-                stream.next().await
+                // A followed stream never ends by itself. Its catch-up ends
+                // here, where nothing is waiting to be stored and no
+                // transaction is open, so the position is a whole
+                // transaction's end exactly as it is at the end of a log.
+                let quiet = !pending.has_mutations() && position.pending_gtid.is_none();
+                let arrived = match follow_until {
+                    Some(until) if quiet => {
+                        tokio::select! {
+                            biased;
+                            next = stream.next() => Some(next),
+                            () = follow_ended(until, options.stop.as_ref()) => None,
+                        }
+                    }
+                    _ => Some(stream.next().await),
+                };
+                let Some(next) = arrived else {
+                    phases.read += waiting.elapsed();
+                    stream.close().await?;
+                    pintail_log::log_debug!(
+                        "cdc cycle done db={database_id} events={events_read} commits={commits} \
+                         mutations={mutations} pos={}:{} {phases} followed=true",
+                        position.file,
+                        position.pos
+                    );
+                    settle_paused_skips(&metadata, database_id, &targets, &paused_skipped)?;
+                    return finish_result(
+                        commits,
+                        mutations,
+                        &position,
+                        targets,
+                        options.stop.as_ref(),
+                        true,
+                        &blocked_targets,
+                    );
+                };
+                next
             };
             phases.read += waiting.elapsed();
             let Some(event) = next else {
@@ -2855,6 +2928,21 @@ fn stored_version_floor(targets: &[CdcTarget]) -> u64 {
         .filter_map(|target| target.store.snapshot().max_row_version())
         .max()
         .unwrap_or(0)
+}
+
+/// Resolves when a followed catch-up should end: at `until`, or as soon as
+/// `stop` is raised.
+async fn follow_ended(until: Instant, stop: Option<&CycleStop>) {
+    let deadline = tokio::time::sleep_until(until.into());
+    match stop {
+        Some(stop) => {
+            tokio::select! {
+                () = deadline => {}
+                () = stop.raised() => {}
+            }
+        }
+        None => deadline.await,
+    }
 }
 
 async fn open_stream(

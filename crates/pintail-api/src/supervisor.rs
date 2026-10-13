@@ -175,15 +175,32 @@ pub fn spawn(
                 )),
             }
         }
-        let mut interval = tokio::time::interval(supervisor_interval());
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                _ = interval.tick() => supervise_once(&state),
-                _ = shutdown.recv() => break,
-            }
-        }
+        supervise_until_shutdown(&state, &mut shutdown).await;
     })
+}
+
+/// Starts cycles at the cadence, and at once for a database whose cycle
+/// asks for its next one, until shutdown.
+async fn supervise_until_shutdown(
+    state: &ApiState,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) {
+    let mut interval = tokio::time::interval(supervisor_interval());
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // A change-capture cycle that followed its stream to the end of its
+    // window asks for the next one here, by database, instead of leaving
+    // the source unread until the cadence comes round. Only that database
+    // is looked at: every other one keeps its cadence.
+    let (resume, mut resumed) = tokio::sync::mpsc::unbounded_channel::<String>();
+    loop {
+        tokio::select! {
+            _ = interval.tick() => supervise_once(state, &resume, None),
+            Some(database_id) = resumed.recv() => {
+                supervise_once(state, &resume, Some(&database_id));
+            }
+            _ = shutdown.recv() => break,
+        }
+    }
 }
 
 /// Databases whose first snapshot captured its position but never handed
@@ -204,7 +221,13 @@ fn first_snapshots_never_handed_off(metadata: &MetaStore) -> Vec<String> {
         .collect()
 }
 
-fn supervise_once(state: &ApiState) {
+/// Starts a cycle for every eligible database whose job slot is free, or
+/// for `only` when one database asked for its next cycle.
+fn supervise_once(
+    state: &ApiState,
+    resume: &tokio::sync::mpsc::UnboundedSender<String>,
+    only: Option<&str>,
+) {
     let databases = match state.metadata().and_then(|metadata| {
         metadata
             .databases()
@@ -220,7 +243,10 @@ fn supervise_once(state: &ApiState) {
             return;
         }
     };
-    for database in databases {
+    for database in databases
+        .into_iter()
+        .filter(|database| only.is_none_or(|id| database.id == id))
+    {
         // A reset still owed its fresh copy has no tables and no position:
         // there is nothing to replicate until that copy lands.
         if crate::snapshot::resume_pending_reset(state, &database) || !eligible(&database) {
@@ -278,6 +304,7 @@ fn supervise_once(state: &ApiState) {
         let task_state = state.clone();
         let database_id = database.id.clone();
         let thread_database_id = database_id.clone();
+        let resume = resume.clone();
         if let Err(error) = std::thread::Builder::new()
             .name(format!("pintail-supervisor-{database_id}"))
             .spawn(move || {
@@ -286,12 +313,18 @@ fn supervise_once(state: &ApiState) {
                     .build()
                 {
                     Ok(runtime) => {
-                        runtime.block_on(supervise_database(&task_state, &database, &signal));
+                        let followed =
+                            runtime.block_on(supervise_database(&task_state, &database, &signal));
                         // Whatever the cycle left running ends with its
                         // runtime, before the slot passes to the next job.
                         drop(runtime);
                         task_state.release_job(&thread_database_id);
                         after_cycle(&task_state, &thread_database_id);
+                        if followed {
+                            // A supervisor that has shut down is not
+                            // listening, and nothing is owed to it.
+                            let _ = resume.send(thread_database_id);
+                        }
                     }
                     Err(error) => {
                         task_state.record_replication_cycle(0, false);
@@ -342,7 +375,18 @@ fn eligible(database: &DatabaseRecord) -> bool {
         && state_live
 }
 
-async fn supervise_database(state: &ApiState, database: &DatabaseRecord, signal: &JobSignal) {
+/// Runs one replication cycle and records it. Returns whether the next
+/// cycle should start at once: a change-capture cycle that succeeded and
+/// stayed on its stream for a whole cadence has, by ending, stopped reading
+/// a source that may be writing. Anything else - a failure, a polling
+/// cycle, a cycle that returned early or gave way to an operator - waits
+/// for the cadence, which is what keeps a cycle that cannot run from
+/// spinning.
+async fn supervise_database(
+    state: &ApiState,
+    database: &DatabaseRecord,
+    signal: &JobSignal,
+) -> bool {
     let run_id = crate::state::random_identifier("run_", 16);
     let started = std::time::Instant::now();
     // Derived exactly as run_cycle derives it, so the success path's
@@ -364,7 +408,7 @@ async fn supervise_database(state: &ApiState, database: &DatabaseRecord, signal:
     }
     let cycle_started = std::time::Instant::now();
     let result = signal
-        .until_cancelled(run_cycle(state, database, signal))
+        .until_cancelled(Box::pin(run_cycle(state, database, signal)))
         .await;
     pintail_log::log_debug!(
         "supervisor cycle db={} kind={kind} total_ms={} cut_short={}",
@@ -372,6 +416,10 @@ async fn supervise_database(state: &ApiState, database: &DatabaseRecord, signal:
         cycle_started.elapsed().as_millis(),
         result.is_none()
     );
+    let followed = kind == "cdc"
+        && matches!(result, Some(Ok(_)))
+        && !signal.stop().requested()
+        && cycle_started.elapsed() >= supervisor_interval();
     match result {
         // The slot was taken mid-cycle. What the cycle had committed stays
         // committed and the rest is read again from the checkpoint; nothing
@@ -427,6 +475,7 @@ async fn supervise_database(state: &ApiState, database: &DatabaseRecord, signal:
             state.publish(ApiEvent::database("replication.error", &database.id, error));
         }
     }
+    followed
 }
 
 /// What follows every cycle once its job slot is free again.
@@ -518,6 +567,10 @@ async fn run_cycle(
                     blocking: false,
                     max_duration: Some(CYCLE_BUDGET),
                     stop: Some(signal.stop()),
+                    // The cycle stays on the stream for one cadence, so a
+                    // change is applied when it arrives, not when the next
+                    // cycle would have connected to read it.
+                    follow: Some(supervisor_interval()),
                     new_table_root: Some(root.clone()),
                     new_table_includes: includes,
                     new_table_excludes: excludes,
