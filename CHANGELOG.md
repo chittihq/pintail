@@ -32,6 +32,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   second on an 8-vCPU host (`benchmark/evidence/ingest-overhead.md`).
   `PINTAIL_CDC_READ_AHEAD_ROWS` overrides the row threshold, and the
   cycle's debug line reports `read_ahead=`.
+- A filter comparing a `TIMESTAMP` column with a constant outside the
+  type's range is decided without reading rows (6.9 ms to 0.5 ms on a
+  2M-row table).
 - Opening a scan no longer copies each segment's manifest entry, and a
   scan asks the file system about each segment file, and opens it, once
   instead of once per slice. A full-table `COUNT(*)` answered from segment
@@ -93,6 +96,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `SYSTEM_USER()` and `SCHEMA()`, alone or inside a statement; and the
   `HIGH_PRIORITY`, `STRAIGHT_JOIN` and `SQL_BUFFER_RESULT` select
   modifiers.
+- More SQL surface, checked the same way (the oracle is now 2,920
+  cases): `INET6_ATON`, `INET6_NTOA`, `IS_IPV4`, `IS_IPV6`,
+  `IS_IPV4_COMPAT`, `IS_IPV4_MAPPED`; `0b` bit literals; `VALUES ROW(...)`
+  as a statement, derived table, CTE or set operand; a row compared with
+  a subquery; `INTERVAL(N, N1, ...)`, `QUOTE`, `MAKE_SET`, `EXPORT_SET`;
+  `TIMESTAMPDIFF(MICROSECOND, ...)`; and `STRCMP` over date and time
+  columns where MySQL compares their text.
 - `/metrics` exposes `pintail_settled_memo_{hits,misses,stores,delta_merges}_total`,
   so a settled-memo answer can be proved a cache hit.
 - A benchmark cache study (`BENCHMARK_CACHE_STUDY=1`) that compares
@@ -111,6 +121,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A `UNION`, `INTERSECT`, `EXCEPT` or recursive CTE over an `ENUM` or
+  `SET` column orders and compares by the label, as MySQL does; so does an
+  `ENUM` read through a scalar subquery, a window function or `ANY_VALUE`.
+  A numeric comparison against such a derived column (`WHERE s = 3`) now
+  compares the label too, where MySQL can still push it into the branches
+  (`docs/limitations.md`).
+- `BETWEEN` with hex or bit literal bounds over a numeric column compares
+  numbers; it matched no row before.
 - A window's partition and order keys compare under the key's own
   collation: a PAD SPACE column no longer splits a value with a trailing
   space from its peers, and `ORDER BY x COLLATE utf8mb4_bin` inside `OVER`
