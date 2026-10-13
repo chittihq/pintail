@@ -897,11 +897,6 @@ impl<'catalog> Binder<'catalog> {
                 actual: predicate.data_type,
             });
         }
-        if !windows.is_empty() && select.distinct.is_some() {
-            return Err(BindError::UnsupportedQueryClause(
-                "window functions cannot combine with DISTINCT".to_owned(),
-            ));
-        }
         for item in &mut projection {
             outer_aggregate::lift(
                 &mut item.expr,

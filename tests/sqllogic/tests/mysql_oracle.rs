@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2793;
+const EXPECTED_CASES: usize = 2803;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4628,6 +4628,55 @@ fn hand_written_cases() -> Vec<OracleCase> {
              CAST(CAST('\\\"12\\\"' AS JSON) AS SIGNED), CAST(CAST('\\\" 7.5\\\"' AS JSON) AS DECIMAL(10,2)), \
              CAST(CAST('-0.5' AS JSON) AS DOUBLE), CAST(CAST('[5]' AS JSON) AS DOUBLE), \
              CAST(JSON_OBJECT('a', 1) AS DOUBLE)",
+        ),
+        // DISTINCT applies to the rows the windows were computed over.
+        ordered(
+            "distinct over window results",
+            "SELECT DISTINCT status, COUNT(*) OVER (PARTITION BY status), \
+             SUM(total) OVER (PARTITION BY status) FROM orders ORDER BY status",
+        ),
+        ordered(
+            "distinct over window results",
+            "SELECT DISTINCT active, ROW_NUMBER() OVER (ORDER BY active, id) FROM events ORDER BY 1, 2",
+        ),
+        ordered(
+            "distinct over window results",
+            "SELECT DISTINCT RANK() OVER (ORDER BY note) FROM events ORDER BY 1",
+        ),
+        ordered(
+            "distinct over window results",
+            "SELECT DISTINCT user_id, AVG(total) OVER (PARTITION BY user_id) AS a, \
+             FIRST_VALUE(id) OVER (PARTITION BY user_id ORDER BY id) FROM orders \
+             ORDER BY a DESC, user_id LIMIT 3 OFFSET 1",
+        ),
+        ordered(
+            "distinct over window results",
+            "SELECT DISTINCT user_id % 2, SUM(SUM(total)) OVER (PARTITION BY user_id % 2) \
+             FROM orders GROUP BY user_id ORDER BY 1",
+        ),
+        ordered(
+            "distinct over window results",
+            "SELECT COUNT(*) FROM (SELECT DISTINCT note, COUNT(*) OVER (PARTITION BY note) \
+             FROM events) t",
+        ),
+        ordered(
+            "distinct over window results",
+            "SELECT DISTINCT u.name, COUNT(o.id) OVER (PARTITION BY u.id) FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id ORDER BY 1",
+        ),
+        ordered(
+            "distinct over window results",
+            "SELECT DISTINCT total FROM orders WHERE total IN (SELECT DISTINCT MAX(total) \
+             OVER (PARTITION BY status) FROM orders) ORDER BY total",
+        ),
+        ordered(
+            "distinct over window results",
+            "SELECT DISTINCT user_id, SUM(total) OVER (PARTITION BY user_id) FROM orders \
+             UNION SELECT 0, 0 ORDER BY 1",
+        ),
+        ordered(
+            "distinct over window results",
+            "SELECT DISTINCT UPPER(note), LAG(note) OVER (ORDER BY id) FROM events ORDER BY 1, 2",
         ),
         // FORMAT's third argument; `format_locale_cases` covers every locale.
         ordered(
