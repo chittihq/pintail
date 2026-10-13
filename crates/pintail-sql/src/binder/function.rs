@@ -561,10 +561,25 @@ pub(super) fn bind_window_function(
             window_list.push(window.clone());
             index
         });
-    Ok(BoundExpr {
+    let result = BoundExpr {
         kind: BoundExprKind::Window(index),
         data_type,
         nullable,
+    };
+    // A window function's value read from an ENUM is a string in `MySQL`.
+    let label = match &window.function {
+        WindowFunction::Offset { expr, .. } | WindowFunction::Extreme { expr, .. } => {
+            super::is_enum_column(expr)
+        }
+        WindowFunction::Aggregate(aggregate) => {
+            aggregate.expr.as_ref().is_some_and(super::is_enum_column)
+        }
+        _ => false,
+    };
+    Ok(if label {
+        super::plain_text(result)
+    } else {
+        result
     })
 }
 
@@ -2533,7 +2548,7 @@ pub(super) fn bind_scalar(
         // '00:00:01.5'), and the fixed-width temporal carrier truncates to
         // the declared precision - typing it Time64 cost the fraction, which
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
-        ScalarFunction::Collate { .. } | ScalarFunction::BitNot => (args[0].data_type, args[0].nullable),
+        ScalarFunction::Collate { .. } | ScalarFunction::BitNot | ScalarFunction::PlainText => (args[0].data_type, args[0].nullable),
         ScalarFunction::EncodedCase { .. } | ScalarFunction::Utf8Prefix | ScalarFunction::BitBytes(_) | ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
         // SHA2's width argument, an invalid IPv4 string, and an
         // out-of-range address number all answer NULL, so these stay

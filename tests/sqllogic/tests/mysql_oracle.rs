@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2823;
+const EXPECTED_CASES: usize = 2842;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4871,6 +4871,83 @@ fn hand_written_cases() -> Vec<OracleCase> {
              FORMAT(o.total, 2, NULL), FORMAT(o.total, 3, IF(o.id > 6, 'sv_SE', NULL)), \
              FORMAT(NULL, 2, 'de_DE'), FORMAT(o.total, NULL, 'de_DE'), \
              FORMAT(o.total, 2, o.status) FROM orders o ORDER BY o.id",
+        ),
+        // A set operation, a subquery, a window function and ANY_VALUE hand an ENUM on as a string.
+        ordered(
+            "enum read as text",
+            "SELECT status AS s FROM orders UNION ALL SELECT name FROM users ORDER BY s",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT status AS s FROM orders UNION SELECT 'placed' ORDER BY s",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT status AS s FROM orders UNION SELECT status FROM orders ORDER BY s DESC",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT status AS s FROM orders WHERE id < 5 UNION ALL SELECT status FROM orders WHERE id > 9 ORDER BY s LIMIT 4",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT status AS s FROM orders EXCEPT SELECT 'shipped' ORDER BY s",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT status AS s FROM orders WHERE user_id < 3 INTERSECT SELECT status FROM orders WHERE user_id > 3 ORDER BY s",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT s, COUNT(*) FROM (SELECT status AS s FROM orders UNION ALL SELECT name FROM users) d GROUP BY s ORDER BY s",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT MIN(s), MAX(s) FROM (SELECT status AS s FROM orders UNION ALL SELECT status FROM orders) d",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT s + 0, s FROM (SELECT status AS s FROM orders UNION ALL SELECT status FROM orders) d ORDER BY s, 1",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT s FROM (SELECT status AS s FROM orders UNION SELECT status FROM orders) d WHERE s BETWEEN 'delivered' AND 'pending' ORDER BY s",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT status, COUNT(*) FROM orders GROUP BY status UNION ALL SELECT name, 0 FROM users WHERE id < 3 ORDER BY 1, 2",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT d.s, o.id FROM (SELECT status AS s FROM orders UNION SELECT 'placed') d JOIN orders o ON o.status = d.s ORDER BY d.s, o.id",
+        ),
+        ordered(
+            "enum read as text",
+            "WITH RECURSIVE r AS (SELECT id, status AS s FROM orders WHERE id <= 4 UNION ALL SELECT id + 20, s FROM r WHERE id < 20) SELECT id, s, s + 0 FROM r ORDER BY s, id",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT o.id, (SELECT p.status FROM orders p WHERE p.id = o.id + 1) AS nxt FROM orders o ORDER BY nxt, o.id",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT id FROM orders ORDER BY (SELECT p.status FROM orders p WHERE p.id = orders.id), id",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT (SELECT status FROM orders WHERE id = 4) + 0, (SELECT status FROM orders WHERE id = 4), (SELECT status FROM orders WHERE id = 4) = 5",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT id, LAG(status) OVER (ORDER BY id) AS l, LEAD(status, 1, 'none') OVER (ORDER BY id) AS n FROM orders ORDER BY l, id",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT id, FIRST_VALUE(status) OVER (PARTITION BY user_id ORDER BY id) + 0, MAX(status) OVER (PARTITION BY user_id) AS m FROM orders ORDER BY m, id",
+        ),
+        ordered(
+            "enum read as text",
+            "SELECT id, ANY_VALUE(status) AS c, ANY_VALUE(status) + 0 FROM orders GROUP BY id ORDER BY c, id",
         ),
     ]
     .into_iter()

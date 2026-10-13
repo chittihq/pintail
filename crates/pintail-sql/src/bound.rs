@@ -1365,6 +1365,11 @@ pub enum ScalarFunction {
     /// `BIN_TO_UUID(bin[, swap])`: sixteen bytes as dashed lowercase text,
     /// undoing `UUID_TO_BIN`'s swap when asked.
     BinToUuid,
+    /// The text of a value without the declaration position an ENUM or SET
+    /// column's value carries. A set operation's column is plain text in
+    /// `MySQL` whatever its branches read, so it orders and compares by the
+    /// label; the branch's own column orders by position.
+    PlainText,
     /// `UNHEX(str)`: binary from hex text, NULL when malformed.
     Unhex,
     /// `ELT(n, ...)`: 1-based pick, NULL out of range.

@@ -73,6 +73,16 @@ pub(super) fn packed_text(
         return None;
     };
     match (function, &operands[1..]) {
+        // The same text, coded or not, with nothing left that says where a
+        // label stands in its declaration.
+        (ScalarFunction::PlainText, []) if declared == DataType::Utf8 => {
+            let (source, validity) = text_of(column)?;
+            Some(ColumnVector::from_typed(
+                declared,
+                TypedValues::Utf8(source.clone().without_declaration()),
+                validity.clone(),
+            ))
+        }
         (ScalarFunction::Upper | ScalarFunction::Lower, []) if declared == DataType::Utf8 => {
             let upper = function == ScalarFunction::Upper;
             let (source, validity) = text_of(column)?;

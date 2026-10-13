@@ -553,6 +553,26 @@ fn expression(
                         column = first.clone();
                     }
                 }
+                // A column's or a window's value read as plain text keeps
+                // its width and character set and is declared as the
+                // variable-length string a set operation's column is. An
+                // aggregate or a subquery is declared as it was: `MySQL`
+                // still announces a grouped ANY_VALUE over an ENUM as one.
+                ScalarFunction::PlainText => {
+                    if let Some(first) = first {
+                        column = first.clone();
+                        if matches!(
+                            args[0].kind,
+                            BoundExprKind::Column(_)
+                                | BoundExprKind::GroupKey(_)
+                                | BoundExprKind::Window(_)
+                        ) {
+                            set_flags(&mut column, u16::from(!expr.nullable));
+                            column.coltype = ColumnType::MysqlTypeVarString;
+                            column.decimals = 0;
+                        }
+                    }
+                }
                 // MySQL declares PI() with six decimals and prints it that
                 // way; arithmetic over it keeps the full double.
                 ScalarFunction::Pi => {

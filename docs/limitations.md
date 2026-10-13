@@ -160,7 +160,26 @@ stays readable as a list of things to fix.
   MySQL. A value not present in the declaration - which a source can hold
   after the column was altered - has no index and stays plain text, so it
   orders lexically against the labelled values rather than being given an
-  invented position.
+  invented position. Where MySQL hands an ENUM or SET on as a string,
+  Pintail does for the column of a set operation (`UNION`, `INTERSECT`,
+  `EXCEPT`, a recursive CTE) and, over an ENUM column, for a scalar
+  subquery, a window function's value and a written `ANY_VALUE`. Still
+  different, measured:
+  - `IF`, `CASE` and `NULLIF` over ENUM or SET columns read as their text
+    in a numeric context (`IF(c, e1, e2) + 0` is 0, and `IF(c, e1, e2) = 3`
+    compares the label with 3), where MySQL reads the chosen branch's
+    position. Both order the result as text.
+  - `MIN(e) + 0` and `MAX(e) + 0` read the position, where MySQL reads the
+    label as a number.
+  - A SET column through a scalar subquery or `ANY_VALUE` still orders by
+    its declaration, and so does an ENUM through a correlated scalar
+    subquery in the select list when the subquery aggregates it or the
+    query around it is grouped.
+  - A number compared with a set operation's column from the query around
+    it (`WHERE s = 3` over a derived `UNION`) is compared with the label's
+    text. MySQL moves such a comparison into the branches when it can, and
+    there it compares the ENUM's position; with a `LIMIT` in the derived
+    table it compares the text, as Pintail does.
 - Locale-specific collation profiles remain unsupported, and so do the `NONE`
   and `SYSCONST` coercibility rungs: an expression mixing collations carries
   its resolved one rather than `NONE` (#10).

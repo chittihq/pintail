@@ -390,6 +390,16 @@ impl StrColumn {
         self
     }
 
+    /// The same text as plain strings: no ENUM labels and no SET members,
+    /// so a value read from it carries no declared ordinal.
+    #[must_use]
+    pub(crate) fn without_declaration(mut self) -> Self {
+        self.enum_labels = None;
+        self.enum_labels_exhaustive = false;
+        self.set_members = None;
+        self
+    }
+
     /// Attaches source SET members in declaration order.
     #[must_use]
     pub fn with_set_members(mut self, members: Option<std::sync::Arc<Vec<String>>>) -> Self {

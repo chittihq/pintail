@@ -1668,6 +1668,7 @@ impl CompiledExpr {
                     ScalarFunction::Substring
                     | ScalarFunction::Trim
                     | ScalarFunction::Collate { .. }
+                    | ScalarFunction::PlainText
                     | ScalarFunction::JsonSortKey
                     | ScalarFunction::TrimPattern { .. }
                     | ScalarFunction::Left
@@ -1984,6 +1985,7 @@ impl CompiledExpr {
                     ScalarFunction::Substring
                     | ScalarFunction::Trim
                     | ScalarFunction::Collate { .. }
+                    | ScalarFunction::PlainText
                     | ScalarFunction::JsonSortKey
                     | ScalarFunction::TrimPattern { .. }
                     | ScalarFunction::Left
@@ -2972,6 +2974,10 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::Collate { .. } | ScalarFunction::PackedDateParts { .. } => {
             Ok(values[0].clone())
         }
+        ScalarFunction::PlainText => Ok(match &values[0] {
+            Value::Enum { label, .. } => Value::Utf8(label.clone()),
+            value => value.clone(),
+        }),
         ScalarFunction::JsonModify { insert, replace } => {
             if values.iter().any(|value| matches!(value, Value::Null)) {
                 // A NULL document or path is NULL; a NULL VALUE argument is

@@ -391,6 +391,10 @@ impl<'catalog> Binder<'catalog> {
         if !cte.alias.columns.is_empty() && cte.alias.columns.len() != anchor.projection.len() {
             return Err(unsupported());
         }
+        // A lone anchor went through no union, and the recursion is one.
+        for projection in &mut anchor.projection {
+            without_declared_order(&mut projection.expr);
+        }
 
         // The working table carries the anchor's layout under the CTE name;
         // recursive scans of it read the previous iteration's delta.
@@ -843,6 +847,34 @@ impl<'catalog> Binder<'catalog> {
             &expression_tables,
             Some(&resolve_subquery),
         )?;
+        // A subquery answered through a join is still a subquery to the
+        // statement: an ENUM it selects is a string. A grouped query is
+        // left alone, where the value is matched against the grouping as
+        // the column it is.
+        if group_by.is_empty() && aggregates.is_empty() {
+            for correlation in &scalar_correlations {
+                let label = tables
+                    .iter()
+                    .find(|table| table.relation_name == correlation.alias)
+                    .and_then(|table| table.input.as_deref())
+                    .is_some_and(|input| {
+                        input.projection.iter().any(|item| {
+                            item.name == SCALAR_VALUE_COLUMN && selects_enum(input, &item.expr)
+                        })
+                    });
+                if !label {
+                    continue;
+                }
+                for item in &mut projection {
+                    let value = matches!(&item.expr.kind, BoundExprKind::Column(column)
+                        if column.relation_name == correlation.alias
+                            && column.name == SCALAR_VALUE_COLUMN);
+                    if value {
+                        item.expr = plain_text(item.expr.clone());
+                    }
+                }
+            }
+        }
         // What MySQL reads through a covering source index keeps instants.
         let unfiltered = filter.is_none() && from.iter().all(|source| source.joins.is_empty());
         let through_index = |key: &BoundExpr| {
@@ -3122,12 +3154,85 @@ fn coerce_union_projection(
     }
     expression.data_type = target;
     expression.nullable = nullable;
+    if target == Some(DataType::Utf8) {
+        without_declared_order(expression);
+    }
     for branch in &mut query.union_all {
         coerce_union_projection(branch, index, target, nullable);
     }
     for (_, branch) in &mut query.set_ops {
         coerce_union_projection(branch, index, target, nullable);
     }
+}
+
+/// Makes a set operation's text column plain text. `MySQL` types the column
+/// of a UNION, INTERSECT, EXCEPT or recursive CTE as a string even when
+/// every branch reads the same ENUM or SET, so above the operation it sorts,
+/// groups and compares by the label and reads as a number the way text does.
+/// Left alone, a branch's values keep their declaration position and order
+/// by it, among themselves and against the other branches' text.
+///
+/// Only an expression that can hand a stored value through is wrapped: a
+/// column (a derived table's included, which no longer says what it reads),
+/// a grouping key, an aggregate, a window or a scalar subquery. A function's
+/// result is text already.
+fn without_declared_order(expression: &mut BoundExpr) {
+    if expression.data_type != Some(DataType::Utf8) {
+        return;
+    }
+    let carrier = matches!(
+        &expression.kind,
+        BoundExprKind::Column(_)
+            | BoundExprKind::GroupKey(_)
+            | BoundExprKind::Aggregate(_)
+            | BoundExprKind::Window(_)
+            | BoundExprKind::ScalarSubquery(_)
+            | BoundExprKind::Scalar {
+                function: ScalarFunction::Collate { .. },
+                ..
+            }
+    );
+    if carrier {
+        *expression = plain_text(std::mem::replace(
+            expression,
+            BoundExpr {
+                kind: BoundExprKind::Literal(Value::Null),
+                data_type: None,
+                nullable: true,
+            },
+        ));
+    }
+}
+
+/// `expression`'s text with no declaration position (see
+/// [`ScalarFunction::PlainText`]).
+pub(super) fn plain_text(expression: BoundExpr) -> BoundExpr {
+    BoundExpr {
+        data_type: expression.data_type,
+        nullable: expression.nullable,
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::PlainText,
+            args: vec![expression],
+        },
+    }
+}
+
+/// Whether `expression`, selected by `query`, is an ENUM column or an
+/// aggregate over one.
+fn selects_enum(query: &BoundQuery, expression: &BoundExpr) -> bool {
+    match &expression.kind {
+        BoundExprKind::Aggregate(index) => query
+            .aggregates
+            .get(*index)
+            .and_then(|aggregate| aggregate.expr.as_ref())
+            .is_some_and(is_enum_column),
+        _ => is_enum_column(expression),
+    }
+}
+
+/// Whether `expression` is an ENUM column itself.
+pub(super) fn is_enum_column(expression: &BoundExpr) -> bool {
+    matches!(&expression.kind, BoundExprKind::Column(column) if column.enum_labels.is_some())
 }
 
 fn integral(data_type: DataType) -> bool {
@@ -4705,10 +4810,19 @@ fn bind_scalar_subquery(
             }
             let projection = &query.projection[0];
             let data_type = projection.expr.data_type;
-            return Ok(BoundExpr {
+            // A subquery's ENUM is a string to the statement around it:
+            // `MySQL` orders it by its label and reads it as a number the
+            // way it reads text.
+            let label = selects_enum(&query, &projection.expr);
+            let subquery = BoundExpr {
                 kind: BoundExprKind::ScalarSubquery(Box::new(query)),
                 data_type,
                 nullable: true,
+            };
+            return Ok(if label {
+                plain_text(subquery)
+            } else {
+                subquery
             });
         }
         Err(error) => return Err(error),
@@ -6610,12 +6724,20 @@ fn bind_aggregate(
             aggregate_list.push(aggregate);
             index
         });
+    let result = BoundExpr {
+        kind: BoundExprKind::Aggregate(index),
+        data_type,
+        nullable,
+    };
+    // A written ANY_VALUE over an ENUM is a string in `MySQL`; the column
+    // a grouped query reads without one keeps its declaration.
+    let label = aggregate_list[index].function == AggregateFunction::AnyValue
+        && aggregate_list[index]
+            .expr
+            .as_ref()
+            .is_some_and(is_enum_column);
     Ok(crate::text_charset::annotate(
-        BoundExpr {
-            kind: BoundExprKind::Aggregate(index),
-            data_type,
-            nullable,
-        },
+        if label { plain_text(result) } else { result },
         charset,
     ))
 }
