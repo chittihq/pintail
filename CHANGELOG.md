@@ -19,6 +19,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ingest threads (`PINTAIL_INGEST_THREADS`, half the machine's threads, at
   most eight): a 20.7M-row copy went from 60.2 s to 32.0 s on an 8-vCPU
   host (`benchmark/evidence/ingest-overhead.md`).
+- A change-capture cycle now stays on the source's stream for one cadence
+  and applies each transaction as it arrives, and the next cycle for that
+  database starts at once. Replication lag under light writes (100 row
+  changes a second) drops from 2.5 s to 4 ms at the median and from 4.8 s
+  to 7 ms at the 95th percentile; idle CPU is unchanged.
+- A change batch of 4,096 rows or more is stored on another thread while
+  the stream is decoded ahead of it, one batch checkpointed at a time, and
+  a flushed segment's statistics and fixed-width probes run across the
+  ingest threads. A 1.34M-row burst is mirrored in 3.8 s instead of 9.4 s
+  and a backlog applies about 1.4 times faster, 313,000 row changes a
+  second on an 8-vCPU host (`benchmark/evidence/ingest-overhead.md`).
+  `PINTAIL_CDC_READ_AHEAD_ROWS` overrides the row threshold, and the
+  cycle's debug line reports `read_ahead=`.
 - Opening a scan no longer copies each segment's manifest entry, and a
   scan asks the file system about each segment file, and opens it, once
   instead of once per slice. A full-table `COUNT(*)` answered from segment
