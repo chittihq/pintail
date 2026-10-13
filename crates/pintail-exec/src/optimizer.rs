@@ -1625,6 +1625,7 @@ fn capture_timestamp_offsets(function: ScalarFunction, args: &mut [BoundExpr]) {
     let count = match function {
         ScalarFunction::DateDiff
         | ScalarFunction::TimestampDiff { .. }
+        | ScalarFunction::TimestampDiffMicros
         | ScalarFunction::AddTime
         | ScalarFunction::SubTime
         | ScalarFunction::TimeDiff => 2,
@@ -1712,7 +1713,9 @@ fn read_time_arguments_as_dates(function: ScalarFunction, args: &mut [BoundExpr]
         | ScalarFunction::LastDay
         | ScalarFunction::UnixTimestamp
         | ScalarFunction::ConvertTz => &[0],
-        ScalarFunction::DateDiff | ScalarFunction::TimestampDiff { .. } => &[0, 1],
+        ScalarFunction::DateDiff
+        | ScalarFunction::TimestampDiff { .. }
+        | ScalarFunction::TimestampDiffMicros => &[0, 1],
         _ => return,
     };
     for position in positions {

@@ -274,11 +274,7 @@ pub(super) const TO_DAYS_EPOCH_OFFSET: i64 = 719_528;
 /// toward zero (negative when `to` precedes `from`). `Chrono`'s duration
 /// accessors already truncate toward zero for the clock units.
 pub(super) fn timestamp_diff(from: NaiveDateTime, to: NaiveDateTime, unit: IntervalUnit) -> i64 {
-    // MySQL's year zero has no leap day: an interval across the end of its
-    // February is a day shorter than the calendar here counts.
-    let before_march = |value: NaiveDateTime| value.year() == 0 && value.month() <= 2;
-    let leap_day = Duration::days(i64::from(before_march(from)) - i64::from(before_march(to)));
-    let elapsed = to.signed_duration_since(from) - leap_day;
+    let elapsed = elapsed(from, to);
     match unit {
         IntervalUnit::Second => elapsed.num_seconds(),
         IntervalUnit::Minute => elapsed.num_minutes(),
@@ -287,6 +283,21 @@ pub(super) fn timestamp_diff(from: NaiveDateTime, to: NaiveDateTime, unit: Inter
         IntervalUnit::Month => complete_months(from, to),
         IntervalUnit::Year => complete_months(from, to) / 12,
     }
+}
+
+/// The time from `from` to `to` as `MySQL` counts it.
+fn elapsed(from: NaiveDateTime, to: NaiveDateTime) -> Duration {
+    // MySQL's year zero has no leap day: an interval across the end of its
+    // February is a day shorter than the calendar here counts.
+    let before_march = |value: NaiveDateTime| value.year() == 0 && value.month() <= 2;
+    let leap_day = Duration::days(i64::from(before_march(from)) - i64::from(before_march(to)));
+    to.signed_duration_since(from) - leap_day
+}
+
+/// The microseconds from `from` to `to`. The whole DATETIME range is under
+/// 2^59 of them, so the count always fits.
+pub(super) fn elapsed_micros(from: NaiveDateTime, to: NaiveDateTime) -> i64 {
+    elapsed(from, to).num_microseconds().unwrap_or(i64::MAX)
 }
 
 /// Calendar months fully elapsed between two datetimes: the month delta,

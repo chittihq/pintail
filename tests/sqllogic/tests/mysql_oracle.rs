@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2894;
+const EXPECTED_CASES: usize = 2897;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5161,6 +5161,19 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "functions composed of others",
             "SELECT id, EXPORT_SET(score, '1', '0', '', 8), EXPORT_SET(id, name, note, '/', 3), EXPORT_SET(5, 'yes', 'no', ' | ', 3), EXPORT_SET(18446744073709551615, '1', '0', '', 64) FROM events ORDER BY id",
+        ),
+        // TIMESTAMPDIFF counts microseconds.
+        ordered(
+            "microsecond differences",
+            "SELECT TIMESTAMPDIFF(MICROSECOND, '2024-01-01 00:00:00', '2024-01-01 00:00:01.5'), TIMESTAMPDIFF(MICROSECOND, '2024-01-01 00:00:01.000001', '2024-01-01 00:00:00'), TIMESTAMPDIFF(MICROSECOND, '2024-01-01', '2024-01-02'), TIMESTAMPDIFF(MICROSECOND, NULL, '2024-01-02'), TIMESTAMPDIFF(MICROSECOND, 'x', '2024-01-02'), TIMESTAMPDIFF(MICROSECOND, '0001-01-01', '9999-12-31 23:59:59.999999'), TIMESTAMPDIFF(MICROSECOND, TIME '10:00:00', TIME '10:00:00.25'), TIMESTAMPDIFF(MICROSECOND, DATE '2024-01-01', TIMESTAMP '2024-01-01 00:00:00.000007'), TIMESTAMPDIFF(MICROSECOND, '2024-01-01 00:00:00.1234567', '2024-01-01 00:00:00.9')",
+        ),
+        ordered(
+            "microsecond differences",
+            "SELECT id, TIMESTAMPDIFF(MICROSECOND, placed_at, '2024-06-15 18:00:00.25'), TIMESTAMPDIFF(MICROSECOND, '2025-01-01', placed_at), TIMESTAMPDIFF(MICROSECOND, placed_at, placed_at + INTERVAL id MICROSECOND), TIMESTAMPDIFF(MICROSECOND, DATE(placed_at), placed_at) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "microsecond differences",
+            "SELECT user_id, SUM(TIMESTAMPDIFF(MICROSECOND, '2024-01-01', placed_at)) DIV 1000000, MAX(TIMESTAMPDIFF(SECOND, '2024-01-01', placed_at)) FROM orders WHERE TIMESTAMPDIFF(MICROSECOND, placed_at, '2025-01-01') > 0 GROUP BY user_id ORDER BY user_id",
         ),
     ]
     .into_iter()

@@ -1603,6 +1603,15 @@ fn bind_timestamp_diff(
     let Expr::Identifier(unit) = unit else {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
+    if unit.value.eq_ignore_ascii_case("MICROSECOND") {
+        return bind_scalar(
+            ScalarFunction::TimestampDiffMicros,
+            vec![
+                bind_expr_inner(from, tables, aggregates, windows, subqueries)?,
+                bind_expr_inner(to, tables, aggregates, windows, subqueries)?,
+            ],
+        );
+    }
     let Some((unit, factor)) = interval_unit_named(&unit.value) else {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
@@ -2929,7 +2938,7 @@ pub(super) fn bind_scalar(
             Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::TimestampDiff { .. } => (
+        ScalarFunction::TimestampDiff { .. } | ScalarFunction::TimestampDiffMicros => (
             Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
         ),
@@ -3108,7 +3117,9 @@ pub(super) fn bind_scalar(
             crate::session_parse_mode().allow_invalid_dates
                 || crate::session_parse_mode().no_zero_date
         }
-        ScalarFunction::DateInterval { .. } | ScalarFunction::TimestampDiff { .. } => {
+        ScalarFunction::DateInterval { .. }
+        | ScalarFunction::TimestampDiff { .. }
+        | ScalarFunction::TimestampDiffMicros => {
             args.len() == 2 && crate::session_parse_mode().allow_invalid_dates
         }
         // TIMEDIFF takes it third when one side is a date or datetime and
@@ -3141,7 +3152,9 @@ pub(super) fn bind_scalar(
     let written = reads_policy
         && if matches!(
             function,
-            ScalarFunction::TimestampDiff { .. } | ScalarFunction::TimeDiff
+            ScalarFunction::TimestampDiff { .. }
+                | ScalarFunction::TimestampDiffMicros
+                | ScalarFunction::TimeDiff
         ) {
             !args.iter().all(stored)
         } else {

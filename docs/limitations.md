@@ -193,12 +193,14 @@ stays readable as a list of things to fix.
   single zone letter. `CONVERT_TZ` and a comparison of computed text with a
   DATE or DATETIME column do not read a date that other text follows
   (`CONCAT(d, 'Z') = d` is 0 where MySQL answers 1).
+- Date and time text written with a seventh fractional digit of exactly 5
+  is cut at six digits by `SECOND`, `MICROSECOND` and `TIMESTAMPDIFF`, where
+  MySQL rounds it up: `TIMESTAMPDIFF(MICROSECOND, '2024-01-01 00:00:00',
+  '2024-01-01 00:00:00.9999995')` is 999999, and MySQL answers 1000000.
 - A bit literal of sixty-four bits whose first is set (`b'1...'`, `0b1...`)
   is unsigned in arithmetic, so adding zero to sixty-four ones gives
   18446744073709551615 where MySQL reads the literal as signed and gives
   -1. Bit operators, comparisons and casts agree.
-- `TIMESTAMPDIFF` does not take the `MICROSECOND` unit. Interval arithmetic
-  (`INTERVAL n MICROSECOND`, `TIMESTAMPADD(MICROSECOND, ...)`) does.
 
 - Unix timestamp conversions round excess fractional digits to microseconds;
   `TIME_TRUNCATE_FRACTIONAL` does not switch them to truncation.

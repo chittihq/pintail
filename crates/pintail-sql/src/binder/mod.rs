@@ -11290,7 +11290,7 @@ mod tests {
                 .all(|item| item.expr.data_type == Some(DataType::Int64))
         );
         assert!(matches!(
-            bind("SELECT TIMESTAMPDIFF(MICROSECOND, Name, Name) FROM Events"),
+            bind("SELECT TIMESTAMPDIFF(FORTNIGHT, Name, Name) FROM Events"),
             Err(BindError::UnsupportedExpression(_))
         ));
     }

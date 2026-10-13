@@ -1516,6 +1516,9 @@ pub enum ScalarFunction {
         /// Calendar or clock unit being counted.
         unit: IntervalUnit,
     },
+    /// `TIMESTAMPDIFF(MICROSECOND, from, to)`: the microseconds from `from`
+    /// to `to`. Its own function because no interval unit counts them.
+    TimestampDiffMicros,
     /// Case-insensitive SQL pattern matching.
     Like {
         /// Whether the result is negated.

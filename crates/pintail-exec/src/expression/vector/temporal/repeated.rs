@@ -30,6 +30,7 @@ const fn temporal(function: ScalarFunction) -> bool {
             | ScalarFunction::DateInterval { .. }
             | ScalarFunction::DateDiff
             | ScalarFunction::TimestampDiff { .. }
+            | ScalarFunction::TimestampDiffMicros
             | ScalarFunction::Date
             | ScalarFunction::Time
             | ScalarFunction::DayName

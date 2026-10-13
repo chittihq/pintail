@@ -1840,6 +1840,7 @@ impl CompiledExpr {
                     | ScalarFunction::RegexpLike { .. }
                     | ScalarFunction::RegexpInstr
                     | ScalarFunction::TimestampDiff { .. }
+                    | ScalarFunction::TimestampDiffMicros
                     // The JSON predicates answer numerically and retain
                     // nothing on the heap.
                     | ScalarFunction::JsonValid
@@ -2149,6 +2150,7 @@ impl CompiledExpr {
                     | ScalarFunction::RegexpLike { .. }
                     | ScalarFunction::RegexpInstr
                     | ScalarFunction::TimestampDiff { .. }
+                    | ScalarFunction::TimestampDiffMicros
                     // The JSON predicates answer numerically; the same
                     // scalar bound covers them.
                     | ScalarFunction::JsonValid
@@ -4287,7 +4289,11 @@ fn evaluate_eager_scalar_inner(
                 Err(ExecError::NumericOverflow)
             }
         }
-        ScalarFunction::TimestampDiff { unit } => {
+        ScalarFunction::TimestampDiff { .. } | ScalarFunction::TimestampDiffMicros => {
+            let unit = match function {
+                ScalarFunction::TimestampDiff { unit } => Some(unit),
+                _ => None,
+            };
             // A day past its month's end, stored or written under
             // ALLOW_INVALID_DATES, counts as the day it runs into for days
             // and clock units, and as its own fields for months and years.
@@ -4306,6 +4312,9 @@ fn evaluate_eager_scalar_inner(
             };
             let (from, from_fields) = moment(0)?;
             let (to, to_fields) = moment(1)?;
+            let Some(unit) = unit else {
+                return Ok(Value::Int64(temporal::elapsed_micros(from, to)));
+            };
             if matches!(unit, IntervalUnit::Month | IntervalUnit::Year)
                 && (from_fields.is_some() || to_fields.is_some())
             {

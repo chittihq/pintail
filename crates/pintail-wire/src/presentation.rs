@@ -721,7 +721,8 @@ fn expression(
                 ScalarFunction::RegexpInstr
                 | ScalarFunction::JsonLength
                 | ScalarFunction::JsonContainsPath
-                | ScalarFunction::TimestampDiff { .. } => {
+                | ScalarFunction::TimestampDiff { .. }
+                | ScalarFunction::TimestampDiffMicros => {
                     column.column_length = 21;
                     column.colflags.set(ColumnFlags::UNSIGNED_FLAG, false);
                 }
