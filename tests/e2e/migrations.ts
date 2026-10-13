@@ -618,6 +618,117 @@ const addedCases: AddedCase[] = [
   },
 ]
 
+/// Declarations that permit a rewrite of stored values, run over rows that
+/// decide whether there was one. The source rewrites the values the new
+/// declaration cannot hold and no others; a mirror that has stored every
+/// change before the statement holds the same rows, so it can read whether
+/// any of them was rewritten. `path` says how it is expected to take the
+/// change: in place when none was, by recopying the table when one was.
+/// A case without it only has to match the source.
+type NarrowedCase = {
+  name: string
+  before: string
+  rows: string[]
+  /// Writes the stream carries ahead of the migration, `{t}` the table.
+  streamed?: string[]
+  alters: string[]
+  writes: string[]
+  path?: 'in place' | 'recopy'
+  projection?: string
+}
+
+const narrowedCases: NarrowedCase[] = [
+  {
+    name: 'not null over a column holding no null',
+    before: 'v INT NULL',
+    rows: ['(1, 5)', '(2, 0)'],
+    alters: ['MODIFY v INT NOT NULL'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
+    path: 'in place',
+  },
+  {
+    name: 'integer narrows around values that fit',
+    before: 'v BIGINT NULL',
+    rows: ['(1, 32767)', '(2, -32768)', '(3, NULL)'],
+    alters: ['MODIFY v SMALLINT NULL'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, 123)', 'UPDATE {t} SET v = 456 WHERE id = 2'],
+    path: 'in place',
+  },
+  {
+    name: 'integer narrows around a row the stream carried just before',
+    before: 'v BIGINT NULL',
+    rows: ['(1, 7)', '(2, 8)'],
+    streamed: ['INSERT INTO {t} (id, v) VALUES (50, 100000)'],
+    alters: ['MODIFY v SMALLINT NULL'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, 123)', 'UPDATE {t} SET v = 456 WHERE id = 2'],
+    path: 'recopy',
+  },
+  {
+    name: 'varchar shrinks around values that fit',
+    before: 'v VARCHAR(64) NULL',
+    rows: ["(1, '🦆🦆🦆🦆🦆🦆🦆é')", "(2, 'ab   ')", "(3, 'abcdefgh')"],
+    alters: ['MODIFY v VARCHAR(8) NULL'],
+    writes: ["INSERT INTO {t} (id, v) VALUES (90, 'newvalue')", "UPDATE {t} SET v = 'tiny' WHERE id = 2"],
+    path: 'in place',
+  },
+  {
+    name: 'varchar shrinks around a value one character too long',
+    before: 'v VARCHAR(64) NULL',
+    rows: ["(1, 'abcdefghi')", "(2, 'ab')"],
+    alters: ['MODIFY v VARCHAR(8) NULL'],
+    writes: ["INSERT INTO {t} (id, v) VALUES (90, 'newvalue')", "UPDATE {t} SET v = 'tiny' WHERE id = 2"],
+    path: 'recopy',
+  },
+  {
+    name: 'text family shrinks around values that fit',
+    before: 'v TEXT NULL',
+    rows: ["(1, REPEAT('é', 127))", "(2, 'small')"],
+    alters: ['MODIFY v TINYTEXT NULL'],
+    writes: ["INSERT INTO {t} (id, v) VALUES (90, 'fresh')", "UPDATE {t} SET v = 'rewritten' WHERE id = 2"],
+    path: 'in place',
+  },
+  {
+    name: 'varbinary shrinks around values that fit',
+    before: 'v VARBINARY(16) NULL',
+    rows: ["(1, X'00112233')", "(2, X'01')"],
+    alters: ['MODIFY v VARBINARY(4) NULL'],
+    writes: ["INSERT INTO {t} (id, v) VALUES (90, X'AABB')", "UPDATE {t} SET v = X'CC' WHERE id = 2"],
+    path: 'in place',
+  },
+  {
+    name: 'enum drops a member no row holds',
+    before: "v ENUM('alpha','beta','gamma') NULL",
+    rows: ["(1, 'gamma')", "(2, 'alpha')", '(3, NULL)'],
+    alters: ["MODIFY v ENUM('alpha','gamma') NULL"],
+    writes: ["INSERT INTO {t} (id, v) VALUES (90, 'gamma')", "UPDATE {t} SET v = 'gamma' WHERE id = 2"],
+    // The order the declaration gives the members is part of the value.
+    projection: 'id, v, v + 0',
+    path: 'in place',
+  },
+  {
+    name: 'two narrowings in one statement, one of them over a null',
+    before: 'v BIGINT NULL, w VARCHAR(32) NULL',
+    rows: ["(1, NULL, 'ab')", "(2, 4, 'cd')"],
+    alters: ['MODIFY v SMALLINT NOT NULL, MODIFY w VARCHAR(4) NULL'],
+    writes: ["INSERT INTO {t} (id, v, w) VALUES (90, 1, 'ef')", 'UPDATE {t} SET v = 5 WHERE id = 2'],
+    projection: 'id, v, w',
+    path: 'recopy',
+  },
+  {
+    // Whichever statement the mirror reads first, the probe may already
+    // show the second; the row written after it never fitted the first.
+    name: 'varchar shrinks and widens again with a long row after',
+    before: 'v VARCHAR(64) NULL',
+    rows: ["(1, 'ab')", "(2, 'cd')"],
+    alters: ['MODIFY v VARCHAR(8) NULL', 'MODIFY v VARCHAR(64) NULL'],
+    writes: ["INSERT INTO {t} (id, v) VALUES (90, REPEAT('z', 40))", "UPDATE {t} SET v = REPEAT('y', 30) WHERE id = 2"],
+  },
+]
+
+function narrowedTable(index: number) {
+  return `n_${String(index).padStart(2, '0')}`
+}
+
 function addedTable(index: number) {
   return `a_${String(index).padStart(2, '0')}`
 }
@@ -887,6 +998,11 @@ async function main() {
     await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, d INT NULL) DEFAULT CHARACTER SET utf8mb4`)
     await sql(`INSERT INTO ${table} (id, d) VALUES (1, 10), (2, 20), (3, 30)`)
   }
+  for (const [index, narrowed] of narrowedCases.entries()) {
+    const table = narrowedTable(index)
+    await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, ${narrowed.before}) DEFAULT CHARACTER SET utf8mb4`)
+    await sql(`INSERT INTO ${table} VALUES ${narrowed.rows.join(', ')}`)
+  }
 
   pintailBinary = process.env.PINTAIL_E2E_BINARY
     ? resolve(process.env.PINTAIL_E2E_BINARY)
@@ -1002,6 +1118,13 @@ async function main() {
     await sql(`INSERT INTO ${table} (id, d) VALUES (90, 900)`)
     await sql(`UPDATE ${table} SET d = 21 WHERE id = 2`)
   }
+  for (const [index, narrowed] of narrowedCases.entries()) {
+    const table = narrowedTable(index)
+    untouched.set(table, [1])
+    for (const write of narrowed.streamed ?? []) await sql(write.replaceAll('{t}', table))
+    for (const alter of narrowed.alters) await sql(`ALTER TABLE ${table} ${alter}`)
+    for (const write of narrowed.writes) await sql(write.replaceAll('{t}', table))
+  }
 
   const families = [
     ...cases.map((testCase, index) => ({
@@ -1018,6 +1141,11 @@ async function main() {
       table: addedTable(index),
       name: added.name,
       columns: added.projection,
+    })),
+    ...narrowedCases.map((narrowed, index) => ({
+      table: narrowedTable(index),
+      name: narrowed.name,
+      columns: narrowed.projection ?? 'id, v',
     })),
   ]
   log('checking every table against the source after its migration')
@@ -1042,6 +1170,26 @@ async function main() {
       table,
       added.name,
       added.inPlace ? 'evolved in place, never quarantined' : 'recopied, with the reason given',
+      ok ? 'PASS' : 'FAIL',
+      ok ? undefined : quarantine ?? 'no quarantine line and no in-place line',
+    )
+  }
+  // And how it took each narrowing: an adoption names the column and the
+  // rewrite its rows ruled out, a recopy is a quarantine as above.
+  for (const [index, narrowed] of narrowedCases.entries()) {
+    if (!narrowed.path) continue
+    const table = narrowedTable(index)
+    const quarantine = output
+      .split('\n')
+      .find((line) => line.includes(`table quarantined db=${databaseId} table=${table}:`))
+    const adopted = output.includes(`cdc column change adopted in place db=${databaseId} table=${table} `)
+    const ok = narrowed.path === 'in place' ? !quarantine && adopted : Boolean(quarantine) && !adopted
+    record(
+      table,
+      narrowed.name,
+      narrowed.path === 'in place'
+        ? 'adopted in place on the evidence of its rows, never quarantined'
+        : 'recopied, with the reason given',
       ok ? 'PASS' : 'FAIL',
       ok ? undefined : quarantine ?? 'no quarantine line and no in-place line',
     )

@@ -36,18 +36,131 @@ pub(crate) fn unsafe_column_change(
     previous: &SourceColumn,
     refreshed: &SourceColumn,
 ) -> Option<String> {
-    let reason = |detail: String| Some(format!("column {} {detail}", refreshed.name));
+    judge_column_change(previous, refreshed).reason
+}
+
+/// What every value a column already holds has to satisfy for a change of
+/// its declaration to have rewritten none of them.
+///
+/// A declaration says what the source WOULD rewrite: the NULLs under a new
+/// `NOT NULL`, the integers outside a narrower width, the strings longer
+/// than a shorter one, the rows holding a dropped `ENUM` member. Whether it
+/// rewrote anything is a fact about the rows, and a mirror that has applied
+/// every change before the statement holds those rows. When none of them
+/// meets the condition, the statement changed the declaration and nothing
+/// else.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StoredValueCheck {
+    /// No value is NULL.
+    NoNulls,
+    /// Every integer lies inside the narrower type's range.
+    IntegerWithin {
+        /// Smallest value the new type holds.
+        minimum: i128,
+        /// Largest value the new type holds.
+        maximum: i128,
+    },
+    /// Every string fits the shorter declaration.
+    TextFits {
+        /// Characters a `CHAR` or `VARCHAR` holds; a `TEXT` size has none.
+        characters: Option<u64>,
+        /// Bytes the declaration holds.
+        bytes: u64,
+    },
+    /// Every binary value fits the shorter declaration.
+    BinaryFits {
+        /// Bytes the declaration holds.
+        bytes: u64,
+    },
+    /// No value is one of the `ENUM` members the declaration dropped.
+    LabelsUnused(Vec<String>),
+}
+
+impl StoredValueCheck {
+    /// Whether the source left `value` as it was. A value of a kind the
+    /// check has no reading of is not admitted.
+    #[must_use]
+    pub fn admits(&self, value: &pintail_types::Value) -> bool {
+        use pintail_types::Value;
+        match (self, value) {
+            (Self::NoNulls, Value::Null) => false,
+            (Self::NoNulls, _) | (_, Value::Null) => true,
+            (Self::IntegerWithin { minimum, maximum }, value) => {
+                let integer = match value {
+                    Value::Int64(integer) => i128::from(*integer),
+                    Value::UInt64(integer) => i128::from(*integer),
+                    Value::Boolean(flag) => i128::from(*flag),
+                    _ => return false,
+                };
+                (*minimum..=*maximum).contains(&integer)
+            }
+            (Self::TextFits { characters, bytes }, Value::Utf8(text)) => {
+                // The stored text is UTF-8, which is never shorter than the
+                // same characters in a source character set this is offered
+                // for, so its length bounds theirs.
+                u64::try_from(text.len()).is_ok_and(|length| length <= *bytes)
+                    && characters.is_none_or(|limit| {
+                        u64::try_from(text.chars().count()).is_ok_and(|count| count <= limit)
+                    })
+            }
+            (Self::BinaryFits { bytes }, Value::Binary(value)) => {
+                u64::try_from(value.len()).is_ok_and(|length| length <= *bytes)
+            }
+            (Self::LabelsUnused(labels), Value::Enum { label, .. } | Value::Utf8(label)) => {
+                !labels.contains(label)
+            }
+            _ => false,
+        }
+    }
+}
+
+/// What a change of declaration means for the values already stored.
+pub(crate) struct ColumnChange {
+    /// Why the declaration alone cannot be adopted in place: the first
+    /// rewrite it permits. `None` when it permits none.
+    pub(crate) reason: Option<String>,
+    /// The conditions under which every rewrite the declaration permits
+    /// rewrote nothing, or `None` when one of them is a rewrite no reading
+    /// of the stored values can rule out. Empty when `reason` is `None`.
+    pub(crate) checks: Option<Vec<StoredValueCheck>>,
+}
+
+impl ColumnChange {
+    fn refuse(&mut self, reason: String, check: Option<StoredValueCheck>) {
+        self.reason.get_or_insert(reason);
+        match (check, self.checks.as_mut()) {
+            (Some(check), Some(checks)) => checks.push(check),
+            _ => self.checks = None,
+        }
+    }
+}
+
+/// Reads a change of declaration for every rewrite it permits.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn judge_column_change(
+    previous: &SourceColumn,
+    refreshed: &SourceColumn,
+) -> ColumnChange {
+    let mut change = ColumnChange {
+        reason: None,
+        checks: Some(Vec::new()),
+    };
+    let reason = |detail: String| format!("column {} {detail}", refreshed.name);
 
     // A generated column's values are produced by its expression, so a changed
     // expression rewrites every row without the source ever saying so. The
     // same is true of a column that starts or stops being generated.
     if let Some(detail) = generation_change(previous, refreshed) {
-        return reason(detail);
+        change.refuse(reason(detail), None);
+        return change;
     }
     // NOT NULL converts the NULLs already stored into the type's implicit
     // default; the replica's copies of those rows stay NULL.
     if previous.nullable && !refreshed.nullable {
-        return reason("became NOT NULL, which rewrites the NULLs already stored".to_owned());
+        change.refuse(
+            reason("became NOT NULL, which rewrites the NULLs already stored".to_owned()),
+            Some(StoredValueCheck::NoNulls),
+        );
     }
 
     let before = Declaration::read(previous);
@@ -56,24 +169,109 @@ pub(crate) fn unsafe_column_change(
     // an integer wears it in its family and a DECIMAL or a float does not.
     // MySQL converts a negative value to zero either way.
     if before.unsigned != after.unsigned {
-        return reason(format!(
-            "changed signedness from {} to {}, which converts every negative value the source \
-             held to zero",
-            previous.mysql_column_type, refreshed.mysql_column_type
-        ));
+        change.refuse(
+            reason(format!(
+                "changed signedness from {} to {}, which converts every negative value the \
+                 source held to zero",
+                previous.mysql_column_type, refreshed.mysql_column_type
+            )),
+            None,
+        );
+        return change;
     }
     if before.family != after.family {
-        return reason(format!(
-            "changed from {} to {}, which converts every stored value",
-            previous.mysql_data_type, refreshed.mysql_data_type
-        ));
+        change.refuse(
+            reason(format!(
+                "changed from {} to {}, which converts every stored value",
+                previous.mysql_data_type, refreshed.mysql_data_type
+            )),
+            None,
+        );
+        return change;
     }
     if narrowed(&before, &after) {
-        return reason(format!(
-            "narrowed from {} to {}, which clips or truncates the values already stored",
-            previous.mysql_column_type, refreshed.mysql_column_type
-        ));
+        change.refuse(
+            reason(format!(
+                "narrowed from {} to {}, which clips or truncates the values already stored",
+                previous.mysql_column_type, refreshed.mysql_column_type
+            )),
+            fits_check(previous, refreshed, &after),
+        );
     }
+    if let Some(detail) = rewrite_beyond_width(previous, refreshed, &before, &after) {
+        change.refuse(detail.0, detail.1);
+    }
+    change
+}
+
+/// The condition under which a narrower declaration of the same family
+/// clipped nothing, for the families whose stored values say so on their
+/// own: an integer by its range, a string or a binary by its length. A
+/// string is read only where the character set stays the same one of those
+/// whose encoding of a value is never longer than the stored UTF-8.
+fn fits_check(
+    previous: &SourceColumn,
+    refreshed: &SourceColumn,
+    after: &Declaration,
+) -> Option<StoredValueCheck> {
+    let data_type = refreshed.mysql_data_type.to_ascii_lowercase();
+    match after.family {
+        Family::SignedInteger | Family::UnsignedInteger => {
+            let bits = u32::try_from(after.capacity?)
+                .ok()
+                .filter(|bits| *bits <= 64)?;
+            Some(if after.family == Family::UnsignedInteger {
+                StoredValueCheck::IntegerWithin {
+                    minimum: 0,
+                    maximum: (1_i128 << bits) - 1,
+                }
+            } else {
+                StoredValueCheck::IntegerWithin {
+                    minimum: -(1_i128 << (bits - 1)),
+                    maximum: (1_i128 << (bits - 1)) - 1,
+                }
+            })
+        }
+        Family::Text => {
+            let set = |column: &SourceColumn| {
+                column.character_set.as_deref().map(str::to_ascii_lowercase)
+            };
+            let character_set = set(refreshed)?;
+            if set(previous).as_deref() != Some(character_set.as_str())
+                || !matches!(
+                    character_set.as_str(),
+                    "utf8mb4" | "utf8mb3" | "utf8" | "latin1" | "ascii"
+                )
+            {
+                return None;
+            }
+            Some(match data_type.as_str() {
+                "char" | "varchar" => StoredValueCheck::TextFits {
+                    characters: Some(after.numbers.first().copied()?),
+                    bytes: u64::MAX,
+                },
+                _ => StoredValueCheck::TextFits {
+                    characters: None,
+                    bytes: after.capacity?,
+                },
+            })
+        }
+        Family::Binary => Some(StoredValueCheck::BinaryFits {
+            bytes: after.capacity?,
+        }),
+        _ => None,
+    }
+}
+
+/// The rewrites a declaration permits that its capacity does not show: a
+/// reason, and the condition that rules it out where there is one.
+fn rewrite_beyond_width(
+    previous: &SourceColumn,
+    refreshed: &SourceColumn,
+    before: &Declaration,
+    after: &Declaration,
+) -> Option<(String, Option<StoredValueCheck>)> {
+    let reason = |detail: String| format!("column {} {detail}", refreshed.name);
     // A fixed-width declaration pads what it stores, and the padding is not
     // the value that was there. VARCHAR(10) holding `abc   ` reads back as
     // `abc` once it is a CHAR(10) - the source strips the trailing spaces on
@@ -84,9 +282,12 @@ pub(crate) fn unsafe_column_change(
     // matters: CHAR to VARCHAR keeps every value, because CHAR had already
     // stripped its padding before the mirror ever saw it.
     if !before.fixed_width && after.fixed_width {
-        return reason(format!(
-            "became the fixed-width {}, which pads or strips every value {} stored",
-            refreshed.mysql_column_type, previous.mysql_column_type
+        return Some((
+            reason(format!(
+                "became the fixed-width {}, which pads or strips every value {} stored",
+                refreshed.mysql_column_type, previous.mysql_column_type
+            )),
+            None,
         ));
     }
     match before.family {
@@ -97,14 +298,22 @@ pub(crate) fn unsafe_column_change(
             // that disappears (dropped, or renamed, which is a drop and an add)
             // turns every row holding it into the empty label.
             let Some((before_labels, after_labels)) = labels(previous, refreshed, "enum") else {
-                return reason("declares an ENUM whose members cannot be read".to_owned());
+                return Some((
+                    reason("declares an ENUM whose members cannot be read".to_owned()),
+                    None,
+                ));
             };
             let lost = before_labels
-                .iter()
-                .find(|label| !after_labels.contains(label))?;
-            reason(format!(
-                "no longer declares the ENUM member {lost}, so the source replaced it with the \
-                 empty label in every row holding it"
+                .into_iter()
+                .filter(|label| !after_labels.contains(label))
+                .collect::<Vec<_>>();
+            let first = lost.first()?;
+            Some((
+                reason(format!(
+                    "no longer declares the ENUM member {first}, so the source replaced it with \
+                     the empty label in every row holding it"
+                )),
+                Some(StoredValueCheck::LabelsUnused(lost)),
             ))
         }
         Family::Selection => {
@@ -112,13 +321,19 @@ pub(crate) fn unsafe_column_change(
             // rewrites the text of every row holding more than one member even
             // though the membership is untouched. Only an append is inert.
             let Some((before_labels, after_labels)) = labels(previous, refreshed, "set") else {
-                return reason("declares a SET whose members cannot be read".to_owned());
+                return Some((
+                    reason("declares a SET whose members cannot be read".to_owned()),
+                    None,
+                ));
             };
             (!after_labels.starts_with(&before_labels)).then(|| {
-                format!(
-                    "column {} reordered or dropped SET members, which re-renders the values \
-                     already stored",
-                    refreshed.name
+                (
+                    format!(
+                        "column {} reordered or dropped SET members, which re-renders the \
+                         values already stored",
+                        refreshed.name
+                    ),
+                    None,
                 )
             })
         }
@@ -129,12 +344,13 @@ pub(crate) fn unsafe_column_change(
         // version has no reading of. Nothing here can say whether the source
         // rewrote its rows, so it refuses and pays a recopy rather than
         // adopt a rewrite it cannot see.
-        Family::Other(_) if previous.mysql_column_type != refreshed.mysql_column_type => {
+        Family::Other(_) if previous.mysql_column_type != refreshed.mysql_column_type => Some((
             reason(format!(
                 "changed from {} to {}, a type whose stored values this cannot reason about",
                 previous.mysql_column_type, refreshed.mysql_column_type
-            ))
-        }
+            )),
+            None,
+        )),
         _ => None,
     }
 }
@@ -412,9 +628,9 @@ fn declared_numbers(column_type: &str) -> Vec<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::unsafe_column_change;
+    use super::{StoredValueCheck, judge_column_change, unsafe_column_change};
     use crate::SourceColumn;
-    use pintail_types::DataType;
+    use pintail_types::{DataType, Value};
 
     /// A column as the probe reports it. Every case below states only what its
     /// family needs; the rest is the same inert column each time.
@@ -803,6 +1019,187 @@ mod tests {
         // BIT(16) -> BIT(4) cut 65535 to 15.
         assert!(adopts(&column("bit", "bit(4)"), &column("bit", "bit(16)")));
         assert!(!adopts(&column("bit", "bit(16)"), &column("bit", "bit(4)")));
+    }
+
+    fn checks(previous: &SourceColumn, refreshed: &SourceColumn) -> Option<Vec<StoredValueCheck>> {
+        let change = judge_column_change(previous, refreshed);
+        assert_eq!(
+            change.reason,
+            unsafe_column_change(previous, refreshed),
+            "the reason is the one the declaration alone gives"
+        );
+        change.reason.as_ref()?;
+        change.checks
+    }
+
+    /// Each of these was run against `MySQL` 8.4 with values on both sides
+    /// of the condition: the ones the check admits read back unchanged.
+    #[test]
+    fn a_narrowing_names_the_values_it_would_rewrite() {
+        let required = SourceColumn {
+            nullable: false,
+            ..column("int", "int")
+        };
+        assert_eq!(
+            checks(&column("int", "int"), &required),
+            Some(vec![StoredValueCheck::NoNulls])
+        );
+        assert_eq!(
+            checks(&column("bigint", "bigint"), &column("smallint", "smallint")),
+            Some(vec![StoredValueCheck::IntegerWithin {
+                minimum: -32768,
+                maximum: 32767
+            }])
+        );
+        assert_eq!(
+            checks(
+                &column("int", "int unsigned"),
+                &column("tinyint", "tinyint unsigned")
+            ),
+            Some(vec![StoredValueCheck::IntegerWithin {
+                minimum: 0,
+                maximum: 255
+            }])
+        );
+        assert_eq!(
+            checks(
+                &text("varchar", "varchar(64)", "utf8mb4"),
+                &text("varchar", "varchar(8)", "utf8mb4")
+            ),
+            Some(vec![StoredValueCheck::TextFits {
+                characters: Some(8),
+                bytes: u64::MAX
+            }])
+        );
+        assert_eq!(
+            checks(
+                &text("text", "text", "utf8mb4"),
+                &text("tinytext", "tinytext", "utf8mb4")
+            ),
+            Some(vec![StoredValueCheck::TextFits {
+                characters: None,
+                bytes: 255
+            }])
+        );
+        assert_eq!(
+            checks(
+                &column("varbinary", "varbinary(16)"),
+                &column("varbinary", "varbinary(4)")
+            ),
+            Some(vec![StoredValueCheck::BinaryFits { bytes: 4 }])
+        );
+        assert_eq!(
+            checks(
+                &column("enum", "enum('alpha','beta','gamma')"),
+                &column("enum", "enum('gamma')")
+            ),
+            Some(vec![StoredValueCheck::LabelsUnused(vec![
+                "alpha".to_owned(),
+                "beta".to_owned()
+            ])])
+        );
+        // Two rewrites on one column are two conditions.
+        let narrow_required = SourceColumn {
+            nullable: false,
+            ..column("smallint", "smallint")
+        };
+        assert_eq!(
+            checks(&column("bigint", "bigint"), &narrow_required).map(|checks| checks.len()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn a_rewrite_the_stored_values_cannot_rule_out_names_none() {
+        // A conversion, a re-rendering, a padding, a rounding, a recoding.
+        for (previous, refreshed) in [
+            (column("int", "int"), column("int", "int unsigned")),
+            (
+                column("datetime", "datetime"),
+                column("timestamp", "timestamp"),
+            ),
+            (column("set", "set('a','b')"), column("set", "set('b','a')")),
+            (
+                column("decimal", "decimal(14,4)"),
+                column("decimal", "decimal(10,1)"),
+            ),
+            (
+                column("datetime", "datetime(6)"),
+                column("datetime", "datetime"),
+            ),
+            (column("bit", "bit(16)"), column("bit", "bit(4)")),
+            (
+                text("varchar", "varchar(64)", "utf8mb4"),
+                text("char", "char(8)", "utf8mb4"),
+            ),
+            (
+                text("varchar", "varchar(64)", "utf8mb4"),
+                text("varchar", "varchar(64)", "latin1"),
+            ),
+            (
+                text("varchar", "varchar(64)", "ucs2"),
+                text("varchar", "varchar(8)", "ucs2"),
+            ),
+        ] {
+            assert!(
+                unsafe_column_change(&previous, &refreshed).is_some(),
+                "{} -> {}",
+                previous.mysql_column_type,
+                refreshed.mysql_column_type
+            );
+            assert_eq!(
+                checks(&previous, &refreshed),
+                None,
+                "{} -> {}",
+                previous.mysql_column_type,
+                refreshed.mysql_column_type
+            );
+        }
+        // A change that rewrites nothing asks for nothing.
+        assert_eq!(
+            checks(&column("int", "int"), &column("bigint", "bigint")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_check_admits_only_the_values_the_source_left_alone() {
+        assert!(StoredValueCheck::NoNulls.admits(&Value::Int64(0)));
+        assert!(!StoredValueCheck::NoNulls.admits(&Value::Null));
+        let small = StoredValueCheck::IntegerWithin {
+            minimum: -32768,
+            maximum: 32767,
+        };
+        assert!(small.admits(&Value::Int64(32767)) && small.admits(&Value::Int64(-32768)));
+        assert!(!small.admits(&Value::Int64(32768)) && !small.admits(&Value::Int64(-32769)));
+        assert!(small.admits(&Value::Null) && !small.admits(&Value::UInt64(u64::MAX)));
+        assert!(!small.admits(&Value::Utf8("7".to_owned())));
+        // Characters, not bytes: eight characters of four bytes each fit.
+        let eight = StoredValueCheck::TextFits {
+            characters: Some(8),
+            bytes: u64::MAX,
+        };
+        assert!(eight.admits(&Value::Utf8("\u{1F986}".repeat(8))));
+        assert!(eight.admits(&Value::Utf8("ab      ".to_owned())));
+        assert!(!eight.admits(&Value::Utf8("abcdefgh ".to_owned())));
+        // Bytes for a TEXT size.
+        let tiny = StoredValueCheck::TextFits {
+            characters: None,
+            bytes: 255,
+        };
+        assert!(tiny.admits(&Value::Utf8("\u{e9}".repeat(127))));
+        assert!(!tiny.admits(&Value::Utf8("\u{e9}".repeat(128))));
+        let four = StoredValueCheck::BinaryFits { bytes: 4 };
+        assert!(
+            four.admits(&Value::Binary(vec![0; 4])) && !four.admits(&Value::Binary(vec![0; 5]))
+        );
+        let unused = StoredValueCheck::LabelsUnused(vec!["beta".to_owned()]);
+        let member = |label: &str| Value::Enum {
+            index: 1,
+            label: label.to_owned(),
+        };
+        assert!(unused.admits(&member("alpha")) && unused.admits(&member("")));
+        assert!(!unused.admits(&member("beta")) && unused.admits(&Value::Null));
     }
 
     #[test]

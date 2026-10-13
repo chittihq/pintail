@@ -219,6 +219,75 @@ pub(crate) fn added_columns(statement: &str) -> Option<Vec<AddedColumn>> {
     Some(added)
 }
 
+/// A column an `ALTER TABLE` redeclares under its own name, as written.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ModifiedColumn {
+    pub(crate) name: String,
+    /// The declared type as written, for example `VARCHAR(8)`.
+    pub(crate) declared_type: String,
+    /// Declared `NOT NULL`.
+    pub(crate) not_null: bool,
+}
+
+/// The columns `statement` redeclares with `MODIFY` or a `CHANGE` that keeps
+/// the name, read from its own text.
+///
+/// `None` when the statement cannot be parsed or a redeclaration carries
+/// anything that decides stored values beyond its type and nullability - a
+/// generated value, a key, a constraint: the statement is then no record of
+/// what the column became.
+pub(crate) fn modified_columns(statement: &str) -> Option<Vec<ModifiedColumn>> {
+    use sqlparser::ast::ColumnOption;
+    let mut modified = Vec::new();
+    for statement in parse_source_ddl(statement).ok()? {
+        let Statement::AlterTable(alter) = statement else {
+            continue;
+        };
+        for operation in alter.operations {
+            let (name, data_type, options) = match operation {
+                AlterTableOperation::ModifyColumn {
+                    col_name,
+                    data_type,
+                    options,
+                    ..
+                } => (col_name, data_type, options),
+                AlterTableOperation::ChangeColumn {
+                    old_name,
+                    new_name,
+                    data_type,
+                    options,
+                    ..
+                } if old_name.value.eq_ignore_ascii_case(&new_name.value) => {
+                    (new_name, data_type, options)
+                }
+                _ => continue,
+            };
+            if !options.iter().all(|option| {
+                matches!(
+                    option,
+                    ColumnOption::Null
+                        | ColumnOption::NotNull
+                        | ColumnOption::Default(_)
+                        | ColumnOption::Comment(_)
+                        | ColumnOption::OnUpdate(_)
+                        | ColumnOption::CharacterSet(_)
+                        | ColumnOption::Collation(_)
+                )
+            }) {
+                return None;
+            }
+            modified.push(ModifiedColumn {
+                name: name.value,
+                declared_type: data_type.to_string(),
+                not_null: options
+                    .iter()
+                    .any(|option| matches!(option, ColumnOption::NotNull)),
+            });
+        }
+    }
+    Some(modified)
+}
+
 /// Whether `statement` does nothing but `RENAME COLUMN`: the form that
 /// restates no type, so the columns it names keep everything but the name.
 pub(crate) fn renames_columns_only(statement: &str) -> bool {

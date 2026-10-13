@@ -514,17 +514,29 @@ stays readable as a list of things to fix.
   `TIMESTAMP`, a dropped `ENUM` member, a reordered `SET`, a tightened
   nullability and a rewritten generated expression all keep one mapped type
   while the source rewrites rows underneath it. What still marks the table
-  `needs_resync`: those, other storage-incompatible type changes, and
+  `needs_resync`: those where a stored value was rewritten or the rows
+  cannot say (next entry), other storage-incompatible type changes, and
   key-strategy changes. A rename into another schema is treated as a drop.
 - A `MODIFY`/`CHANGE` that rewrites the values the source already holds
   marks the table `needs_resync` rather than evolving in place, because an
-  `ALTER` carries no row events for the rows it rewrote. The resync is
-  charged even when the rewrite was empty in practice: a nullability
-  tightening on a column with no NULLs left, a `VARCHAR` shrink every value
-  already fits inside, an `ENUM` member dropped that no row used. The
-  declaration is all the stream has to go on - it cannot see the source's
-  rows - so the reading is the conservative one, and the cost is a full
-  recopy of a table where an in-place adoption would have been correct.
+  `ALTER` carries no row events for the rows it rewrote. Four rewrites are
+  ruled out by reading the mirror's own rows as the statement found them,
+  and the table is adopted in place when none is one the change touches: a
+  new `NOT NULL` over a column holding no NULL, a narrower integer of the
+  same signedness around values inside its range, a shorter `CHAR`,
+  `VARCHAR`, `TEXT`, `VARBINARY` or `BLOB` around values that fit, and an
+  `ENUM` member dropped that no row holds. The resync is still charged,
+  even when the rewrite was empty in practice, for every other family
+  (a `DECIMAL` losing digits, fractional seconds dropped, a `BIT` narrowed,
+  a signedness change, a `SET` reordered, a variable-width column made
+  fixed-width, a generated expression); for a string whose character set
+  changes or is not utf8mb4, utf8mb3, latin1 or ASCII; for a statement
+  whose redeclaration carries a key or a generated value, or whose type the
+  statement alone does not spell the way the catalogue does (`TIMESTAMP`,
+  `BIT`, `FLOAT(M,D)`); for a MariaDB source; for a table being copied; and
+  for a statement the stream reads after the source has changed the column
+  again. The reading scans the redeclared columns of the whole table
+  inside the replication cycle.
 - An `ADD COLUMN` evolves in place only when the mirror can reproduce what
   the source filled into the rows it already held. These still mark the
   table `needs_resync`, with the reason logged: an expression default

@@ -2074,6 +2074,190 @@ async fn an_unreadable_ddl_with_nothing_after_it_still_advances_the_checkpoint()
     );
 }
 
+/// A `MODIFY` whose declaration permits a rewrite - a new `NOT NULL`, a
+/// narrower integer, a shorter string, a dropped `ENUM` member - is adopted
+/// in place when no row the mirror holds is one the source rewrote, and
+/// recopied when one is: a row copied before the stream, a row the stream
+/// stored in the same pass, or any row at all once the source has changed
+/// the column again.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn a_narrowing_that_rewrote_nothing_is_adopted_in_place() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE null_kept (id BIGINT PRIMARY KEY, v INT NULL);\
+             INSERT INTO null_kept VALUES (1,5),(2,0);\
+             CREATE TABLE null_lost (id BIGINT PRIMARY KEY, v INT NULL);\
+             INSERT INTO null_lost VALUES (1,5),(2,NULL);\
+             CREATE TABLE int_kept (id BIGINT PRIMARY KEY, v BIGINT NULL);\
+             INSERT INTO int_kept VALUES (1,32767),(2,-32768),(3,NULL);\
+             CREATE TABLE int_lost (id BIGINT PRIMARY KEY, v BIGINT NULL);\
+             INSERT INTO int_lost VALUES (1,32768),(2,7);\
+             CREATE TABLE int_streamed (id BIGINT PRIMARY KEY, v BIGINT NULL);\
+             INSERT INTO int_streamed VALUES (1,7);\
+             CREATE TABLE text_kept (id BIGINT PRIMARY KEY, v VARCHAR(64) NULL);\
+             INSERT INTO text_kept VALUES (1,'abcdefgh'),(2,'ab   '),(3,'🦆🦆🦆🦆🦆🦆🦆é');\
+             CREATE TABLE text_lost (id BIGINT PRIMARY KEY, v VARCHAR(64) NULL);\
+             INSERT INTO text_lost VALUES (1,'abcdefghi'),(2,'ab');\
+             CREATE TABLE text_moved (id BIGINT PRIMARY KEY, v VARCHAR(64) NULL);\
+             INSERT INTO text_moved VALUES (1,'ab');\
+             CREATE TABLE enum_kept (id BIGINT PRIMARY KEY, v ENUM('alpha','beta','gamma') NULL);\
+             INSERT INTO enum_kept VALUES (1,'alpha'),(2,'gamma'),(3,NULL);\
+             CREATE TABLE enum_lost (id BIGINT PRIMARY KEY, v ENUM('alpha','beta','gamma') NULL);\
+             INSERT INTO enum_lost VALUES (1,'alpha'),(2,'beta');",
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("narrowing DSN"));
+    let report = probe(&pool, "app").await.expect("probe narrowing source");
+    let workspace = tempfile::tempdir().expect("narrowing workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("narrowing metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register narrowing source");
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.path().join(&source.name),
+                source.table_schema().expect("narrowing table schema"),
+                StoreOptions::default(),
+            )
+            .expect("narrowing table store");
+            SnapshotTarget::new(source.clone(), store).expect("narrowing snapshot target")
+        })
+        .collect();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("narrowing baseline snapshot");
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("narrowing CDC target")
+        })
+        .collect::<Vec<_>>();
+
+    // The permissive mode lets the source clip instead of refusing, which
+    // is the case a mirror has to notice on its own.
+    mysql
+        .query_batch(
+            "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';\
+             ALTER TABLE null_kept MODIFY v INT NOT NULL;\
+             ALTER TABLE null_lost MODIFY v INT NOT NULL;\
+             INSERT INTO int_kept VALUES (4,-1);\
+             ALTER TABLE int_kept MODIFY v SMALLINT NULL;\
+             ALTER TABLE int_lost MODIFY v SMALLINT NULL;\
+             INSERT INTO int_streamed VALUES (2,99999);\
+             ALTER TABLE int_streamed MODIFY v SMALLINT NULL;\
+             ALTER TABLE text_kept MODIFY v VARCHAR(8) NULL;\
+             ALTER TABLE text_lost MODIFY v VARCHAR(8) NULL;\
+             ALTER TABLE text_moved MODIFY v VARCHAR(8) NULL;\
+             ALTER TABLE text_moved MODIFY v VARCHAR(64) NULL;\
+             ALTER TABLE enum_kept MODIFY v ENUM('alpha','gamma') NULL;\
+             ALTER TABLE enum_lost MODIFY v ENUM('alpha','gamma') NULL;\
+             INSERT INTO null_kept VALUES (3,9);\
+             INSERT INTO int_kept VALUES (5,-32768);\
+             INSERT INTO text_kept VALUES (4,'newvalue');\
+             INSERT INTO enum_kept VALUES (4,'gamma');",
+        )
+        .expect("narrowing statements");
+    let result = finite_catch_up(&pool, &metadata_path, &report, targets)
+        .await
+        .expect("catch up past the narrowings");
+    let flagged = MetaStore::open(&metadata_path)
+        .expect("narrowing state")
+        .tables(DATABASE_ID)
+        .expect("narrowing tables")
+        .into_iter()
+        .filter(|table| table.state == "needs_resync")
+        .map(|table| table.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        flagged,
+        [
+            "enum_lost",
+            "int_lost",
+            "int_streamed",
+            "null_lost",
+            "text_lost",
+            "text_moved"
+        ],
+        "exactly the tables holding a rewritten value, or changed again, are recopied"
+    );
+    let values = |name: &str| {
+        cdc_target(&result.targets, name)
+            .store()
+            .snapshot()
+            .scan()
+            .expect("narrowed rows")
+            .iter()
+            .map(|row| row.values()[1].clone())
+            .collect::<Vec<_>>()
+    };
+    for name in ["null_kept", "int_kept", "text_kept", "enum_kept"] {
+        assert_eq!(
+            cdc_target(&result.targets, name).store().schema().version(),
+            2,
+            "{name} took the new declaration as a schema generation"
+        );
+    }
+    assert!(
+        !cdc_target(&result.targets, "null_kept").source().columns[1].nullable,
+        "the tracked column is NOT NULL too"
+    );
+    assert_eq!(
+        values("null_kept"),
+        [Value::Int64(5), Value::Int64(0), Value::Int64(9)]
+    );
+    assert_eq!(
+        values("int_kept"),
+        [
+            Value::Int64(32767),
+            Value::Int64(-32768),
+            Value::Null,
+            Value::Int64(-1),
+            Value::Int64(-32768)
+        ]
+    );
+    assert_eq!(
+        values("text_kept"),
+        [
+            Value::Utf8("abcdefgh".to_owned()),
+            Value::Utf8("ab   ".to_owned()),
+            Value::Utf8("🦆🦆🦆🦆🦆🦆🦆é".to_owned()),
+            Value::Utf8("newvalue".to_owned())
+        ]
+    );
+    let labels = values("enum_kept")
+        .into_iter()
+        .map(|value| match value {
+            Value::Enum { label, .. } | Value::Utf8(label) => label,
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["alpha", "gamma", "Null", "gamma"]);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires the configured Docker host and mysql:8.4 image"]
 async fn purged_file_position_marks_the_source_for_resnapshot() {

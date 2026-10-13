@@ -1437,9 +1437,56 @@ pub fn stabilize_source_table(
     previous: &SourceTable,
     mut refreshed: SourceTable,
 ) -> Result<SourceTable, String> {
-    stabilize(previous, &mut refreshed)
+    stabilize(previous, &mut refreshed, None)
         .map_err(|reason| format!("{IN_PLACE_REFUSAL}: {reason}"))?;
     Ok(refreshed)
+}
+
+pub use migration::StoredValueCheck;
+
+/// A column whose new declaration permits a rewrite of stored values, and
+/// what those values have to satisfy for the rewrite to have been empty.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredValueProof {
+    /// Stable ID of the column.
+    pub column_id: u32,
+    /// The column's name under the new declaration.
+    pub column: String,
+    /// Why the declaration alone cannot be adopted in place.
+    pub reason: String,
+    /// What every stored value has to satisfy.
+    pub checks: Vec<StoredValueCheck>,
+}
+
+/// [`stabilize_source_table`] for a caller that holds the table's rows as
+/// they stood when the declaration changed.
+///
+/// A change that rewrites stored values only where they meet a condition -
+/// a NULL under a new `NOT NULL`, an integer outside a narrower width, a
+/// string longer than a shorter one, a dropped `ENUM` member - is returned
+/// with that condition instead of refused. The caller adopts the table only
+/// after reading that none of its rows meets one; a change whose rewrite no
+/// reading of the rows rules out is refused as before.
+///
+/// # Errors
+///
+/// As [`stabilize_source_table`].
+pub fn stabilize_source_table_given_rows(
+    previous: &SourceTable,
+    mut refreshed: SourceTable,
+) -> Result<(SourceTable, Vec<StoredValueProof>), String> {
+    let mut proofs = Vec::new();
+    stabilize(previous, &mut refreshed, Some(&mut proofs))
+        .map_err(|reason| format!("{IN_PLACE_REFUSAL}: {reason}"))?;
+    Ok((refreshed, proofs))
+}
+
+/// Why `declared` cannot be adopted in place for rows stored under
+/// `tracked`, read from the two declarations alone. `None` when the change
+/// leaves every stored value as it was.
+#[must_use]
+pub fn declaration_rewrites(tracked: &SourceColumn, declared: &SourceColumn) -> Option<String> {
+    migration::unsafe_column_change(tracked, declared)
 }
 
 /// Marker every in-place refusal carries.
@@ -1451,7 +1498,11 @@ pub fn stabilize_source_table(
 /// a matching line there refused forever on the path that exists to repair it.
 pub const IN_PLACE_REFUSAL: &str = "cannot adopt the source schema in place";
 
-fn stabilize(previous: &SourceTable, refreshed: &mut SourceTable) -> Result<(), String> {
+fn stabilize(
+    previous: &SourceTable,
+    refreshed: &mut SourceTable,
+    mut proofs: Option<&mut Vec<StoredValueProof>>,
+) -> Result<(), String> {
     if previous.key.mode != refreshed.key.mode
         || previous.key.columns.len() != refreshed.key.columns.len()
         || previous
@@ -1493,8 +1544,18 @@ fn stabilize(previous: &SourceTable, refreshed: &mut SourceTable) -> Result<(), 
             // underneath it - and an ALTER carries no row events, so the
             // replica would keep the pre-ALTER values forever. Read the source
             // declaration too, and send anything it rewrote to a resync.
-            if let Some(reason) = migration::unsafe_column_change(existing, column) {
-                return Err(reason);
+            let change = migration::judge_column_change(existing, column);
+            if let Some(reason) = change.reason {
+                // A caller holding the rows may find the rewrite was empty.
+                match (proofs.as_deref_mut(), change.checks) {
+                    (Some(proofs), Some(checks)) => proofs.push(StoredValueProof {
+                        column_id: existing.id,
+                        column: column.name.clone(),
+                        reason,
+                        checks,
+                    }),
+                    _ => return Err(reason),
+                }
             }
             column.id = existing.id;
             // A probe never knows what the rows stored before the column

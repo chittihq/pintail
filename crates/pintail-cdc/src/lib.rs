@@ -16,6 +16,7 @@ pub use event::{TRANSACTION_PAYLOAD_EVENT, check_transaction_payload_header};
 const ROTATE_EVENT: u8 = 0x04;
 const FORMAT_DESCRIPTION_EVENT: u8 = 0x0f;
 mod gtid;
+mod narrowing;
 mod rowimage;
 #[cfg(test)]
 mod simulation;
@@ -1721,23 +1722,55 @@ async fn apply_ddl_actions(
                 };
                 // Storage-compatible type changes evolve in place; anything
                 // else fails stabilization (or the store's segment re-read)
-                // and quarantines for resync exactly like before.
-                let mut source =
-                    match pintail_probe::stabilize_source_table(&targets[index].source, source) {
-                        Ok(source) => source,
-                        Err(reason) => {
-                            quarantine_schema_change(
-                                metadata,
-                                database_id,
-                                &targets[index],
-                                index,
-                                blocked_targets,
-                                &format!("{statement}; {reason}"),
-                                None,
-                            )?;
-                            continue;
-                        }
-                    };
+                // and quarantines for resync exactly like before. A change
+                // that rewrites only the values meeting a condition comes
+                // back with the condition, for the rows to answer.
+                let (mut source, proofs) = match pintail_probe::stabilize_source_table_given_rows(
+                    &targets[index].source,
+                    source,
+                ) {
+                    Ok(stabilized) => stabilized,
+                    Err(reason) => {
+                        quarantine_schema_change(
+                            metadata,
+                            database_id,
+                            &targets[index],
+                            index,
+                            blocked_targets,
+                            &format!("{statement}; {reason}"),
+                            None,
+                        )?;
+                        continue;
+                    }
+                };
+                // The statement's text is the catalogue's spelling only on
+                // a source whose every column the mirror holds.
+                let declared = every_column_tracked
+                    .then(|| ddl::modified_columns(statement))
+                    .flatten();
+                // A table being copied, or already set aside, does not hold
+                // the rows as this statement found them.
+                let rows_as_of_statement =
+                    !blocked_targets.contains(&index) && !snapshot_fences.contains_key(&index);
+                if let Err(reason) = narrowing::decide(
+                    &targets[index].source,
+                    &targets[index].store,
+                    &source,
+                    &proofs,
+                    declared.as_deref(),
+                    rows_as_of_statement,
+                ) {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        &format!("{statement}; {}: {reason}", pintail_probe::IN_PLACE_REFUSAL),
+                        None,
+                    )?;
+                    continue;
+                }
                 // A column the probe shows and the table lacks was added by a
                 // statement still ahead in the stream; its rows need the same
                 // fill that statement would have given them.
@@ -1782,6 +1815,16 @@ async fn apply_ddl_actions(
                         Some(&source),
                     )?;
                     continue;
+                }
+                // The line that tells an operator the table was not
+                // recopied, and on what evidence.
+                for proof in &proofs {
+                    pintail_log::log_info!(
+                        "cdc column change adopted in place db={database_id} table={name} \
+                         column={}: no stored value is one the change rewrites ({})",
+                        proof.column,
+                        proof.reason
+                    );
                 }
                 targets[index].source = source;
             }
