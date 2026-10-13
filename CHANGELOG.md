@@ -26,6 +26,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   filtered count over a text column 7–14% less; statements whose time is
   the scan itself are unchanged
   (`benchmark/evidence/query-path-overhead.md`).
+- Correlated subqueries that used to run once per outer row, or time out:
+  - `EXISTS` over an ungrouped aggregate whose `HAVING` names a select
+    alias is answered for every outer row in one execution (one case went
+    from 4.9 s to 0.23 s).
+  - A correlated `EXISTS` whose only reading of the outer row is a range
+    comparison with an integer column is decided by that column's least or
+    greatest value.
+  - A correlated scalar subquery that takes the first row by a table's
+    single-column integer key beyond an outer value (`ORDER BY key LIMIT
+    1`) reads the table once and finds each row by position.
+- `UNIX_TIMESTAMP` of a `TIMESTAMP` column reads the stored instant
+  instead of converting through the session time zone (about nine times
+  faster on the measured cases).
+- `ORDER BY`, window ordering and limited sorts on a `DATE`, `DATETIME` or
+  `TIMESTAMP` column that holds the zero date sort by the instants the
+  text spells, instead of comparing row values.
 
 - The settled-result memo now serves a table whose latest changes are
   still in its memtable: after an insert, update or delete the first
