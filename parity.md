@@ -18,7 +18,7 @@ banked in `tests/sqllogic/fuzz-results.md` with the reproduction recipe in
 
 | Area | Status |
 |---|---|
-| Callable functions | 188 — `bun run scripts/function-surface.ts` reads them from the binder, and a unit test holds this number to what it prints |
+| Callable functions | 204 — `bun run scripts/function-surface.ts` reads them from the binder, and a unit test holds this number to what it prints |
 | Aggregates | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, `ANY_VALUE`, `STDDEV`/`STD`/`STDDEV_POP`/`STDDEV_SAMP`, `VARIANCE`/`VAR_POP`/`VAR_SAMP`, `BIT_AND`/`BIT_OR`/`BIT_XOR` |
 | Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE` |
 | Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; value-based `RANGE` bounds over numeric keys (including exact fractional DECIMAL offsets) and simple temporal `INTERVAL` offsets; `GROUPS` and DISTINCT window aggregates reject as MySQL 8.4 requires |
@@ -192,10 +192,10 @@ read as far worse than the engine is.
 | `AVG` | ✅ | ✅ |
 | `BENCHMARK` | ❌ | ❌ |
 | `BIN` | ✅ | ✅ |
-| `BIN_TO_UUID` | ❌ | ❌ |
+| `BIN_TO_UUID` | ✅ | ❌ |
 | `BIT_AND` | ✅ | ✅ |
 | `BIT_COUNT` | ❌ | ❌ |
-| `BIT_LENGTH` | ❌ | ❌ |
+| `BIT_LENGTH` | ✅ | ❌ |
 | `BIT_OR` | ✅ | ✅ |
 | `BIT_XOR` | ✅ | ✅ |
 | `CAN_ACCESS_COLUMN` | ❌ | ❌ |
@@ -226,7 +226,7 @@ read as far worse than the engine is.
 | `CREATE_ASYMMETRIC_PRIV_KEY` | ❌ | ❌ |
 | `CREATE_ASYMMETRIC_PUB_KEY` | ❌ | ❌ |
 | `CREATE_DIGEST` | ❌ | ❌ |
-| `CUME_DIST` | ❌ | ✅ |
+| `CUME_DIST` | ✅ | ✅ |
 | `CURDATE` | ✅ | ✅ |
 | `CURRENT_DATE` | ❌ | ✅ |
 | `CURRENT_ROLE` | ❌ | ❌ |
@@ -304,19 +304,19 @@ read as far worse than the engine is.
 | `INTERNAL_UPDATE_TIME` | ❌ | ❌ |
 | `INTERVAL` | ❌ | ❌ |
 | `IS` | ❌ | ❌ |
-| `ISNULL` | ❌ | ✅ |
+| `ISNULL` | ✅ | ✅ |
 | `IS_FREE_LOCK` | ❌ | ❌ |
 | `IS_IPV4` | ❌ | ❌ |
 | `IS_IPV4_COMPAT` | ❌ | ❌ |
 | `IS_IPV4_MAPPED` | ❌ | ❌ |
 | `IS_IPV6` | ❌ | ❌ |
 | `IS_USED_LOCK` | ❌ | ❌ |
-| `IS_UUID` | ❌ | ❌ |
+| `IS_UUID` | ✅ | ❌ |
 | `IS_VISIBLE_DD_OBJECT` | ❌ | ❌ |
 | `JSON_ARRAY` | ✅ | ❌ |
 | `JSON_ARRAYAGG` | ✅ | ❌ |
-| `JSON_ARRAY_APPEND` | ❌ | ❌ |
-| `JSON_ARRAY_INSERT` | ❌ | ❌ |
+| `JSON_ARRAY_APPEND` | ✅ | ❌ |
+| `JSON_ARRAY_INSERT` | ✅ | ❌ |
 | `JSON_CONTAINS` | ✅ | ❌ |
 | `JSON_CONTAINS_PATH` | ✅ | ❌ |
 | `JSON_DEPTH` | ✅ | ❌ |
@@ -324,7 +324,7 @@ read as far worse than the engine is.
 | `JSON_INSERT` | ✅ | ❌ |
 | `JSON_KEYS` | ✅ | ❌ |
 | `JSON_LENGTH` | ✅ | ❌ |
-| `JSON_MERGE` | ❌ | ❌ |
+| `JSON_MERGE` | ✅ | ❌ |
 | `JSON_MERGE_PATCH` | ✅ | ❌ |
 | `JSON_OBJECT` | ✅ | ❌ |
 | `JSON_OBJECTAGG` | ✅ | ❌ |
@@ -364,7 +364,7 @@ read as far worse than the engine is.
 | `LOG2` | ✅ | ✅ |
 | `LOWER` | ✅ | ✅ |
 | `LPAD` | ✅ | ✅ |
-| `LTRIM` | ❌ | ✅ |
+| `LTRIM` | ✅ | ✅ |
 | `MAKEDATE` | ✅ | ✅ |
 | `MAKETIME` | ✅ | ❌ |
 | `MAKE_SET` | ❌ | ❌ |
@@ -380,7 +380,7 @@ read as far worse than the engine is.
 | `MBRWITHIN` | ❌ | ❌ |
 | `MD5` | ✅ | ✅ |
 | `MICROSECOND` | ✅ | ✅ |
-| `MID` | ❌ | ✅ |
+| `MID` | ✅ | ✅ |
 | `MIN` | ✅ | ✅ |
 | `MINUTE` | ✅ | ✅ |
 | `MOD` | ✅ | ✅ |
@@ -388,18 +388,18 @@ read as far worse than the engine is.
 | `MONTHNAME` | ✅ | ✅ |
 | `NAME_CONST` | ❌ | ❌ |
 | `NOW` | ✅ | ✅ |
-| `NTH_VALUE` | ❌ | ✅ |
+| `NTH_VALUE` | ✅ | ✅ |
 | `NTILE` | ❌ | ✅ |
 | `NULLIF` | ✅ | ✅ |
 | `OCT` | ✅ | ❌ |
-| `OCTET_LENGTH` | ❌ | ✅ |
+| `OCTET_LENGTH` | ✅ | ✅ |
 | `OR` | ❌ | ✅ |
 | `ORD` | ✅ | ❌ |
-| `PERCENT_RANK` | ❌ | ✅ |
+| `PERCENT_RANK` | ✅ | ✅ |
 | `PERIOD_ADD` | ✅ | ❌ |
 | `PERIOD_DIFF` | ✅ | ❌ |
 | `PI` | ✅ | ✅ |
-| `POSITION` | ❌ | ✅ |
+| `POSITION` | ✅ | ✅ |
 | `POW` | ✅ | ✅ |
 | `POWER` | ✅ | ✅ |
 | `PS_CURRENT_THREAD_ID` | ❌ | ❌ |
@@ -424,7 +424,7 @@ read as far worse than the engine is.
 | `ROW_COUNT` | ❌ | ❌ |
 | `ROW_NUMBER` | ✅ | ✅ |
 | `RPAD` | ✅ | ✅ |
-| `RTRIM` | ❌ | ✅ |
+| `RTRIM` | ✅ | ✅ |
 | `SCHEMA` | ❌ | ✅ |
 | `SECOND` | ✅ | ✅ |
 | `SEC_TO_TIME` | ✅ | ❌ |
@@ -443,7 +443,7 @@ read as far worse than the engine is.
 | `STDDEV` | ✅ | ✅ |
 | `STDDEV_POP` | ✅ | ✅ |
 | `STDDEV_SAMP` | ✅ | ✅ |
-| `STRCMP` | ❌ | ❌ |
+| `STRCMP` | ✅ | ❌ |
 | `STR_TO_DATE` | ✅ | ✅ |
 | `ST_AREA` | ❌ | ❌ |
 | `ST_ASBINARY` | ❌ | ❌ |
@@ -552,7 +552,7 @@ read as far worse than the engine is.
 | `UTC_TIMESTAMP` | ❌ | ✅ |
 | `UUID` | ✅ | ❌ |
 | `UUID_SHORT` | ✅ | ❌ |
-| `UUID_TO_BIN` | ❌ | ❌ |
+| `UUID_TO_BIN` | ✅ | ❌ |
 | `VALIDATE_PASSWORD_STRENGTH` | ❌ | ❌ |
 | `VALUES` | ❌ | ❌ |
 | `VARIANCE` | ✅ | ❌ |
@@ -673,7 +673,7 @@ read as far worse than the engine is.
 | `CREATE` | ✅ | ➖ | ✅ |
 | `CROSS` | ✅ | ✅ | ✅ |
 | `CUBE` | ✅ | ❌ | ✅ |
-| `CUME_DIST` | ✅ | ❌ | ❌ |
+| `CUME_DIST` | ✅ | ✅ | ❌ |
 | `CURRENT` |  | ✅ | ✅ |
 | `CURRENT_DATE` | ✅ | ❌ | ❌ |
 | `CURRENT_TIME` | ✅ | ❌ | ❌ |
@@ -807,7 +807,7 @@ read as far worse than the engine is.
 | `HASH` |  | ❌ | ✅ |
 | `HAVING` | ✅ | ✅ | ✅ |
 | `HELP` |  | ❌ | ❌ |
-| `HIGH_PRIORITY` | ✅ | ❌ | ❌ |
+| `HIGH_PRIORITY` | ✅ | ✅ | ❌ |
 | `HISTOGRAM` |  | ❌ | ❌ |
 | `HISTORY` |  | ❌ | ❌ |
 | `HOST` |  | ❌ | ✅ |
@@ -953,7 +953,7 @@ read as far worse than the engine is.
 | `NONE` |  | ❌ | ✅ |
 | `NOT` | ✅ | ✅ | ✅ |
 | `NOWAIT` |  | ❌ | ❌ |
-| `NTH_VALUE` | ✅ | ❌ | ❌ |
+| `NTH_VALUE` | ✅ | ✅ | ❌ |
 | `NTILE` | ✅ | ❌ | ❌ |
 | `NULL` | ✅ | ✅ | ✅ |
 | `NULLS` |  | ❌ | ✅ |
@@ -997,7 +997,7 @@ read as far worse than the engine is.
 | `PASSWORD` |  | ➖ | ❌ |
 | `PASSWORD_LOCK_TIME` |  | ❌ | ❌ |
 | `PATH` |  | ❌ | ✅ |
-| `PERCENT_RANK` | ✅ | ❌ | ❌ |
+| `PERCENT_RANK` | ✅ | ✅ | ❌ |
 | `PERSIST` |  | ❌ | ❌ |
 | `PERSIST_ONLY` |  | ❌ | ❌ |
 | `PHASE` |  | ❌ | ❌ |
@@ -1172,7 +1172,7 @@ read as far worse than the engine is.
 | `SQL_AFTER_MTS_GAPS` |  | ❌ | ❌ |
 | `SQL_BEFORE_GTIDS` |  | ❌ | ❌ |
 | `SQL_BIG_RESULT` | ✅ | ❌ | ❌ |
-| `SQL_BUFFER_RESULT` |  | ❌ | ❌ |
+| `SQL_BUFFER_RESULT` |  | ✅ | ❌ |
 | `SQL_CALC_FOUND_ROWS` | ✅ | ❌ | ❌ |
 | `SQL_NO_CACHE` |  | ❌ | ❌ |
 | `SQL_SMALL_RESULT` | ✅ | ❌ | ❌ |
