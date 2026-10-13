@@ -19,6 +19,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ingest threads (`PINTAIL_INGEST_THREADS`, half the machine's threads, at
   most eight): a 20.7M-row copy went from 60.2 s to 32.0 s on an 8-vCPU
   host (`benchmark/evidence/ingest-overhead.md`).
+- Opening a scan no longer copies each segment's manifest entry, and a
+  scan asks the file system about each segment file, and opens it, once
+  instead of once per slice. A full-table `COUNT(*)` answered from segment
+  aggregates takes about a quarter less time and CPU per statement, and a
+  filtered count over a text column 7–14% less; statements whose time is
+  the scan itself are unchanged
+  (`benchmark/evidence/query-path-overhead.md`).
 
 - The settled-result memo now serves a table whose latest changes are
   still in its memtable: after an insert, update or delete the first
