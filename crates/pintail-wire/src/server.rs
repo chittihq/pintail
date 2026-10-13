@@ -923,6 +923,13 @@ struct Session {
     /// `SET @name = expr` values, each the literal its expression evaluated
     /// to, read by every later statement on this connection.
     user_variables: pintail_sql::UserVariables,
+    /// What `CONNECTION_ID()` answers: the id the handshake announced.
+    connection_id: u32,
+    /// The name the connection logged in under, for `USER()` and
+    /// `CURRENT_USER()`.
+    user: String,
+    /// The address the client connected from, the host half of `USER()`.
+    client_host: String,
 }
 
 impl Session {
@@ -994,6 +1001,9 @@ impl Default for Session {
             div_precision_increment: pintail_sql::DEFAULT_DIV_PRECISION_INCREMENT,
             sql_select_limit: None,
             user_variables: pintail_sql::UserVariables::default(),
+            connection_id: 0,
+            user: String::new(),
+            client_host: "localhost".to_owned(),
         }
     }
 }
@@ -1881,11 +1891,18 @@ impl Backend {
         let authenticated = self
             .authenticated()
             .map_err(|error| QueryError::Internal(error.to_string()))?;
-        let session = self
+        let mut session = self
             .session
             .lock()
             .map_err(|error| QueryError::Internal(error.to_string()))?
             .clone();
+        if mentions_connection_function(sql) {
+            session.connection_id = self.connection_id;
+            session.user.clone_from(&authenticated.database_name);
+            if let Some(address) = &self.client_ip {
+                session.client_host.clone_from(address);
+            }
+        }
         if let Some(output) = compatibility_query(sql, &authenticated.database_name, &session) {
             let normalized = normalized_command(sql);
             if !normalized.starts_with("show warnings")
@@ -4422,9 +4439,50 @@ fn error_kind(error: &QueryError) -> ErrorKind {
 }
 
 /// Whether `sql` could be a statement the compatibility layer answers: every
-/// one names a variable (`@@`), is a `SHOW`, or asks `VERSION()` or
-/// `DATABASE()`. Anything else goes straight to the engine, without the
-/// parse and the text scans the answers need.
+/// one names a variable (`@@`), is a `SHOW`, or leads with a function that
+/// asks about the server or the connection (`VERSION()`, `DATABASE()`,
+/// `USER()`, `CONNECTION_ID()` and their kin). Anything else goes straight
+/// to the engine, without the parse and the text scans the answers need.
+/// The zero-argument functions that ask about the server or the connection,
+/// by lowercase name.
+const CONNECTION_FUNCTIONS: [&str; 8] = [
+    "version",
+    "database",
+    "schema",
+    "connection_id",
+    "user",
+    "current_user",
+    "session_user",
+    "system_user",
+];
+
+/// Whether `sql` could call one of [`CONNECTION_FUNCTIONS`]: one of their
+/// names stands right before an opening parenthesis, or the statement says
+/// `CURRENT_USER`, which is also written bare. A scan of the text, so a
+/// statement that names none pays nothing more.
+fn mentions_connection_function(sql: &str) -> bool {
+    let bytes = sql.as_bytes();
+    let called = bytes.iter().enumerate().any(|(open, byte)| {
+        *byte == b'('
+            && CONNECTION_FUNCTIONS.iter().any(|name| {
+                open.checked_sub(name.len()).is_some_and(|start| {
+                    bytes[start..open].eq_ignore_ascii_case(name.as_bytes())
+                        && !start
+                            .checked_sub(1)
+                            .is_some_and(|before| is_name_byte(bytes[before]))
+                })
+            })
+    });
+    called
+        || bytes
+            .windows("current_user".len())
+            .any(|window| window.eq_ignore_ascii_case(b"current_user"))
+}
+
+fn is_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' || byte >= 0x80
+}
+
 fn may_answer_compatibly(sql: &str) -> bool {
     let text = sql.trim_start();
     let starts = |form: &str| {
@@ -4435,7 +4493,13 @@ fn may_answer_compatibly(sql: &str) -> bool {
         || starts("show ")
         || starts("select version()")
         || starts("select database()")
+        || starts("select schema()")
         || starts("select row_count()")
+        || starts("select connection_id()")
+        || starts("select user()")
+        || starts("select current_user")
+        || starts("select session_user()")
+        || starts("select system_user()")
 }
 
 fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
@@ -4449,7 +4513,14 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         || pintail_sql::connection_projection(sql),
     );
     let Some(projection) = projection else {
-        return if sql.contains("@@") {
+        // A SELECT that is more than a list of these functions - one of
+        // them beside a column or a literal, or under a clause - is the
+        // engine's: answering it here would return its first item alone.
+        let select = sql
+            .trim_start()
+            .get(..6)
+            .is_some_and(|head| head.eq_ignore_ascii_case("select"));
+        return if select || sql.contains("@@") {
             None
         } else {
             compatibility_single(sql, database, session)
@@ -4537,6 +4608,29 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         ("VERSION()", Value::Utf8(mysql_compat_version()))
     } else if normalized.starts_with("select database()") {
         ("DATABASE()", Value::Utf8(database.to_owned()))
+    } else if normalized.starts_with("select schema()") {
+        ("SCHEMA()", Value::Utf8(database.to_owned()))
+    } else if normalized.starts_with("select connection_id()") {
+        (
+            "CONNECTION_ID()",
+            Value::UInt64(u64::from(session.connection_id)),
+        )
+    } else if normalized.starts_with("select current_user") {
+        // The account the login matched: any host.
+        ("CURRENT_USER()", Value::Utf8(format!("{}@%", session.user)))
+    } else if let Some(name) = [
+        ("select user()", "USER()"),
+        ("select session_user()", "SESSION_USER()"),
+        ("select system_user()", "SYSTEM_USER()"),
+    ]
+    .into_iter()
+    .find_map(|(form, name)| normalized.starts_with(form).then_some(name))
+    {
+        // The name given at login and the host the client came from.
+        (
+            name,
+            Value::Utf8(format!("{}@{}", session.user, session.client_host)),
+        )
     } else if normalized == "select @@version_comment" {
         (
             "@@version_comment",
@@ -6860,6 +6954,97 @@ mod result_ceiling_tests {
                 (ColumnType::MysqlTypeMediumBlob, 31, 255),
             ]
         );
+    }
+
+    #[test]
+    fn connection_functions_answer_from_the_session_and_only_whole_projections() {
+        use pintail_types::Value;
+        let session = super::Session {
+            connection_id: 41,
+            user: "analytics".to_owned(),
+            client_host: "10.1.2.3".to_owned(),
+            ..super::Session::default()
+        };
+        let output = super::compatibility_query(
+            "select connection_id(), user(), CURRENT_USER(), current_user, session_user(), \
+             SYSTEM_USER() AS su, database(), SCHEMA() from dual limit 1",
+            "analytics",
+            &session,
+        )
+        .expect("answered by the compatibility layer");
+        assert_eq!(
+            output
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "connection_id()",
+                "user()",
+                "CURRENT_USER()",
+                "current_user",
+                "session_user()",
+                "su",
+                "database()",
+                "SCHEMA()"
+            ]
+        );
+        let text = |value: &str| Value::Utf8(value.to_owned());
+        assert_eq!(
+            output.rows[0],
+            vec![
+                Value::UInt64(41),
+                text("analytics@10.1.2.3"),
+                text("analytics@%"),
+                text("analytics@%"),
+                text("analytics@10.1.2.3"),
+                text("analytics@10.1.2.3"),
+                text("analytics"),
+                text("analytics"),
+            ]
+        );
+        // One of them beside anything else is the engine's statement: the
+        // layer once answered its first item alone.
+        for engine in [
+            "SELECT DATABASE(), 1",
+            "SELECT USER(), name FROM t",
+            "SELECT DATABASE() FROM t",
+            "SELECT VERSION() LIMIT 0",
+            "SELECT CONNECTION_ID() > 0",
+        ] {
+            assert!(
+                super::compatibility_query(engine, "analytics", &session).is_none(),
+                "{engine}"
+            );
+        }
+        for (sql, mentions) in [
+            ("SELECT user()", true),
+            ("select Connection_Id ()", false),
+            ("SELECT CURRENT_USER", true),
+            ("SELECT id FROM t WHERE owner = SESSION_USER()", true),
+            ("SELECT my_user(id), reuser(1), superuser FROM t", false),
+            ("SELECT schema_name FROM information_schema.schemata", false),
+            ("SELECT 'user()' FROM t", true),
+        ] {
+            assert_eq!(super::mentions_connection_function(sql), mentions, "{sql}");
+        }
+        // Inside a larger statement each call is pinned to its answer.
+        let pinned = super::session_expression::variables(
+            "SELECT id FROM t WHERE owner = USER() AND CONNECTION_ID() > 0 AND note <> current_user",
+            &session,
+        );
+        assert_eq!(
+            pinned.get("user()").map(ToString::to_string).as_deref(),
+            Some("'analytics@10.1.2.3'")
+        );
+        assert_eq!(
+            pinned
+                .get("connection_id()")
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("41")
+        );
+        assert!(pinned.contains_key("current_user()"));
     }
 
     #[test]

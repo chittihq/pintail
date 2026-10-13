@@ -786,10 +786,20 @@ pub fn connection_projection(sql: &str) -> Option<Vec<(String, String)>> {
     let SetExpr::Select(select) = query.body.as_ref() else {
         return None;
     };
-    if !select.from.is_empty()
+    // `FROM DUAL` is no table, and `LIMIT 1` keeps the one row there is.
+    let no_table = match select.from.as_slice() {
+        [] => true,
+        [only] => only.joins.is_empty() && only.relation.to_string().eq_ignore_ascii_case("dual"),
+        _ => false,
+    };
+    let keeps_the_row = query
+        .limit_clause
+        .as_ref()
+        .is_none_or(|limit| limit.to_string().trim().eq_ignore_ascii_case("LIMIT 1"));
+    if !no_table
         || select.selection.is_some()
         || select.having.is_some()
-        || query.limit_clause.is_some()
+        || !keeps_the_row
         || query.order_by.is_some()
         || !matches!(&select.group_by, sqlparser::ast::GroupByExpr::Expressions(expressions, modifiers) if expressions.is_empty() && modifiers.is_empty())
     {
@@ -808,9 +818,20 @@ pub fn connection_projection(sql: &str) -> Option<Vec<(String, String)>> {
             let simple = matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
                 && text.starts_with("@@");
             if !simple
-                && !["VERSION()", "DATABASE()", "ROW_COUNT()"]
-                    .iter()
-                    .any(|name| text.eq_ignore_ascii_case(name))
+                && ![
+                    "VERSION()",
+                    "DATABASE()",
+                    "SCHEMA()",
+                    "ROW_COUNT()",
+                    "CONNECTION_ID()",
+                    "USER()",
+                    "CURRENT_USER()",
+                    "CURRENT_USER",
+                    "SESSION_USER()",
+                    "SYSTEM_USER()",
+                ]
+                .iter()
+                .any(|name| text.eq_ignore_ascii_case(name))
             {
                 return None;
             }

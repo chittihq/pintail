@@ -3,7 +3,8 @@ use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 use sqlparser::ast::{Expr, Value};
 
-/// Literal values keyed by the complete lowercase system-variable reference.
+/// Literal values keyed by the complete lowercase system-variable reference,
+/// or by the lowercase call (`user()`) of a connection function.
 pub type SystemVariables = Arc<HashMap<String, Value>>;
 
 thread_local! {
@@ -23,6 +24,28 @@ pub fn with_system_variables<T>(variables: SystemVariables, work: impl FnOnce() 
 }
 
 pub(crate) fn literal(expression: &Expr) -> Option<Value> {
+    // A function that asks about the server or the connection - `USER()`,
+    // `CONNECTION_ID()` - is pinned the same way, under its lowercase call.
+    if let Expr::Function(function) = expression {
+        use sqlparser::ast::FunctionArguments;
+        let bare = match &function.args {
+            FunctionArguments::None => true,
+            FunctionArguments::List(list) => list.args.is_empty() && list.clauses.is_empty(),
+            FunctionArguments::Subquery(_) => false,
+        };
+        if !bare || function.over.is_some() {
+            return None;
+        }
+        let name = format!("{}()", function.name.to_string().to_ascii_lowercase());
+        return VARIABLES.with(|cell| cell.borrow().as_ref()?.get(&name).cloned());
+    }
+    // `CURRENT_USER` is also written without its parentheses.
+    if let Expr::Identifier(identifier) = expression
+        && identifier.quote_style.is_none()
+        && identifier.value.eq_ignore_ascii_case("current_user")
+    {
+        return VARIABLES.with(|cell| cell.borrow().as_ref()?.get("current_user()").cloned());
+    }
     let identifiers = match expression {
         Expr::Identifier(identifier) => std::slice::from_ref(identifier),
         Expr::CompoundIdentifier(identifiers) => identifiers,
