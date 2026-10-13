@@ -30,6 +30,10 @@ pub(super) struct CompiledWindow {
     high_precision: bool,
     /// The declared type of each of [`Self::key_exprs`], where one is known.
     key_types: Vec<Option<DataType>>,
+    /// The collation each partition key, then each order key, compares its
+    /// text under: the key's own column's or its written `COLLATE`. `None`
+    /// leaves the key on the plan's collation.
+    key_collations: Vec<Option<&'static str>>,
 }
 
 enum CompiledWindowFunction {
@@ -151,7 +155,14 @@ impl CompiledWindow {
             frame: window.frame,
             high_precision: super::session_window_high_precision(),
             key_types,
+            key_collations: key_collations(window),
         })
+    }
+
+    /// The collation the key at `position` compares under, counting the
+    /// partition keys first and the order keys after them.
+    fn key_collation(&self, position: usize) -> Option<&'static str> {
+        self.key_collations.get(position).copied().flatten()
     }
 
     /// Whether the input column at `position` is one of this window's
@@ -193,10 +204,16 @@ impl CompiledWindow {
     fn sort_keys(&self) -> Vec<BoundOrderKey> {
         let partition = self.partition.len();
         (0..partition)
-            .map(|index| window_order_key(index, true, true, false))
+            .map(|index| window_order_key(index, true, true, false, self.key_collation(index)))
             .chain(self.order.iter().enumerate().map(
                 |(index, (_, ascending, nulls_first, decimal))| {
-                    window_order_key(partition + index, *ascending, *nulls_first, *decimal)
+                    window_order_key(
+                        partition + index,
+                        *ascending,
+                        *nulls_first,
+                        *decimal,
+                        self.key_collation(partition + index),
+                    )
                 },
             ))
             .collect()
@@ -301,7 +318,7 @@ pub(super) fn build_window(
         )?;
     }
     let width = column_types.len();
-    let keys = vec![window_order_key(width, true, true, false)];
+    let keys = vec![window_order_key(width, true, true, false, None)];
     let mut sorter = WindowSorter::new(keys, collation);
     let mut reader = run.open().map_err(window_io)?;
     while let Some(payload) = reader.next().map_err(window_io)? {
@@ -401,7 +418,7 @@ fn columnar_window(
             key_batch.set_selection(batch.selection().clone())?;
             key_batches.push(key_batch);
         }
-        intern_text_partitions(window.partition.len(), &mut key_batches, collation)?;
+        intern_text_partitions(window, &mut key_batches, collation)?;
         for key_batch in &key_batches {
             for row in key_batch.selection().selected_rows() {
                 let values = key_batch
@@ -484,12 +501,17 @@ fn columnar_window(
 /// printable ASCII, by their collation sort keys otherwise. A column that
 /// is not plain text is left as it is.
 fn intern_text_partitions(
-    partitions: usize,
+    window: &CompiledWindow,
     key_batches: &mut [RecordBatch],
     collation: Collation,
 ) -> Result<(), ExecError> {
     use crate::batch::Cell;
-    for position in 0..partitions {
+    let fallback = collation;
+    for position in 0..window.partition.len() {
+        let collation = window
+            .key_collation(position)
+            .and_then(Collation::from_mysql_name)
+            .unwrap_or(fallback);
         if !key_batches.iter().all(|batch| {
             batch
                 .column(position)
@@ -615,23 +637,15 @@ fn small_partition_order(
     if keys.len() / count > SMALL_PARTITION_ROWS {
         return Ok(None);
     }
-    let order_key = |ascending: bool, nulls_first: bool, decimal: bool| BoundOrderKey {
-        value_kind: if decimal {
-            pintail_sql::OrderValueKind::Decimal
-        } else {
-            pintail_sql::OrderValueKind::Ordinary
-        },
-        index: 0,
-        ascending,
-        nulls_first,
-        collation: None,
+    let order_key = |ascending: bool, nulls_first: bool, decimal: bool, position: usize| {
+        window_order_key(0, ascending, nulls_first, decimal, window.key_collation(position))
     };
     let compare_rows = |left: &usize, right: &usize| {
         for (position, (_, ascending, nulls_first, decimal)) in window.order.iter().enumerate() {
             let ordering = compare_sort_values(
                 &keys[*left][1 + position],
                 &keys[*right][1 + position],
-                order_key(*ascending, *nulls_first, *decimal),
+                order_key(*ascending, *nulls_first, *decimal, 1 + position),
                 collation,
             );
             if ordering != Ordering::Equal {
@@ -736,11 +750,27 @@ fn write_window_row(writer: &mut crate::spill::RunWriter, row: &[Value]) -> Resu
     writer.write(&encoder.finish()).map_err(window_io)
 }
 
+/// The collation each of a window's partition keys, then each of its order
+/// keys, compares text under. JSON keys order by the JSON ladder instead.
+fn key_collations(window: &BoundWindow) -> Vec<Option<&'static str>> {
+    window
+        .partition_by
+        .iter()
+        .chain(window.order_by.iter().map(|key| &key.expr))
+        .map(|expr| {
+            (expr.data_type != Some(DataType::Json))
+                .then(|| expr.text_collation())
+                .flatten()
+        })
+        .collect()
+}
+
 fn window_order_key(
     index: usize,
     ascending: bool,
     nulls_first: bool,
     decimal: bool,
+    collation: Option<&'static str>,
 ) -> BoundOrderKey {
     BoundOrderKey {
         value_kind: if decimal {
@@ -751,7 +781,7 @@ fn window_order_key(
         index,
         ascending,
         nulls_first,
-        collation: None,
+        collation,
     }
 }
 
@@ -821,7 +851,9 @@ fn evaluate_spilled_window(
 ) -> Result<crate::spill::ClosedRun, ExecError> {
     let key_start = width + 1;
     let mut order = (0..window.partition.len())
-        .map(|index| window_order_key(key_start + index, true, true, false))
+        .map(|index| {
+            window_order_key(key_start + index, true, true, false, window.key_collation(index))
+        })
         .collect::<Vec<_>>();
     order.extend(window.order.iter().enumerate().map(|(index, key)| {
         window_order_key(
@@ -829,9 +861,10 @@ fn evaluate_spilled_window(
             key.1,
             key.2,
             key.3,
+            window.key_collation(window.partition.len() + index),
         )
     }));
-    order.push(window_order_key(width, true, true, false));
+    order.push(window_order_key(width, true, true, false, None));
     let mut sorter = WindowSorter::new(order, collation);
     let mut reader = run.open().map_err(window_io)?;
     while let Some(payload) = reader.next().map_err(window_io)? {
@@ -879,7 +912,7 @@ fn evaluate_spilled_window(
                 compare_sort_values(
                     &first[key_start + index],
                     &row[key_start + index],
-                    window_order_key(0, true, true, false),
+                    window_order_key(0, true, true, false, window.key_collation(index)),
                     collation,
                 )
                 .is_eq()
@@ -1270,7 +1303,7 @@ fn range_bound_for_target(
                     index: 0,
                     ascending: *ascending,
                     nulls_first: *nulls_first,
-                    collation: None,
+                    collation: window.key_collation(key_position),
                 },
                 collation,
             ),
@@ -1309,16 +1342,8 @@ fn window_order(
     collation: Collation,
 ) -> Result<Vec<usize>, ExecError> {
     let partition_len = window.partition.len();
-    let order_key = |ascending: bool, nulls_first: bool, decimal: bool| BoundOrderKey {
-        value_kind: if decimal {
-            pintail_sql::OrderValueKind::Decimal
-        } else {
-            pintail_sql::OrderValueKind::Ordinary
-        },
-        index: 0,
-        ascending,
-        nulls_first,
-        collation: None,
+    let order_key = |ascending: bool, nulls_first: bool, decimal: bool, position: usize| {
+        window_order_key(0, ascending, nulls_first, decimal, window.key_collation(position))
     };
     let compare_rows = |left: usize, right: usize| {
         let left_keys = &keys[left];
@@ -1327,7 +1352,7 @@ fn window_order(
             let ordering = compare_sort_values(
                 &left_keys[position],
                 &right_keys[position],
-                order_key(true, true, false),
+                order_key(true, true, false, position),
                 collation,
             );
             if ordering != Ordering::Equal {
@@ -1338,7 +1363,7 @@ fn window_order(
             let ordering = compare_sort_values(
                 &left_keys[partition_len + position],
                 &right_keys[partition_len + position],
-                order_key(*ascending, *nulls_first, *decimal),
+                order_key(*ascending, *nulls_first, *decimal, partition_len + position),
                 collation,
             );
             if ordering != Ordering::Equal {
@@ -1367,23 +1392,15 @@ fn compute_window_column(
     collation: Collation,
 ) -> Result<Vec<Value>, ExecError> {
     let partition_len = window.partition.len();
-    let order_key = |ascending: bool, nulls_first: bool, decimal: bool| BoundOrderKey {
-        value_kind: if decimal {
-            pintail_sql::OrderValueKind::Decimal
-        } else {
-            pintail_sql::OrderValueKind::Ordinary
-        },
-        index: 0,
-        ascending,
-        nulls_first,
-        collation: None,
+    let order_key = |ascending: bool, nulls_first: bool, decimal: bool, position: usize| {
+        window_order_key(0, ascending, nulls_first, decimal, window.key_collation(position))
     };
     let same_partition = |left: usize, right: usize| {
         (0..partition_len).all(|position| {
             compare_sort_values(
                 &keys[left][position],
                 &keys[right][position],
-                order_key(true, true, false),
+                order_key(true, true, false, position),
                 collation,
             ) == Ordering::Equal
         })
@@ -1393,7 +1410,7 @@ fn compute_window_column(
             compare_sort_values(
                 &keys[left][partition_len + position],
                 &keys[right][partition_len + position],
-                order_key(key.1, key.2, key.3),
+                order_key(key.1, key.2, key.3, partition_len + position),
                 collation,
             ) == Ordering::Equal
         })

@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2777;
+const EXPECTED_CASES: usize = 2782;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4538,6 +4538,47 @@ fn hand_written_cases() -> Vec<OracleCase> {
              LEAD(id) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING), \
              CUME_DIST() OVER (ORDER BY note ROWS 1 PRECEDING), \
              PERCENT_RANK() OVER (ORDER BY note ROWS 1 PRECEDING) FROM events ORDER BY id",
+        ),
+        // Each window key compares under its own collation - the column's
+        // or a written COLLATE - whatever else the statement reads: a
+        // trailing space is a peer under a PAD SPACE collation, and case
+        // separates rows under utf8mb4_bin.
+        ordered(
+            "window key collations",
+            "SELECT id, RANK() OVER (ORDER BY tag), DENSE_RANK() OVER (ORDER BY tag DESC), \
+             COUNT(*) OVER (ORDER BY tag), COUNT(*) OVER (PARTITION BY tag), \
+             CUME_DIST() OVER (ORDER BY tag) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window key collations",
+            "SELECT id, note, RANK() OVER (ORDER BY tag), COUNT(*) OVER (PARTITION BY tag), \
+             COUNT(*) OVER (PARTITION BY tag, note), MIN(note) OVER (PARTITION BY tag), \
+             SUM(id) OVER (ORDER BY tag RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "window key collations",
+            "SELECT id, RANK() OVER (ORDER BY note COLLATE utf8mb4_bin), RANK() OVER (ORDER BY note), \
+             RANK() OVER (ORDER BY tag COLLATE utf8mb4_bin), \
+             COUNT(*) OVER (PARTITION BY note COLLATE utf8mb4_bin), \
+             COUNT(*) OVER (PARTITION BY note), \
+             ROW_NUMBER() OVER (PARTITION BY tag ORDER BY note COLLATE utf8mb4_bin, id), \
+             SUM(id) OVER (PARTITION BY note COLLATE utf8mb4_bin ORDER BY tag, id) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "window key collations",
+            "SELECT id, RANK() OVER (ORDER BY label), COUNT(*) OVER (PARTITION BY label), \
+             DENSE_RANK() OVER (ORDER BY CONCAT(tag, 'x')), RANK() OVER (ORDER BY UPPER(tag)), \
+             COUNT(*) OVER (PARTITION BY CONCAT(tag, '')), \
+             LAG(id) OVER (PARTITION BY tag ORDER BY id), \
+             FIRST_VALUE(id) OVER (PARTITION BY tag ORDER BY note, id) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window key collations",
+            "SELECT e.id, COUNT(*) OVER (PARTITION BY e.tag), \
+             RANK() OVER (ORDER BY e.tag, u.name COLLATE utf8mb4_bin) \
+             FROM events e JOIN users u ON u.id = e.id ORDER BY e.id",
         ),
     ]
     .into_iter()
