@@ -1,3 +1,4 @@
+mod address;
 mod selection;
 pub(crate) use selection::{SignedUnits, pair_column_ranges, signed_slice_range_mask};
 mod spatial;
@@ -1771,6 +1772,12 @@ impl CompiledExpr {
                     | ScalarFunction::Crc32
                     | ScalarFunction::InetAton
                     | ScalarFunction::InetNtoa
+                    | ScalarFunction::Inet6Aton
+                    | ScalarFunction::Inet6Ntoa
+                    | ScalarFunction::IsIpv4
+                    | ScalarFunction::IsIpv6
+                    | ScalarFunction::IsIpv4Compat
+                    | ScalarFunction::IsIpv4Mapped
                     | ScalarFunction::IsUuid
                     | ScalarFunction::UuidToBin
                     | ScalarFunction::BinToUuid
@@ -2081,6 +2088,12 @@ impl CompiledExpr {
                     | ScalarFunction::Crc32
                     | ScalarFunction::InetAton
                     | ScalarFunction::InetNtoa
+                    | ScalarFunction::Inet6Aton
+                    | ScalarFunction::Inet6Ntoa
+                    | ScalarFunction::IsIpv4
+                    | ScalarFunction::IsIpv6
+                    | ScalarFunction::IsIpv4Compat
+                    | ScalarFunction::IsIpv4Mapped
                     | ScalarFunction::IsUuid
                     | ScalarFunction::UuidToBin
                     | ScalarFunction::BinToUuid
@@ -3982,6 +3995,28 @@ fn evaluate_eager_scalar_inner(
             }
             Ok(Value::UInt64(address))
         }
+        ScalarFunction::Inet6Aton => {
+            Ok(address::address_bytes(&scalar_bytes(&values[0])?)
+                .map_or(Value::Null, Value::Binary))
+        }
+        // Only a binary string is an address; text and numbers are not
+        // read as one, whatever their bytes.
+        ScalarFunction::Inet6Ntoa => Ok(match &values[0] {
+            Value::Binary(bytes) => address::address_text(bytes).map_or(Value::Null, Value::Utf8),
+            _ => Value::Null,
+        }),
+        ScalarFunction::IsIpv4 => Ok(Value::Int64(i64::from(
+            address::ipv4_bytes(&scalar_bytes(&values[0])?).is_some(),
+        ))),
+        ScalarFunction::IsIpv6 => Ok(Value::Int64(i64::from(
+            address::ipv6_bytes(&scalar_bytes(&values[0])?).is_some(),
+        ))),
+        ScalarFunction::IsIpv4Compat => Ok(Value::Int64(i64::from(address::ipv4_compatible(
+            &scalar_bytes(&values[0])?,
+        )))),
+        ScalarFunction::IsIpv4Mapped => Ok(Value::Int64(i64::from(address::ipv4_mapped(
+            &scalar_bytes(&values[0])?,
+        )))),
         ScalarFunction::IsUuid => Ok(Value::Int64(i64::from(
             uuid_bytes(&scalar_bytes(&values[0])?).is_some(),
         ))),

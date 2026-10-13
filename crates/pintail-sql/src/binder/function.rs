@@ -766,6 +766,12 @@ pub(super) fn bind_scalar_function(
         "OCT" if args.len() == 1 => ScalarFunction::Oct,
         "INET_ATON" if args.len() == 1 => ScalarFunction::InetAton,
         "INET_NTOA" if args.len() == 1 => ScalarFunction::InetNtoa,
+        "INET6_ATON" if args.len() == 1 => ScalarFunction::Inet6Aton,
+        "INET6_NTOA" if args.len() == 1 => ScalarFunction::Inet6Ntoa,
+        "IS_IPV4" if args.len() == 1 => ScalarFunction::IsIpv4,
+        "IS_IPV6" if args.len() == 1 => ScalarFunction::IsIpv6,
+        "IS_IPV4_COMPAT" if args.len() == 1 => ScalarFunction::IsIpv4Compat,
+        "IS_IPV4_MAPPED" if args.len() == 1 => ScalarFunction::IsIpv4Mapped,
         "UNHEX" if args.len() == 1 => ScalarFunction::Unhex,
         "IS_UUID" if args.len() == 1 => ScalarFunction::IsUuid,
         "UUID_TO_BIN" if args.len() == 1 => ScalarFunction::UuidToBin,
@@ -2600,6 +2606,7 @@ pub(super) fn bind_scalar(
         ScalarFunction::StrToDate => (Some(str_to_date_result_type(&args)), true),
         ScalarFunction::Sha2
         | ScalarFunction::InetNtoa
+        | ScalarFunction::Inet6Ntoa
         | ScalarFunction::ConvertTz
         | ScalarFunction::Elt
         | ScalarFunction::RegexpSubstr
@@ -2620,7 +2627,14 @@ pub(super) fn bind_scalar(
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::PadTextBytes(_) | ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
+        ScalarFunction::PadTextBytes(_) | ScalarFunction::Unhex | ScalarFunction::FromBase64 | ScalarFunction::Inet6Aton => (Some(DataType::Binary), true),
+        ScalarFunction::IsIpv4
+        | ScalarFunction::IsIpv6
+        | ScalarFunction::IsIpv4Compat
+        | ScalarFunction::IsIpv4Mapped => (
+            Some(DataType::Int64),
+            args.iter().any(|argument| argument.nullable),
+        ),
         ScalarFunction::UuidToBin => (
             Some(DataType::Binary),
             args.iter().any(|argument| argument.nullable),

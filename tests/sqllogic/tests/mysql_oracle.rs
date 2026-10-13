@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2842;
+const EXPECTED_CASES: usize = 2851;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4948,6 +4948,43 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "enum read as text",
             "SELECT id, ANY_VALUE(status) AS c, ANY_VALUE(status) + 0 FROM orders GROUP BY id ORDER BY c, id",
+        ),
+        // IPv4 and IPv6 text to bytes and back, as MySQL reads and prints them.
+        ordered(
+            "network addresses",
+            "SELECT HEX(INET6_ATON('::1')), HEX(INET6_ATON('10.0.5.9')), HEX(INET6_ATON('fdfe::5a55:caff:fefa:9089')), HEX(INET6_ATON('::ffff:10.0.5.9')), HEX(INET6_ATON('1:2:3:4:5:6:1.2.3.4')), HEX(INET6_ATON('1:2:3:4:5:6:7::')), HEX(INET6_ATON('01.2.3.004')), LENGTH(INET6_ATON('1.2.3.4')), LENGTH(INET6_ATON('::'))",
+        ),
+        ordered(
+            "network addresses",
+            "SELECT INET6_ATON('x'), INET6_ATON(''), INET6_ATON(NULL), INET6_ATON('1.2.3'), INET6_ATON('1.2.3.256'), INET6_ATON('0001.2.3.4'), INET6_ATON(':::'), INET6_ATON('1::2::3'), INET6_ATON('12345::'), INET6_ATON('::00001'), INET6_ATON('1:2:3:4:5:6:7'), INET6_ATON('1:2:3:4:5:6:7:1.2.3.4'), INET6_ATON(' ::1'), INET6_ATON('1.2.3.4 '), INET6_ATON(127)",
+        ),
+        ordered(
+            "network addresses",
+            "SELECT INET6_NTOA(INET6_ATON('fdfe::5a55:caff:fefa:9089')), INET6_NTOA(INET6_ATON('10.0.5.9')), INET6_NTOA(UNHEX('00000000000000000000000000000001')), INET6_NTOA(INET6_ATON('::ffff:10.0.5.9')), INET6_NTOA(INET6_ATON('::10.0.5.9')), INET6_NTOA(INET6_ATON('::')), INET6_NTOA(INET6_ATON('::ffff:0:1')), INET6_NTOA(INET6_ATON('::fffe:1.2.3.4'))",
+        ),
+        ordered(
+            "network addresses",
+            "SELECT INET6_NTOA(INET6_ATON('1:0:0:2:0:0:0:3')), INET6_NTOA(INET6_ATON('1:0:0:0:2:0:0:3')), INET6_NTOA(INET6_ATON('0:0:1:0:0:0:0:0')), INET6_NTOA(INET6_ATON('1:2:3:4:5:6:7:0')), INET6_NTOA(INET6_ATON('0:2:3:4:5:6:7:8')), INET6_NTOA(INET6_ATON('1:0:3:4:5:6:7:8')), INET6_NTOA(INET6_ATON('ABCD:EF01::')), INET6_NTOA(INET6_ATON('::0.1.0.0'))",
+        ),
+        ordered(
+            "network addresses",
+            "SELECT INET6_NTOA(NULL), INET6_NTOA('abc'), INET6_NTOA(''), INET6_NTOA(UNHEX('0102030405')), INET6_NTOA('1234'), INET6_NTOA('1234567890123456'), INET6_NTOA(1234), INET6_NTOA(x'01020304'), INET6_NTOA(CAST('abcd' AS BINARY)), INET6_NTOA(CAST('1234567890123456' AS BINARY))",
+        ),
+        ordered(
+            "network addresses",
+            "SELECT IS_IPV4('10.0.5.9'), IS_IPV4('10.0.5.256'), IS_IPV4('::1'), IS_IPV4(NULL), IS_IPV4(''), IS_IPV4('01.02.03.04'), IS_IPV4(' 1.2.3.4'), IS_IPV4(1234), IS_IPV4('1.2.3.4.'), IS_IPV6('10.0.5.9'), IS_IPV6('::1'), IS_IPV6(NULL), IS_IPV6('::ffff:1.2.3.4'), IS_IPV6('1:2:3:4:5:6:7'), IS_IPV6(':'), IS_IPV6('fe80::1%eth0')",
+        ),
+        ordered(
+            "network addresses",
+            "SELECT IS_IPV4_COMPAT(INET6_ATON('::10.0.5.9')), IS_IPV4_COMPAT(INET6_ATON('::ffff:10.0.5.9')), IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9')), IS_IPV4_MAPPED(INET6_ATON('::ffff:10.0.5.9')), IS_IPV4_COMPAT(NULL), IS_IPV4_MAPPED('x'), IS_IPV4_COMPAT(INET6_ATON('::1')), IS_IPV4_COMPAT(INET6_ATON('::0.0.1.0')), IS_IPV4_COMPAT(INET6_ATON('1.2.3.4'))",
+        ),
+        ordered(
+            "network addresses",
+            "SELECT id, INET6_NTOA(INET6_ATON(CONCAT('10.0.', id, '.', score))), IS_IPV4(CONCAT(score, '.1.1.', id)), HEX(INET6_ATON(CONCAT('fe80::', id, ':', HEX(score)))), IS_IPV6(note), INET6_ATON(note) IS NULL FROM events ORDER BY id",
+        ),
+        ordered(
+            "network addresses",
+            "SELECT id FROM events WHERE INET6_ATON(CONCAT('10.0.0.', score)) > INET6_ATON('10.0.0.50') ORDER BY INET6_ATON(CONCAT('::', 100 - score)), id",
         ),
     ]
     .into_iter()

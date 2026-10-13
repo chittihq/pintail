@@ -1355,6 +1355,20 @@ pub enum ScalarFunction {
     InetAton,
     /// `INET_NTOA(n)`: the dotted-quad form, NULL outside the IPv4 range.
     InetNtoa,
+    /// `INET6_ATON(str)`: the four bytes of an IPv4 address or the sixteen
+    /// of an IPv6 one, NULL for text that is neither.
+    Inet6Aton,
+    /// `INET6_NTOA(bin)`: four or sixteen bytes as address text; NULL for
+    /// any other length and for an argument that is not a binary string.
+    Inet6Ntoa,
+    /// `IS_IPV4(str)`: whether the text is a dotted-quad address.
+    IsIpv4,
+    /// `IS_IPV6(str)`: whether the text is an IPv6 address.
+    IsIpv6,
+    /// `IS_IPV4_COMPAT(bin)`: whether sixteen bytes are `::a.b.c.d`.
+    IsIpv4Compat,
+    /// `IS_IPV4_MAPPED(bin)`: whether sixteen bytes are `::ffff:a.b.c.d`.
+    IsIpv4Mapped,
     /// `IS_UUID(str)`: whether the text spells a UUID - five dashed groups,
     /// the same in braces, or thirty-two bare hex digits.
     IsUuid,
