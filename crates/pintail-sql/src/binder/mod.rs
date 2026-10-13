@@ -3485,10 +3485,12 @@ fn rewrite_right_joins(item: &TableWithJoins) -> Option<TableWithJoins> {
 fn validate_select_shape(select: &Select) -> Result<(), BindError> {
     if !crate::hints::select_hints_are_supported(select)
         // Result-size hints are advisory; reservation limits still determine
-        // when an aggregate or sort spills. Other modifiers need their own semantics.
+        // when an aggregate or sort spills. HIGH_PRIORITY, STRAIGHT_JOIN and
+        // SQL_BUFFER_RESULT ask for a lock priority, a join order and a
+        // result copy, none of which changes an answer, so they are read
+        // and not acted on. Other modifiers need their own semantics.
         || select.select_modifiers.as_ref().is_some_and(|modifiers| {
-            modifiers.high_priority || modifiers.straight_join || modifiers.sql_buffer_result
-                || modifiers.sql_no_cache || modifiers.sql_calc_found_rows
+            modifiers.sql_no_cache || modifiers.sql_calc_found_rows
         })
         || select.top.is_some()
         || select.exclude.is_some()
