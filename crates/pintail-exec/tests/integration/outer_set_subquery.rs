@@ -84,6 +84,16 @@ const DATABASE: u64 = 11;
 const TABLES: [u64; 3] = [111, 112, 113];
 
 pub(super) fn fixture(parcels: u64) -> Fixture {
+    fixture_with(parcels, false)
+}
+
+/// The same tables with `id` declared as each one's key, as a mirrored
+/// table declares its primary key.
+pub(super) fn keyed_fixture(parcels: u64) -> Fixture {
+    fixture_with(parcels, true)
+}
+
+fn fixture_with(parcels: u64, keyed: bool) -> Fixture {
     let directories = [(); 3].map(|()| tempfile::tempdir().expect("table dir"));
     let parcel_rows = (1..=parcels)
         .map(|id| {
@@ -144,15 +154,18 @@ pub(super) fn fixture(parcels: u64) -> Fixture {
         .expect("open table");
         store.bulk_ingest_snapshot(rows).expect("snapshot rows");
         snapshots.push(store.snapshot());
-        entries.push(
-            TableEntry::new(
-                TableId::new(TABLES[index]),
-                names[index],
-                schemas[index].clone(),
-                TableStatistics::with_row_count(count),
-            )
-            .expect("table entry"),
-        );
+        let entry = TableEntry::new(
+            TableId::new(TABLES[index]),
+            names[index],
+            schemas[index].clone(),
+            TableStatistics::with_row_count(count),
+        )
+        .expect("table entry");
+        entries.push(if keyed {
+            entry.with_key_columns([1]).expect("table key")
+        } else {
+            entry
+        });
     }
     let database = DatabaseEntry::new(DatabaseId::new(DATABASE), "app", entries).expect("database");
     Fixture {

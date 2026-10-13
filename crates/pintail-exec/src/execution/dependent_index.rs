@@ -39,6 +39,13 @@
 //! exactly when the column's greatest (or least) value does, so the read
 //! keeps that one value and each outer row compares with it.
 //!
+//! Another holds its rows in order: a scalar subquery that takes the first
+//! row by its table's own key (`ORDER BY key LIMIT 1`) among those a range
+//! on that key keeps (`key >= outer_expression` going up, `key <=` going
+//! down). No two rows share the key, so there is one first row however the
+//! rows are read; the index sorts the filtered rows by key once and each
+//! outer row finds its row by position.
+//!
 //! What it must never change, and how each is kept:
 //!
 //! - **Comparison semantics**: only `inner_column = outer_expression` with
@@ -176,6 +183,15 @@ struct BuiltBound {
     value: Option<i128>,
 }
 
+/// The filtered rows of a first-row range lookup, in key order.
+struct BuiltOrdered {
+    /// The outer expression and which way the range runs; it holds no
+    /// extreme of its own.
+    lookup: BuiltBound,
+    /// Each row's key, and the batch and row it is held at.
+    rows: Vec<(i128, u32, u32)>,
+}
+
 /// One `inner_column = outer_expression` key.
 struct PlannedKey {
     inner: usize,
@@ -198,6 +214,10 @@ pub(super) struct IndexPlan {
     /// Set for a range `EXISTS`: there are no keys and no residual, and
     /// one extreme of the inner column is all the index holds.
     bound: Option<PlannedBound>,
+    /// Set for the first row of an ordering by the table's key that a range
+    /// on that key bounds: there are no keys and no residual, and the rows
+    /// are held in key order.
+    ordered: Option<PlannedBound>,
 }
 
 enum BuiltAnswer {
@@ -236,6 +256,10 @@ pub(super) struct SubqueryIndex {
     probe: Vec<JoinHashKey>,
     /// Set for a range `EXISTS`, which holds no rows.
     bound: Option<BuiltBound>,
+    /// Set for a first-row range lookup: every held row's key and where
+    /// the row is, in key order, with the outer expression and which way
+    /// the range runs.
+    ordered: Option<BuiltOrdered>,
 }
 
 impl SubqueryIndex {
@@ -249,6 +273,7 @@ impl SubqueryIndex {
         self.reserved = 0;
         self.batches.clear();
         self.rows.clear();
+        self.ordered = None;
     }
 }
 
@@ -273,11 +298,57 @@ pub(super) fn plan(query: &BoundQuery, form: SubqueryForm) -> Result<IndexState,
 
 /// Inner rows a built index holds.
 pub(super) fn indexed_rows(index: &SubqueryIndex) -> u64 {
+    let ordered = index.ordered.as_ref().map_or(0, |ordered| {
+        u64::try_from(ordered.rows.len()).unwrap_or(u64::MAX)
+    });
     index
         .rows
         .values()
         .map(|rows| u64::try_from(rows.len()).unwrap_or(u64::MAX))
-        .sum()
+        .sum::<u64>()
+        .saturating_add(ordered)
+}
+
+/// The select expression, key column and direction of `(SELECT e FROM t
+/// WHERE .. ORDER BY t.key LIMIT 1)`: one row by the table's own key,
+/// which no two rows share, so the first is the same row however the rows
+/// are read. `None` for any other ordering or limit.
+fn first_by_key<'query>(
+    query: &'query BoundQuery,
+    form: SubqueryForm,
+    base: &pintail_sql::BoundTable,
+) -> Option<(&'query BoundExpr, &'query BoundColumn, bool)> {
+    let limit = query.limit?;
+    let [order] = query.order_by.as_slice() else {
+        return None;
+    };
+    if form != SubqueryForm::Scalar
+        || query.distinct
+        || limit.offset != 0
+        || limit.count != 1
+        || query.projection.len() != query.hidden_sort_columns + 1
+        || order.collation.is_some()
+        || base.input.is_some()
+    {
+        return None;
+    }
+    let projection = &query.projection.first()?.expr;
+    let BoundExprKind::Column(key) = &query.projection.get(order.index)?.expr.kind else {
+        return None;
+    };
+    let mut inner = Vec::new();
+    let mut has_outer = false;
+    if !plain_expression(projection) {
+        return None;
+    }
+    columns_of(projection, &mut inner, &mut has_outer);
+    (!has_outer
+        && !key.outer
+        && !key.nullable
+        && belongs_to(key, base)
+        && is_integer(key.data_type)
+        && base.key_column_ids.as_slice() == [key.column_id])
+    .then_some((projection, key, order.ascending))
 }
 
 /// The answer a query's projection and LIMIT ask for, when the index can
@@ -362,9 +433,17 @@ fn analyse(
     let [source] = query.from.as_slice() else {
         return Err("it reads more than one FROM item");
     };
-    let answer =
-        answer_of(query, form).ok_or("its select list, ORDER BY or LIMIT is not one it reads")?;
     let base = &source.base;
+    let first_by_key = first_by_key(query, form, base);
+    let answer = match &first_by_key {
+        Some((projection, ..)) => Answer::Scalar {
+            projection: (*projection).clone(),
+            first: true,
+            nested: false,
+        },
+        None => answer_of(query, form)
+            .ok_or("its select list, ORDER BY or LIMIT is not one it reads")?,
+    };
     let estimated_rows = base.estimated_rows.or(base.row_count);
     if estimated_rows.is_some_and(|rows| rows > MAX_INDEX_ROWS as u64) {
         return Err("its table is larger than an index holds");
@@ -403,11 +482,29 @@ fn analyse(
         (Answer::Exists, true, [conjunct]) => range_bound(conjunct),
         _ => None,
     };
-    if bound.is_some() {
+    // The first row by the table's key, of the rows a range on that key
+    // keeps, is found by position among the rows in key order.
+    let ordered = match (&first_by_key, keys.is_empty(), residual.as_slice()) {
+        (Some((_, key, ascending)), true, [conjunct]) => {
+            range_bound(conjunct).filter(|(inner, _, extreme)| {
+                same_column(inner, key)
+                    && matches!(
+                        (extreme, ascending),
+                        (Extreme::Greatest { .. }, true) | (Extreme::Least { .. }, false)
+                    )
+            })
+        }
+        _ => None,
+    };
+    if first_by_key.is_some() && ordered.is_none() {
+        return Err("its ORDER BY and LIMIT are not a range lookup by its table's key");
+    }
+    if bound.is_some() || ordered.is_some() {
         residual.clear();
     }
     // With no key every inner row is a candidate for every outer row.
     if bound.is_none()
+        && ordered.is_none()
         && keys.is_empty()
         && (residual.is_empty()
             || estimated_rows.is_some_and(|rows| rows > MAX_KEYLESS_ROWS as u64))
@@ -436,6 +533,11 @@ fn analyse(
         })
         .collect::<Vec<_>>();
     let bound = bound.map(|(inner, outer, extreme)| PlannedBound {
+        inner: add_column(&inner),
+        outer,
+        extreme,
+    });
+    let ordered = ordered.map(|(inner, outer, extreme)| PlannedBound {
         inner: add_column(&inner),
         outer,
         extreme,
@@ -473,6 +575,7 @@ fn analyse(
             residual: conjoin(residual),
             answer,
             bound,
+            ordered,
         },
         estimated_rows,
     ))
@@ -720,6 +823,9 @@ pub(super) fn build(plan: &IndexPlan, context: &DependentRow<'_>) -> Option<Subq
     if let Some(bound) = &plan.bound {
         return build_bound(plan, bound, context);
     }
+    if let Some(ordered) = &plan.ordered {
+        return build_ordered(plan, ordered, context);
+    }
     let (outer_keys, answer) = compile_for(plan, context)?;
     let modes = outer_keys.iter().map(|(_, mode)| *mode).collect::<Vec<_>>();
     let physical = PhysicalPlanner::plan(
@@ -747,6 +853,7 @@ pub(super) fn build(plan: &IndexPlan, context: &DependentRow<'_>) -> Option<Subq
         reserved: 0,
         probe: Vec::with_capacity(plan.keys.len()),
         bound: None,
+        ordered: None,
     };
     let key_bytes = size_of::<Vec<JoinHashKey>>()
         + size_of::<Vec<(u32, u32)>>()
@@ -808,6 +915,9 @@ pub(super) fn answer(
 ) -> Result<Option<Value>, ExecError> {
     if let Some(bound) = &index.bound {
         return answer_bound(bound, context);
+    }
+    if let Some(ordered) = &index.ordered {
+        return answer_ordered(index, ordered, context);
     }
     let wanted = match index.answer {
         BuiltAnswer::Exists
@@ -872,6 +982,132 @@ pub(super) fn answer(
     }))
 }
 
+/// Reads the filtered inner table once and holds its rows in key order, for
+/// a first-row range lookup. `None` when a key is not an integer, an outer
+/// column belongs to a scope further out, the rows outgrow the index's
+/// share of memory, or the read fails.
+fn build_ordered(
+    plan: &IndexPlan,
+    ordered: &PlannedBound,
+    context: &DependentRow<'_>,
+) -> Option<SubqueryIndex> {
+    if !outer_columns_resolve(&ordered.outer, context.columns) {
+        return None;
+    }
+    let outer = CompiledExpr::compile(&ordered.outer, context.columns, context.collation).ok()?;
+    let (outer_keys, answer) = compile_for(plan, context)?;
+    let physical = PhysicalPlanner::plan(
+        Optimizer::optimize(LogicalPlanner::plan(plan.materialize.clone())),
+        context.collation,
+    )
+    .ok()?;
+    let limit = dependent_subquery_memory_limit(context.memory, context.batch).ok()?;
+    let mut execution = Execution::start_with_deadline(
+        physical,
+        context.provider,
+        limit,
+        context.memory.deadline,
+        context.collation,
+    )
+    .ok()?;
+    let mut index = SubqueryIndex {
+        batches: Vec::new(),
+        rows: HashMap::new(),
+        layout: plan.layout.clone(),
+        outer_keys,
+        residual: None,
+        answer,
+        reserved: 0,
+        probe: Vec::new(),
+        bound: None,
+        ordered: None,
+    };
+    let mut rows = Vec::new();
+    let budget = context.memory.remaining() / MEMORY_SHARE_DIVISOR;
+    let outcome = (|| -> Option<()> {
+        while let Some(batch) = execution.next_batch().ok()? {
+            let batch_number = u32::try_from(index.batches.len()).ok()?;
+            let mut charge = batch.estimated_bytes();
+            let column = batch.column(ordered.inner)?;
+            for row in batch.selection().selected_rows() {
+                // A NULL key is beyond no value and first of nothing.
+                let Whole::Value(key) = integer(column.value(row)?)? else {
+                    continue;
+                };
+                rows.push((key, batch_number, u32::try_from(row).ok()?));
+                charge += size_of::<(i128, u32, u32)>();
+            }
+            if rows.len() > MAX_INDEX_ROWS || index.reserved.saturating_add(charge) > budget {
+                return None;
+            }
+            context.memory.reserve(charge).ok()?;
+            index.reserved += charge;
+            index.batches.push(batch);
+        }
+        Some(())
+    })();
+    if outcome.is_none() {
+        index.release(context.memory);
+        return None;
+    }
+    rows.sort_unstable_by_key(|(key, ..)| *key);
+    index.ordered = Some(BuiltOrdered {
+        lookup: BuiltBound {
+            outer,
+            extreme: ordered.extreme,
+            value: None,
+        },
+        rows,
+    });
+    Some(index)
+}
+
+/// The select expression of the first row, by key, that the range keeps for
+/// the current outer row; NULL when it keeps none, as when the outer value
+/// is NULL. `None` for an outer value that is not an integer.
+fn answer_ordered(
+    index: &SubqueryIndex,
+    ordered: &BuiltOrdered,
+    context: &DependentRow<'_>,
+) -> Result<Option<Value>, ExecError> {
+    let Some(outer) = integer(&ordered.lookup.outer.evaluate(context.batch, context.row)?) else {
+        return Ok(None);
+    };
+    let rows = &ordered.rows;
+    // The first key the range keeps, going the way the ordering goes.
+    let found = match (outer, ordered.lookup.extreme) {
+        (Whole::Null, _) => None,
+        (Whole::Value(outer), Extreme::Greatest { inclusive }) => {
+            rows.get(rows.partition_point(|(key, ..)| {
+                if inclusive {
+                    *key < outer
+                } else {
+                    *key <= outer
+                }
+            }))
+        }
+        (Whole::Value(outer), Extreme::Least { inclusive }) => rows
+            .partition_point(|(key, ..)| {
+                if inclusive {
+                    *key <= outer
+                } else {
+                    *key < outer
+                }
+            })
+            .checked_sub(1)
+            .and_then(|at| rows.get(at)),
+    };
+    let BuiltAnswer::Scalar { projection, .. } = &index.answer else {
+        return Ok(None);
+    };
+    Ok(Some(match found {
+        Some(&(_, batch, row)) => {
+            projection.evaluate(&index.batches[batch as usize], row as usize)?
+        }
+        None => Value::Null,
+    }))
+}
+
 /// Reads the filtered inner column once and keeps the extreme a range
 /// `EXISTS` is decided by. `None` when a value is not an integer, an outer
 /// column belongs to a scope further out, or the read fails.
@@ -926,6 +1162,7 @@ fn build_bound(
             extreme: bound.extreme,
             value,
         }),
+        ordered: None,
     })
 }
 

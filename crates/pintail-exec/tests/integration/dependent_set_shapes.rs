@@ -17,7 +17,9 @@ use pintail_exec::{
 use pintail_sql::{Binder, parse_statement};
 use pintail_types::Value;
 
-use super::outer_set_subquery::{Fixture, SCANS, fixture, nullable, run, scan, scans_of, weight};
+use super::outer_set_subquery::{
+    Fixture, SCANS, fixture, keyed_fixture, nullable, run, scan, scans_of, weight,
+};
 
 /// What one statement did on the dependent path.
 struct Ran {
@@ -949,4 +951,71 @@ fn a_range_exists_is_decided_by_one_extreme_of_the_inner_column() {
         flags(&|parcel| scans().any(|(owner, ok, _)| owner > parcel
             && ok.is_some_and(|ok| i64::try_from(ok).expect("ok") < signed(parcel))))
     );
+}
+
+/// `(SELECT e FROM t WHERE t.key >= outer ORDER BY t.key LIMIT 1)` is the
+/// first row at or beyond the outer value by the table's own key. The table
+/// is read once into key order and each outer row finds its row by
+/// position; no outer row runs the subquery.
+#[test]
+fn the_first_row_by_key_beyond_the_outer_value_is_found_by_position() {
+    let fixture = keyed_fixture(260);
+    let signed = |parcel: u64| i64::try_from(weight(parcel)).expect("weight");
+    let zone = |k: u64| scan(k).2;
+    let lookup = |sql: &str, expect: &dyn Fn(u64) -> Option<u64>| {
+        let found = ran(&fixture, sql);
+        let expected = (1..=260_u64)
+            .map(|parcel| vec![parcel.to_string(), nullable(expect(parcel))])
+            .collect::<Vec<_>>();
+        assert_eq!(found.rows, expected, "{sql}");
+        assert!(
+            expected.iter().any(|row| row[1] == "NULL")
+                && expected.iter().any(|row| row[1] != "NULL"),
+            "{sql}: some rows find one and some none"
+        );
+        assert_eq!((found.per_row, found.indexes), (0, 1), "{}", found.profile);
+    };
+    lookup(
+        "SELECT p.id, (SELECT s.zone_id FROM scans s WHERE s.id >= p.id * 3 \
+           ORDER BY s.id LIMIT 1) FROM parcels p ORDER BY p.id",
+        &|parcel| (parcel * 3 <= SCANS).then(|| zone(parcel * 3)),
+    );
+    // Strictly beyond, written with the outer value first.
+    lookup(
+        "SELECT p.id, (SELECT s.zone_id * 10 FROM scans s WHERE p.id * 3 < s.id \
+           ORDER BY s.id LIMIT 1) FROM parcels p ORDER BY p.id",
+        &|parcel| (parcel * 3 < SCANS).then(|| zone(parcel * 3 + 1) * 10),
+    );
+    // The last row before a signed value, going down.
+    lookup(
+        "SELECT p.id, (SELECT s.zone_id FROM scans s WHERE s.id < p.weight \
+           ORDER BY s.id DESC LIMIT 1) FROM parcels p ORDER BY p.id",
+        &|parcel| {
+            u64::try_from(signed(parcel) - 1)
+                .ok()
+                .filter(|k| *k >= 1)
+                .map(zone)
+        },
+    );
+    lookup(
+        "SELECT p.id, (SELECT s.zone_id FROM scans s WHERE s.id <= p.weight - 40 \
+           ORDER BY s.id DESC LIMIT 1) FROM parcels p ORDER BY p.id",
+        &|parcel| {
+            u64::try_from(signed(parcel) - 40)
+                .ok()
+                .filter(|k| *k >= 1)
+                .map(zone)
+        },
+    );
+    // An ordering by anything but the key has ties to resolve, and a range
+    // running against the ordering asks for the far end: neither is this.
+    for sql in [
+        "SELECT p.id, (SELECT s.zone_id FROM scans s WHERE s.id >= p.id * 3 \
+           ORDER BY s.parcel_id LIMIT 1) FROM parcels p WHERE p.id <= 12 ORDER BY p.id",
+        "SELECT p.id, (SELECT s.zone_id FROM scans s WHERE s.id >= p.id * 3 \
+           ORDER BY s.id DESC LIMIT 1) FROM parcels p WHERE p.id <= 12 ORDER BY p.id",
+    ] {
+        let other = ran(&fixture, sql);
+        assert_eq!(other.indexes, 0, "{}", other.profile);
+    }
 }
