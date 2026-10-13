@@ -424,7 +424,7 @@ impl CacheKey {
         key: &IndexKey,
     ) -> Option<Self> {
         let path = directory.join(&meta.file_name);
-        let file = segment::file_identity(&path)?;
+        let file = meta.file_identity(&path)?;
         Some(Self {
             path,
             file,

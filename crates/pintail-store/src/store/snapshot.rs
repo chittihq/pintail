@@ -890,6 +890,12 @@ impl TableSnapshot {
                 segments.push(meta.clone());
             }
         }
+        // What this scan learns of its segments' files, once for all of
+        // its slices: a place for each segment it may read.
+        let files = Arc::new(segment::ScanFiles::for_segments(segments.len()));
+        for (place, meta) in segments.iter_mut().enumerate() {
+            *meta = meta.reading_in(&files, place);
+        }
         segments.sort_by(|left, right| left.min_key.cmp(&right.min_key));
         let candidate_rows = segments
             .iter()

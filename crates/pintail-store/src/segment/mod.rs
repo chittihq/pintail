@@ -342,11 +342,93 @@ fn reserve_scan_memory(
 /// statement was the larger part of opening a scan that then read none of
 /// their blocks.
 #[derive(Clone, Debug)]
-pub(crate) struct SegmentMeta(std::sync::Arc<SegmentFacts>);
+pub(crate) struct SegmentMeta {
+    facts: std::sync::Arc<SegmentFacts>,
+    /// The scan this copy of the entry is read in, when it is read in
+    /// one, and the segment's place among that scan's files.
+    scan: Option<(std::sync::Arc<ScanFiles>, usize)>,
+}
 
 impl SegmentMeta {
     pub(crate) fn new(facts: SegmentFacts) -> Self {
-        Self(std::sync::Arc::new(facts))
+        Self {
+            facts: std::sync::Arc::new(facts),
+            scan: None,
+        }
+    }
+
+    /// This entry as one scan reads it: what the scan learns of the
+    /// segment's file is kept at `place` in `scan` and shared by every
+    /// slice.
+    pub(crate) fn reading_in(&self, scan: &std::sync::Arc<ScanFiles>, place: usize) -> Self {
+        Self {
+            facts: std::sync::Arc::clone(&self.facts),
+            scan: Some((std::sync::Arc::clone(scan), place)),
+        }
+    }
+
+    fn seen(&self) -> Option<&SeenFile> {
+        let (scan, place) = self.scan.as_ref()?;
+        scan.seen
+            .get_or_init(|| (0..scan.segments).map(|_| SeenFile::default()).collect())
+            .get(*place)
+    }
+
+    /// The identity of this segment's file at `path` (see
+    /// [`file_identity`]): asked of the file system each time, except
+    /// within a scan, which asks once per segment.
+    ///
+    /// Every read of a block, a dictionary or a set of postings names the
+    /// file it wants by this, so a scan asked for it several times for
+    /// every slice it decoded - a system call each, and all of them for a
+    /// file the scan had already named. One statement reads one snapshot
+    /// of a table: what a segment's file was when the scan first read it
+    /// is what the scan goes on reading. The next statement asks again.
+    /// A file that cannot be read is not remembered.
+    pub(crate) fn file_identity(&self, path: &Path) -> Option<(u64, i128)> {
+        let Some(seen) = self.seen() else {
+            return file_identity(path);
+        };
+        if let Some(known) = seen.identity.get() {
+            return Some(*known);
+        }
+        let read = file_identity(path)?;
+        Some(*seen.identity.get_or_init(|| read))
+    }
+
+    /// This segment's file at `path`, open for positioned reads.
+    ///
+    /// A scan reads a segment a slice at a time, and every slice opened
+    /// the file and closed it again: two system calls and a walk of the
+    /// path for each, made by every scan worker at once against the same
+    /// directory. Within a scan the handle a first read opened is kept
+    /// and every later slice shares it - positioned reads do not disturb
+    /// one another - until the scan ends. So a scan also goes on reading
+    /// the file it began with if another is published under that name.
+    /// At most [`MAX_HELD_SEGMENT_FILES`] are held at once, by all scans
+    /// together; a read outside a scan opens its own.
+    fn open_file(&self, path: &Path) -> Result<std::sync::Arc<File>, StoreError> {
+        let open = || {
+            File::open(path)
+                .map(std::sync::Arc::new)
+                .map_err(|error| StoreError::io(format!("open segment {}", path.display()), error))
+        };
+        // Only where a positioned read leaves the handle's cursor alone can
+        // readers share one.
+        let Some(seen) = self.seen().filter(|_| cfg!(unix)) else {
+            return open();
+        };
+        if let Some(held) = seen.file.get() {
+            return Ok(std::sync::Arc::clone(held));
+        }
+        let file = open()?;
+        if HELD_SEGMENT_FILES.fetch_add(1, AtomicOrdering::Relaxed) >= MAX_HELD_SEGMENT_FILES
+            || seen.file.set(std::sync::Arc::clone(&file)).is_err()
+        {
+            // Over the limit, or another slice's handle was kept first.
+            HELD_SEGMENT_FILES.fetch_sub(1, AtomicOrdering::Relaxed);
+        }
+        Ok(file)
     }
 
     /// The entry of the same rows published again as another file.
@@ -355,7 +437,7 @@ impl SegmentMeta {
         Self::new(SegmentFacts {
             id,
             file_name,
-            ..(*self.0).clone()
+            ..(*self.facts).clone()
         })
     }
 }
@@ -364,9 +446,59 @@ impl std::ops::Deref for SegmentMeta {
     type Target = SegmentFacts;
 
     fn deref(&self) -> &SegmentFacts {
-        &self.0
+        &self.facts
     }
 }
+
+/// What one scan has learned of the segment files it reads: a place for
+/// each segment it may read, filled as slices reach them and read without
+/// a lock afterwards. The places are made when the first is
+/// asked for: a scan answered from the manifest alone reads no file.
+#[derive(Debug)]
+pub(crate) struct ScanFiles {
+    segments: usize,
+    seen: std::sync::OnceLock<Box<[SeenFile]>>,
+}
+
+#[derive(Debug, Default)]
+struct SeenFile {
+    /// The file's length and modification time.
+    identity: std::sync::OnceLock<(u64, i128)>,
+    /// The file, open, once the scan has read blocks from it.
+    file: std::sync::OnceLock<std::sync::Arc<File>>,
+}
+
+impl ScanFiles {
+    /// Places for a scan of `segments` segments.
+    pub(crate) fn for_segments(segments: usize) -> Self {
+        Self {
+            segments,
+            seen: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// How many segment files this scan holds open.
+    fn held_files(&self) -> usize {
+        self.seen.get().map_or(0, |seen| {
+            seen.iter().filter(|seen| seen.file.get().is_some()).count()
+        })
+    }
+}
+
+impl Drop for ScanFiles {
+    fn drop(&mut self) {
+        HELD_SEGMENT_FILES.fetch_sub(self.held_files(), AtomicOrdering::Relaxed);
+    }
+}
+
+/// Segment files held open by scans, process-wide.
+static HELD_SEGMENT_FILES: AtomicUsize = AtomicUsize::new(0);
+
+/// The most segment files scans may hold open at once. A process is
+/// allowed a limited number of open files and its connections need theirs:
+/// past this many, a read opens the file for itself and closes it, as
+/// every read once did.
+const MAX_HELD_SEGMENT_FILES: usize = 128;
 
 /// What [`SegmentMeta`] shares.
 #[derive(Clone, Debug)]
@@ -2470,7 +2602,7 @@ fn probe_block_compression(decoder: &mut FileDecoder) -> Result<Option<u8>, Stri
 }
 
 fn verified_key(path: &Path, meta: &SegmentMeta, schema: &TableSchema) -> Option<VerifiedKey> {
-    let (length, nanos) = file_identity(path)?;
+    let (length, nanos) = meta.file_identity(path)?;
     Some((
         path.to_path_buf(),
         length,
@@ -4442,36 +4574,34 @@ fn read_projected_pick(
     // identity and the manifest entry name, except the row count, which is
     // compared again here.
     let identity = verified_key(&path, meta, schema);
-    let (layout, row_count, format_version, file) = if let Some(held) =
-        identity.as_ref().and_then(held_layout)
-    {
-        if u64::try_from(held.row_count).ok() != Some(meta.row_count) {
-            return Err(corrupt(
-                &path,
-                0,
-                format!(
-                    "segment header declares {} rows, the manifest {}",
-                    held.row_count, meta.row_count
-                ),
-            ));
-        }
-        let file = File::open(&path)
-            .map_err(|error| StoreError::io(format!("open segment {}", path.display()), error))?;
-        (held.columns, held.row_count, held.format_version, file)
-    } else {
-        let mut decoder = FileDecoder::open(&path)?;
-        let header = read_segment_columns_header(&path, &mut decoder, meta, schema)?;
-        let layout = projected_layout(&path, meta, schema, &mut decoder, &header)?;
-        let format_version = decoder
-            .format_version()
-            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-        (
-            layout,
-            header.row_count,
-            format_version,
-            decoder.reader.into_inner(),
-        )
-    };
+    let (layout, row_count, format_version, file) =
+        if let Some(held) = identity.as_ref().and_then(held_layout) {
+            if u64::try_from(held.row_count).ok() != Some(meta.row_count) {
+                return Err(corrupt(
+                    &path,
+                    0,
+                    format!(
+                        "segment header declares {} rows, the manifest {}",
+                        held.row_count, meta.row_count
+                    ),
+                ));
+            }
+            let file = meta.open_file(&path)?;
+            (held.columns, held.row_count, held.format_version, file)
+        } else {
+            let mut decoder = FileDecoder::open(&path)?;
+            let header = read_segment_columns_header(&path, &mut decoder, meta, schema)?;
+            let layout = projected_layout(&path, meta, schema, &mut decoder, &header)?;
+            let format_version = decoder
+                .format_version()
+                .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+            (
+                layout,
+                header.row_count,
+                format_version,
+                std::sync::Arc::new(decoder.reader.into_inner()),
+            )
+        };
     // Blocks arrive through positioned reads of this handle.
     let mut runs = StoredRuns::new(&file, memory);
     // Opened only for a block read frame by frame.
@@ -8167,6 +8297,62 @@ mod range_read_tests {
         // A deleted file's blocks are dropped by name.
         super::forget_cached_blocks(&directory.path().join(&second.file_name));
         assert_eq!(read(&schema, &second, 176), after);
+    }
+
+    #[test]
+    fn a_scan_names_a_segments_file_once_and_the_next_scan_asks_again() {
+        let directory = tempfile::tempdir().expect("directory");
+        let cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&cell, usize::MAX);
+        let read = |schema: &TableSchema, meta: &super::SegmentMeta, rows: usize| {
+            read_projected_column_ranges(
+                directory.path(),
+                meta,
+                schema,
+                &[0, 1, 2],
+                std::slice::from_ref(&(0..rows)),
+                &budget,
+            )
+            .expect("read")
+            .columns
+            .into_iter()
+            .map(super::super::store::DecodedColumn::into_values)
+            .collect::<Vec<_>>()
+        };
+        let (schema, written) = numbered_segment(directory.path(), 0..160, 0);
+        let path = directory.path().join(&written.file_name);
+        let scan = std::sync::Arc::new(super::ScanFiles::for_segments(1));
+        let first = written.reading_in(&scan, 0);
+        // The first read of a segment reads its header through a handle
+        // of its own; from the second the scan keeps one.
+        let before = read(&schema, &first, 160);
+        assert_eq!(before[2][0], Value::Int64(0));
+        assert_eq!(read(&schema, &first, 160), before);
+        assert_eq!(scan.held_files(), usize::from(cfg!(unix)));
+        let named = first.file_identity(&path);
+        assert_eq!(named, super::file_identity(&path));
+
+        // The same name, other rows, while the scan is under way: the scan
+        // goes on naming the file it began with, and so does every copy of
+        // the entry read in it.
+        let (_, rewritten) = numbered_segment(directory.path(), 0..176, 3);
+        assert_eq!(written.file_name, rewritten.file_name);
+        assert_ne!(super::file_identity(&path), named);
+        assert_eq!(first.file_identity(&path), named);
+        assert_eq!(first.clone().file_identity(&path), named);
+        // And goes on reading it, through the handle it holds.
+        if cfg!(unix) {
+            assert_eq!(read(&schema, &first, 160), before);
+        }
+
+        // Outside a scan the file system is asked every time and nothing
+        // is held, and a scan that starts afterwards names the file that
+        // is there now.
+        assert_eq!(written.file_identity(&path), super::file_identity(&path));
+        let later =
+            rewritten.reading_in(&std::sync::Arc::new(super::ScanFiles::for_segments(1)), 0);
+        assert_eq!(later.file_identity(&path), super::file_identity(&path));
+        assert_eq!(read(&schema, &later, 176)[2][0], Value::Int64(3));
     }
 
     /// The encoding tag of every block of the user column `column_id`.
