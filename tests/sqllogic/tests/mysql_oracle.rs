@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2770;
+const EXPECTED_CASES: usize = 2777;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4481,6 +4481,63 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "microsecond intervals",
             "SELECT o.id FROM orders o WHERE o.placed_at + INTERVAL o.id MICROSECOND \
              > '2025-01-01 00:00:00.000007' ORDER BY o.id",
+        ),
+        ordered(
+            "window distribution and nth value",
+            "SELECT id, CUME_DIST() OVER (ORDER BY score), PERCENT_RANK() OVER (ORDER BY score), \
+             CUME_DIST() OVER (PARTITION BY active ORDER BY note), \
+             PERCENT_RANK() OVER (PARTITION BY active ORDER BY note DESC), \
+             CUME_DIST() OVER (), PERCENT_RANK() OVER () FROM events ORDER BY id",
+        ),
+        ordered(
+            "window distribution and nth value",
+            "SELECT o.id, CUME_DIST() OVER w, PERCENT_RANK() OVER w, \
+             ROUND(100 * PERCENT_RANK() OVER (ORDER BY o.total), 1), \
+             PERCENT_RANK() OVER (PARTITION BY o.id ORDER BY o.total) \
+             FROM orders o WINDOW w AS (PARTITION BY o.user_id ORDER BY o.total) ORDER BY o.id",
+        ),
+        ordered(
+            "window distribution and nth value",
+            "SELECT status, SUM(total), CUME_DIST() OVER (ORDER BY SUM(total)), \
+             PERCENT_RANK() OVER (ORDER BY SUM(total)), \
+             NTH_VALUE(status, 2) OVER (ORDER BY SUM(total), status) \
+             FROM orders GROUP BY status ORDER BY status",
+        ),
+        ordered(
+            "window distribution and nth value",
+            "SELECT * FROM (SELECT id, CUME_DIST() OVER (ORDER BY note) AS cd, \
+             PERCENT_RANK() OVER (ORDER BY note) AS pr FROM events) t WHERE cd > 0.5 ORDER BY id",
+        ),
+        ordered(
+            "window distribution and nth value",
+            "SELECT id, NTH_VALUE(score, 2) OVER (ORDER BY id), NTH_VALUE(name, 3) OVER (ORDER BY id), \
+             NTH_VALUE(score, 99) OVER (), \
+             NTH_VALUE(id, 2) OVER (PARTITION BY active ORDER BY note, id), \
+             NTH_VALUE(id, 4) OVER (ORDER BY note, id), \
+             NTH_VALUE(note, 4) OVER (PARTITION BY active ORDER BY id DESC), \
+             NTH_VALUE(id, 1) OVER (ORDER BY id DESC) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window distribution and nth value",
+            "SELECT id, NTH_VALUE(id, 2) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING), \
+             NTH_VALUE(id, 3) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING), \
+             NTH_VALUE(id, 2) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING), \
+             NTH_VALUE(id, 3) OVER (ORDER BY score RANGE BETWEEN 20 PRECEDING AND CURRENT ROW), \
+             NTH_VALUE(id, 2) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING AND 5 FOLLOWING) \
+             FROM events ORDER BY id",
+        ),
+        // A frame written on a ranking or offset function is accepted and
+        // not used.
+        ordered(
+            "window distribution and nth value",
+            "SELECT id, RANK() OVER (ORDER BY note ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), \
+             ROW_NUMBER() OVER (ORDER BY id ROWS UNBOUNDED PRECEDING), \
+             DENSE_RANK() OVER (ORDER BY note RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), \
+             NTILE(3) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING), \
+             LAG(id) OVER (ORDER BY id ROWS 1 PRECEDING), \
+             LEAD(id) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING), \
+             CUME_DIST() OVER (ORDER BY note ROWS 1 PRECEDING), \
+             PERCENT_RANK() OVER (ORDER BY note ROWS 1 PRECEDING) FROM events ORDER BY id",
         ),
     ]
     .into_iter()

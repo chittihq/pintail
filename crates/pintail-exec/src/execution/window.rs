@@ -50,6 +50,7 @@ enum CompiledWindowFunction {
     NTile(u64),
     Extreme {
         last: bool,
+        nth: u64,
         argument: CompiledExpr,
     },
 }
@@ -101,8 +102,9 @@ impl CompiledWindow {
                     .transpose()?,
             },
             WindowFunction::NTile(buckets) => CompiledWindowFunction::NTile(*buckets),
-            WindowFunction::Extreme { last, expr } => CompiledWindowFunction::Extreme {
+            WindowFunction::Extreme { last, nth, expr } => CompiledWindowFunction::Extreme {
                 last: *last,
+                nth: *nth,
                 argument: CompiledExpr::compile(expr, columns, collation)?,
             },
             WindowFunction::RowNumber => CompiledWindowFunction::RowNumber,
@@ -1571,34 +1573,44 @@ fn compute_window_column(
                     assigned += size;
                 }
             }
-            CompiledWindowFunction::Extreme { last, .. } => {
+            CompiledWindowFunction::Extreme { last, nth, .. } => {
                 let value_position = partition_len + window.order.len();
+                // The framed row counted from the frame's first, from zero.
+                let skipped = usize::try_from(*nth - 1).unwrap_or(usize::MAX);
                 if let Some(frame) = window.frame {
                     // An explicit frame governs which row is read. Binding a
                     // frame and then ignoring it would answer the default
                     // frame's question under the caller's syntax.
                     for index in 0..partition.len() {
                         let (start, end) = frame_extent(frame, index)?;
-                        // An empty frame has no value to read.
-                        let value = if start >= end {
-                            Value::Null
+                        // An empty frame has no value to read, and neither
+                        // has one shorter than the row asked for.
+                        let source = if *last {
+                            end.checked_sub(1)
                         } else {
-                            let source = if *last { end - 1 } else { start };
-                            keys[partition[source]][value_position].clone()
+                            start.checked_add(skipped)
+                        };
+                        let value = match source {
+                            Some(source) if start <= source && source < end => {
+                                keys[partition[source]][value_position].clone()
+                            }
+                            _ => Value::Null,
                         };
                         memory.reserve(value.heap_bytes())?;
                         results[partition[index]] = value;
                     }
-                } else if !*last || window.order.is_empty() {
+                } else if window.order.is_empty() || (!*last && skipped == 0) {
                     // FIRST_VALUE reads the partition's first row; without
                     // ORDER BY the frame is the whole partition, so
-                    // LAST_VALUE reads its last.
+                    // LAST_VALUE reads its last and NTH_VALUE the row it
+                    // counts to, when the partition is that long.
                     let source = if *last {
-                        *partition.last().expect("partitions are non-empty")
+                        partition.last()
                     } else {
-                        partition[0]
+                        partition.get(skipped)
                     };
-                    let value = keys[source][value_position].clone();
+                    let value =
+                        source.map_or(Value::Null, |source| keys[*source][value_position].clone());
                     for row in partition {
                         memory.reserve(value.heap_bytes())?;
                         results[*row] = value.clone();
@@ -1607,7 +1619,8 @@ fn compute_window_column(
                     // Under MySQL's default frame LAST_VALUE is the last row
                     // of the CURRENT PEER GROUP, not of the partition. This
                     // surprises people, and matching it is the whole point of
-                    // pinning it against the oracle.
+                    // pinning it against the oracle. NTH_VALUE reads the
+                    // same frame: its row exists once the frame reaches it.
                     let mut group_start = 0;
                     while group_start < partition.len() {
                         let mut group_end = group_start + 1;
@@ -1616,7 +1629,14 @@ fn compute_window_column(
                         {
                             group_end += 1;
                         }
-                        let value = keys[partition[group_end - 1]][value_position].clone();
+                        let source = if *last {
+                            Some(group_end - 1)
+                        } else {
+                            Some(skipped).filter(|source| *source < group_end)
+                        };
+                        let value = source.map_or(Value::Null, |source| {
+                            keys[partition[source]][value_position].clone()
+                        });
                         for row in &partition[group_start..group_end] {
                             memory.reserve(value.heap_bytes())?;
                             results[*row] = value.clone();

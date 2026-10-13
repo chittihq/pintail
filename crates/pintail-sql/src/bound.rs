@@ -1703,10 +1703,15 @@ pub enum WindowFunction {
     },
     /// `NTILE(buckets)`: the current row's bucket, 1-based.
     NTile(u64),
-    /// `FIRST_VALUE` / `LAST_VALUE` over the frame.
+    /// `FIRST_VALUE` / `LAST_VALUE` / `NTH_VALUE` over the frame.
     Extreme {
-        /// Whether the last framed row is taken rather than the first.
+        /// Whether the last framed row is taken rather than one counted
+        /// from the first.
         last: bool,
+        /// Which framed row is taken, counted from one at the frame's first
+        /// row: one for `FIRST_VALUE`, `NTH_VALUE`'s constant otherwise. A
+        /// frame with fewer rows answers NULL. Unused when `last` is set.
+        nth: u64,
         /// Value expression.
         expr: Box<BoundExpr>,
     },

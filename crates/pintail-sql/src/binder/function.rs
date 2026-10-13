@@ -184,6 +184,91 @@ fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
     }
 }
 
+/// `PERCENT_RANK()` and `CUME_DIST()` as the ratios they are defined to be,
+/// over the windows that already exist: a row's rank less one against the
+/// other rows of its partition, and the rows up to and including its peers
+/// against the whole partition. Both are floats, and a partition of one row
+/// answers 0 and 1. A frame written on either is not used, as in `MySQL`.
+pub(super) fn distribution_window(function: &Function) -> Option<Expr> {
+    use sqlparser::ast::{BinaryOperator, FunctionArgumentList, Ident, ObjectName};
+    let name = function.name.to_string().to_ascii_uppercase();
+    let percent_rank = match name.as_str() {
+        "PERCENT_RANK" => true,
+        "CUME_DIST" => false,
+        _ => return None,
+    };
+    let FunctionArguments::List(arguments) = &function.args else {
+        return None;
+    };
+    if !arguments.args.is_empty() || !arguments.clauses.is_empty() {
+        return None;
+    }
+    let Some(WindowType::WindowSpec(spec)) = &function.over else {
+        return None;
+    };
+    if spec.window_name.is_some() {
+        return None;
+    }
+    let call = |name: &str, args: Vec<FunctionArg>, over: Option<WindowType>| {
+        let mut call = function.clone();
+        call.name = ObjectName::from(vec![Ident::new(name)]);
+        call.args = FunctionArguments::List(FunctionArgumentList {
+            duplicate_treatment: None,
+            args,
+            clauses: Vec::new(),
+        });
+        call.over = over;
+        Expr::Function(call)
+    };
+    let mut ordered = spec.clone();
+    ordered.window_frame = None;
+    let mut partition = ordered.clone();
+    partition.order_by = Vec::new();
+    let count = |spec: sqlparser::ast::WindowSpec| {
+        call(
+            "COUNT",
+            vec![FunctionArg::Unnamed(FunctionArgExpr::Wildcard)],
+            Some(WindowType::WindowSpec(spec)),
+        )
+    };
+    let float = |digits: &str| {
+        Expr::Value(SqlValue::Number(digits.to_owned(), false).with_empty_span())
+    };
+    let binary = |left: Expr, op: BinaryOperator, right: Expr| {
+        Expr::Nested(Box::new(Expr::BinaryOp {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        }))
+    };
+    Some(if percent_rank {
+        let rank = call("RANK", Vec::new(), Some(WindowType::WindowSpec(ordered)));
+        let others = call(
+            "GREATEST",
+            vec![
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(binary(
+                    count(partition),
+                    BinaryOperator::Minus,
+                    float("1e0"),
+                ))),
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(float("1e0"))),
+            ],
+            None,
+        );
+        binary(
+            binary(rank, BinaryOperator::Minus, float("1")),
+            BinaryOperator::Divide,
+            others,
+        )
+    } else {
+        binary(
+            count(ordered),
+            BinaryOperator::Divide,
+            binary(count(partition), BinaryOperator::Plus, float("0e0")),
+        )
+    })
+}
+
 /// A top-level `function(...) OVER (...)` projection item.
 #[allow(clippy::too_many_lines)]
 pub(super) fn bind_window_function(
@@ -305,15 +390,34 @@ pub(super) fn bind_window_function(
             Some(DataType::UInt64),
             false,
         )
-    } else if matches!(upper.as_str(), "FIRST_VALUE" | "LAST_VALUE") {
-        let [FunctionArg::Unnamed(FunctionArgExpr::Expr(expr))] = arguments.args.as_slice() else {
-            return Err(BindError::UnsupportedExpression(function.to_string()));
+    } else if matches!(upper.as_str(), "FIRST_VALUE" | "LAST_VALUE" | "NTH_VALUE") {
+        // NTH_VALUE takes the row's position as a constant positive integer.
+        let (expr, nth) = match arguments.args.as_slice() {
+            [FunctionArg::Unnamed(FunctionArgExpr::Expr(expr))] if upper != "NTH_VALUE" => {
+                (expr, 1)
+            }
+            [
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)),
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(position)),
+            ] if upper == "NTH_VALUE" => {
+                let position =
+                    bind_expr_inner(position, tables, &mut None, &mut None, subqueries)?;
+                match position.kind {
+                    BoundExprKind::Literal(Value::Int64(nth)) if nth > 0 => {
+                        (expr, nth.unsigned_abs())
+                    }
+                    BoundExprKind::Literal(Value::UInt64(nth)) if nth > 0 => (expr, nth),
+                    _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+                }
+            }
+            _ => return Err(BindError::UnsupportedExpression(function.to_string())),
         };
         let bound = bind_expr_inner(expr, tables, aggregates, &mut None, subqueries)?;
         let value_type = bound.data_type;
         (
             WindowFunction::Extreme {
                 last: upper == "LAST_VALUE",
+                nth,
                 expr: Box::new(bound),
             },
             value_type,
@@ -400,20 +504,17 @@ pub(super) fn bind_window_function(
         ));
     }
     let frame = bind_window_frame(spec, function, &order_by)?;
-    // FIRST_VALUE and LAST_VALUE read the frame by definition — LAST_VALUE's
-    // whole reputation for surprise comes from the default frame — so a
-    // frame on them is meaningful. Ranking and offset functions ignore or
-    // forbid one, and rejecting beats silently dropping it.
-    if frame.is_some()
-        && !matches!(
+    // FIRST_VALUE, LAST_VALUE and NTH_VALUE read the frame by definition —
+    // LAST_VALUE's whole reputation for surprise comes from the default
+    // frame — so a frame on them is meaningful. The ranking and offset
+    // functions answer over the whole partition: `MySQL` accepts a frame
+    // written on one and does not use it, so it is checked and set aside.
+    let frame = frame.filter(|_| {
+        matches!(
             window_function,
             WindowFunction::Aggregate(_) | WindowFunction::Extreme { .. }
         )
-    {
-        return Err(BindError::UnsupportedQueryClause(format!(
-            "window frame on {function}"
-        )));
-    }
+    });
     let window = BoundWindow {
         function: window_function,
         partition_by: partition_by

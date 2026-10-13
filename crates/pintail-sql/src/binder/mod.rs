@@ -4208,6 +4208,9 @@ fn bind_expr_inner(
         // list (WHERE, HAVING, aggregate arguments) still reject it.
         Expr::Function(function) if function.over.is_some() => {
             if windows.is_some() {
+                if let Some(ratio) = function::distribution_window(function) {
+                    return bind_expr_inner(&ratio, tables, aggregates, windows, subqueries);
+                }
                 bind_window_function(function, tables, aggregates, windows, subqueries)
             } else {
                 Err(BindError::UnsupportedExpression(expr.to_string()))
