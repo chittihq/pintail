@@ -1439,10 +1439,9 @@ mod resumed_copy {
                     directory.path().join(&file_name),
                 )
                 .unwrap();
-                let mut copy = original.clone();
-                copy.id = id;
-                copy.file_name = file_name;
-                manifest.segments.push(copy);
+                manifest
+                    .segments
+                    .push(original.republished_as(id, file_name));
                 manifest.next_segment_id += 1;
             }
             manifest.generation += 1;

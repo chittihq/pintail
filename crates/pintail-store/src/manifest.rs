@@ -7,7 +7,7 @@ use crate::{
     StoreError,
     codec::{Decoder, Encoder, decode_key, encode_key},
     segment::{
-        ColumnSma, SegmentMeta, SegmentSmas, SmaExtremes, SmaSum, schema_fingerprint,
+        ColumnSma, SegmentFacts, SegmentMeta, SegmentSmas, SmaExtremes, SmaSum, schema_fingerprint,
         sync_directory,
     },
     sketch::{DistinctSketch, SKETCH_REGISTERS},
@@ -135,7 +135,7 @@ pub(crate) fn segment_files_at_rest(directory: &Path) -> Result<Vec<String>, Sto
         manifest
             .segments
             .into_iter()
-            .map(|segment| segment.file_name)
+            .map(|segment| segment.file_name.clone())
             .collect()
     }))
 }
@@ -269,7 +269,7 @@ fn read(directory: &Path) -> Result<Option<Manifest>, StoreError> {
         } else {
             None
         };
-        segments.push(SegmentMeta {
+        segments.push(SegmentMeta::new(SegmentFacts {
             id,
             file_name,
             row_count,
@@ -281,7 +281,7 @@ fn read(directory: &Path) -> Result<Option<Manifest>, StoreError> {
             bloom,
             unique_keys,
             smas,
-        });
+        }));
     }
     decoder
         .finish()

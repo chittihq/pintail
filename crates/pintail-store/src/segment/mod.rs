@@ -334,8 +334,43 @@ fn reserve_scan_memory(
     }
 }
 
+/// One published segment as the manifest records it.
+///
+/// Shared, not copied: a scan holds every segment it reads, and a table
+/// has as many as it has had flushes and merges since its last full merge.
+/// Copying the keys, the filter and the aggregates of each one for each
+/// statement was the larger part of opening a scan that then read none of
+/// their blocks.
 #[derive(Clone, Debug)]
-pub(crate) struct SegmentMeta {
+pub(crate) struct SegmentMeta(std::sync::Arc<SegmentFacts>);
+
+impl SegmentMeta {
+    pub(crate) fn new(facts: SegmentFacts) -> Self {
+        Self(std::sync::Arc::new(facts))
+    }
+
+    /// The entry of the same rows published again as another file.
+    #[cfg(test)]
+    pub(crate) fn republished_as(&self, id: u64, file_name: String) -> Self {
+        Self::new(SegmentFacts {
+            id,
+            file_name,
+            ..(*self.0).clone()
+        })
+    }
+}
+
+impl std::ops::Deref for SegmentMeta {
+    type Target = SegmentFacts;
+
+    fn deref(&self) -> &SegmentFacts {
+        &self.0
+    }
+}
+
+/// What [`SegmentMeta`] shares.
+#[derive(Clone, Debug)]
+pub(crate) struct SegmentFacts {
     pub(crate) id: u64,
     pub(crate) file_name: String,
     pub(crate) row_count: u64,
@@ -1242,7 +1277,7 @@ fn write_columns(
     })?;
     sync_directory(directory)?;
 
-    Ok(SegmentMeta {
+    Ok(SegmentMeta::new(SegmentFacts {
         id,
         file_name,
         row_count: rows.len() as u64,
@@ -1254,7 +1289,7 @@ fn write_columns(
         bloom,
         unique_keys,
         smas: Some(compute_segment_smas(schema, rows, &sketches)),
-    })
+    }))
 }
 
 pub(crate) fn read(
