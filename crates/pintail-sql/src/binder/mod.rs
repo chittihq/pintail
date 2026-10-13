@@ -289,13 +289,17 @@ impl<'catalog> Binder<'catalog> {
         let resolve_subquery = |query: &Query, columns: &[BoundColumn]| {
             self.bind_subquery_outputs(query, &ctes, &scope, columns)
         };
-        bind_order_by(
-            self.source,
-            query,
-            &mut bound,
-            &resolve_subquery,
-            &self.next_derived_id,
-        )?;
+        // A table value constructor's own ORDER BY is read and not applied:
+        // `MySQL` returns the rows as written, and LIMIT counts from there.
+        if !matches!(query.body.as_ref(), SetExpr::Values(_)) {
+            bind_order_by(
+                self.source,
+                query,
+                &mut bound,
+                &resolve_subquery,
+                &self.next_derived_id,
+            )?;
+        }
         bound.limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
         calendar_copy::check_copies(&mut bound);
         let bound = pre_aggregate::apply(bound, |table, relation, input| {
@@ -569,6 +573,9 @@ impl<'catalog> Binder<'catalog> {
                 };
                 left.set_ops.push((kind, right));
                 Ok(left)
+            }
+            SetExpr::Values(values) if values.explicit_row => {
+                self.bind_set_expr(&row::values_query(values)?, ctes)
             }
             _ => Err(BindError::UnsupportedQueryBody(expression.to_string())),
         }

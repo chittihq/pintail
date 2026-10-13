@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2868;
+const EXPECTED_CASES: usize = 2884;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5055,6 +5055,71 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "row compared with a subquery",
             "SELECT u.id, (u.id, u.name) = (SELECT o.user_id, 'user-01' FROM orders o WHERE o.id = u.id) FROM users u ORDER BY u.id",
+        ),
+        // VALUES ROW(...) as a statement, a derived table, a CTE and a set operand.
+        ordered(
+            "table value constructor",
+            "VALUES ROW(1, 'a'), ROW(2, 'b'), ROW(3, NULL)",
+        ),
+        ordered(
+            "table value constructor",
+            "VALUES ROW(3, 'c'), ROW(1, 'a'), ROW(2, 'b') ORDER BY column_0",
+        ),
+        ordered(
+            "table value constructor",
+            "VALUES ROW(3, 'c'), ROW(1, 'a'), ROW(2, 'b') LIMIT 1 OFFSET 1",
+        ),
+        ordered(
+            "table value constructor",
+            "VALUES ROW(1 + 1, CONCAT('a', 'b'), NULL, 2.50)",
+        ),
+        ordered(
+            "table value constructor",
+            "SELECT * FROM (VALUES ROW(1, 'a'), ROW(2, 'b'), ROW(3, NULL)) AS v ORDER BY 1",
+        ),
+        ordered(
+            "table value constructor",
+            "SELECT column_0, column_1 FROM (VALUES ROW(1, 'a'), ROW(2, 'b')) AS v ORDER BY column_0 DESC",
+        ),
+        ordered(
+            "table value constructor",
+            "SELECT v.n, v.t FROM (VALUES ROW(1, 'a'), ROW(2, 'b')) AS v (n, t) ORDER BY v.n",
+        ),
+        ordered(
+            "table value constructor",
+            "SELECT e.id, v.t FROM events e JOIN (VALUES ROW(1, 'one'), ROW(4, 'four'), ROW(99, 'none')) AS v (n, t) ON v.n = e.id ORDER BY e.id",
+        ),
+        ordered(
+            "table value constructor",
+            "SELECT u.id, COALESCE(v.t, '-') FROM users u LEFT JOIN (VALUES ROW(1, 'one'), ROW(4, 'four')) AS v (n, t) ON v.n = u.id ORDER BY u.id",
+        ),
+        ordered(
+            "table value constructor",
+            "SELECT * FROM (VALUES ROW(1, 1.5), ROW(2, 2), ROW(-3, NULL)) AS v (a, b) WHERE a > 0 ORDER BY b DESC",
+        ),
+        ordered(
+            "table value constructor",
+            "SELECT * FROM (VALUES ROW(1), ROW('a'), ROW(2.5)) AS v ORDER BY 1",
+        ),
+        ordered(
+            "table value constructor",
+            "SELECT a, COUNT(*), GROUP_CONCAT(t ORDER BY t) FROM (VALUES ROW(1, 'x'), ROW(2, 'y'), ROW(2, 'z')) AS v (a, t) GROUP BY a ORDER BY a",
+        ),
+        ordered(
+            "table value constructor",
+            "SELECT id FROM events WHERE id IN (SELECT column_0 FROM (VALUES ROW(1), ROW(3), ROW(30)) AS v) ORDER BY id",
+        ),
+        ordered(
+            "table value constructor",
+            "WITH v (n, t) AS (VALUES ROW(1, 'a'), ROW(2, 'b')) SELECT n, t FROM v ORDER BY n DESC",
+        ),
+        ordered(
+            "table value constructor",
+            "VALUES ROW(1), ROW(2) UNION VALUES ROW(2), ROW(3) ORDER BY 1",
+        ),
+        ordered(
+            "table value constructor",
+            "VALUES ROW(1, 2.5, 'x'), ROW(NULL, 3, 'yy') UNION ALL SELECT 7, 8, 'z' ORDER BY 3",
         ),
     ]
     .into_iter()

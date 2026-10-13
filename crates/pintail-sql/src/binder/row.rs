@@ -198,6 +198,50 @@ fn subquery_row(subquery: &Query, width: usize) -> Result<Vec<Expr>, BindError> 
 /// The derived table a row-valued subquery is read through.
 const ROW_VALUE: &str = "<row-value>";
 
+/// `VALUES ROW(...), ROW(...)` as the query it is: one `SELECT` of each
+/// row's expressions, joined by `UNION ALL`, the columns named `column_0`,
+/// `column_1` and so on as `MySQL` names them. The set operation gives the
+/// rows their common column types.
+///
+/// # Errors
+///
+/// Rows of different widths, or no rows.
+pub(super) fn values_query(values: &sqlparser::ast::Values) -> Result<SetExpr, BindError> {
+    let unsupported = || BindError::UnsupportedQueryBody(values.to_string());
+    let Ok(sqlparser::ast::Statement::Query(template)) = crate::parse_statement("SELECT 1") else {
+        unreachable!("the template parses as a query");
+    };
+    let SetExpr::Select(template) = *template.body else {
+        unreachable!("the template's body is a SELECT");
+    };
+    let width = values.rows.first().map_or(0, |row| row.content.len());
+    let mut rows = Vec::with_capacity(values.rows.len());
+    for row in &values.rows {
+        if row.content.is_empty() || row.content.len() != width {
+            return Err(unsupported());
+        }
+        let mut select = template.clone();
+        select.projection = row
+            .content
+            .iter()
+            .enumerate()
+            .map(|(index, expr)| SelectItem::ExprWithAlias {
+                expr: expr.clone(),
+                alias: Ident::new(format!("column_{index}")),
+            })
+            .collect();
+        rows.push(SetExpr::Select(select));
+    }
+    rows.into_iter()
+        .reduce(|left, right| SetExpr::SetOperation {
+            op: sqlparser::ast::SetOperator::Union,
+            set_quantifier: sqlparser::ast::SetQuantifier::All,
+            left: Box::new(left),
+            right: Box::new(right),
+        })
+        .ok_or_else(unsupported)
+}
+
 fn all(pairs: Vec<(Expr, Expr)>, op: &BinaryOperator) -> Expr {
     pairs
         .into_iter()
