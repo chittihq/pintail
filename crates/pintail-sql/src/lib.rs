@@ -267,6 +267,7 @@ pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
         }
     }
     combine_prefixed_strings(&mut tokens, dialect.1);
+    read_bit_literals(&mut tokens);
     interval::rewrite(&mut tokens);
     let mut statements = Parser::new(&dialect)
         .with_tokens_with_locations(tokens)
@@ -284,6 +285,34 @@ pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
         debug_assert!(flow.is_continue());
     }
     Ok(statements)
+}
+
+/// `0b0101` is a bit literal, the same value as `b'0101'`. The tokenizer
+/// reads it as a word, since an identifier may start with a digit. A word
+/// that is `0b` and then only binary digits is the literal, as it is in
+/// `MySQL`, unless it follows a period, where it names a column; `0b`
+/// alone, `0b2` and `0B1` stay names.
+fn read_bit_literals(tokens: &mut [sqlparser::tokenizer::TokenWithSpan]) {
+    use sqlparser::tokenizer::Token;
+    let mut qualified = false;
+    for token in tokens {
+        let bits = match &token.token {
+            Token::Word(word) if !qualified && word.quote_style.is_none() => word
+                .value
+                .strip_prefix("0b")
+                .filter(|bits| {
+                    !bits.is_empty() && bits.bytes().all(|bit| matches!(bit, b'0' | b'1'))
+                })
+                .map(str::to_owned),
+            _ => None,
+        };
+        if !matches!(token.token, Token::Whitespace(_)) {
+            qualified = token.token == Token::Period;
+        }
+        if let Some(bits) = bits {
+            token.token = Token::SingleQuotedByteStringLiteral(bits);
+        }
+    }
 }
 
 /// An introducer qualifies the entire adjacent-string sequence. Combining its

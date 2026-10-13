@@ -193,6 +193,10 @@ stays readable as a list of things to fix.
   single zone letter. `CONVERT_TZ` and a comparison of computed text with a
   DATE or DATETIME column do not read a date that other text follows
   (`CONCAT(d, 'Z') = d` is 0 where MySQL answers 1).
+- A bit literal of sixty-four bits whose first is set (`b'1...'`, `0b1...`)
+  is unsigned in arithmetic, so adding zero to sixty-four ones gives
+  18446744073709551615 where MySQL reads the literal as signed and gives
+  -1. Bit operators, comparisons and casts agree.
 - `TIMESTAMPDIFF` does not take the `MICROSECOND` unit. Interval arithmetic
   (`INTERVAL n MICROSECOND`, `TIMESTAMPADD(MICROSECOND, ...)`) does.
 

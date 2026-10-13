@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2851;
+const EXPECTED_CASES: usize = 2855;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4985,6 +4985,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "network addresses",
             "SELECT id FROM events WHERE INET6_ATON(CONCAT('10.0.0.', score)) > INET6_ATON('10.0.0.50') ORDER BY INET6_ATON(CONCAT('::', 100 - score)), id",
+        ),
+        // 0b digits are a bit literal, the value b'...' spells.
+        ordered(
+            "bit literals",
+            "SELECT 0b101 + 0, 0b0 + 0, HEX(0b0100000101000010), 0b01000001 = 'A', CONCAT(0b01000001, 'x'), 0b1 + 0b1, LENGTH(0b111111111), b'101' + 0, 0b101 | 0, 0b1111 & 0b1010, 0b01000001 = 65",
+        ),
+        ordered(
+            "bit literals",
+            "SELECT CAST(0b01000001 AS CHAR), CAST(0b101 AS UNSIGNED), 0b01100001 LIKE 'a', -0b11, 0b11 * 2.5, BIT_COUNT(0b10110), HEX(0b1), HEX(0b100000000)",
+        ),
+        ordered(
+            "bit literals",
+            "SELECT id, score & 0b11, score > 0b101000, score + 0b1 FROM events WHERE score <> 0b110010 ORDER BY id",
+        ),
+        ordered(
+            "bit literals",
+            "SELECT id FROM events WHERE id IN (0b1, 0b11, 0b1010) AND score >= 0b1 ORDER BY id",
         ),
     ]
     .into_iter()
