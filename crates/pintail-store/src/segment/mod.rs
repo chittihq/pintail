@@ -664,145 +664,157 @@ pub(crate) fn sma_disjoint(meta: &SegmentMeta, bounds: &[ColumnBounds]) -> bool 
 /// Computes per-column SMAs for a segment's rows. Columns whose type or
 /// contents fall outside the supported statistics keep only the non-NULL
 /// count, which still answers COUNT(column).
+///
+/// A column's statistics read that column alone, so `spread` computes them
+/// across the ingest pool, a column to a thread; the result is the same
+/// either way.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn compute_segment_smas(
     schema: &TableSchema,
     rows: &[StoredRow],
     sketches: &BTreeMap<u32, crate::sketch::DistinctSketch>,
+    spread: bool,
 ) -> SegmentSmas {
     let tombstones = rows.iter().filter(|row| row.is_deleted()).count() as u64;
     let live_rows = rows.len() as u64 - tombstones;
-    let columns = schema
-        .columns()
-        .iter()
-        .enumerate()
-        .map(|(index, column)| {
-            let mut non_null = 0_u64;
-            let mut int_sum = Some(0_i128);
-            let mut int_extremes: Option<(i128, i128)> = None;
-            let mut float_sum = Some(0.0_f64);
-            let mut float_extremes: Option<(f64, f64)> = None;
-            let decimal_scale = match column.data_type() {
-                DataType::Decimal { scale, .. } => Some(scale),
-                _ => None,
-            };
-            // Temporal columns fold their native units (days/microseconds)
-            // into extremes; sums over dates are meaningless and stay unset.
-            let temporal_units = match column.data_type() {
-                DataType::Date32 | DataType::DateTime64 { .. } => {
-                    NativeUnits::for_data_type(column.data_type())
-                }
-                _ => None,
-            };
-            // One numeric family per column; the first value outside it
-            // clears every statistic except the non-NULL count.
-            let mut family: Option<u8> = None;
-            let mut supported = true;
-            for row in rows {
-                if row.is_deleted() {
-                    continue;
-                }
-                let value = &row.values()[index];
-                if matches!(value, Value::Null) {
-                    continue;
-                }
-                non_null += 1;
-                if !supported {
-                    continue;
-                }
-                let observed = match (value, decimal_scale, temporal_units) {
-                    (Value::Utf8(text), Some(scale), _) => {
-                        pintail_types::parse_decimal_scaled(text, scale)
-                            .map(|units| (3, units, 0.0))
-                    }
-                    (Value::Utf8(text), None, Some(units)) => units
-                        .parse_exact(text)
-                        .map(|value| (5, i128::from(value), 0.0)),
-                    (Value::Int64(value), None, None) => Some((1, i128::from(*value), 0.0)),
-                    (Value::UInt64(value), None, None) => Some((2, i128::from(*value), 0.0)),
-                    (Value::Float64(value), None, None) => Some((4, 0, value.get())),
-                    _ => None,
-                };
-                let Some((kind, integer, float)) = observed else {
-                    supported = false;
-                    continue;
-                };
-                if *family.get_or_insert(kind) != kind {
-                    supported = false;
-                    continue;
-                }
-                if kind == 4 {
-                    float_sum = float_sum
-                        .map(|sum| sum + float)
-                        .filter(|sum| sum.is_finite());
-                    float_extremes = Some(match float_extremes {
-                        Some((min, max)) => (min.min(float), max.max(float)),
-                        None => (float, float),
-                    });
-                } else {
-                    int_sum = int_sum.and_then(|sum| sum.checked_add(integer));
-                    int_extremes = Some(match int_extremes {
-                        Some((min, max)) => (min.min(integer), max.max(integer)),
-                        None => (integer, integer),
-                    });
-                }
+    let column_sma = |index: usize, column: &pintail_types::Column| {
+        let mut non_null = 0_u64;
+        let mut int_sum = Some(0_i128);
+        let mut int_extremes: Option<(i128, i128)> = None;
+        let mut float_sum = Some(0.0_f64);
+        let mut float_extremes: Option<(f64, f64)> = None;
+        let decimal_scale = match column.data_type() {
+            DataType::Decimal { scale, .. } => Some(scale),
+            _ => None,
+        };
+        // Temporal columns fold their native units (days/microseconds)
+        // into extremes; sums over dates are meaningless and stay unset.
+        let temporal_units = match column.data_type() {
+            DataType::Date32 | DataType::DateTime64 { .. } => {
+                NativeUnits::for_data_type(column.data_type())
             }
-            let (sum, extremes) = if !supported || non_null == 0 {
-                (None, None)
+            _ => None,
+        };
+        // One numeric family per column; the first value outside it
+        // clears every statistic except the non-NULL count.
+        let mut family: Option<u8> = None;
+        let mut supported = true;
+        for row in rows {
+            if row.is_deleted() {
+                continue;
+            }
+            let value = &row.values()[index];
+            if matches!(value, Value::Null) {
+                continue;
+            }
+            non_null += 1;
+            if !supported {
+                continue;
+            }
+            let observed = match (value, decimal_scale, temporal_units) {
+                (Value::Utf8(text), Some(scale), _) => {
+                    pintail_types::parse_decimal_scaled(text, scale).map(|units| (3, units, 0.0))
+                }
+                (Value::Utf8(text), None, Some(units)) => units
+                    .parse_exact(text)
+                    .map(|value| (5, i128::from(value), 0.0)),
+                (Value::Int64(value), None, None) => Some((1, i128::from(*value), 0.0)),
+                (Value::UInt64(value), None, None) => Some((2, i128::from(*value), 0.0)),
+                (Value::Float64(value), None, None) => Some((4, 0, value.get())),
+                _ => None,
+            };
+            let Some((kind, integer, float)) = observed else {
+                supported = false;
+                continue;
+            };
+            if *family.get_or_insert(kind) != kind {
+                supported = false;
+                continue;
+            }
+            if kind == 4 {
+                float_sum = float_sum
+                    .map(|sum| sum + float)
+                    .filter(|sum| sum.is_finite());
+                float_extremes = Some(match float_extremes {
+                    Some((min, max)) => (min.min(float), max.max(float)),
+                    None => (float, float),
+                });
             } else {
-                match family {
-                    Some(1) => (
-                        int_sum.map(SmaSum::Int),
-                        int_extremes.map(|(min, max)| SmaExtremes::Int {
-                            min: i64::try_from(min).expect("i64 addends"),
-                            max: i64::try_from(max).expect("i64 addends"),
-                        }),
-                    ),
-                    Some(2) => (
-                        int_sum.map(SmaSum::Int),
-                        int_extremes.map(|(min, max)| SmaExtremes::UInt {
-                            min: u64::try_from(min).expect("u64 addends"),
-                            max: u64::try_from(max).expect("u64 addends"),
-                        }),
-                    ),
-                    Some(3) => {
-                        let scale = decimal_scale.expect("decimal family implies scale");
-                        (
-                            int_sum.map(|units| SmaSum::DecimalUnits { units, scale }),
-                            int_extremes.map(|(min, max)| SmaExtremes::DecimalUnits {
-                                min,
-                                max,
-                                scale,
-                            }),
-                        )
-                    }
-                    Some(4) => (
-                        float_sum.map(SmaSum::Float),
-                        float_extremes.map(|(min, max)| SmaExtremes::Float { min, max }),
-                    ),
-                    Some(5) => (
-                        None,
-                        int_extremes.and_then(|(min, max)| {
-                            let units = temporal_units?;
-                            Some(SmaExtremes::Temporal {
-                                min: i64::try_from(min).expect("native units fit i64"),
-                                max: i64::try_from(max).expect("native units fit i64"),
-                                units,
-                            })
-                        }),
-                    ),
-                    _ => (None, None),
-                }
-            };
-            ColumnSma {
-                column_id: column.id(),
-                non_null,
-                sum,
-                extremes,
-                distinct: sketches.get(&column.id()).copied(),
+                int_sum = int_sum.and_then(|sum| sum.checked_add(integer));
+                int_extremes = Some(match int_extremes {
+                    Some((min, max)) => (min.min(integer), max.max(integer)),
+                    None => (integer, integer),
+                });
             }
+        }
+        let (sum, extremes) = if !supported || non_null == 0 {
+            (None, None)
+        } else {
+            match family {
+                Some(1) => (
+                    int_sum.map(SmaSum::Int),
+                    int_extremes.map(|(min, max)| SmaExtremes::Int {
+                        min: i64::try_from(min).expect("i64 addends"),
+                        max: i64::try_from(max).expect("i64 addends"),
+                    }),
+                ),
+                Some(2) => (
+                    int_sum.map(SmaSum::Int),
+                    int_extremes.map(|(min, max)| SmaExtremes::UInt {
+                        min: u64::try_from(min).expect("u64 addends"),
+                        max: u64::try_from(max).expect("u64 addends"),
+                    }),
+                ),
+                Some(3) => {
+                    let scale = decimal_scale.expect("decimal family implies scale");
+                    (
+                        int_sum.map(|units| SmaSum::DecimalUnits { units, scale }),
+                        int_extremes.map(|(min, max)| SmaExtremes::DecimalUnits {
+                            min,
+                            max,
+                            scale,
+                        }),
+                    )
+                }
+                Some(4) => (
+                    float_sum.map(SmaSum::Float),
+                    float_extremes.map(|(min, max)| SmaExtremes::Float { min, max }),
+                ),
+                Some(5) => (
+                    None,
+                    int_extremes.and_then(|(min, max)| {
+                        let units = temporal_units?;
+                        Some(SmaExtremes::Temporal {
+                            min: i64::try_from(min).expect("native units fit i64"),
+                            max: i64::try_from(max).expect("native units fit i64"),
+                            units,
+                        })
+                    }),
+                ),
+                _ => (None, None),
+            }
+        };
+        ColumnSma {
+            column_id: column.id(),
+            non_null,
+            sum,
+            extremes,
+            distinct: sketches.get(&column.id()).copied(),
+        }
+    };
+    let columns = if spread {
+        crate::ingest_pool::ingest_map(schema.columns().iter().collect(), |index, column| {
+            Ok::<_, std::convert::Infallible>(column_sma(index, column))
         })
-        .collect();
+        .unwrap_or_else(|never| match never {})
+    } else {
+        schema
+            .columns()
+            .iter()
+            .enumerate()
+            .map(|(index, column)| column_sma(index, column))
+            .collect()
+    };
     SegmentSmas {
         live_rows,
         tombstones,
@@ -1271,14 +1283,31 @@ fn write_columns(
     // value passes the exact round-trip probe is stored as fixed-width
     // units under wire type Int64; one failing value keeps the column on
     // the v1 text path.
-    for spec in &mut specs {
+    // Each column is probed on its own, so a spread write probes them
+    // across the pool as it encodes them.
+    #[cfg(test)]
+    let probed_format = written_format_version();
+    let probe = |spec: &ColumnSpec| {
+        // The probe depends on the format being written, which a test
+        // sets per thread: the thread probing this column has to share it.
+        #[cfg(test)]
+        write_format_version_for_test(probed_format);
         let ColumnSource::Value(index) = spec.source else {
-            continue;
+            return None;
         };
-        let Some(units) = NativeUnits::for_data_type(schema.columns()[index].data_type()) else {
-            continue;
-        };
-        if probe_native_column(units, rows, index).is_some() {
+        let units = NativeUnits::for_data_type(schema.columns()[index].data_type())?;
+        probe_native_column(units, rows, index).map(|_| units)
+    };
+    let natives = if spread {
+        crate::ingest_pool::ingest_map(specs.iter().collect(), |_, spec| {
+            Ok::<_, std::convert::Infallible>(probe(spec))
+        })
+        .unwrap_or_else(|never| match never {})
+    } else {
+        specs.iter().map(probe).collect::<Vec<_>>()
+    };
+    for (spec, native) in specs.iter_mut().zip(natives) {
+        if let Some(units) = native {
             spec.logical_type = LogicalType::Int64;
             spec.native = Some(units);
         }
@@ -1420,7 +1449,7 @@ fn write_columns(
         max_key,
         bloom,
         unique_keys,
-        smas: Some(compute_segment_smas(schema, rows, &sketches)),
+        smas: Some(compute_segment_smas(schema, rows, &sketches, spread)),
     }))
 }
 
@@ -7987,6 +8016,9 @@ mod range_read_tests {
         );
         assert_eq!(one.bloom, many.bloom);
         assert_eq!(one.row_count, many.row_count);
+        // The statistics are computed a column to a thread as well.
+        assert!(one.smas.is_some());
+        assert_eq!(one.smas, many.smas);
     }
 
     #[test]
