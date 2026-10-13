@@ -32,6 +32,10 @@ pub enum CompoundUnit {
     MinuteMicrosecond,
     /// `SECOND_MICROSECOND`, in microseconds.
     SecondMicrosecond,
+    /// Plain `MICROSECOND`: one field that counts microseconds one by one.
+    /// The binder builds it over a whole-number amount; it has no qualifier
+    /// spelling of its own and is never lowered from tokens.
+    Microsecond,
 }
 
 const UNITS: [(&str, CompoundUnit); 11] = [
@@ -95,6 +99,7 @@ impl CompoundUnit {
                 | Self::HourMicrosecond
                 | Self::MinuteMicrosecond
                 | Self::SecondMicrosecond
+                | Self::Microsecond
         )
     }
 
@@ -129,6 +134,7 @@ impl CompoundUnit {
             Self::HourMicrosecond => &[3_600_000_000, 60_000_000, 1_000_000, 1],
             Self::MinuteMicrosecond => &[60_000_000, 1_000_000, 1],
             Self::SecondMicrosecond => &[1_000_000, 1],
+            Self::Microsecond => &[1],
         }
     }
 
@@ -139,8 +145,10 @@ impl CompoundUnit {
     /// zeroes and text with no digits is zero. A dot is another separator
     /// rather than an implicit fraction, except that a microsecond field is
     /// the digits of a fraction of a second: `5` is half a second, and only
-    /// a field of six digits or more counts microseconds one by one. More
-    /// fields than the qualifier has is `None`, which `MySQL` answers as NULL.
+    /// a field of six digits or more counts microseconds one by one. A plain
+    /// `MICROSECOND` amount has no seconds field to be a fraction of and
+    /// counts as written. More fields than the qualifier has is `None`,
+    /// which `MySQL` answers as NULL.
     #[must_use]
     pub fn quantity(self, text: &str) -> Option<i64> {
         let weights = self.weights();
@@ -153,7 +161,7 @@ impl CompoundUnit {
         if fields.len() > weights.len() {
             return None;
         }
-        let fraction = self.counts_microseconds();
+        let fraction = self.counts_microseconds() && weights.len() > 1;
         let mut total = 0_i64;
         for (field, weight) in fields.iter().zip(&weights[weights.len() - fields.len()..]) {
             let mut value = field.parse::<i64>().ok()?;

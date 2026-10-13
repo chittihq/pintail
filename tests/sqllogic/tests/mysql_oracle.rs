@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2760;
+const EXPECTED_CASES: usize = 2770;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4409,6 +4409,78 @@ fn hand_written_cases() -> Vec<OracleCase> {
         unordered(
             "string function spellings",
             "SELECT RTRIM(tag) AS t, COUNT(*) FROM events GROUP BY RTRIM(tag)",
+        ),
+        // Modifiers that ask for a priority, a join order or a result copy.
+        ordered(
+            "advisory select modifiers",
+            "SELECT STRAIGHT_JOIN u.id, COUNT(o.id) FROM users u LEFT JOIN orders o \
+             ON o.user_id = u.id GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "advisory select modifiers",
+            "SELECT HIGH_PRIORITY SQL_BUFFER_RESULT id, name FROM users WHERE id < 4 ORDER BY id",
+        ),
+        // An amount of a whole-number unit rounds: a decimal half away from
+        // zero, a float half to even, and text stops at its integer.
+        ordered(
+            "fractional interval amounts",
+            "SELECT '2024-01-01' + INTERVAL 1.5 DAY, '2024-01-01' + INTERVAL '1.5' DAY, \
+             '2024-01-01' + INTERVAL 2.5 DAY, '2024-01-01' + INTERVAL -1.5 DAY, \
+             '2024-01-01' + INTERVAL 1.5 YEAR, '2024-01-01' + INTERVAL 1.5 MONTH, \
+             '2024-01-01' + INTERVAL 1.4 QUARTER, '2024-01-01' + INTERVAL 1.5 WEEK, \
+             '2024-01-01' + INTERVAL 1.5 HOUR, '2024-01-01' + INTERVAL 0.5 MINUTE, \
+             '2024-01-01' - INTERVAL 0.5 DAY, '2024-01-01' + INTERVAL 0.4 DAY, \
+             '2024-01-01' + INTERVAL 2.5e0 DAY, '2024-01-01' + INTERVAL -0.5e0 DAY",
+        ),
+        ordered(
+            "fractional interval amounts",
+            "SELECT id, day + INTERVAL frac DAY, day + INTERVAL approx DAY, \
+             dt3 - INTERVAL frac HOUR, day + INTERVAL approx MONTH, \
+             TIMESTAMPADD(WEEK, approx, day), TIMESTAMPADD(MINUTE, frac, dt0), \
+             ADDDATE(day, frac), SUBDATE(day, approx), dt3 + INTERVAL frac SECOND \
+             FROM bounds WHERE id BETWEEN 2 AND 5 ORDER BY id",
+        ),
+        ordered(
+            "fractional interval amounts",
+            "SELECT o.id, DATE_ADD(o.placed_at, INTERVAL o.total / 7 DAY), \
+             o.placed_at - INTERVAL o.total MINUTE FROM orders o WHERE o.id <> 4 ORDER BY o.id",
+        ),
+        ordered(
+            "microsecond intervals",
+            "SELECT '2024-01-01 00:00:00' + INTERVAL 1.5 MICROSECOND, \
+             '2024-01-01 00:00:00' + INTERVAL '1.5' MICROSECOND, \
+             '2024-01-01' + INTERVAL 2.5 MICROSECOND, '2024-01-01' + INTERVAL -3 MICROSECOND, \
+             '2024-01-01' + INTERVAL NULL MICROSECOND, '2024-01-01' + INTERVAL 'abc' MICROSECOND, \
+             '2024-01-01' + INTERVAL 86400000000 MICROSECOND, '2024-01-01' + INTERVAL 1e3 MICROSECOND",
+        ),
+        ordered(
+            "microsecond intervals",
+            "SELECT '2024-01-01 00:00:00.5' + INTERVAL 500000 MICROSECOND, \
+             TIME '10:00:00' + INTERVAL 1 MICROSECOND, DATE '2024-01-01' - INTERVAL 1 MICROSECOND, \
+             INTERVAL 9 MICROSECOND + '2024-01-01', \
+             '2024-01-01' + INTERVAL MICROSECOND('00:00:00.000123') MICROSECOND, \
+             '9999-12-31 23:59:59.999999' + INTERVAL 1 MICROSECOND, \
+             '2024-01-01' + INTERVAL 0 MICROSECOND, DATE '2024-01-01' + INTERVAL 0 MICROSECOND",
+        ),
+        ordered(
+            "microsecond intervals",
+            "SELECT id, day + INTERVAL 5 MICROSECOND, DATE_ADD(dt3, INTERVAL 1500 MICROSECOND), \
+             DATE_SUB(dt6, INTERVAL 1 MICROSECOND), dt0 - INTERVAL n MICROSECOND, \
+             dt3 + INTERVAL frac MICROSECOND, dt3 + INTERVAL approx MICROSECOND, \
+             dt3 + INTERVAL txt MICROSECOND, ADDDATE(dt0, INTERVAL 3 MICROSECOND), \
+             SUBDATE(day, INTERVAL 3 MICROSECOND) FROM bounds WHERE id BETWEEN 3 AND 5 OR id = 8 \
+             ORDER BY id",
+        ),
+        ordered(
+            "microsecond intervals",
+            "SELECT id, clock + INTERVAL 250 MICROSECOND, TIMESTAMPADD(MICROSECOND, 7, dt3), \
+             TIMESTAMPADD(MICROSECOND, id, day), TIMESTAMPADD(MICROSECOND, -1, stamp) \
+             FROM bounds WHERE id BETWEEN 2 AND 6 ORDER BY id",
+        ),
+        ordered(
+            "microsecond intervals",
+            "SELECT o.id FROM orders o WHERE o.placed_at + INTERVAL o.id MICROSECOND \
+             > '2025-01-01 00:00:00.000007' ORDER BY o.id",
         ),
     ]
     .into_iter()

@@ -162,9 +162,9 @@ stays readable as a list of things to fix.
 - Locale-specific collation profiles remain unsupported, and so do the `NONE`
   and `SYSCONST` coercibility rungs: an expression mixing collations carries
   its resolved one rather than `NONE` (#10).
-- Date parsing is limited to canonical date and date-time forms. The plain
-  `MICROSECOND` interval unit is not implemented; the compound
-  `*_MICROSECOND` qualifiers are.
+- Date parsing is limited to canonical date and date-time forms.
+- `TIMESTAMPDIFF` does not take the `MICROSECOND` unit. Interval arithmetic
+  (`INTERVAL n MICROSECOND`, `TIMESTAMPADD(MICROSECOND, ...)`) does.
 
 - Unix timestamp conversions round excess fractional digits to microseconds;
   `TIME_TRUNCATE_FRACTIONAL` does not switch them to truncation.

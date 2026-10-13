@@ -955,13 +955,27 @@ fn bind_timestamp_add(
     let Expr::Identifier(unit) = unit else {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
+    if unit.value.eq_ignore_ascii_case("MICROSECOND") {
+        let datetime = bind_expr_inner(datetime, tables, aggregates, windows, subqueries)?;
+        let amount = bind_expr_inner(amount, tables, aggregates, windows, subqueries)?;
+        return bind_scalar(
+            ScalarFunction::DateInterval {
+                unit: IntervalUnit::Second,
+                subtract: false,
+            },
+            vec![datetime, microsecond_amount(amount)?],
+        );
+    }
     let Some((unit, factor)) = interval_unit_named(&unit.value) else {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
     let datetime = bind_expr_inner(datetime, tables, aggregates, windows, subqueries)?;
-    let amount = scaled_amount(
-        bind_expr_inner(amount, tables, aggregates, windows, subqueries)?,
-        factor,
+    let amount = whole_amount(
+        scaled_amount(
+            bind_expr_inner(amount, tables, aggregates, windows, subqueries)?,
+            factor,
+        )?,
+        unit,
     )?;
     bind_scalar(
         ScalarFunction::DateInterval {
@@ -1032,6 +1046,19 @@ pub(super) fn bind_interval_arithmetic(
     {
         return Err(BindError::UnsupportedExpression(interval.to_string()));
     }
+    if matches!(interval.leading_field, Some(DateTimeField::Microsecond)) {
+        let amount = bind_expr_inner(&interval.value, tables, aggregates, windows, subqueries)?;
+        return bind_scalar(
+            ScalarFunction::DateInterval {
+                unit: IntervalUnit::Second,
+                subtract,
+            },
+            vec![
+                bind_expr_inner(date, tables, aggregates, windows, subqueries)?,
+                microsecond_amount(amount)?,
+            ],
+        );
+    }
     let Some((unit, factor)) = interval_unit_of(interval.leading_field.as_ref()) else {
         return Err(BindError::UnsupportedExpression(interval.to_string()));
     };
@@ -1040,9 +1067,37 @@ pub(super) fn bind_interval_arithmetic(
         ScalarFunction::DateInterval { unit, subtract },
         vec![
             bind_expr_inner(date, tables, aggregates, windows, subqueries)?,
-            scaled_amount(amount, factor)?,
+            whole_amount(scaled_amount(amount, factor)?, unit)?,
         ],
     )
+}
+
+/// An amount of microseconds as the seconds it is, written with six
+/// fractional digits. `MySQL` reads the amount as a whole number first - an
+/// exact fraction rounds, text stops at its leading integer - and the
+/// integer cast is that reading.
+fn microsecond_amount(amount: BoundExpr) -> Result<BoundExpr, BindError> {
+    let count = bind_scalar(ScalarFunction::Cast(DataType::Int64), vec![amount])?;
+    bind_scalar(
+        ScalarFunction::IntervalQuantity(crate::CompoundUnit::Microsecond),
+        vec![count],
+    )
+}
+
+/// A fractional amount of a unit counted in whole numbers. `MySQL` rounds
+/// it to the nearest whole number - an exact decimal half away from zero,
+/// so `INTERVAL 1.5 DAY` is two days, and a float half to even - and the
+/// integer cast rounds each the same way. Seconds keep their fraction.
+fn whole_amount(amount: BoundExpr, unit: IntervalUnit) -> Result<BoundExpr, BindError> {
+    if unit == IntervalUnit::Second
+        || !matches!(
+            amount.data_type,
+            Some(DataType::Decimal { .. } | DataType::Float32 | DataType::Float64)
+        )
+    {
+        return Ok(amount);
+    }
+    bind_scalar(ScalarFunction::Cast(DataType::Int64), vec![amount])
 }
 
 /// An interval unit as the unit it counts in and how many of those one of it
