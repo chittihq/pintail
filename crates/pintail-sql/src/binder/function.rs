@@ -412,14 +412,13 @@ pub(super) fn bind_window_function(
         )
     } else if matches!(upper.as_str(), "FIRST_VALUE" | "LAST_VALUE" | "NTH_VALUE") {
         // NTH_VALUE takes the row's position as a constant positive integer.
+        let positional = upper == "NTH_VALUE";
         let (expr, nth) = match arguments.args.as_slice() {
-            [FunctionArg::Unnamed(FunctionArgExpr::Expr(expr))] if upper != "NTH_VALUE" => {
-                (expr, 1)
-            }
+            [FunctionArg::Unnamed(FunctionArgExpr::Expr(expr))] if !positional => (expr, 1),
             [
                 FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)),
                 FunctionArg::Unnamed(FunctionArgExpr::Expr(position)),
-            ] if upper == "NTH_VALUE" => {
+            ] if positional => {
                 let position = bind_expr_inner(position, tables, &mut None, &mut None, subqueries)?;
                 match position.kind {
                     BoundExprKind::Literal(Value::Int64(nth)) if nth > 0 => {
