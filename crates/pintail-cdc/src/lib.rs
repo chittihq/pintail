@@ -580,6 +580,13 @@ async fn run_cdc_inner(
     let mut key_image = Vec::new();
     let mut durable;
     let mut phases = PhaseTimes::default();
+    // A commit budget makes every transaction its own batch and returns on
+    // the one that spends it, which leaves nothing to read ahead of.
+    let read_ahead = options.max_commits.is_none();
+    let read_ahead_rows = read_ahead_rows();
+    // The control-plane connection a batch stored off the stream writes
+    // through; opened for the first such batch.
+    let mut away_metadata: Option<MetaStore> = None;
     let mut commits = 0_usize;
     let cycle_started = Instant::now();
     // A followed catch-up reads a stream the source holds open, and ends on
@@ -628,6 +635,30 @@ async fn run_cdc_inner(
         // them. Every place that needs the stores and the checkpoint to
         // agree with the stream - a schema change, a return, a reconnect -
         // calls it first.
+        // What follows a stored batch, wherever it was stored.
+        macro_rules! account {
+            ($flushed:expr) => {
+                let flushed: FlushedBatch = $flushed;
+                commits += flushed.transactions;
+                mutations += flushed.mutations;
+                for index in flushed.passed_fences {
+                    // The durable position is past the snapshot's; the
+                    // fence has done its job across however many cycles
+                    // it took.
+                    if snapshot_fences.remove(&index).is_some() {
+                        metadata.delete_setting(&fence_key(
+                            database_id,
+                            &targets[index].source.name.to_ascii_lowercase(),
+                        ))?;
+                    }
+                }
+                progress(CdcProgress {
+                    commits,
+                    mutations,
+                    checkpoint: flushed.checkpoint,
+                });
+            };
+        }
         macro_rules! flush {
             () => {
                 if !batch.is_empty() {
@@ -640,24 +671,7 @@ async fn run_cdc_inner(
                         &mut durable,
                         &mut phases,
                     )?;
-                    commits += flushed.transactions;
-                    mutations += flushed.mutations;
-                    for index in flushed.passed_fences {
-                        // The durable position is past the snapshot's; the
-                        // fence has done its job across however many cycles
-                        // it took.
-                        if snapshot_fences.remove(&index).is_some() {
-                            metadata.delete_setting(&fence_key(
-                                database_id,
-                                &targets[index].source.name.to_ascii_lowercase(),
-                            ))?;
-                        }
-                    }
-                    progress(CdcProgress {
-                        commits,
-                        mutations,
-                        checkpoint: flushed.checkpoint,
-                    });
+                    account!(flushed);
                 }
             };
         }
@@ -743,13 +757,271 @@ async fn run_cdc_inner(
         // keyless table, keyed by version, overwrote one another, and a row
         // event compared against a snapshot fence always fell below it.
         let mut logged_position = position.pos;
+        // What the stream handed over while a batch was being stored and
+        // the read-ahead left for the loop below to act on.
+        let mut held_back: Option<Option<Result<mysql_async::binlog::events::Event, MysqlError>>> =
+            None;
+        // Ends the catch-up where it stands: the stream is between
+        // transactions and everything closed has been stored.
+        macro_rules! end_catch_up {
+            () => {
+                stream.close().await?;
+                pintail_log::log_debug!(
+                    "cdc cycle done db={database_id} events={events_read} commits={commits} \
+                     mutations={mutations} pos={}:{} {phases}",
+                    position.file,
+                    position.pos
+                );
+                settle_paused_skips(&metadata, database_id, &targets, &paused_skipped)?;
+                return finish_result(
+                    commits,
+                    mutations,
+                    &position,
+                    targets,
+                    options.stop.as_ref(),
+                    // Cut short by its budget or a stop: the source may
+                    // hold more.
+                    false,
+                    &blocked_targets,
+                );
+            };
+        }
+        // Stores the batch where nothing needs the stores at once. A large
+        // batch is written on another thread while this one goes on reading
+        // the stream: it decodes the row events that follow and closes
+        // their transactions into the next batch, so decoding and storing
+        // overlap instead of taking turns. Only what touches neither the
+        // stores nor the control plane is read that way - the rows of a
+        // table being streamed normally, and the events around them. The
+        // first event that needs more is held back until the batch is
+        // stored, and the loop then handles it as it always has. The order
+        // of everything durable is unchanged: one batch is stored and
+        // checkpointed at a time, and the next is not started before it.
+        macro_rules! store {
+            () => {
+                if read_ahead && batch.mutations >= read_ahead_rows && batch.staged.is_empty() {
+                    let mut writer = match away_metadata.take() {
+                        Some(writer) => writer,
+                        None => MetaStore::open(metadata_path)?,
+                    };
+                    let sources = targets
+                        .iter()
+                        .map(|target| target.source.clone())
+                        .collect::<Vec<_>>();
+                    let mut storing = std::mem::take(&mut batch);
+                    batch.cascade_watchers.clone_from(&storing.cascade_watchers);
+                    let stored_position = position.clone();
+                    let mut away = std::mem::take(&mut targets);
+                    let mut point = std::mem::take(&mut durable);
+                    let owner = database_id.to_owned();
+                    let store_task = tokio::task::spawn_blocking(move || {
+                        let mut spent = PhaseTimes::default();
+                        let outcome = flush_batch(
+                            &mut away,
+                            &mut writer,
+                            &owner,
+                            &stored_position,
+                            &mut storing,
+                            &mut point,
+                            &mut spent,
+                        );
+                        (away, writer, point, spent, outcome)
+                    });
+                    tokio::pin!(store_task);
+                    let mut yielding = false;
+                    let landed = loop {
+                        if held_back.is_some()
+                            || yielding
+                            || batch.bytes >= BATCH_BYTES
+                            || batch.transactions >= BATCH_TRANSACTIONS
+                        {
+                            break (&mut store_task).await;
+                        }
+                        let next = tokio::select! {
+                            biased;
+                            landed = &mut store_task => break landed,
+                            next = stream.next() => next,
+                        };
+                        let closed_ahead = batch.transactions;
+                        let consumed = 'ahead: {
+                            let Some(Ok(event)) = &next else {
+                                break 'ahead false;
+                            };
+                            let event_type = event.header().event_type_raw();
+                            let logged = u64::from(event.header().log_pos());
+                            let event_position = if logged > 0 { logged } else { logged_position };
+                            if let Some(data) = self::event::decode_event(event)? {
+                                match data {
+                                    EventData::GtidEvent(gtid) => {
+                                        position.pending_gtid = Some(GtidIdentity {
+                                            sid: gtid.sid(),
+                                            tag: gtid.tag().map(ToString::to_string),
+                                            sequence: gtid.gno(),
+                                        });
+                                        pending.ordinal = 0;
+                                        if position.out_of_order(event_position)?.is_some() {
+                                            break 'ahead false;
+                                        }
+                                    }
+                                    EventData::RowsEvent(rows_event) => {
+                                        let Some(table_map) = stream.get_tme(rows_event.table_id())
+                                        else {
+                                            break 'ahead false;
+                                        };
+                                        let target_index = table_map
+                                            .database_name()
+                                            .eq_ignore_ascii_case(&report.database)
+                                            .then(|| {
+                                                target_indexes
+                                                    .get(
+                                                        &table_map
+                                                            .table_name()
+                                                            .to_ascii_lowercase(),
+                                                    )
+                                                    .copied()
+                                            })
+                                            .flatten();
+                                        if let Some(target_index) = target_index {
+                                            let source = &sources[target_index];
+                                            if blocked_targets.contains(&target_index)
+                                                || paused_targets.contains(&target_index)
+                                                || snapshot_fences.contains_key(&target_index)
+                                                || source.engine.as_deref().is_some_and(|engine| {
+                                                    !engine.eq_ignore_ascii_case("InnoDB")
+                                                })
+                                            {
+                                                break 'ahead false;
+                                            }
+                                            let Ok(alignment) = RowAlignment::resolve(
+                                                source,
+                                                table_map,
+                                                UnknownColumn::Reject,
+                                            ) else {
+                                                break 'ahead false;
+                                            };
+                                            let decoding = Instant::now();
+                                            let context = RowsEventContext {
+                                                rows_event: &rows_event,
+                                                table_map,
+                                                source,
+                                                alignment: &alignment,
+                                                target_index,
+                                                position: &position,
+                                                event_position,
+                                                event_type,
+                                                database_id,
+                                                metadata: &metadata,
+                                                maximum_bytes: options.max_transaction_bytes,
+                                            };
+                                            let failed = match planned_rows(
+                                                &mut row_plans,
+                                                &rows_event,
+                                                table_map,
+                                                source,
+                                                &alignment,
+                                                target_index,
+                                            ) {
+                                                Some(plan) => read_rows_event(
+                                                    &context,
+                                                    plan,
+                                                    &mut pending,
+                                                    &mut key_image,
+                                                )?,
+                                                None => decode_rows_event(&context, &mut pending)?,
+                                            };
+                                            phases.decode += decoding.elapsed();
+                                            if failed {
+                                                blocked_targets.insert(target_index);
+                                            }
+                                            position.pos = event_position;
+                                        }
+                                    }
+                                    EventData::XidEvent(_) => {
+                                        if pending.spill.is_some() {
+                                            break 'ahead false;
+                                        }
+                                        position.pos = event_position;
+                                        seal_transaction(
+                                            &mut position,
+                                            &mut pending,
+                                            &mut batch,
+                                            &mut TablesAway(&sources),
+                                            STAGE_BYTES,
+                                        )?;
+                                    }
+                                    EventData::QueryEvent(query) => {
+                                        let statement = query.query();
+                                        let statement = statement.trim();
+                                        if !statement.eq_ignore_ascii_case("BEGIN")
+                                            && !statement.starts_with('#')
+                                        {
+                                            break 'ahead false;
+                                        }
+                                    }
+                                    EventData::RotateEvent(_)
+                                    | EventData::FormatDescriptionEvent(_) => {
+                                        break 'ahead false;
+                                    }
+                                    _ => {
+                                        if event_position > 0 {
+                                            position.pos = event_position;
+                                        }
+                                    }
+                                }
+                            }
+                            events_read += 1;
+                            if logged > 0
+                                && !matches!(event_type, ROTATE_EVENT | FORMAT_DESCRIPTION_EVENT)
+                            {
+                                logged_position = logged;
+                            }
+                            true
+                        };
+                        if !consumed {
+                            held_back = Some(next);
+                            continue;
+                        }
+                        reconnect_attempts = 0;
+                        yielding = batch.transactions > closed_ahead
+                            && !options.blocking
+                            && (options.stop.as_ref().is_some_and(CycleStop::requested)
+                                || options
+                                    .max_duration
+                                    .is_some_and(|maximum| cycle_started.elapsed() >= maximum));
+                    };
+                    let (home, writer, point, spent, outcome) = landed.map_err(|error| {
+                        CdcError::Store(StoreError::Io {
+                            action: "storing a batch off the stream".to_owned(),
+                            source: std::io::Error::other(error),
+                        })
+                    })?;
+                    targets = home;
+                    away_metadata = Some(writer);
+                    durable = point;
+                    phases.absorb(&spent);
+                    phases.read_ahead += 1;
+                    BATCHES_READ_AHEAD.fetch_add(1, Ordering::Relaxed);
+                    account!(outcome?);
+                    if yielding {
+                        flush!();
+                        end_catch_up!();
+                    }
+                    true
+                } else {
+                    flush!();
+                    false
+                }
+            };
+        }
         loop {
             // A stream with nothing more to hand over right now is the end
             // of the batch: the transactions already closed are written out
             // before the wait, so a quiet source is mirrored as each
             // transaction arrives and only a busy one is batched.
             let mut waiting = Instant::now();
-            let ready = if batch.is_empty() {
+            let ready = if held_back.is_some() {
+                held_back.take()
+            } else if batch.is_empty() {
                 None
             } else {
                 stream.next().now_or_never()
@@ -757,7 +1029,10 @@ async fn run_cdc_inner(
             let next = if let Some(next) = ready {
                 next
             } else {
-                flush!();
+                if store!() {
+                    // The stream moved on while the batch was stored.
+                    continue;
+                }
                 waiting = Instant::now();
                 // A followed stream never ends by itself. Its catch-up ends
                 // here, where nothing is waiting to be stored and no
@@ -1239,29 +1514,12 @@ async fn run_cdc_inner(
                         .max_duration
                         .is_some_and(|maximum| cycle_started.elapsed() >= maximum));
             let spent = options.max_commits.is_some_and(|maximum| closed >= maximum);
-            if yielding || spent || batch.is_due(options.max_commits) {
-                flush!();
-            }
             if yielding || spent {
-                stream.close().await?;
-                pintail_log::log_debug!(
-                    "cdc cycle done db={database_id} events={events_read} commits={commits} \
-                     mutations={mutations} pos={}:{} {phases}",
-                    position.file,
-                    position.pos
-                );
-                settle_paused_skips(&metadata, database_id, &targets, &paused_skipped)?;
-                return finish_result(
-                    commits,
-                    mutations,
-                    &position,
-                    targets,
-                    options.stop.as_ref(),
-                    // Cut short by its budget or a stop: the source may
-                    // hold more.
-                    false,
-                    &blocked_targets,
-                );
+                flush!();
+                end_catch_up!();
+            }
+            if batch.is_due(options.max_commits) {
+                store!();
             }
         }
         // However the stream ended, the transactions it closed are stored
@@ -3898,6 +4156,34 @@ const BATCH_AGE: Duration = Duration::from_millis(250);
 /// Past this, the table holding the most is written out as segments its
 /// readers do not see until the transaction's batch is stored.
 const STAGE_BYTES: usize = 32 * 1024 * 1024;
+/// Rows from which a batch is stored on another thread while the stream is
+/// read ahead of it. Below it the hand-over costs more than the overlap
+/// gains, and the batch is stored where it stands.
+const READ_AHEAD_ROWS: usize = 4_096;
+
+/// [`READ_AHEAD_ROWS`], or `PINTAIL_CDC_READ_AHEAD_ROWS` when a harness sets
+/// it: at 1, every batch of a stream is stored off the stream, which is how
+/// the recovery harness puts that path under its kills.
+fn read_ahead_rows() -> usize {
+    static ROWS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *ROWS.get_or_init(|| {
+        std::env::var("PINTAIL_CDC_READ_AHEAD_ROWS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .map_or(READ_AHEAD_ROWS, |rows| rows.max(1))
+    })
+}
+
+/// Batches stored off the stream since the process started.
+static BATCHES_READ_AHEAD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many batches were stored on another thread while the stream was read
+/// ahead of them, since the process started.
+#[must_use]
+pub fn batches_read_ahead() -> u64 {
+    BATCHES_READ_AHEAD.load(Ordering::Relaxed)
+}
+
 /// Threads one flush spreads its tables over.
 const FLUSH_WORKERS: usize = 8;
 /// Rows below which a flush writes its tables one after another: starting
@@ -3956,16 +4242,13 @@ struct CascadeRecorder<'a> {
 impl<'a> CascadeRecorder<'a> {
     /// `None` when no target has a watching child, so the seal costs
     /// nothing more.
-    fn new(watchers: &'a [Vec<String>], targets: &[CdcTarget]) -> Option<Self> {
+    fn new(watchers: &'a [Vec<String>], names: impl FnOnce() -> Vec<String>) -> Option<Self> {
         watchers
             .iter()
             .any(|children| !children.is_empty())
             .then(|| Self {
                 watchers,
-                names: targets
-                    .iter()
-                    .map(|target| target.source.name.clone())
-                    .collect(),
+                names: names(),
                 last_tombstone: HashMap::new(),
                 keys: Vec::new(),
             })
@@ -4009,24 +4292,90 @@ impl<'a> CascadeRecorder<'a> {
 /// own delete and key-moving events are the only trace of them a stream
 /// sees.
 fn cascade_watchers(targets: &[CdcTarget]) -> Vec<Vec<String>> {
-    targets
+    source_watchers(
+        &targets
+            .iter()
+            .map(|target| &target.source)
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// [`cascade_watchers`] over the tables' descriptions alone.
+fn source_watchers(sources: &[&SourceTable]) -> Vec<Vec<String>> {
+    sources
         .iter()
         .map(|parent| {
-            targets
+            sources
                 .iter()
                 .filter(|child| {
-                    child.source.requires_reconciliation
-                        && child.source.foreign_keys.iter().any(|key| {
-                            key.referenced_table
-                                .eq_ignore_ascii_case(&parent.source.name)
+                    child.requires_reconciliation
+                        && child.foreign_keys.iter().any(|key| {
+                            key.referenced_table.eq_ignore_ascii_case(&parent.name)
                                 && (invisible_fk_rule(&key.delete_rule)
                                     || invisible_fk_rule(&key.update_rule))
                         })
                 })
-                .map(|child| child.source.name.clone())
+                .map(|child| child.name.clone())
                 .collect()
         })
         .collect()
+}
+
+/// What closing a transaction asks of the tables it touched.
+trait SealTables {
+    /// See [`cascade_watchers`].
+    fn watchers(&self) -> Vec<Vec<String>>;
+    /// Source names, by target index.
+    fn names(&self) -> Vec<String>;
+    /// Drops the pieces a failed spilled transaction left staged.
+    fn discard_staged(&mut self);
+    /// Stages rows of a spilled transaction in table `index`.
+    fn stage(&mut self, index: usize, rows: Vec<StoredRow>) -> Result<(), CdcError>;
+}
+
+impl SealTables for Vec<CdcTarget> {
+    fn watchers(&self) -> Vec<Vec<String>> {
+        cascade_watchers(self)
+    }
+
+    fn names(&self) -> Vec<String> {
+        self.iter()
+            .map(|target| target.source.name.clone())
+            .collect()
+    }
+
+    fn discard_staged(&mut self) {
+        for target in self.iter_mut() {
+            target.store.discard_staged();
+        }
+    }
+
+    fn stage(&mut self, index: usize, rows: Vec<StoredRow>) -> Result<(), CdcError> {
+        stage_rows(self, index, rows)
+    }
+}
+
+/// The tables of a stream while their stores are away being written: enough
+/// to close a transaction that fits in memory, which is all the stream
+/// closes in that time. A spilled one waits for the stores to come back.
+struct TablesAway<'a>(&'a [SourceTable]);
+
+impl SealTables for TablesAway<'_> {
+    fn watchers(&self) -> Vec<Vec<String>> {
+        source_watchers(&self.0.iter().collect::<Vec<_>>())
+    }
+
+    fn names(&self) -> Vec<String> {
+        self.0.iter().map(|source| source.name.clone()).collect()
+    }
+
+    fn discard_staged(&mut self) {}
+
+    fn stage(&mut self, _index: usize, _rows: Vec<StoredRow>) -> Result<(), CdcError> {
+        Err(CdcError::TransactionSpill(
+            "a spilled transaction was sealed while its tables were being stored".to_owned(),
+        ))
+    }
 }
 
 impl ApplyBatch {
@@ -4096,6 +4445,8 @@ impl DurablePoint {
 #[derive(Default)]
 struct PhaseTimes {
     batches: usize,
+    /// Batches stored on another thread while the stream was read ahead.
+    read_ahead: usize,
     read: Duration,
     decode: Duration,
     ingest: Duration,
@@ -4103,12 +4454,24 @@ struct PhaseTimes {
     checkpoint: Duration,
 }
 
+impl PhaseTimes {
+    /// Adds what a batch stored elsewhere spent.
+    fn absorb(&mut self, other: &Self) {
+        self.batches += other.batches;
+        self.ingest += other.ingest;
+        self.sync += other.sync;
+        self.checkpoint += other.checkpoint;
+    }
+}
+
 impl std::fmt::Display for PhaseTimes {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "batches={} read_ms={} decode_ms={} ingest_ms={} sync_ms={} checkpoint_ms={}",
+            "batches={} read_ahead={} read_ms={} decode_ms={} ingest_ms={} sync_ms={} \
+             checkpoint_ms={}",
             self.batches,
+            self.read_ahead,
             self.read.as_millis(),
             self.decode.as_millis(),
             self.ingest.as_millis(),
@@ -4171,7 +4534,7 @@ fn seal_transaction(
     position: &mut StreamPosition,
     pending: &mut PendingTransaction,
     batch: &mut ApplyBatch,
-    targets: &mut [CdcTarget],
+    targets: &mut impl SealTables,
     stage_bytes: usize,
 ) -> Result<(), CdcError> {
     let spilled = pending.spill.is_some();
@@ -4182,9 +4545,7 @@ fn seal_transaction(
             ));
         }
         // Pieces a failed attempt left behind belong to no transaction.
-        for target in targets.iter_mut() {
-            target.store.discard_staged();
-        }
+        targets.discard_staged();
     }
     let mut waiting: BTreeMap<usize, (usize, Vec<StoredRow>)> = BTreeMap::new();
     let mut waiting_bytes = 0_usize;
@@ -4195,8 +4556,8 @@ fn seal_transaction(
     let watchers = batch
         .cascade_watchers
         .take()
-        .unwrap_or_else(|| cascade_watchers(targets));
-    let mut recorder = CascadeRecorder::new(&watchers, targets);
+        .unwrap_or_else(|| targets.watchers());
+    let mut recorder = CascadeRecorder::new(&watchers, || targets.names());
     pending.for_each_mutation(|mutation| {
         let version = mutation.row.version();
         highest_version = Some(highest_version.map_or(version, |highest| highest.max(version)));
@@ -4226,14 +4587,14 @@ fn seal_transaction(
             && let Some((held_bytes, rows)) = waiting.remove(&index)
         {
             waiting_bytes = waiting_bytes.saturating_sub(held_bytes);
-            stage_rows(targets, index, rows)?;
+            targets.stage(index, rows)?;
             staged.insert(index);
         }
         Ok(())
     })?;
     for (index, (held_bytes, rows)) in waiting {
         if staged.contains(&index) {
-            stage_rows(targets, index, rows)?;
+            targets.stage(index, rows)?;
         } else {
             bytes = bytes.saturating_add(held_bytes);
             batch.rows.entry(index).or_default().extend(rows);
@@ -4647,6 +5008,7 @@ struct GtidIdentity {
     sequence: u64,
 }
 
+#[derive(Clone)]
 struct StreamPosition {
     kind: PositionKind,
     gtid_set: Option<MysqlGtidSet>,
@@ -4667,6 +5029,7 @@ struct StreamPosition {
     slot_bits: u32,
 }
 
+#[derive(Clone, Copy)]
 enum PositionKind {
     MysqlGtid,
     FilePosition,

@@ -2074,6 +2074,204 @@ async fn an_unreadable_ddl_with_nothing_after_it_still_advances_the_checkpoint()
     );
 }
 
+/// A followed catch-up stays on the stream after the end of the source's
+/// log: a transaction written once the backlog is stored is applied by the
+/// same catch-up, and a stop raised while the stream is quiet ends it. The
+/// backlog's large batch is stored off the stream while the events after it
+/// are read ahead - row events, a transaction on another table, and a
+/// schema change that has to wait for the batch - and the mirror still
+/// equals the source row for row.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn a_followed_catch_up_reads_ahead_of_a_large_batch_and_applies_what_arrives_after() {
+    let mysql = Arc::new(MysqlContainer::start().unwrap_or_else(|error| panic!("{error}")));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE ahead_other (id BIGINT UNSIGNED PRIMARY KEY, note VARCHAR(32) NOT NULL);\
+             CREATE TABLE ahead_rows (id BIGINT UNSIGNED PRIMARY KEY, bucket BIGINT NOT NULL, \
+               note VARCHAR(32) NOT NULL);\
+             INSERT INTO ahead_other VALUES (1,'seed');\
+             INSERT INTO ahead_rows VALUES (1,0,'seed');",
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("ahead DSN"));
+    let report = probe(&pool, "app").await.expect("probe ahead source");
+    let workspace = tempfile::tempdir().expect("ahead workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("ahead metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register ahead source");
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.path().join(&source.name),
+                source.table_schema().expect("ahead schema"),
+                StoreOptions::default(),
+            )
+            .expect("ahead store");
+            SnapshotTarget::new(source.clone(), store).expect("ahead snapshot target")
+        })
+        .collect::<Vec<_>>();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("ahead baseline snapshot");
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("ahead CDC target")
+        })
+        .collect::<Vec<_>>();
+
+    // The backlog: two transactions large enough to be stored off the
+    // stream, then one on another table, a schema change, and two more.
+    mysql
+        .query_batch(
+            "SET SESSION cte_max_recursion_depth = 100000;\
+             INSERT INTO ahead_rows \
+               WITH RECURSIVE seq(n) AS (SELECT 2 UNION ALL SELECT n + 1 FROM seq WHERE n < 6001) \
+               SELECT n, MOD(n, 7), CONCAT('row-', n) FROM seq;\
+             UPDATE ahead_rows SET bucket = bucket + 1;\
+             INSERT INTO ahead_other VALUES (2,'two'),(3,'three');\
+             ALTER TABLE ahead_rows ADD COLUMN extra BIGINT NULL;\
+             UPDATE ahead_rows SET extra = id * 3 WHERE id <= 5000;\
+             DELETE FROM ahead_rows WHERE id > 5990;",
+        )
+        .expect("ahead backlog");
+    let status = mysql
+        .query_batch("SHOW BINARY LOG STATUS;")
+        .expect("source position");
+    let mut fields = status.split_whitespace();
+    let backlog_file = fields.next().expect("binlog file").to_owned();
+    let backlog_pos: u64 = fields
+        .next()
+        .expect("binlog position")
+        .parse()
+        .expect("binlog position is a number");
+
+    // The late write goes in only after the catch-up has stored the whole
+    // backlog, so a catch-up that returned at the end of the log could not
+    // have read it; the stop goes up once the late write is stored too.
+    let backlog_stored = Arc::new(AtomicBool::new(false));
+    let backlog_mutations = Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX));
+    let stop = pintail_cdc::CycleStop::new();
+    let late = {
+        let mysql = Arc::clone(&mysql);
+        let backlog_stored = Arc::clone(&backlog_stored);
+        thread::spawn(move || {
+            let waited = std::time::Instant::now();
+            while !backlog_stored.load(Ordering::Acquire) {
+                assert!(
+                    waited.elapsed() < Duration::from_secs(120),
+                    "the backlog was never stored"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            mysql
+                .query_batch("INSERT INTO ahead_other VALUES (100,'late');")
+                .expect("late write");
+        })
+    };
+    let read_ahead_before = pintail_cdc::batches_read_ahead();
+    let result = {
+        let backlog_stored = Arc::clone(&backlog_stored);
+        let backlog_mutations = Arc::clone(&backlog_mutations);
+        let stop_when_late = stop.clone();
+        pintail_cdc::run_cdc_with_progress(
+            &pool,
+            &metadata_path,
+            DATABASE_ID,
+            &report,
+            targets,
+            CdcOptions {
+                blocking: false,
+                follow: Some(Duration::from_secs(120)),
+                stop: Some(stop.clone()),
+                ..CdcOptions::default()
+            },
+            move |progress| {
+                let past_backlog = progress.checkpoint.binlog_file > backlog_file
+                    || (progress.checkpoint.binlog_file == backlog_file
+                        && progress.checkpoint.binlog_pos >= backlog_pos);
+                if !past_backlog {
+                    return;
+                }
+                if backlog_stored.swap(true, Ordering::AcqRel) {
+                    if progress.mutations > backlog_mutations.load(Ordering::Acquire) {
+                        stop_when_late.request();
+                    }
+                } else {
+                    backlog_mutations.store(progress.mutations, Ordering::Release);
+                }
+            },
+        )
+        .await
+        .expect("followed catch-up")
+    };
+    late.join().expect("late writer");
+
+    assert!(
+        pintail_cdc::batches_read_ahead() > read_ahead_before,
+        "the backlog's large batch was stored off the stream"
+    );
+    let text = |table: &str| {
+        let target = cdc_target(&result.targets, table);
+        let mut lines = target
+            .store()
+            .snapshot()
+            .scan()
+            .expect("ahead scan")
+            .iter()
+            .map(|row| {
+                row.values()
+                    .iter()
+                    .map(|value| match value {
+                        Value::Null => "NULL".to_owned(),
+                        Value::Int64(value) => value.to_string(),
+                        Value::UInt64(value) => value.to_string(),
+                        Value::Utf8(value) => value.clone(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
+            .collect::<Vec<_>>();
+        lines.sort();
+        lines.join("\n")
+    };
+    assert_eq!(
+        text("ahead_other"),
+        source_text(&mysql, "SELECT id, note FROM ahead_other;"),
+        "the late write was applied by the catch-up that was following"
+    );
+    let rows = text("ahead_rows");
+    assert_eq!(rows.lines().count(), 5990);
+    assert_eq!(
+        rows,
+        source_text(&mysql, "SELECT id, bucket, note, extra FROM ahead_rows;")
+    );
+}
+
 /// A `MODIFY` whose declaration permits a rewrite - a new `NOT NULL`, a
 /// narrower integer, a shorter string, a dropped `ENUM` member - is adopted
 /// in place when no row the mirror holds is one the source rewrote, and
