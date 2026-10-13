@@ -2196,6 +2196,60 @@ mod mixed_segment_versions {
     }
 
     #[test]
+    fn a_sweep_pass_starts_its_limit_of_upgrades_and_passes_over_current_tables() {
+        let directories = [(); 3].map(|()| tempfile::tempdir().unwrap());
+        // The first table has nothing old; the other two are settled tables
+        // an earlier build wrote.
+        let mut current = TableStore::open(directories[0].path(), schema(), options()).unwrap();
+        current
+            .ingest((1..=1_000).map(|id| row(id, 0, 1)).collect())
+            .unwrap();
+        current.flush().unwrap();
+        let mut older = settled_table_from_an_earlier_build(directories[1].path());
+        let mut oldest = settled_table_from_an_earlier_build(directories[2].path());
+        let expected = visible(&older);
+
+        let mut failures = 0;
+        let started = TableStore::start_segment_upgrades(
+            [&mut current, &mut older, &mut oldest],
+            1,
+            |_, _| failures += 1,
+        );
+        assert_eq!((started, failures), (1, 0));
+        assert!(current.background.is_none(), "nothing in it is old");
+        assert!(
+            older.background.is_some(),
+            "the first table with old segments"
+        );
+        assert!(oldest.background.is_none(), "one pass starts its limit");
+        older.settle_background_merge();
+        older.reclaim_obsolete_segments().unwrap();
+        assert_eq!(old_segments(&older), 0);
+        assert_eq!(visible(&older), expected);
+
+        // The next pass reaches the table the first one left.
+        let started = TableStore::start_segment_upgrades(
+            [&mut current, &mut older, &mut oldest],
+            1,
+            |_, _| failures += 1,
+        );
+        assert_eq!((started, failures), (1, 0));
+        oldest.settle_background_merge();
+        oldest.reclaim_obsolete_segments().unwrap();
+        assert_eq!(old_segments(&oldest), 0);
+        assert_eq!(visible(&oldest), expected);
+        assert_eq!(
+            TableStore::start_segment_upgrades(
+                [&mut current, &mut older, &mut oldest],
+                1,
+                |_, _| failures += 1,
+            ),
+            0,
+            "nothing is old"
+        );
+    }
+
+    #[test]
     fn readers_keep_a_consistent_snapshot_while_an_upgrade_runs_and_publishes() {
         let directory = tempfile::tempdir().unwrap();
         let mut table = settled_table_from_an_earlier_build(directory.path());

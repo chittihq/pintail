@@ -2173,6 +2173,34 @@ impl TableStore {
         Ok(true)
     }
 
+    /// One pass of the segment-upgrade sweep over the tables of a
+    /// replication cycle, whichever way the cycle replicates: starts an
+    /// upgrade ([`Self::start_segment_upgrade`]) on up to `limit` of
+    /// `stores`, taken in the order given, and answers how many now run.
+    ///
+    /// A table with nothing old, a merge of its own to run, or no room on
+    /// its volume is passed over. So is one whose upgrade failed to start:
+    /// its old segments still answer correctly and a later pass tries
+    /// again, so the failure goes to `deferred` and the pass moves on.
+    pub fn start_segment_upgrades<'a>(
+        stores: impl IntoIterator<Item = &'a mut Self>,
+        limit: usize,
+        mut deferred: impl FnMut(&Self, &StoreError),
+    ) -> usize {
+        let mut started = 0;
+        for store in stores {
+            if started >= limit {
+                break;
+            }
+            match store.start_segment_upgrade() {
+                Ok(true) => started += 1,
+                Ok(false) => {}
+                Err(error) => deferred(store, &error),
+            }
+        }
+        started
+    }
+
     /// Starts a size-tier merge on a background thread. The thread reads
     /// immutable inputs and writes chunk files nothing references; segment
     /// IDs come from a range reserved here so concurrent flushes never

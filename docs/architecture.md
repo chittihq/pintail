@@ -144,8 +144,10 @@ upgrade waits. The
 `pintail paths:` startup line reports `segment_upgrade=on|off`, and
 `GET /api/storage` reports `segment_upgrade`: the upgrades running and done,
 and each table's segments by format version. A table whose last old segment
-is rewritten logs `finished upgrading` at info. Polling-mode tables are not
-swept; their segments convert when a merge picks them.
+is rewritten logs `finished upgrading` at info. A polling-mode database is
+swept the same way: a polling cycle that read every table starts at most
+one upgrade when it ends, under the same conditions, and its tables take
+turns.
 
 A secondary side index answers equality and IN filters, and join key sets,
 on integer columns other than the table key, whose values scatter across

@@ -4463,29 +4463,20 @@ fn upgrade_targets(
     first: usize,
     limit: usize,
 ) -> usize {
-    let count = targets.len();
-    let mut started = 0;
-    for offset in 0..count {
-        if started >= limit {
-            break;
-        }
-        let index = (first + offset) % count;
-        if blocked.contains(&index) {
-            continue;
-        }
-        let target = &mut targets[index];
-        match target.store.start_segment_upgrade() {
-            Ok(true) => started += 1,
-            Ok(false) => {}
-            // The old segment still answers correctly; a later stream
-            // tries again.
-            Err(error) => pintail_log::log_debug!(
-                "cdc segment upgrade of {} deferred: {error}",
-                target.source.name
-            ),
-        }
-    }
-    started
+    let (tail, head) = targets.split_at_mut(first.min(targets.len()));
+    let rotated = head
+        .iter_mut()
+        .enumerate()
+        .map(|(offset, target)| (first + offset, target))
+        .chain(tail.iter_mut().enumerate())
+        .filter(|(index, _)| !blocked.contains(index))
+        .map(|(_, target)| &mut target.store);
+    TableStore::start_segment_upgrades(rotated, limit, |store, error| {
+        pintail_log::log_debug!(
+            "cdc segment upgrade of {} deferred: {error}",
+            store.directory().display()
+        );
+    })
 }
 
 fn finish_result(

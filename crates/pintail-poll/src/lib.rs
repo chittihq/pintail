@@ -309,10 +309,53 @@ pub async fn run_poll_cycle(
         }
         outcomes.push(outcome);
     }
+    if let Some(reason) = upgrade_targets(&mut targets) {
+        pintail_log::log_debug!("poll db={database_id} segment upgrade deferred: {reason}");
+    }
     Ok(PollResult {
         tables: outcomes,
         targets,
     })
+}
+
+/// Segment upgrades one finished polling cycle may start: each rewrites a
+/// bounded group of one table's segments, and the cycle's tables wait for
+/// it when they close.
+const UPGRADES_STARTED_PER_CYCLE: usize = 1;
+
+/// Moves the segment-upgrade sweep forward at the end of a polling cycle,
+/// as a replication stream does at the end of its own. A cycle that read
+/// every table has caught up with its source by construction; the sweep
+/// still waits while it is off or a table copy runs in the process, and a
+/// table with a merge to run is left to the merge. Tables take turns, so
+/// one with many old segments does not hold the others back. Returns why
+/// no upgrade was looked for, or `None`.
+fn upgrade_targets(targets: &mut [PollTarget]) -> Option<&'static str> {
+    static ROTATION: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    if targets.is_empty() {
+        return Some("no tables");
+    }
+    if let Some(reason) = pintail_store::segment_upgrade_deferral(
+        pintail_store::segment_upgrade_enabled(),
+        pintail_store::copies_in_flight(),
+        true,
+        0,
+    ) {
+        return Some(reason);
+    }
+    let first = ROTATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % targets.len();
+    let (tail, head) = targets.split_at_mut(first);
+    TableStore::start_segment_upgrades(
+        head.iter_mut().chain(tail).map(|target| &mut target.store),
+        UPGRADES_STARTED_PER_CYCLE,
+        |store, error| {
+            pintail_log::log_debug!(
+                "poll segment upgrade of {} deferred: {error}",
+                store.directory().display()
+            );
+        },
+    );
+    None
 }
 
 /// Runs a full-row reconciliation for CDC tables whose source-side cascades
