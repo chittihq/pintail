@@ -252,9 +252,8 @@ pub(super) fn distribution_window(function: &Function) -> Option<Expr> {
             Some(WindowType::WindowSpec(spec)),
         )
     };
-    let float = |digits: &str| {
-        Expr::Value(SqlValue::Number(digits.to_owned(), false).with_empty_span())
-    };
+    let float =
+        |digits: &str| Expr::Value(SqlValue::Number(digits.to_owned(), false).with_empty_span());
     let binary = |left: Expr, op: BinaryOperator, right: Expr| {
         Expr::Nested(Box::new(Expr::BinaryOp {
             left: Box::new(left),
@@ -421,8 +420,7 @@ pub(super) fn bind_window_function(
                 FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)),
                 FunctionArg::Unnamed(FunctionArgExpr::Expr(position)),
             ] if upper == "NTH_VALUE" => {
-                let position =
-                    bind_expr_inner(position, tables, &mut None, &mut None, subqueries)?;
+                let position = bind_expr_inner(position, tables, &mut None, &mut None, subqueries)?;
                 match position.kind {
                     BoundExprKind::Literal(Value::Int64(nth)) if nth > 0 => {
                         (expr, nth.unsigned_abs())
@@ -1073,9 +1071,8 @@ fn respelled_call(
             // A number or a date compares by its text here, never by value:
             // STRCMP(9, 10) is 1.
             let text = |operand: &Expr| {
-                let data_type =
-                    bind_expr_inner(operand, tables, &mut None, &mut None, subqueries)
-                        .map_or(None, |bound| bound.data_type);
+                let data_type = bind_expr_inner(operand, tables, &mut None, &mut None, subqueries)
+                    .map_or(None, |bound| bound.data_type);
                 match data_type {
                     None | Some(DataType::Utf8 | DataType::Binary) => Ok(nested(operand)),
                     Some(

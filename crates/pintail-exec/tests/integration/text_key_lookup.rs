@@ -436,7 +436,12 @@ impl Fixture {
             stage,
             "carrier",
             |parcel| parcel.carrier.as_ref(),
-            |value| value.trim_end_matches(' ').to_lowercase().replace('\u{f3}', "o"),
+            |value| {
+                value
+                    .trim_end_matches(' ')
+                    .to_lowercase()
+                    .replace('\u{f3}', "o")
+            },
         );
         let pair_rows = |pairs: &[(u64, u64)]| -> Rows {
             pairs

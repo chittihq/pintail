@@ -4886,19 +4886,18 @@ fn hand_written_cases() -> Vec<OracleCase> {
 /// separators.
 fn format_locale_cases() -> Vec<OracleCase> {
     const LOCALES: &[&str] = &[
-        "en_US", "en_GB", "ja_JP", "sv_SE", "de_DE", "fr_FR", "ar_AE", "ar_BH", "ar_JO",
-        "ar_SA", "ar_SY", "be_BY", "bg_BG", "ca_ES", "cs_CZ", "da_DK", "de_AT", "es_ES",
-        "et_EE", "eu_ES", "fi_FI", "fo_FO", "gl_ES", "gu_IN", "he_IL", "hi_IN", "hr_HR",
-        "hu_HU", "id_ID", "is_IS", "it_CH", "ko_KR", "lt_LT", "lv_LV", "mk_MK", "mn_MN",
-        "ms_MY", "nb_NO", "nl_NL", "pl_PL", "pt_BR", "pt_PT", "ro_RO", "ru_RU", "ru_UA",
-        "sk_SK", "sl_SI", "sq_AL", "sr_RS", "ta_IN", "te_IN", "th_TH", "tr_TR", "uk_UA",
-        "ur_PK", "vi_VN", "zh_CN", "zh_TW", "ar_DZ", "ar_EG", "ar_IN", "ar_IQ", "ar_KW",
-        "ar_LB", "ar_LY", "ar_MA", "ar_OM", "ar_QA", "ar_SD", "ar_TN", "ar_YE", "de_BE",
-        "de_CH", "de_LU", "en_AU", "en_CA", "en_IN", "en_NZ", "en_PH", "en_ZA", "en_ZW",
-        "es_AR", "es_BO", "es_CL", "es_CO", "es_CR", "es_DO", "es_EC", "es_GT", "es_HN",
-        "es_MX", "es_NI", "es_PA", "es_PE", "es_PR", "es_PY", "es_SV", "es_US", "es_UY",
-        "es_VE", "fr_BE", "fr_CA", "fr_CH", "fr_LU", "it_IT", "nl_BE", "no_NO", "sv_FI",
-        "zh_HK", "el_GR", "rm_CH",
+        "en_US", "en_GB", "ja_JP", "sv_SE", "de_DE", "fr_FR", "ar_AE", "ar_BH", "ar_JO", "ar_SA",
+        "ar_SY", "be_BY", "bg_BG", "ca_ES", "cs_CZ", "da_DK", "de_AT", "es_ES", "et_EE", "eu_ES",
+        "fi_FI", "fo_FO", "gl_ES", "gu_IN", "he_IL", "hi_IN", "hr_HR", "hu_HU", "id_ID", "is_IS",
+        "it_CH", "ko_KR", "lt_LT", "lv_LV", "mk_MK", "mn_MN", "ms_MY", "nb_NO", "nl_NL", "pl_PL",
+        "pt_BR", "pt_PT", "ro_RO", "ru_RU", "ru_UA", "sk_SK", "sl_SI", "sq_AL", "sr_RS", "ta_IN",
+        "te_IN", "th_TH", "tr_TR", "uk_UA", "ur_PK", "vi_VN", "zh_CN", "zh_TW", "ar_DZ", "ar_EG",
+        "ar_IN", "ar_IQ", "ar_KW", "ar_LB", "ar_LY", "ar_MA", "ar_OM", "ar_QA", "ar_SD", "ar_TN",
+        "ar_YE", "de_BE", "de_CH", "de_LU", "en_AU", "en_CA", "en_IN", "en_NZ", "en_PH", "en_ZA",
+        "en_ZW", "es_AR", "es_BO", "es_CL", "es_CO", "es_CR", "es_DO", "es_EC", "es_GT", "es_HN",
+        "es_MX", "es_NI", "es_PA", "es_PE", "es_PR", "es_PY", "es_SV", "es_US", "es_UY", "es_VE",
+        "fr_BE", "fr_CA", "fr_CH", "fr_LU", "it_IT", "nl_BE", "no_NO", "sv_FI", "zh_HK", "el_GR",
+        "rm_CH",
     ];
     let every = LOCALES
         .iter()

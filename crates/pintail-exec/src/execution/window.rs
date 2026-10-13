@@ -638,7 +638,13 @@ fn small_partition_order(
         return Ok(None);
     }
     let order_key = |ascending: bool, nulls_first: bool, decimal: bool, position: usize| {
-        window_order_key(0, ascending, nulls_first, decimal, window.key_collation(position))
+        window_order_key(
+            0,
+            ascending,
+            nulls_first,
+            decimal,
+            window.key_collation(position),
+        )
     };
     let compare_rows = |left: &usize, right: &usize| {
         for (position, (_, ascending, nulls_first, decimal)) in window.order.iter().enumerate() {
@@ -852,7 +858,13 @@ fn evaluate_spilled_window(
     let key_start = width + 1;
     let mut order = (0..window.partition.len())
         .map(|index| {
-            window_order_key(key_start + index, true, true, false, window.key_collation(index))
+            window_order_key(
+                key_start + index,
+                true,
+                true,
+                false,
+                window.key_collation(index),
+            )
         })
         .collect::<Vec<_>>();
     order.extend(window.order.iter().enumerate().map(|(index, key)| {
@@ -1343,7 +1355,13 @@ fn window_order(
 ) -> Result<Vec<usize>, ExecError> {
     let partition_len = window.partition.len();
     let order_key = |ascending: bool, nulls_first: bool, decimal: bool, position: usize| {
-        window_order_key(0, ascending, nulls_first, decimal, window.key_collation(position))
+        window_order_key(
+            0,
+            ascending,
+            nulls_first,
+            decimal,
+            window.key_collation(position),
+        )
     };
     let compare_rows = |left: usize, right: usize| {
         let left_keys = &keys[left];
@@ -1393,7 +1411,13 @@ fn compute_window_column(
 ) -> Result<Vec<Value>, ExecError> {
     let partition_len = window.partition.len();
     let order_key = |ascending: bool, nulls_first: bool, decimal: bool, position: usize| {
-        window_order_key(0, ascending, nulls_first, decimal, window.key_collation(position))
+        window_order_key(
+            0,
+            ascending,
+            nulls_first,
+            decimal,
+            window.key_collation(position),
+        )
     };
     let same_partition = |left: usize, right: usize| {
         (0..partition_len).all(|position| {

@@ -6729,9 +6729,9 @@ fn numeric_aggregate_input(
             // HHMMSS, YYYYMMDD, YYYYMMDDHHMMSS and any fraction - and a JSON
             // value as the float its scalar converts to.
             let value = match value.data_type {
-                Some(
-                    DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. },
-                ) => temporal_as_number(value),
+                Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. }) => {
+                    temporal_as_number(value)
+                }
                 Some(DataType::Json) => cast_to(value, DataType::Float64),
                 _ => value,
             };
