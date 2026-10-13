@@ -202,13 +202,20 @@ impl CompiledWindow {
     /// The sort keys ordering this window's rows: its partition keys, then
     /// its order keys, by their positions among [`Self::key_exprs`].
     fn sort_keys(&self) -> Vec<BoundOrderKey> {
+        self.sort_keys_from(0)
+    }
+
+    /// [`Self::sort_keys`] for rows that hold the keys from column `start`.
+    fn sort_keys_from(&self, start: usize) -> Vec<BoundOrderKey> {
         let partition = self.partition.len();
         (0..partition)
-            .map(|index| window_order_key(index, true, true, false, self.key_collation(index)))
+            .map(|index| {
+                window_order_key(start + index, true, true, false, self.key_collation(index))
+            })
             .chain(self.order.iter().enumerate().map(
                 |(index, (_, ascending, nulls_first, decimal))| {
                     window_order_key(
-                        partition + index,
+                        start + partition + index,
                         *ascending,
                         *nulls_first,
                         *decimal,
@@ -856,26 +863,7 @@ fn evaluate_spilled_window(
     collation: Collation,
 ) -> Result<crate::spill::ClosedRun, ExecError> {
     let key_start = width + 1;
-    let mut order = (0..window.partition.len())
-        .map(|index| {
-            window_order_key(
-                key_start + index,
-                true,
-                true,
-                false,
-                window.key_collation(index),
-            )
-        })
-        .collect::<Vec<_>>();
-    order.extend(window.order.iter().enumerate().map(|(index, key)| {
-        window_order_key(
-            key_start + window.partition.len() + index,
-            key.1,
-            key.2,
-            key.3,
-            window.key_collation(window.partition.len() + index),
-        )
-    }));
+    let mut order = window.sort_keys_from(key_start);
     order.push(window_order_key(width, true, true, false, None));
     let mut sorter = WindowSorter::new(order, collation);
     let mut reader = run.open().map_err(window_io)?;

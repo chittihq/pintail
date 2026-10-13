@@ -3998,12 +3998,14 @@ fn evaluate_eager_scalar_inner(
                 bytes[..4].rotate_left(2);
                 bytes[..8].rotate_left(4);
             }
+            let digits = b"0123456789abcdef";
             let mut text = String::with_capacity(36);
             for (index, byte) in bytes.iter().enumerate() {
                 if matches!(index, 4 | 6 | 8 | 10) {
                     text.push('-');
                 }
-                text.push_str(&format!("{byte:02x}"));
+                text.push(char::from(digits[usize::from(byte >> 4)]));
+                text.push(char::from(digits[usize::from(byte & 0x0f)]));
             }
             Ok(Value::Utf8(text))
         }
