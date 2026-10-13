@@ -329,6 +329,9 @@ fn specific_scalar(
         ScalarFunction::SessionTimestamp => {
             temporal::session_timestamp_column(batch, args, data_type, effects)
         }
+        ScalarFunction::UnixTimestamp => {
+            temporal::unix_timestamp_column(batch, args, data_type, effects)
+        }
         ScalarFunction::Date | ScalarFunction::LastDay => {
             temporal::date_of_column(batch, args, function, data_type, effects)
         }

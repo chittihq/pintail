@@ -465,6 +465,123 @@ fn session_timestamp_text(
     ))
 }
 
+/// `UNIX_TIMESTAMP(column)` of a stored `TIMESTAMP`, which the planner
+/// writes as the column read in UTC: `UnixTimestamp(column, '+00:00')`.
+///
+/// The stored instant is the answer. Row evaluation spells each row as
+/// text, parses it, converts it from UTC to UTC and parses that again; the
+/// units are already what the last parse recovers. A column the store kept
+/// as text (one holding the zero `TIMESTAMP`) is parsed once per row, or
+/// once per entry where it is coded. As in row evaluation, the zero
+/// `TIMESTAMP` and an instant outside what the function accepts are 0, and
+/// the answer carries the column's own fraction digits: an integer for
+/// none, else a decimal of that scale. Text in any other shape declines.
+pub(super) fn unix_timestamp_column(
+    batch: &RecordBatch,
+    args: &[CompiledExpr],
+    data_type: Option<DataType>,
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
+    let [argument, CompiledExpr::Literal(Value::Utf8(zone))] = args else {
+        return None;
+    };
+    if zone != "+00:00" {
+        return None;
+    }
+    let input = operand(batch, argument, effects)?;
+    let Operand::Column(column) = &input else {
+        return None;
+    };
+    let DataType::DateTime64 { fsp } = column.data_type() else {
+        return None;
+    };
+    let declared = data_type?;
+    match declared {
+        DataType::UInt64 if fsp == 0 => {}
+        DataType::Decimal { scale, .. } if scale == fsp && (1..=6).contains(&fsp) => {}
+        _ => return None,
+    }
+    let step = fraction_step(fsp);
+    // An instant in the answer's units; `None` where the text spells more
+    // fraction digits than the column declares.
+    let answer = |micros: i64| {
+        if !(0..=crate::expression::UNIX_TIMESTAMP_MAX_MICROS).contains(&micros) {
+            return Some(0);
+        }
+        (micros % step == 0).then_some(micros / step)
+    };
+    let read = |bytes: &[u8]| {
+        if bytes.starts_with(b"0000-00-00") {
+            return Some(0);
+        }
+        answer(pintail_types::parse_datetime_micros(
+            std::str::from_utf8(bytes).ok()?,
+        )?)
+    };
+    let rows = batch.row_count();
+    let mut answers = Vec::with_capacity(rows);
+    let validity = if let Some(units) = temporal_column(column) {
+        for row in 0..rows {
+            answers.push(
+                if !units.validity.is_valid(row) || units.units[row] <= units.zero() {
+                    0
+                } else {
+                    answer(units.spelled(row))?
+                },
+            );
+        }
+        units.validity.clone()
+    } else {
+        let (text, validity) = calendar_text(column)?;
+        if let Some((codes, entries)) = text.dictionary() {
+            let entries = entries
+                .iter()
+                .map(|entry| read(entry.as_bytes()))
+                .collect::<Vec<_>>();
+            for row in 0..rows {
+                answers.push(if validity.is_valid(row) {
+                    (*entries.get(*codes.get(row)? as usize)?)?
+                } else {
+                    0
+                });
+            }
+        } else {
+            let heap = text.heap();
+            for (row, view) in text.views().iter().enumerate().take(rows) {
+                answers.push(if validity.is_valid(row) {
+                    view.with_bytes(heap, |bytes| read(bytes))?
+                } else {
+                    0
+                });
+            }
+        }
+        validity.clone()
+    };
+    if answers.len() != rows {
+        return None;
+    }
+    crate::counters::count(|counters| {
+        counters.instants_read = counters
+            .instants_read
+            .saturating_add(u64::try_from(rows).unwrap_or(u64::MAX));
+    });
+    let typed = if fsp == 0 {
+        TypedValues::UInt64(
+            answers
+                .into_iter()
+                .map(|answer| u64::try_from(answer).unwrap_or(0))
+                .collect(),
+        )
+    } else {
+        TypedValues::Decimal128 {
+            values: crate::batch::DecimalUnits::Narrow(answers),
+            scale: fsp,
+            text: LazyText::decimal(fsp),
+        }
+    };
+    Some(ColumnVector::from_typed(declared, typed, validity))
+}
+
 /// No zone reads an instant a day or more from UTC: an offset is held as a
 /// fixed offset, which is strictly inside a day either way.
 const WIDEST_OFFSET_MICROS: i64 = MICROS_PER_DAY;
@@ -2299,6 +2416,109 @@ mod tests {
                 assert!(crate::counters::take_exec_counters().calendar_copies_packed > 0);
             }
         }
+    }
+
+    /// `UNIX_TIMESTAMP` of a stored `TIMESTAMP` read in UTC is the instant
+    /// the column holds. Packed units, text the store kept and coded text
+    /// all answer what row evaluation answers, and none takes the row path.
+    #[test]
+    fn unix_timestamps_of_stored_instants_match_row_evaluation() {
+        const INSTANTS: [Option<&str>; 10] = [
+            Some("1970-01-01 00:00:00"),
+            Some("1970-01-01 00:00:01"),
+            None,
+            Some("2001-09-09 01:46:40"),
+            Some("0000-00-00 00:00:00"),
+            Some("1969-12-31 23:59:59"),
+            Some("2024-03-10 06:59:59"),
+            Some("2038-01-19 03:14:07"),
+            Some("3001-01-18 23:59:59"),
+            Some("3001-01-19 00:00:00"),
+        ];
+        for fsp in [0_u8, 3, 6] {
+            let data_type = DataType::DateTime64 { fsp };
+            let declared = match fsp {
+                0 => DataType::UInt64,
+                scale => DataType::Decimal {
+                    precision: 20,
+                    scale,
+                },
+            };
+            let texts = INSTANTS
+                .iter()
+                .map(|instant| {
+                    instant.map(|instant| match (fsp, instant.starts_with("0000")) {
+                        (0, _) => instant.to_owned(),
+                        (_, true) => format!("{instant}.{}", "0".repeat(usize::from(fsp))),
+                        (_, false) => format!("{instant}.{}", "7".repeat(usize::from(fsp))),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let validity =
+                ValidityMask::from_bools(&texts.iter().map(Option::is_some).collect::<Vec<_>>());
+            let packed = ColumnVector::new(
+                data_type,
+                texts
+                    .iter()
+                    .map(|text| text.clone().map_or(Value::Null, Value::Utf8))
+                    .collect(),
+            )
+            .expect("column");
+            assert!(super::temporal_column(&packed).is_some(), "packed units");
+            let mut kept = crate::array::StrColumn::default();
+            let mut heap = Vec::new();
+            let mut offsets = vec![0];
+            for text in &texts {
+                let text = text.as_deref().unwrap_or("");
+                kept.push(text.as_bytes());
+                heap.extend_from_slice(text.as_bytes());
+                offsets.push(heap.len());
+            }
+            let coded = crate::array::StrColumn::from_dictionary(
+                &heap,
+                &offsets,
+                (0..u32::try_from(texts.len()).expect("rows")).collect(),
+                validity.clone(),
+            );
+            let columns = [
+                packed,
+                ColumnVector::from_typed(data_type, TypedValues::Utf8(kept), validity.clone()),
+                ColumnVector::from_typed(data_type, TypedValues::Utf8(coded), validity.clone()),
+            ];
+            let expression = typed_scalar(
+                data_type,
+                ScalarFunction::UnixTimestamp,
+                vec![
+                    CompiledExpr::Column(0),
+                    CompiledExpr::Literal(Value::Utf8("+00:00".to_owned())),
+                ],
+                declared,
+            );
+            for column in columns {
+                let batch = batch(column);
+                let _ = crate::counters::take_exec_counters();
+                assert!(agrees_with_rows(&expression, &batch, declared), "fsp {fsp}");
+                assert_eq!(
+                    crate::counters::take_exec_counters().instants_read,
+                    INSTANTS.len() as u64,
+                    "fsp {fsp}: read from the stored instants"
+                );
+            }
+        }
+        // A zone other than UTC is the general conversion's.
+        let elsewhere = typed_scalar(
+            DataType::DateTime64 { fsp: 0 },
+            ScalarFunction::UnixTimestamp,
+            vec![
+                CompiledExpr::Column(0),
+                CompiledExpr::Literal(Value::Utf8("+05:30".to_owned())),
+            ],
+            DataType::UInt64,
+        );
+        let batch = batch(temporal_from(&ORDINARY, Some(0)));
+        let _ = crate::counters::take_exec_counters();
+        let _ = agrees_with_rows(&elsewhere, &batch, DataType::UInt64);
+        assert_eq!(crate::counters::take_exec_counters().instants_read, 0);
     }
 
     /// A scalar over column 0, which the binder types as `column`, as it

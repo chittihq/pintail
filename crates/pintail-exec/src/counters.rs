@@ -73,6 +73,9 @@ pub struct ExecCounters {
     pub session_texts_read: u64,
     /// Batches whose packed calendar column the copy check passed whole.
     pub calendar_copies_packed: u64,
+    /// Rows whose `UNIX_TIMESTAMP` was read from a stored `TIMESTAMP`'s
+    /// instant, without spelling it as text and converting that.
+    pub instants_read: u64,
 }
 
 thread_local! {
@@ -102,6 +105,7 @@ thread_local! {
             fused_batches: 0,
             session_texts_read: 0,
             calendar_copies_packed: 0,
+            instants_read: 0,
         })
     };
 }
