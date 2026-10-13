@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2855;
+const EXPECTED_CASES: usize = 2868;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5002,6 +5002,59 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "bit literals",
             "SELECT id FROM events WHERE id IN (0b1, 0b11, 0b1010) AND score >= 0b1 ORDER BY id",
+        ),
+        // A row against a subquery is compared with the subquery's one row.
+        ordered(
+            "row compared with a subquery",
+            "SELECT id FROM events WHERE (id, score) = (SELECT 1, 10)",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT id FROM events WHERE (id, score) = (SELECT user_id, 10 FROM orders WHERE id = 1)",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT id FROM events WHERE (id, score) = (SELECT user_id, 10 FROM orders WHERE id = 99)",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT id FROM events WHERE (id, score) <> (SELECT 1, 10) ORDER BY id",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT id, (id, score) = (SELECT 1, 10), (id, score) = (SELECT 1, NULL), (id, score) = (SELECT 2, NULL), (id, score) <=> (SELECT 1, 10), (id, score) > (SELECT 1, 5), (id, score) = (SELECT user_id, 10 FROM orders WHERE id = 99) FROM events ORDER BY id",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT id FROM events WHERE ROW(id, score) = (SELECT 1, 10)",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT id FROM events WHERE (SELECT 2, 20) = (id, score)",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT e.id FROM events e WHERE (e.id, 'shipped') = (SELECT o.id, o.status FROM orders o WHERE o.id = e.id) ORDER BY e.id",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT e.id FROM events e WHERE (e.id, e.score) < (SELECT o.user_id, o.total FROM orders o WHERE o.id = e.id + 1) ORDER BY e.id",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT id FROM events WHERE (id, score) = (SELECT user_id, 10 FROM orders ORDER BY id LIMIT 1)",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT id FROM events WHERE (id, score) = (SELECT DISTINCT user_id, 10 FROM orders WHERE user_id = 1)",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT id FROM events WHERE (id, score) >= (SELECT MIN(user_id), MAX(total) FROM orders WHERE id > 4 AND id < 9) ORDER BY id",
+        ),
+        ordered(
+            "row compared with a subquery",
+            "SELECT u.id, (u.id, u.name) = (SELECT o.user_id, 'user-01' FROM orders o WHERE o.id = u.id) FROM users u ORDER BY u.id",
         ),
     ]
     .into_iter()

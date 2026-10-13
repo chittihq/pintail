@@ -16,6 +16,10 @@
 //! - `IN` is equality with any listed row, and `NOT IN` its negation. Against
 //!   a subquery, `IN` asks whether some member row equals, through EXISTS
 //!   over a derived table of the subquery that names its columns.
+//! - A row compared with a subquery (`(a, b) = (SELECT x, y ...)`) is
+//!   compared with the subquery's one row: each of its columns is read as a
+//!   scalar subquery, so no row is a row of NULLs and a second row is the
+//!   scalar subquery's error, which is what `MySQL` answers for both.
 //!
 //! Rows nest: a column that is itself a row compares by the same rules when
 //! the rewritten pair is bound.
@@ -92,10 +96,17 @@ pub(super) fn comparison(
     let (left_columns, right_columns) = match (columns(left), columns(right)) {
         (Some(left), Some(right)) => (left, right),
         (None, None) => return Ok(None),
-        // A row against a subquery is the subquery binder's to answer.
-        (Some(_), None) if is_subquery(right) => return Ok(None),
-        (None, Some(_)) if is_subquery(left) => return Ok(None),
-        (Some(row), None) | (None, Some(row)) => return Err(arity_error(row.len())),
+        (Some(row), None) => match subquery(right) {
+            Some(query) => {
+                let value = subquery_row(query, row.len())?;
+                (row, value)
+            }
+            None => return Err(arity_error(row.len())),
+        },
+        (None, Some(row)) => match subquery(left) {
+            Some(query) => (subquery_row(query, row.len())?, row),
+            None => return Err(arity_error(row.len())),
+        },
     };
     if left_columns.len() != right_columns.len() {
         return Err(arity_error(left_columns.len()));
@@ -115,13 +126,77 @@ pub(super) fn comparison(
     }))
 }
 
-fn is_subquery(expr: &Expr) -> bool {
+fn subquery(expr: &Expr) -> Option<&Query> {
     match expr {
-        Expr::Subquery(_) => true,
-        Expr::Nested(inner) => is_subquery(inner),
-        _ => false,
+        Expr::Subquery(query) => Some(query),
+        Expr::Nested(inner) => subquery(inner),
+        _ => None,
     }
 }
+
+/// The one row `subquery` produces, as a scalar subquery per column.
+///
+/// A plain `SELECT ... FROM ... WHERE` is read once per column with only
+/// that column selected, which keeps a reference to the outer row working.
+/// Anything whose rows depend on the select list as a whole - DISTINCT,
+/// grouping, a set operation - or that names its columns from elsewhere -
+/// ORDER BY - is read through a derived table that names the columns
+/// instead, which an uncorrelated subquery allows.
+fn subquery_row(subquery: &Query, width: usize) -> Result<Vec<Expr>, BindError> {
+    let whole = members(subquery, width)?;
+    let independent = subquery.order_by.is_none()
+        && subquery.limit_clause.is_none()
+        && matches!(subquery.body.as_ref(), SetExpr::Select(select)
+            if select.distinct.is_none()
+                && select.having.is_none()
+                && select.named_window.is_empty()
+                && matches!(&select.group_by,
+                    sqlparser::ast::GroupByExpr::Expressions(keys, modifiers)
+                        if keys.is_empty() && modifiers.is_empty()));
+    (0..width)
+        .map(|index| {
+            if independent {
+                let mut column = whole.clone();
+                let SetExpr::Select(select) = column.body.as_mut() else {
+                    unreachable!("an independent subquery is a SELECT");
+                };
+                select.projection = vec![select.projection.swap_remove(index)];
+                return Ok(Expr::Subquery(Box::new(column)));
+            }
+            let template =
+                crate::parse_expression(&format!("(SELECT 1 FROM (SELECT 1) AS `{ROW_VALUE}`)"))
+                    .map_err(|error| BindError::UnsupportedSubquery(error.to_string()))?;
+            let Expr::Subquery(mut value) = template else {
+                unreachable!("the template parses as a subquery");
+            };
+            let SetExpr::Select(select) = value.body.as_mut() else {
+                unreachable!("the template's body is a SELECT");
+            };
+            select.projection = vec![SelectItem::UnnamedExpr(Expr::Identifier(member_column(
+                index,
+            )))];
+            let TableFactor::Derived {
+                subquery: from,
+                alias: Some(alias),
+                ..
+            } = &mut select.from[0].relation
+            else {
+                unreachable!("the template reads a derived table under an alias");
+            };
+            **from = whole.clone();
+            alias.columns = (0..width)
+                .map(|index| TableAliasColumnDef {
+                    name: member_column(index),
+                    data_type: None,
+                })
+                .collect();
+            Ok(Expr::Subquery(value))
+        })
+        .collect()
+}
+
+/// The derived table a row-valued subquery is read through.
+const ROW_VALUE: &str = "<row-value>";
 
 fn all(pairs: Vec<(Expr, Expr)>, op: &BinaryOperator) -> Expr {
     pairs
