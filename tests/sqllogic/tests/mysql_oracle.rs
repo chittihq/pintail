@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2803;
+const EXPECTED_CASES: usize = 2808;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4677,6 +4677,55 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "distinct over window results",
             "SELECT DISTINCT UPPER(note), LAG(note) OVER (ORDER BY id) FROM events ORDER BY 1, 2",
+        ),
+        ordered(
+            "uuid functions",
+            "SELECT IS_UUID('6ccd780c-baba-1026-9564-5b8c656024db'), \
+             IS_UUID('6CCD780CBABA102695645B8C656024DB'), \
+             IS_UUID('{6ccd780c-baba-1026-9564-5b8c656024db}'), \
+             IS_UUID('6ccd780c-baba-1026-9564-5b8c6560'), \
+             IS_UUID(' 6ccd780c-baba-1026-9564-5b8c656024db'), IS_UUID(NULL), IS_UUID(''), \
+             IS_UUID('6ccd780cbaba-1026-9564-5b8c656024db-'), \
+             IS_UUID('{6ccd780cbaba102695645b8c656024db}'), \
+             IS_UUID('6ccd780c-baba-1026-9564-5b8c656024dg'), IS_UUID(12), \
+             IS_UUID('6ccd780c-baba-1026-95645b8c656024db0')",
+        ),
+        ordered(
+            "uuid functions",
+            "SELECT HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db')), \
+             HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', 1)), \
+             HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', 0)), \
+             HEX(UUID_TO_BIN('{6CCD780C-BABA-1026-9564-5B8C656024DB}', TRUE)), \
+             HEX(UUID_TO_BIN('6ccd780cbaba102695645b8c656024db')), UUID_TO_BIN(NULL), \
+             HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', 2)), \
+             HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', NULL)), \
+             HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', '1')), \
+             HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', 0.4))",
+        ),
+        ordered(
+            "uuid functions",
+            "SELECT BIN_TO_UUID(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db')), \
+             BIN_TO_UUID(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', 1), 1), \
+             BIN_TO_UUID(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', 1)), \
+             BIN_TO_UUID(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db'), 1), \
+             BIN_TO_UUID(x'6CCD780CBABA102695645B8C656024DB'), BIN_TO_UUID(NULL), \
+             BIN_TO_UUID('0123456789abcdef'), \
+             BIN_TO_UUID(x'6CCD780CBABA102695645B8C656024DB', NULL)",
+        ),
+        ordered(
+            "uuid functions",
+            "SELECT id, IS_UUID(name), IS_UUID(CONCAT('6ccd780c-baba-1026-9564-5b8c656024d', id)), \
+             BIN_TO_UUID(UUID_TO_BIN(CONCAT('6ccd780c-baba-1026-9564-5b8c656024d', id), id % 2), \
+             id % 2), HEX(UUID_TO_BIN(CONCAT('0000000', id, '-0000-0000-0000-000000000000'), 1)) \
+             FROM events WHERE id < 10 ORDER BY id",
+        ),
+        ordered(
+            "uuid functions",
+            "SELECT id FROM events WHERE id < 10 \
+             AND UUID_TO_BIN(CONCAT('0000000', id, '-0000-0000-0000-000000000000')) \
+             >= x'00000007000000000000000000000000' \
+             ORDER BY BIN_TO_UUID(UUID_TO_BIN(CONCAT('0000000', id, '-0000-0000-0000-00000000000', \
+             10 - id))) DESC",
         ),
         // FORMAT's third argument; `format_locale_cases` covers every locale.
         ordered(

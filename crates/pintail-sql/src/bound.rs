@@ -1345,6 +1345,16 @@ pub enum ScalarFunction {
     InetAton,
     /// `INET_NTOA(n)`: the dotted-quad form, NULL outside the IPv4 range.
     InetNtoa,
+    /// `IS_UUID(str)`: whether the text spells a UUID - five dashed groups,
+    /// the same in braces, or thirty-two bare hex digits.
+    IsUuid,
+    /// `UUID_TO_BIN(str[, swap])`: the UUID's sixteen bytes; with `swap`
+    /// the time-high and time-low groups change places, so values made in
+    /// sequence sort together.
+    UuidToBin,
+    /// `BIN_TO_UUID(bin[, swap])`: sixteen bytes as dashed lowercase text,
+    /// undoing `UUID_TO_BIN`'s swap when asked.
+    BinToUuid,
     /// `UNHEX(str)`: binary from hex text, NULL when malformed.
     Unhex,
     /// `ELT(n, ...)`: 1-based pick, NULL out of range.

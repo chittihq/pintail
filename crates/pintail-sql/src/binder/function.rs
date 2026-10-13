@@ -734,6 +734,29 @@ pub(super) fn bind_scalar_function(
         "INET_ATON" if args.len() == 1 => ScalarFunction::InetAton,
         "INET_NTOA" if args.len() == 1 => ScalarFunction::InetNtoa,
         "UNHEX" if args.len() == 1 => ScalarFunction::Unhex,
+        "IS_UUID" if args.len() == 1 => ScalarFunction::IsUuid,
+        "UUID_TO_BIN" if args.len() == 1 => ScalarFunction::UuidToBin,
+        "BIN_TO_UUID" if args.len() == 1 => ScalarFunction::BinToUuid,
+        // A NULL swap flag is no swap, not a NULL result.
+        "UUID_TO_BIN" | "BIN_TO_UUID" if args.len() == 2 => {
+            let swap = args.pop().expect("two arguments");
+            args.push(bind_scalar(
+                ScalarFunction::Coalesce,
+                vec![
+                    swap,
+                    BoundExpr {
+                        kind: BoundExprKind::Literal(Value::Int64(0)),
+                        data_type: Some(DataType::Int64),
+                        nullable: false,
+                    },
+                ],
+            )?);
+            if function_name == "UUID_TO_BIN" {
+                ScalarFunction::UuidToBin
+            } else {
+                ScalarFunction::BinToUuid
+            }
+        }
         "ELT" if args.len() >= 2 => ScalarFunction::Elt,
         "FIELD" if args.len() >= 2 => ScalarFunction::Field,
         "FORMAT" if args.len() == 2 => ScalarFunction::Format,
@@ -2550,6 +2573,18 @@ pub(super) fn bind_scalar(
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::PadTextBytes(_) | ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
+        ScalarFunction::UuidToBin => (
+            Some(DataType::Binary),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::BinToUuid => (
+            Some(DataType::Utf8),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::IsUuid => (
+            Some(DataType::Int64),
+            args.iter().any(|argument| argument.nullable),
+        ),
         // NULL arguments are skipped, so the result itself is never NULL.
         ScalarFunction::Char => (Some(DataType::Binary), false),
         ScalarFunction::Rand | ScalarFunction::Pi | ScalarFunction::RandSeeded => {

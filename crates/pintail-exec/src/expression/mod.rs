@@ -1767,6 +1767,9 @@ impl CompiledExpr {
                     | ScalarFunction::Crc32
                     | ScalarFunction::InetAton
                     | ScalarFunction::InetNtoa
+                    | ScalarFunction::IsUuid
+                    | ScalarFunction::UuidToBin
+                    | ScalarFunction::BinToUuid
                     | ScalarFunction::MakeTime => 64,
                     ScalarFunction::BitBytes(_) => 8,
                     ScalarFunction::DateFormat | ScalarFunction::TimeFormat => {
@@ -2070,6 +2073,9 @@ impl CompiledExpr {
                     | ScalarFunction::Crc32
                     | ScalarFunction::InetAton
                     | ScalarFunction::InetNtoa
+                    | ScalarFunction::IsUuid
+                    | ScalarFunction::UuidToBin
+                    | ScalarFunction::BinToUuid
                     | ScalarFunction::MakeTime => 64,
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
@@ -3889,6 +3895,37 @@ fn evaluate_eager_scalar_inner(
                 }
             }
             Ok(Value::UInt64(address))
+        }
+        ScalarFunction::IsUuid => Ok(Value::Int64(i64::from(
+            uuid_bytes(&scalar_bytes(&values[0])?).is_some(),
+        ))),
+        ScalarFunction::UuidToBin => {
+            let mut bytes = uuid_bytes(&scalar_bytes(&values[0])?)
+                .ok_or(ExecError::WrongArguments("uuid_to_bin"))?;
+            if values.get(1).map(mysql_f64).transpose()?.unwrap_or(0.0) != 0.0 {
+                // Time-high, time-mid, time-low: the slowest-changing first.
+                bytes[..8].rotate_left(4);
+                bytes[..4].rotate_left(2);
+            }
+            Ok(Value::Binary(bytes.to_vec()))
+        }
+        ScalarFunction::BinToUuid => {
+            let mut bytes: [u8; 16] = scalar_bytes(&values[0])?
+                .as_slice()
+                .try_into()
+                .map_err(|_| ExecError::WrongArguments("bin_to_uuid"))?;
+            if values.get(1).map(mysql_f64).transpose()?.unwrap_or(0.0) != 0.0 {
+                bytes[..4].rotate_left(2);
+                bytes[..8].rotate_left(4);
+            }
+            let mut text = String::with_capacity(36);
+            for (index, byte) in bytes.iter().enumerate() {
+                if matches!(index, 4 | 6 | 8 | 10) {
+                    text.push('-');
+                }
+                text.push_str(&format!("{byte:02x}"));
+            }
+            Ok(Value::Utf8(text))
         }
         ScalarFunction::InetNtoa => {
             let number = mysql_i64(&values[0])?;
@@ -7693,6 +7730,44 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 /// Renders `units` scaled by `10^scale` with thousands separators, the way
 /// `FORMAT()` prints: sign, grouped integer digits, then exactly `scale`
 /// fraction digits.
+/// The bytes of a string argument: a binary value's own, text's encoding.
+fn scalar_bytes(value: &Value) -> Result<Vec<u8>, ExecError> {
+    match value {
+        Value::Binary(bytes) => Ok(bytes.clone()),
+        value => Ok(scalar_string(value)?.into_bytes()),
+    }
+}
+
+/// The sixteen bytes a UUID's text spells, in any of the three forms
+/// `MySQL` reads: `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`, the same in
+/// braces, or its thirty-two hex digits with no dashes. Anything else is
+/// not a UUID.
+fn uuid_bytes(text: &[u8]) -> Option<[u8; 16]> {
+    let text = match text {
+        [b'{', inner @ .., b'}'] if inner.len() == 36 => inner,
+        _ => text,
+    };
+    let dashed = match text.len() {
+        36 => true,
+        32 => false,
+        _ => return None,
+    };
+    let mut bytes = [0_u8; 16];
+    let mut digits = 0;
+    for (index, byte) in text.iter().enumerate() {
+        if dashed && matches!(index, 8 | 13 | 18 | 23) {
+            if *byte != b'-' {
+                return None;
+            }
+            continue;
+        }
+        let digit = u8::try_from(char::from(*byte).to_digit(16)?).ok()?;
+        bytes[digits / 2] = (bytes[digits / 2] << 4) | digit;
+        digits += 1;
+    }
+    Some(bytes)
+}
+
 fn format_grouped(units: i128, scale: u8, style: NumberStyle) -> String {
     let sign = if units < 0 { "-" } else { "" };
     let magnitude = units.unsigned_abs().to_string();
