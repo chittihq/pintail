@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2749;
+const EXPECTED_CASES: usize = 2760;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4349,6 +4349,66 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "datetime helpers",
             "SELECT id, CEIL(score / 3) AS c, FLOOR(score / 3) AS f FROM events ORDER BY id",
+        ),
+        // Functions that are another expression under a second name.
+        ordered(
+            "string function spellings",
+            "SELECT id, CONCAT('[', LTRIM(tag), ']'), CONCAT('[', RTRIM(tag), ']'), \
+             CONCAT('[', LTRIM(RTRIM(label)), ']') FROM events ORDER BY id",
+        ),
+        ordered(
+            "string function spellings",
+            "SELECT LTRIM(NULL), LTRIM(5), RTRIM(12.50), HEX(LTRIM(x'202041')), \
+             CONCAT('[', LTRIM('\\t x'), ']'), CONCAT('[', RTRIM('x \\n'), ']'), \
+             CONCAT('[', LTRIM('  a  '), ']'), CONCAT('[', RTRIM('  a  '), ']')",
+        ),
+        ordered(
+            "string function spellings",
+            "SELECT id, MID(name, 3, 4), MID(name, 7), MID(label, -2, 1), \
+             POSITION('e' IN note), POSITION(tag IN CONCAT('a red blue', tag)) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "string function spellings",
+            "SELECT id, BIT_LENGTH(label), OCTET_LENGTH(label), BIT_LENGTH(note), \
+             OCTET_LENGTH(score), ISNULL(note), 1 + ISNULL(note) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string function spellings",
+            "SELECT POSITION('B' IN 'abc'), POSITION(NULL IN 'a'), POSITION('' IN 'abc'), \
+             POSITION(2 IN 123), ISNULL(NULL), ISNULL(0), ISNULL(1 / 0), BIT_LENGTH(NULL), \
+             BIT_LENGTH(12), MID('abcdef', -3, 2), MID('abc', 0)",
+        ),
+        ordered(
+            "string function spellings",
+            "SELECT id, STRCMP(note, 'alpha'), STRCMP(tag, 'red'), STRCMP(label, 'strasse'), \
+             STRCMP(score, 50), STRCMP(id, '3'), STRCMP(active, 1) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string function spellings",
+            "SELECT STRCMP('a', 'A'), STRCMP('a' COLLATE utf8mb4_bin, 'A'), STRCMP('abc', 'abd'), \
+             STRCMP(NULL, 'a'), STRCMP(9, 10), STRCMP(1.50, '1.5'), STRCMP(1e0, 1), \
+             STRCMP('a', 'a '), STRCMP('a ', 'a')",
+        ),
+        ordered(
+            "string function spellings",
+            "SELECT o.id, STRCMP(o.total, 50), STRCMP(o.total, '12.35'), STRCMP(o.status, 'pending') \
+             FROM orders o ORDER BY o.id",
+        ),
+        ordered(
+            "string function spellings",
+            "SELECT u.id, STRCMP(MAX(o.status), 'shipped'), ISNULL(MAX(o.total)), \
+             BIT_LENGTH(MIN(u.name)) FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+             GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "string function spellings",
+            "SELECT id FROM events WHERE LTRIM(RTRIM(tag)) = 'red' OR STRCMP(note, 'beta') = 0 \
+             ORDER BY STRCMP(label, 'b') DESC, id",
+        ),
+        unordered(
+            "string function spellings",
+            "SELECT RTRIM(tag) AS t, COUNT(*) FROM events GROUP BY RTRIM(tag)",
         ),
     ]
     .into_iter()

@@ -534,6 +534,11 @@ pub(super) fn bind_scalar_function(
     if function_name == "TIMESTAMPADD" {
         return bind_timestamp_add(function, arguments, tables, aggregates, windows, subqueries);
     }
+    if let Some(respelled) =
+        respelled_call(&function_name, function, arguments, tables, subqueries)?
+    {
+        return bind_expr_inner(&respelled, tables, aggregates, windows, subqueries);
+    }
     let mut args = Vec::with_capacity(arguments.args.len());
     for argument in &arguments.args {
         let FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) = argument else {
@@ -546,6 +551,8 @@ pub(super) fn bind_scalar_function(
     let scalar = match function_name.as_str() {
         "CONCAT" if !args.is_empty() => ScalarFunction::Concat,
         "SUBSTRING" | "SUBSTR" if matches!(args.len(), 2 | 3) => ScalarFunction::Substring,
+        #[allow(clippy::match_same_arms)]
+        "MID" if matches!(args.len(), 2 | 3) => ScalarFunction::Substring,
         "LOWER" | "LCASE" if args.len() == 1 => ScalarFunction::Lower,
         "UPPER" | "UCASE" if args.len() == 1 => ScalarFunction::Upper,
         "SOUNDEX" if args.len() == 1 => ScalarFunction::Soundex,
@@ -560,7 +567,24 @@ pub(super) fn bind_scalar_function(
         "DEGREES" if args.len() == 1 => ScalarFunction::Degrees,
         "RADIANS" if args.len() == 1 => ScalarFunction::Radians,
         "TRIM" if args.len() == 1 => ScalarFunction::Trim,
+        "LTRIM" if args.len() == 1 => {
+            args.push(space_literal());
+            ScalarFunction::TrimPattern {
+                leading: true,
+                trailing: false,
+            }
+        }
+        "RTRIM" if args.len() == 1 => {
+            args.push(space_literal());
+            ScalarFunction::TrimPattern {
+                leading: false,
+                trailing: true,
+            }
+        }
         "LENGTH" if args.len() == 1 => ScalarFunction::Length,
+        // A second arm rather than a longer first one, as for the clock names.
+        #[allow(clippy::match_same_arms)]
+        "OCTET_LENGTH" if args.len() == 1 => ScalarFunction::Length,
         "CHAR_LENGTH" | "CHARACTER_LENGTH" if args.len() == 1 => ScalarFunction::CharLength,
         "REPLACE" if args.len() == 3 => ScalarFunction::Replace,
         "LEFT" if args.len() == 2 => ScalarFunction::Left,
@@ -781,6 +805,11 @@ pub(super) fn bind_scalar_function(
                     .ok_or_else(|| BindError::UnsupportedExpression(function.to_string()))?,
             )
         }
+        // Bound before this match as another expression; a call that reaches
+        // here has a number of arguments that spelling does not take.
+        "ISNULL" | "BIT_LENGTH" | "STRCMP" => {
+            return Err(BindError::ParameterCount(function_name));
+        }
         // A function this match knows, called with a number of arguments
         // none of its arms takes.
         name if takes_counted_arguments(name) => {
@@ -812,6 +841,101 @@ pub(super) fn bind_scalar_function(
 
 /// `TIMESTAMPADD(unit, amount, datetime)` is `DATE_ADD` with reordered
 /// arguments.
+/// The one space `LTRIM` and `RTRIM` strip, as `TRIM(LEADING ' ' FROM x)`
+/// writes it.
+fn space_literal() -> BoundExpr {
+    BoundExpr {
+        kind: BoundExprKind::Literal(Value::Utf8(" ".into())),
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+    }
+}
+
+/// A function that is another expression under its own name, as the
+/// expression it stands for: `ISNULL(x)` is `x IS NULL`, `BIT_LENGTH(x)` is
+/// `LENGTH(x) * 8`, and `STRCMP(a, b)` is `(a > b) - (a < b)` over both
+/// arguments read as text, which is NULL when either is and otherwise the
+/// sign of the comparison under the collation the pair resolves to. A date
+/// or time argument is refused: `MySQL`'s answer over a temporal column does
+/// not follow the text the value prints as.
+fn respelled_call(
+    name: &str,
+    function: &Function,
+    arguments: &sqlparser::ast::FunctionArgumentList,
+    tables: &[BoundTable],
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<Option<Expr>, BindError> {
+    use sqlparser::ast::{BinaryOperator, CastKind, Ident, ObjectName};
+    let Some(operands) = arguments
+        .args
+        .iter()
+        .map(|argument| match argument {
+            FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) => Some(expression),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(None);
+    };
+    let nested = |operand: &Expr| Expr::Nested(Box::new(operand.clone()));
+    Ok(match (name, operands.as_slice()) {
+        ("ISNULL", [operand]) => Some(Expr::IsNull(Box::new(nested(operand)))),
+        ("BIT_LENGTH", [_]) => {
+            let mut length = function.clone();
+            length.name = ObjectName::from(vec![Ident::new("LENGTH")]);
+            Some(Expr::BinaryOp {
+                left: Box::new(Expr::Function(length)),
+                op: BinaryOperator::Multiply,
+                right: Box::new(Expr::Value(
+                    SqlValue::Number("8".to_owned(), false).with_empty_span(),
+                )),
+            })
+        }
+        ("STRCMP", [left, right]) => {
+            // A number or a date compares by its text here, never by value:
+            // STRCMP(9, 10) is 1.
+            let text = |operand: &Expr| {
+                let data_type =
+                    bind_expr_inner(operand, tables, &mut None, &mut None, subqueries)
+                        .map_or(None, |bound| bound.data_type);
+                match data_type {
+                    None | Some(DataType::Utf8 | DataType::Binary) => Ok(nested(operand)),
+                    Some(
+                        DataType::Date32
+                        | DataType::DateTime64 { .. }
+                        | DataType::Time64 { .. }
+                        | DataType::Year
+                        | DataType::Json,
+                    ) => Err(BindError::InvalidScalarFunction(
+                        "STRCMP over a date, time or JSON value".to_owned(),
+                    )),
+                    Some(_) => Ok(Expr::Cast {
+                        kind: CastKind::Cast,
+                        expr: Box::new(operand.clone()),
+                        data_type: SqlDataType::Char(None),
+                        array: false,
+                        format: None,
+                    }),
+                }
+            };
+            let (left, right) = (text(left)?, text(right)?);
+            let side = |op| {
+                Expr::Nested(Box::new(Expr::BinaryOp {
+                    left: Box::new(left.clone()),
+                    op,
+                    right: Box::new(right.clone()),
+                }))
+            };
+            Some(Expr::BinaryOp {
+                left: Box::new(side(BinaryOperator::Gt)),
+                op: BinaryOperator::Minus,
+                right: Box::new(side(BinaryOperator::Lt)),
+            })
+        }
+        _ => None,
+    })
+}
+
 fn bind_timestamp_add(
     function: &Function,
     arguments: &sqlparser::ast::FunctionArgumentList,

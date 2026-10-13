@@ -4363,6 +4363,13 @@ fn bind_expr_inner(
             }
             bind_scalar(ScalarFunction::Substring, args)
         }
+        Expr::Position { expr: needle, r#in } => bind_scalar(
+            ScalarFunction::Locate,
+            vec![
+                bind_expr_inner(needle, tables, aggregates, windows, subqueries)?,
+                bind_expr_inner(r#in, tables, aggregates, windows, subqueries)?,
+            ],
+        ),
         Expr::Trim {
             trim_where,
             trim_what: Some(what),

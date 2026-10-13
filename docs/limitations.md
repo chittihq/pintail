@@ -202,6 +202,10 @@ stays readable as a list of things to fix.
   arithmetic they coerce as a string would (the leading number), where MySQL
   reads the result as a `TIME` and yields its `HHMMSS` number. Over `TIME`
   values and over literals they follow MySQL.
+- `STRCMP` rejects a DATE, TIME, DATETIME, TIMESTAMP, YEAR or JSON argument.
+  MySQL's answer over a temporal column does not follow the text the value
+  prints as (`STRCMP(t, '01:30:00')` is -1 for a TIME column holding
+  `01:30:00`), so Pintail refuses rather than answer by the text.
 - Pintail maps an empty scalar-subquery result to `NULL`. During oracle development, MySQL 8.4's constant `SELECT` with `LIMIT 0` produced a special-case result that did not follow this behavior; that MySQL-only corner is excluded from the common-workload corpus.
 
 - A replica created while source `DECIMAL` columns above precision 38 mapped
