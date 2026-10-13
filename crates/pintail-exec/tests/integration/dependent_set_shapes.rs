@@ -854,3 +854,99 @@ fn non_null_row_membership_skips_the_undecided_index() {
         assert_eq!(row[1], membership(id == 1 || id == 3, id > 4, false));
     }
 }
+
+/// `EXISTS` whose only reading of the outer row is one range comparison
+/// with an integer column asks whether any inner row lies beyond the outer
+/// value, which the column's greatest or least value answers for every
+/// outer row: the inner table is read once and no outer row runs it.
+#[test]
+fn a_range_exists_is_decided_by_one_extreme_of_the_inner_column() {
+    let fixture = fixture(260);
+    let scans = || (1..=SCANS).map(scan);
+    let flags = |decide: &dyn Fn(u64) -> bool| {
+        (1..=260_u64)
+            .map(|parcel| vec![parcel.to_string(), u8::from(decide(parcel)).to_string()])
+            .collect::<Vec<_>>()
+    };
+    let signed = |parcel: u64| i64::try_from(weight(parcel)).expect("weight");
+
+    let greatest = scans().map(|(parcel, ..)| parcel).max().expect("scans");
+    let above = ran(
+        &fixture,
+        "SELECT p.id, EXISTS (SELECT 1 FROM scans s WHERE s.parcel_id > p.id) \
+         FROM parcels p ORDER BY p.id",
+    );
+    assert_eq!(above.rows, flags(&|parcel| greatest > parcel));
+    assert_eq!((above.per_row, above.indexes), (0, 1), "{}", above.profile);
+
+    // Written the other way round, under a filter that reads no outer row,
+    // and negated.
+    let greatest_in_zone = scans()
+        .filter(|(.., zone)| *zone == 2)
+        .map(|(parcel, ..)| parcel)
+        .max()
+        .expect("zone scans");
+    assert!(greatest_in_zone < 260);
+    let none_at_or_above = ran(
+        &fixture,
+        "SELECT p.id, NOT EXISTS (SELECT 1 FROM scans s \
+           WHERE p.id <= s.parcel_id AND s.zone_id = 2) FROM parcels p ORDER BY p.id",
+    );
+    assert_eq!(
+        none_at_or_above.rows,
+        flags(&|parcel| greatest_in_zone < parcel)
+    );
+    assert_eq!(
+        (none_at_or_above.per_row, none_at_or_above.indexes),
+        (0, 1),
+        "{}",
+        none_at_or_above.profile
+    );
+
+    // A nullable signed column against a signed expression: NULLs are no
+    // value, and the least one decides `<`.
+    let oks = || scans().filter_map(|(_, ok, _)| ok);
+    let (least_ok, greatest_ok) = (oks().min().expect("oks"), oks().max().expect("oks"));
+    let at_least = ran(
+        &fixture,
+        "SELECT p.id, EXISTS (SELECT 1 FROM scans s WHERE s.ok >= p.weight) \
+         FROM parcels p ORDER BY p.id",
+    );
+    assert_eq!(
+        at_least.rows,
+        flags(&|parcel| i64::try_from(greatest_ok).expect("ok") >= signed(parcel))
+    );
+    assert_eq!((at_least.per_row, at_least.indexes), (0, 1));
+    let below = ran(
+        &fixture,
+        "SELECT p.id, EXISTS (SELECT 1 FROM scans s WHERE s.ok < p.weight - 50) \
+         FROM parcels p ORDER BY p.id",
+    );
+    assert_eq!(
+        below.rows,
+        flags(&|parcel| i64::try_from(least_ok).expect("ok") < signed(parcel) - 50)
+    );
+    assert_eq!((below.per_row, below.indexes), (0, 1));
+
+    // No inner row passes the filter: nothing lies beyond anything.
+    let empty = ran(
+        &fixture,
+        "SELECT p.id, EXISTS (SELECT 1 FROM scans s WHERE s.zone_id = 9 AND s.parcel_id < p.id) \
+         FROM parcels p ORDER BY p.id",
+    );
+    assert_eq!(empty.rows, flags(&|_| false));
+    assert_eq!((empty.per_row, empty.indexes), (0, 1));
+
+    // A second conjunct reading the outer row is not this shape.
+    let two = ran(
+        &fixture,
+        "SELECT p.id, EXISTS (SELECT 1 FROM scans s \
+           WHERE s.parcel_id > p.id AND s.ok < p.weight) FROM parcels p ORDER BY p.id",
+    );
+    assert_eq!(two.indexes, 0, "{}", two.profile);
+    assert_eq!(
+        two.rows,
+        flags(&|parcel| scans().any(|(owner, ok, _)| owner > parcel
+            && ok.is_some_and(|ok| i64::try_from(ok).expect("ok") < signed(parcel))))
+    );
+}

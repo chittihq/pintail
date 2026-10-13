@@ -33,6 +33,12 @@
 //! With no equality to key by, every inner row is a candidate for every
 //! outer row; that is only taken for an inner side of a few rows.
 //!
+//! One keyless shape needs no candidates at all: an `EXISTS` whose only
+//! reading of the outer row is `inner_column > outer_expression` (or `>=`,
+//! `<`, `<=`) between integers. Some inner row lies beyond the outer value
+//! exactly when the column's greatest (or least) value does, so the read
+//! keeps that one value and each outer row compares with it.
+//!
 //! What it must never change, and how each is kept:
 //!
 //! - **Comparison semantics**: only `inner_column = outer_expression` with
@@ -146,6 +152,30 @@ enum PlannedForm {
     Text(Option<&'static str>),
 }
 
+/// Which extreme of the inner column decides a range `EXISTS`, and whether
+/// the outer value may equal it.
+#[derive(Clone, Copy)]
+enum Extreme {
+    Greatest { inclusive: bool },
+    Least { inclusive: bool },
+}
+
+/// `inner_column > outer_expression` (or `>=`, `<`, `<=`) as the only
+/// conjunct that reads the outer row.
+struct PlannedBound {
+    inner: usize,
+    outer: BoundExpr,
+    extreme: Extreme,
+}
+
+/// The extreme of the filtered inner column, `None` when no row has a
+/// value, and the outer expression it is compared with.
+struct BuiltBound {
+    outer: CompiledExpr,
+    extreme: Extreme,
+    value: Option<i128>,
+}
+
 /// One `inner_column = outer_expression` key.
 struct PlannedKey {
     inner: usize,
@@ -165,6 +195,9 @@ pub(super) struct IndexPlan {
     /// The correlated conjuncts that are not keys, joined by AND.
     residual: Option<BoundExpr>,
     answer: Answer,
+    /// Set for a range `EXISTS`: there are no keys and no residual, and
+    /// one extreme of the inner column is all the index holds.
+    bound: Option<PlannedBound>,
 }
 
 enum BuiltAnswer {
@@ -201,6 +234,8 @@ pub(super) struct SubqueryIndex {
     reserved: usize,
     /// Reused probe key.
     probe: Vec<JoinHashKey>,
+    /// Set for a range `EXISTS`, which holds no rows.
+    bound: Option<BuiltBound>,
 }
 
 impl SubqueryIndex {
@@ -362,8 +397,18 @@ fn analyse(
             residual.push(conjunct.clone());
         }
     }
+    // A range `EXISTS` with nothing else to check is decided by one
+    // extreme of the inner column, whatever the table's size.
+    let bound = match (&answer, keys.is_empty(), residual.as_slice()) {
+        (Answer::Exists, true, [conjunct]) => range_bound(conjunct),
+        _ => None,
+    };
+    if bound.is_some() {
+        residual.clear();
+    }
     // With no key every inner row is a candidate for every outer row.
-    if keys.is_empty()
+    if bound.is_none()
+        && keys.is_empty()
         && (residual.is_empty()
             || estimated_rows.is_some_and(|rows| rows > MAX_KEYLESS_ROWS as u64))
     {
@@ -390,6 +435,11 @@ fn analyse(
             form,
         })
         .collect::<Vec<_>>();
+    let bound = bound.map(|(inner, outer, extreme)| PlannedBound {
+        inner: add_column(&inner),
+        outer,
+        extreme,
+    });
     let mut read = residual.iter().collect::<Vec<_>>();
     match &answer {
         // Which of the inner row's columns a nested subquery reads is not
@@ -422,6 +472,7 @@ fn analyse(
             keys,
             residual: conjoin(residual),
             answer,
+            bound,
         },
         estimated_rows,
     ))
@@ -666,6 +717,9 @@ fn compile_for(
 /// Reads the filtered inner table and indexes it. `None` when anything
 /// about it says the per-row path should keep answering.
 pub(super) fn build(plan: &IndexPlan, context: &DependentRow<'_>) -> Option<SubqueryIndex> {
+    if let Some(bound) = &plan.bound {
+        return build_bound(plan, bound, context);
+    }
     let (outer_keys, answer) = compile_for(plan, context)?;
     let modes = outer_keys.iter().map(|(_, mode)| *mode).collect::<Vec<_>>();
     let physical = PhysicalPlanner::plan(
@@ -692,6 +746,7 @@ pub(super) fn build(plan: &IndexPlan, context: &DependentRow<'_>) -> Option<Subq
         answer,
         reserved: 0,
         probe: Vec::with_capacity(plan.keys.len()),
+        bound: None,
     };
     let key_bytes = size_of::<Vec<JoinHashKey>>()
         + size_of::<Vec<(u32, u32)>>()
@@ -751,6 +806,9 @@ pub(super) fn answer(
     index: &mut SubqueryIndex,
     context: &DependentRow<'_>,
 ) -> Result<Option<Value>, ExecError> {
+    if let Some(bound) = &index.bound {
+        return answer_bound(bound, context);
+    }
     let wanted = match index.answer {
         BuiltAnswer::Exists
         | BuiltAnswer::Scalar { first: true, .. }
@@ -812,6 +870,101 @@ pub(super) fn answer(
             _ => return Err(ExecError::ScalarSubqueryRows { rows: found.len() }),
         },
     }))
+}
+
+/// Reads the filtered inner column once and keeps the extreme a range
+/// `EXISTS` is decided by. `None` when a value is not an integer, an outer
+/// column belongs to a scope further out, or the read fails.
+fn build_bound(
+    plan: &IndexPlan,
+    bound: &PlannedBound,
+    context: &DependentRow<'_>,
+) -> Option<SubqueryIndex> {
+    if !outer_columns_resolve(&bound.outer, context.columns) {
+        return None;
+    }
+    let outer = CompiledExpr::compile(&bound.outer, context.columns, context.collation).ok()?;
+    let physical = PhysicalPlanner::plan(
+        Optimizer::optimize(LogicalPlanner::plan(plan.materialize.clone())),
+        context.collation,
+    )
+    .ok()?;
+    let limit = dependent_subquery_memory_limit(context.memory, context.batch).ok()?;
+    let mut execution = Execution::start_with_deadline(
+        physical,
+        context.provider,
+        limit,
+        context.memory.deadline,
+        context.collation,
+    )
+    .ok()?;
+    let mut value: Option<i128> = None;
+    while let Some(batch) = execution.next_batch().ok()? {
+        let column = batch.column(bound.inner)?;
+        for row in batch.selection().selected_rows() {
+            let Whole::Value(read) = integer(column.value(row)?)? else {
+                continue;
+            };
+            value = Some(match (value, bound.extreme) {
+                (None, _) => read,
+                (Some(held), Extreme::Greatest { .. }) => held.max(read),
+                (Some(held), Extreme::Least { .. }) => held.min(read),
+            });
+        }
+    }
+    Some(SubqueryIndex {
+        batches: Vec::new(),
+        rows: HashMap::new(),
+        layout: plan.layout.clone(),
+        outer_keys: Vec::new(),
+        residual: None,
+        answer: BuiltAnswer::Exists,
+        reserved: 0,
+        probe: Vec::new(),
+        bound: Some(BuiltBound {
+            outer,
+            extreme: bound.extreme,
+            value,
+        }),
+    })
+}
+
+/// An integer cell: NULL, or its value in a width both signs compare in.
+enum Whole {
+    Null,
+    Value(i128),
+}
+
+/// `value` as an integer cell; `None` for anything that is not one.
+fn integer(value: &Value) -> Option<Whole> {
+    match value {
+        Value::Null => Some(Whole::Null),
+        Value::Int64(value) => Some(Whole::Value(i128::from(*value))),
+        Value::UInt64(value) => Some(Whole::Value(i128::from(*value))),
+        _ => None,
+    }
+}
+
+/// Whether some inner row lies beyond the current outer row's value: the
+/// extreme does exactly when any row does. A NULL outer value compares
+/// with nothing, so no row qualifies.
+fn answer_bound(
+    bound: &BuiltBound,
+    context: &DependentRow<'_>,
+) -> Result<Option<Value>, ExecError> {
+    let Some(outer) = integer(&bound.outer.evaluate(context.batch, context.row)?) else {
+        return Ok(None);
+    };
+    let found = match (outer, bound.value) {
+        (Whole::Value(outer), Some(value)) => match bound.extreme {
+            Extreme::Greatest { inclusive: true } => value >= outer,
+            Extreme::Greatest { inclusive: false } => value > outer,
+            Extreme::Least { inclusive: true } => value <= outer,
+            Extreme::Least { inclusive: false } => value < outer,
+        },
+        _ => false,
+    };
+    Ok(Some(Value::Boolean(found)))
 }
 
 /// Up to `wanted` qualifying candidates for the current outer row, in scan
@@ -970,6 +1123,49 @@ fn equality_key(conjunct: &BoundExpr) -> Option<(&BoundColumn, &BoundExpr, Plann
         outer,
         PlannedForm::Text(Some(collation)),
     ))
+}
+
+/// `inner_column > outer_expression`, or `>=`, `<`, `<=`, either way round,
+/// with both sides integers: the inner column, the outer expression and
+/// the extreme of the column that decides whether any row qualifies.
+fn range_bound(conjunct: &BoundExpr) -> Option<(BoundColumn, BoundExpr, Extreme)> {
+    let BoundExprKind::Binary { op, left, right } = &conjunct.kind else {
+        return None;
+    };
+    let bare = |side: &BoundExpr| match &side.kind {
+        BoundExprKind::Column(column) if !column.outer => Some(column.clone()),
+        _ => None,
+    };
+    // Read as `inner op outer`.
+    let (inner, inner_side, outer, op) = if let Some(inner) = bare(left) {
+        (inner, &**left, &**right, *op)
+    } else {
+        let turned = match op {
+            BinaryOp::Less => BinaryOp::Greater,
+            BinaryOp::LessOrEqual => BinaryOp::GreaterOrEqual,
+            BinaryOp::Greater => BinaryOp::Less,
+            BinaryOp::GreaterOrEqual => BinaryOp::LessOrEqual,
+            _ => return None,
+        };
+        (bare(right)?, &**right, &**left, turned)
+    };
+    let extreme = match op {
+        BinaryOp::Greater => Extreme::Greatest { inclusive: false },
+        BinaryOp::GreaterOrEqual => Extreme::Greatest { inclusive: true },
+        BinaryOp::Less => Extreme::Least { inclusive: false },
+        BinaryOp::LessOrEqual => Extreme::Least { inclusive: true },
+        _ => return None,
+    };
+    let mut inner_columns = Vec::new();
+    let mut has_outer = false;
+    columns_of(outer, &mut inner_columns, &mut has_outer);
+    if !inner_columns.is_empty() || !has_outer {
+        return None;
+    }
+    (is_integer(inner.data_type)
+        && is_integer(inner_side.data_type?)
+        && is_integer(outer.data_type?))
+    .then(|| (inner, outer.clone(), extreme))
 }
 
 /// Replaces every outer column with a text literal, as substitution would.
