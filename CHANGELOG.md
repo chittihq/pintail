@@ -43,6 +43,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- SQL surface, each checked byte for byte against MySQL 8.4:
+  `LTRIM`, `RTRIM`, `MID`, `POSITION(a IN b)`, `OCTET_LENGTH`,
+  `BIT_LENGTH`, `ISNULL`, `STRCMP`; `PERCENT_RANK`, `CUME_DIST`,
+  `NTH_VALUE`, `SELECT DISTINCT` beside window functions, and a frame
+  clause on a ranking or offset function (accepted and unused, as in
+  MySQL); `INTERVAL n MICROSECOND` and `TIMESTAMPADD(MICROSECOND, ...)`;
+  `FORMAT(number, decimals, locale)` for every MySQL locale; `SUM`, `AVG`,
+  `STDDEV` and `VARIANCE` over TIME, DATE, DATETIME and JSON values;
+  `IS_UUID`, `UUID_TO_BIN`, `BIN_TO_UUID`; `JSON_ARRAY_APPEND`,
+  `JSON_ARRAY_INSERT`, `JSON_MERGE_PRESERVE`, `JSON_MERGE`;
+  `CONNECTION_ID()`, `USER()`, `CURRENT_USER`, `SESSION_USER()`,
+  `SYSTEM_USER()` and `SCHEMA()`, alone or inside a statement; and the
+  `HIGH_PRIORITY`, `STRAIGHT_JOIN` and `SQL_BUFFER_RESULT` select
+  modifiers.
 - `/metrics` exposes `pintail_settled_memo_{hits,misses,stores,delta_merges}_total`,
   so a settled-memo answer can be proved a cache hit.
 - A benchmark cache study (`BENCHMARK_CACHE_STUDY=1`) that compares
@@ -61,6 +75,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A window's partition and order keys compare under the key's own
+  collation: a PAD SPACE column no longer splits a value with a trailing
+  space from its peers, and `ORDER BY x COLLATE utf8mb4_bin` inside `OVER`
+  is honoured.
+- An interval amount of a whole-number unit rounds as MySQL does
+  (`INTERVAL 1.5 DAY` is two days) instead of truncating.
+- Text that begins with a date and continues with other text
+  (`'2024-01-05T10:11:12Z'`) reads as the date, with warning 1292, instead
+  of NULL.
+- `JSON_SET`, `JSON_INSERT` and `JSON_REPLACE` write a NULL value as JSON
+  null and a DECIMAL as a JSON number, and a numeric cast of a JSON string
+  or boolean converts the scalar it holds instead of answering 0.
+- `SELECT DATABASE(), <anything>` no longer returns its first column alone.
 - Re-running the installer to upgrade now moves the generated
   `PINTAIL_BUILD_VERSION` with the image, so clients stop reporting the
   previous release. A compose file whose pintail image line the installer
