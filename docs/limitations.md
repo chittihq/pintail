@@ -238,6 +238,19 @@ stays readable as a list of things to fix.
   arithmetic they coerce as a string would (the leading number), where MySQL
   reads the result as a `TIME` and yields its `HHMMSS` number. Over `TIME`
   values and over literals they follow MySQL.
+- A table value constructor (`VALUES ROW(...), ...`) takes its column types
+  from the `UNION ALL` of its rows, so a column mixing a date or time with
+  text or a number across rows is refused where MySQL makes it a string. It
+  is not read as the subquery of `IN` (`x IN (VALUES ROW(1), ROW(2))`);
+  inside a derived table it is.
+- A row compared with a subquery (`(a, b) = (SELECT x, y ...)`) is refused
+  when the subquery refers to the outer row and also uses `DISTINCT`,
+  `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT` or a set operation.
+- `EXPORT_SET` takes its bit count as a written whole number only; a count
+  that is a column, a string or a fraction is refused. `INTERVAL(N, N1, ...)`
+  finds the first listed value above `N` in list order; over a list of more
+  than eight constants that is not in ascending order MySQL, which searches
+  such a list by halving, can answer another position.
 - `STRCMP` rejects a DATE, TIME, DATETIME, TIMESTAMP, YEAR or JSON argument.
   MySQL's answer over a temporal column does not follow the text the value
   prints as (`STRCMP(t, '01:30:00')` is -1 for a TIME column holding
