@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- A `MODIFY`/`CHANGE` that tightens a column to `NOT NULL`, narrows an
+  integer, shortens a string or binary column, or drops an `ENUM` member no
+  longer recopies the table when no stored value is affected; the log line
+  `cdc column change adopted in place` names the column. A narrowing the
+  source has since changed again recopies the table.
+- Polling-mode databases take part in the background segment-format
+  upgrade, at most one upgrade per completed cycle.
+- The initial table copy converts rows and encodes segment columns across
+  ingest threads (`PINTAIL_INGEST_THREADS`, half the machine's threads, at
+  most eight): a 20.7M-row copy went from 60.2 s to 32.0 s on an 8-vCPU
+  host (`benchmark/evidence/ingest-overhead.md`).
+
 - The settled-result memo now serves a table whose latest changes are
   still in its memtable: after an insert, update or delete the first
   aggregate executes and repeats are hits, instead of executing until the
@@ -59,6 +71,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rather than the server default. Under a non-default `collation_connection`
   the two could otherwise disagree on a comparison with no column collation
   of its own; no wrong answer was reproduced on the current tree (#42).
+- A narrowing followed by a widening before the stream read either
+  statement was adopted in place and could leave truncated rows stale; the
+  table is now recopied.
 - A zero poll or reconcile interval is refused as a client error (400)
   instead of failing as a server error (500).
 
