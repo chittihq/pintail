@@ -1110,30 +1110,46 @@ fn respelled_call(
         ("STRCMP", [left, right]) => {
             // A number or a date compares by its text here, never by value:
             // STRCMP(9, 10) is 1.
-            let text = |operand: &Expr| {
-                let data_type = bind_expr_inner(operand, tables, &mut None, &mut None, subqueries)
-                    .map_or(None, |bound| bound.data_type);
-                match data_type {
+            let bound = |operand: &Expr| {
+                bind_expr_inner(operand, tables, &mut None, &mut None, subqueries).ok()
+            };
+            let (bound_left, bound_right) = (bound(left), bound(right));
+            let text = |operand: &Expr, own: Option<&BoundExpr>, other: Option<&BoundExpr>| {
+                let refused = || {
+                    BindError::InvalidScalarFunction(
+                        "STRCMP over a date, time or JSON value".to_owned(),
+                    )
+                };
+                let as_text = || Expr::Cast {
+                    kind: CastKind::Cast,
+                    expr: Box::new(operand.clone()),
+                    data_type: SqlDataType::Char(None),
+                    array: false,
+                    format: None,
+                };
+                match own.and_then(|own| own.data_type) {
                     None | Some(DataType::Utf8 | DataType::Binary) => Ok(nested(operand)),
                     Some(
                         DataType::Date32
                         | DataType::DateTime64 { .. }
                         | DataType::Time64 { .. }
-                        | DataType::Year
-                        | DataType::Json,
-                    ) => Err(BindError::InvalidScalarFunction(
-                        "STRCMP over a date, time or JSON value".to_owned(),
-                    )),
-                    Some(_) => Ok(Expr::Cast {
-                        kind: CastKind::Cast,
-                        expr: Box::new(operand.clone()),
-                        data_type: SqlDataType::Char(None),
-                        array: false,
-                        format: None,
-                    }),
+                        | DataType::Year,
+                    ) => match (own, other) {
+                        (Some(own), Some(other)) if temporal_column_reads_as_text(own, other)? => {
+                            Ok(as_text())
+                        }
+                        _ => Err(refused()),
+                    },
+                    Some(DataType::Json) => Err(refused()),
+                    // A number beside a date or time is not its text either.
+                    Some(_) if other.is_some_and(is_temporal) => Err(refused()),
+                    Some(_) => Ok(as_text()),
                 }
             };
-            let (left, right) = (text(left)?, text(right)?);
+            let (left, right) = (
+                text(left, bound_left.as_ref(), bound_right.as_ref())?,
+                text(right, bound_right.as_ref(), bound_left.as_ref())?,
+            );
             let side = |op| {
                 Expr::Nested(Box::new(Expr::BinaryOp {
                     left: Box::new(left.clone()),
@@ -1149,6 +1165,77 @@ fn respelled_call(
         }
         _ => None,
     })
+}
+
+fn is_temporal(expr: &BoundExpr) -> bool {
+    matches!(
+        expr.data_type,
+        Some(
+            DataType::Date32
+                | DataType::DateTime64 { .. }
+                | DataType::Time64 { .. }
+                | DataType::Year
+        )
+    )
+}
+
+/// Whether `STRCMP` compares the date or time `temporal` with `other` by the
+/// text it prints as. `MySQL` does over a column in three cases, each
+/// measured: against a text column, against another date or time column of
+/// its own kind, and - for a DATE, DATETIME, TIMESTAMP or YEAR column -
+/// against a string constant, which for the first three has to read as a
+/// date. Everywhere else its answer does not follow the text: a TIME column
+/// against any constant, and any of them against a number, compare the text
+/// with the constant's internal form.
+///
+/// # Errors
+///
+/// A string constant that is not a date, against a DATE, DATETIME or
+/// TIMESTAMP column, which `MySQL` refuses too.
+fn temporal_column_reads_as_text(
+    temporal: &BoundExpr,
+    other: &BoundExpr,
+) -> Result<bool, BindError> {
+    let column = |expr: &BoundExpr| {
+        matches!(expr.kind, BoundExprKind::Column(_))
+            || expr
+                .session_timestamp_source()
+                .is_some_and(|source| matches!(source.kind, BoundExprKind::Column(_)))
+    };
+    if !column(temporal) {
+        return Ok(false);
+    }
+    let clock = matches!(temporal.data_type, Some(DataType::Time64 { .. }));
+    if column(other) {
+        return Ok(match other.data_type {
+            Some(DataType::Utf8) => true,
+            Some(DataType::Time64 { .. }) => clock,
+            Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Year) => !clock,
+            _ => false,
+        });
+    }
+    let literal = crate::text_charset::literal_value(other);
+    let Some(Value::Utf8(written)) = literal.as_deref() else {
+        return Ok(false);
+    };
+    match temporal.data_type {
+        Some(DataType::Year) => Ok(true),
+        Some(DataType::Date32 | DataType::DateTime64 { .. }) => {
+            if super::TemporalLiteral::parse(written).is_some_and(|date| date.is_valid()) {
+                Ok(true)
+            } else {
+                Err(BindError::UnsupportedExpression(format!(
+                    "incorrect {} value: '{written}'",
+                    if temporal.data_type == Some(DataType::Date32) {
+                        "DATE"
+                    } else {
+                        "DATETIME"
+                    }
+                )))
+            }
+        }
+        _ => Ok(false),
+    }
 }
 
 fn number(text: impl Into<String>) -> Expr {

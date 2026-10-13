@@ -251,10 +251,14 @@ stays readable as a list of things to fix.
   finds the first listed value above `N` in list order; over a list of more
   than eight constants that is not in ascending order MySQL, which searches
   such a list by halving, can answer another position.
-- `STRCMP` rejects a DATE, TIME, DATETIME, TIMESTAMP, YEAR or JSON argument.
-  MySQL's answer over a temporal column does not follow the text the value
-  prints as (`STRCMP(t, '01:30:00')` is -1 for a TIME column holding
-  `01:30:00`), so Pintail refuses rather than answer by the text.
+- `STRCMP` compares a DATE, DATETIME, TIMESTAMP or YEAR column by its text
+  with a text column, another such column, or a string constant that reads
+  as a date, and a TIME column with a text or TIME column. It rejects every
+  other date, time or JSON argument: MySQL's answer there does not follow
+  the text the value prints as (`STRCMP(t, '01:30:00')` is -1 for a TIME
+  column holding `01:30:00`, and `STRCMP(d, 20240115)` is 1 for every DATE),
+  so Pintail refuses rather than answer by the text. A date-like constant
+  MySQL reads leniently (`'2024-01-15x'`) is refused too.
 - Pintail maps an empty scalar-subquery result to `NULL`. During oracle development, MySQL 8.4's constant `SELECT` with `LIMIT 0` produced a special-case result that did not follow this behavior; that MySQL-only corner is excluded from the common-workload corpus.
 
 - A replica created while source `DECIMAL` columns above precision 38 mapped

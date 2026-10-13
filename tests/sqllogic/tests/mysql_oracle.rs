@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2916;
+const EXPECTED_CASES: usize = 2920;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5252,6 +5252,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "filters decided without a scan",
             "SELECT id, id > 5 AND NULL, id > 5 OR NULL, NOT (id > 5 AND NULL) FROM events WHERE NOT (id > 5 AND NULL) ORDER BY id",
+        ),
+        // STRCMP over a date or time column where MySQL compares the text it prints as.
+        ordered(
+            "dates compared as text",
+            "SELECT id, STRCMP(placed_at, '2024-06-15 18:00:00'), STRCMP('2024-06-15 18:00:00', placed_at), STRCMP(placed_at, '2024-06-15'), STRCMP(placed_at, placed_at), STRCMP(placed_at, '2024-06-15 18:00:00.000') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "dates compared as text",
+            "SELECT o.id, STRCMP(o.placed_at, u.name), STRCMP(u.name, o.placed_at) FROM orders o JOIN users u ON u.id = o.user_id ORDER BY o.id",
+        ),
+        ordered(
+            "dates compared as text",
+            "SELECT id FROM orders WHERE STRCMP(placed_at, '2025-01-01 00:00:00') > 0 ORDER BY STRCMP(placed_at, '2025-03-01 08:00:00') DESC, id",
+        ),
+        ordered(
+            "dates compared as text",
+            "SELECT id, STRCMP(d, '2024-02-29'), STRCMP(d, dt), STRCMP(dt, d), STRCMP(ts, dt), STRCMP(ts, '2024-03-10 02:30:00'), STRCMP(d, d) FROM calendar_edges ORDER BY id",
         ),
     ]
     .into_iter()
