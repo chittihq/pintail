@@ -172,6 +172,74 @@ fn having_decides_whether_an_ungrouped_aggregate_row_exists() {
     assert!(none.sets >= 1 && none.per_row <= 2, "{}", none.profile);
 }
 
+/// A HAVING that names a select alias asks about the item the alias names.
+/// Written out in the alias's place it is the same one question, answered
+/// for every outer row at once; a name a column of the subquery's own table
+/// also answers to is left to the row-by-row reading.
+#[test]
+fn a_having_over_a_select_alias_is_answered_for_every_outer_row_at_once() {
+    let fixture = fixture(260);
+    let seen = |parcel: u64| scans_of(parcel).len();
+    let sum = |parcel: u64| {
+        scans_of(parcel)
+            .into_iter()
+            .filter_map(|(ok, _)| ok)
+            .sum::<u64>()
+    };
+    let aliased = ran(
+        &fixture,
+        "SELECT p.id FROM parcels p WHERE EXISTS \
+           (SELECT COUNT(*) AS seen FROM scans s WHERE s.parcel_id = p.id \
+            HAVING seen > 1 AND SUM(s.ok) > 2) ORDER BY p.id",
+    );
+    let expected = (1..=260_u64)
+        .filter(|parcel| seen(*parcel) > 1 && sum(*parcel) > 2)
+        .map(|parcel| vec![parcel.to_string()])
+        .collect::<Vec<_>>();
+    assert!(!expected.is_empty() && expected.len() < 260);
+    assert_eq!(aliased.rows, expected);
+    assert!(
+        aliased.sets >= 1 && aliased.per_row <= 2,
+        "{}",
+        aliased.profile
+    );
+    // The alias written out is the item, so it answers as the item does.
+    let spelled = ran(
+        &fixture,
+        "SELECT p.id FROM parcels p WHERE EXISTS \
+           (SELECT COUNT(*) FROM scans s WHERE s.parcel_id = p.id \
+            HAVING COUNT(*) > 1 AND SUM(s.ok) > 2) ORDER BY p.id",
+    );
+    assert_eq!(aliased.rows, spelled.rows);
+    // No scan is a count of zero: its row passes `seen = 0` and NOT EXISTS
+    // drops exactly the parcels with none.
+    let none = ran(
+        &fixture,
+        "SELECT p.id FROM parcels p WHERE NOT EXISTS \
+           (SELECT COUNT(*) AS seen FROM scans s WHERE s.parcel_id = p.id HAVING seen = 0) \
+         ORDER BY p.id",
+    );
+    let expected = (1..=260_u64)
+        .filter(|parcel| seen(*parcel) != 0)
+        .map(|parcel| vec![parcel.to_string()])
+        .collect::<Vec<_>>();
+    assert!(expected.len() < 260);
+    assert_eq!(none.rows, expected);
+    assert!(none.sets >= 1 && none.per_row <= 2, "{}", none.profile);
+    // `ok` is the alias and a column of `scans`: not rewritten.
+    let shadowed = ran(
+        &fixture,
+        "SELECT p.id FROM parcels p WHERE EXISTS \
+           (SELECT COUNT(*) AS ok FROM scans s WHERE s.parcel_id = p.id HAVING ok > 1) \
+         ORDER BY p.id",
+    );
+    assert!(
+        shadowed.sets == 0 && shadowed.per_row > 2,
+        "{}",
+        shadowed.profile
+    );
+}
+
 /// A HAVING that aggregates nothing still filters the one aggregate row:
 /// the row exists for an empty input and for many input rows alike, so
 /// the answer is the HAVING condition alone, never one row per input row.

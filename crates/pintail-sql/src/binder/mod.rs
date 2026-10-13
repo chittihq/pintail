@@ -4437,7 +4437,7 @@ fn bind_expr_inner(
                         nullable: false,
                     });
                 }
-                if let Some(held) = having_as_value(subquery, *negated, resolver)
+                if let Some(held) = having_as_value(subquery, &query, *negated, resolver)
                     && let Ok(bound) =
                         bind_expr_inner(&held, tables, aggregates, windows, subqueries)
                 {
@@ -4503,15 +4503,25 @@ fn one_row_aggregate(query: &Query, bound: &BoundQuery) -> bool {
 
 /// `EXISTS (SELECT .. HAVING h)` over an ungrouped aggregate, as the truth
 /// of `(SELECT h ..)`; `None` when the subquery orders or limits its row,
-/// when `h` names one of its select aliases, or when `(SELECT h ..)` is no
-/// longer one aggregate row.
+/// when `h` names a select alias that cannot be written out in its place,
+/// or when `(SELECT h ..)` is no longer one aggregate row.
 ///
 /// The aggregate row exists whatever the subquery reads, so the scalar form
 /// is sound only while `h` itself aggregates: `HAVING 1` or a HAVING over
 /// outer columns alone would leave `(SELECT h ..)` one row per input row,
 /// none for an empty input. A select alias is the select item's value; with
-/// the select list replaced, the name would reach a column instead.
-fn having_as_value(query: &Query, negated: bool, resolver: &SubqueryResolver<'_>) -> Option<Expr> {
+/// the select list replaced the name would reach a column instead, so each
+/// alias `h` names is replaced by the item it names. That is only the same
+/// question while the name means the item and nothing else: an alias two
+/// items share, one a column of the subquery's own tables also answers to,
+/// or one named beside a nested subquery with a scope of its own is left
+/// to the row-by-row reading. `bound` is the binding of `query`.
+fn having_as_value(
+    query: &Query,
+    bound: &BoundQuery,
+    negated: bool,
+    resolver: &SubqueryResolver<'_>,
+) -> Option<Expr> {
     if query.order_by.is_some() || query.limit_clause.is_some() {
         return None;
     }
@@ -4519,28 +4529,65 @@ fn having_as_value(query: &Query, negated: bool, resolver: &SubqueryResolver<'_>
     let SetExpr::Select(select) = value.body.as_mut() else {
         return None;
     };
-    let having = select.having.take()?;
+    let mut having = select.having.take()?;
     let aliases = select
         .projection
         .iter()
         .filter_map(|item| match item {
-            SelectItem::ExprWithAlias { alias, .. } => Some(alias.value.as_str()),
+            SelectItem::ExprWithAlias { alias, expr } => Some((alias.value.as_str(), expr)),
             _ => None,
         })
         .collect::<Vec<_>>();
-    let mut names_alias = false;
-    let _ = sqlparser::ast::visit_expressions(&having, |candidate| {
-        if let Expr::Identifier(ident) = candidate
-            && aliases
-                .iter()
-                .any(|alias| alias.eq_ignore_ascii_case(&ident.value))
-        {
-            names_alias = true;
-            return std::ops::ControlFlow::Break(());
+    let item_named = |name: &str| {
+        let mut items = aliases
+            .iter()
+            .filter(|(alias, _)| alias.eq_ignore_ascii_case(name));
+        match (items.next(), items.next()) {
+            (Some((_, item)), None) => Some(Ok(*item)),
+            (Some(_), Some(_)) => Some(Err(())),
+            (None, _) => None,
         }
-        std::ops::ControlFlow::Continue(())
+    };
+    let mut names_alias = false;
+    let mut unreadable = false;
+    let mut nests = false;
+    let _ = sqlparser::ast::visit_expressions(&having, |candidate| {
+        match candidate {
+            Expr::Identifier(ident) => match item_named(&ident.value) {
+                Some(Ok(_)) => names_alias = true,
+                Some(Err(())) => unreadable = true,
+                None => {}
+            },
+            Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. } => nests = true,
+            _ => {}
+        }
+        std::ops::ControlFlow::<()>::Continue(())
     });
     if names_alias {
+        let own_column = bound.from.iter().any(|source| {
+            std::iter::once(&source.base)
+                .chain(source.joins.iter().map(|join| &join.table))
+                .any(|table| {
+                    table
+                        .columns
+                        .iter()
+                        .any(|column| item_named(&column.name).is_some())
+                })
+        });
+        if unreadable || nests || own_column {
+            return None;
+        }
+        // Children are visited before their parent, so an item written in
+        // is not itself searched for the name it replaced.
+        let _ = sqlparser::ast::visit_expressions_mut(&mut having, |candidate| {
+            if let Expr::Identifier(ident) = candidate
+                && let Some(Ok(item)) = item_named(&ident.value)
+            {
+                *candidate = Expr::Nested(Box::new(item.clone()));
+            }
+            std::ops::ControlFlow::<()>::Continue(())
+        });
+    } else if unreadable {
         return None;
     }
     select.projection = vec![SelectItem::UnnamedExpr(having)];
