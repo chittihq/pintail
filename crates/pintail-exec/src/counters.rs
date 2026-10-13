@@ -37,6 +37,9 @@ pub struct ExecCounters {
     pub grouped_spans_reused: u64,
     /// Text sort keys prepared as collation weight keys, once per row.
     pub sort_keys_prepared: u64,
+    /// Sort keys over a calendar column the store kept as text, ordered by
+    /// the units its canonical text spells in place of collating the text.
+    pub sort_keys_spelled: u64,
     /// Text sort keys left on the comparator because the query ceiling had
     /// no room to hold weight keys for every row.
     pub sort_keys_unprepared: u64,
@@ -92,6 +95,7 @@ thread_local! {
             grouped_spans_folded: 0,
             grouped_spans_reused: 0,
             sort_keys_prepared: 0,
+            sort_keys_spelled: 0,
             sort_keys_unprepared: 0,
             dependent_index_builds: 0,
             dependent_index_probes: 0,

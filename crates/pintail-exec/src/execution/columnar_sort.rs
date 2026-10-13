@@ -9,8 +9,10 @@
 //! [`compare_sort_values`] compares the values the row sort would hold: a
 //! key whose packed form orders as those values do - integers, decimals
 //! whose text is derived from their units, temporals within the years their
-//! canonical text spells in order, plain text under the key's collation -
-//! compares in that form; any other compares the values themselves. The
+//! canonical text spells in order (the zero date below them all, whether
+//! the column is packed or the store kept it as text), plain text under the
+//! key's collation - compares in that form; any other compares the values
+//! themselves. The
 //! sort is stable, so rows with equal keys keep the order they arrived in,
 //! as the row sort keeps them.
 
@@ -479,13 +481,72 @@ fn units_at(
             };
             let spelled = i128::from(spelled);
             if !years.is_some_and(|years| years.contains(&spelled)) {
-                return Err(Unordered);
+                // The zero date spells as zeros throughout, below every
+                // date. Asked only of a row outside the years, so a column
+                // of ordinary dates pays nothing for it.
+                return match zero_units(data_type) {
+                    Some(zero) if unit <= zero => Ok(Some(i128::from(zero))),
+                    _ => Err(Unordered),
+                };
             }
             spelled
+        }
+        // A calendar column the store kept as text - one holding the zero
+        // date - orders as its units do while every row is spelled at the
+        // column's own width: equal-width canonical text differs first at
+        // a digit, and digits order alike under every collation.
+        (data_type @ (DataType::Date32 | DataType::DateTime64 { .. }), TypedValues::Utf8(text))
+            if key.value_kind == pintail_sql::OrderValueKind::Ordinary =>
+        {
+            let spelled = |bytes: &[u8]| canonical_units(data_type, bytes);
+            let units = match text.dictionary() {
+                Some((codes, entries)) => codes
+                    .get(row)
+                    .and_then(|code| entries.get(*code as usize))
+                    .and_then(|entry| spelled(entry.as_bytes())),
+                None => text
+                    .views()
+                    .get(row)
+                    .and_then(|view| view.with_bytes(text.heap(), spelled)),
+            };
+            let units = i128::from(units.ok_or(Unordered)?);
+            let zero = zero_units(data_type).map(i128::from);
+            if zero != Some(units) && !years.is_some_and(|years| years.contains(&units)) {
+                return Err(Unordered);
+            }
+            units
         }
         _ => return Err(Unordered),
     };
     Ok(Some(units))
+}
+
+/// The units the zero date packs as in a calendar type.
+const fn zero_units(data_type: DataType) -> Option<i64> {
+    match data_type {
+        DataType::Date32 => Some(pintail_types::ZERO_DATE_DAYS),
+        DataType::DateTime64 { .. } => Some(pintail_types::ZERO_DATETIME_MICROS),
+        _ => None,
+    }
+}
+
+/// The units of calendar text spelled canonically at exactly the width
+/// `data_type` spells, the zero date included; `None` for any other text.
+fn canonical_units(data_type: DataType, bytes: &[u8]) -> Option<i64> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    match data_type {
+        DataType::Date32 => pintail_types::parse_date_units(text),
+        DataType::DateTime64 { fsp } => {
+            let width = match usize::from(fsp.min(6)) {
+                0 => 19,
+                digits => 20 + digits,
+            };
+            (text.len() == width)
+                .then(|| pintail_types::parse_datetime_units(text))
+                .flatten()
+        }
+        _ => None,
+    }
 }
 
 /// One key in the form its rows compare in, and the bytes it holds while
@@ -524,6 +585,16 @@ fn sort_key(
             })
             .collect::<Result<Vec<_>, Unordered>>();
         if let Ok(units) = units {
+            if columns.iter().any(|column| {
+                matches!(
+                    column.data_type(),
+                    DataType::Date32 | DataType::DateTime64 { .. }
+                ) && matches!(column.typed(), Some((TypedValues::Utf8(_), _)))
+            }) {
+                crate::counters::count(|counters| {
+                    counters.sort_keys_spelled = counters.sort_keys_spelled.saturating_add(1);
+                });
+            }
             return Ok((SortKey::Units(units), 0));
         }
         // Text the row sort would read lossily compares as its values.
@@ -953,6 +1024,137 @@ mod tests {
             cramped, generous,
             "the comparator and the prepared keys order the rows alike"
         );
+    }
+
+    /// A `DATETIME(3)` column holding the zero date, as the store keeps it
+    /// (text) when `kept` and as the executor packs it otherwise, beside a
+    /// payload that tells tied rows apart.
+    fn calendar_batch(seed: usize, kept: bool) -> RecordBatch {
+        const MOMENTS: [&str; 6] = [
+            "0000-00-00 00:00:00.000",
+            "1970-01-01 00:00:01.000",
+            "2024-03-10 06:59:59.999",
+            "2024-03-10 07:00:00.000",
+            "0001-01-01 00:00:00.000",
+            "9999-12-31 23:59:59.999",
+        ];
+        let data_type = DataType::DateTime64 { fsp: 3 };
+        let valid = mask(seed, 7);
+        let texts = (0..ROWS)
+            .map(|row| {
+                let pick = spread(seed, row, 6).rem_euclid(6);
+                MOMENTS[usize::try_from(pick).expect("pick")]
+            })
+            .collect::<Vec<_>>();
+        let calendar = if kept {
+            let mut text = crate::array::StrColumn::default();
+            for (row, moment) in texts.iter().enumerate() {
+                text.push(if valid[row] { moment.as_bytes() } else { b"" });
+            }
+            ColumnVector::from_typed(
+                data_type,
+                TypedValues::Utf8(text),
+                ValidityMask::from_bools(&valid),
+            )
+        } else {
+            ColumnVector::new(
+                data_type,
+                texts
+                    .iter()
+                    .enumerate()
+                    .map(|(row, moment)| {
+                        if valid[row] {
+                            Value::Utf8((*moment).to_owned())
+                        } else {
+                            Value::Null
+                        }
+                    })
+                    .collect(),
+            )
+            .expect("calendar")
+        };
+        let payload = ColumnVector::new(
+            DataType::Int64,
+            (0..ROWS)
+                .map(|row| Value::Int64(i64::try_from(seed * 1_000 + row).expect("small")))
+                .collect(),
+        )
+        .expect("payload");
+        RecordBatch::new(ROWS, vec![calendar, payload]).expect("batch")
+    }
+
+    /// Calendar text orders as the instants it spells, the zero date first:
+    /// a column the store kept as text sorts by those units, with no weight
+    /// key built and no value compared, in the row sort's order.
+    #[test]
+    fn calendar_text_holding_the_zero_date_sorts_by_its_units() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let types = [DataType::DateTime64 { fsp: 3 }, DataType::Int64];
+        for kept in [true, false] {
+            let batches = (0..3)
+                .map(|seed| calendar_batch(seed, kept))
+                .collect::<Vec<_>>();
+            for (ascending, nulls_first) in [(true, true), (false, false), (false, true)] {
+                let keys = [key(0, ascending, nulls_first), key(1, false, true)];
+                for collation in ["utf8mb4_0900_ai_ci", "utf8mb4_general_ci", "utf8mb4_bin"] {
+                    let collation = Collation::from_mysql_name(collation).expect("collation");
+                    let mut expected = batches.iter().flat_map(rows_of).collect::<Vec<_>>();
+                    expected
+                        .sort_by(|left, right| compare_sort_rows(left, right, &keys, collation));
+                    for limit in [None, Some(7)] {
+                        let _ = crate::counters::take_exec_counters();
+                        let mut sorted = ColumnarSorted::new(
+                            batches.clone(),
+                            &keys,
+                            None,
+                            collation,
+                            limit,
+                            &memory,
+                        )
+                        .expect("sorted");
+                        let counted = crate::counters::take_exec_counters();
+                        assert_eq!(
+                            (counted.sort_keys_spelled, counted.sort_keys_prepared),
+                            (u64::from(kept), 0),
+                            "kept as text: {kept}"
+                        );
+                        let mut actual = Vec::new();
+                        while let Some(batch) = sorted.next_batch(&types, &memory).expect("batch") {
+                            actual.extend(rows_of(&batch));
+                        }
+                        let expected = &expected[..limit.unwrap_or(usize::MAX).min(expected.len())];
+                        assert_eq!(actual, expected, "{keys:?} {limit:?} kept {kept}");
+                    }
+                }
+            }
+        }
+        // Text at another width than the column spells is not these units.
+        let mut odd = crate::array::StrColumn::default();
+        for moment in ["2024-03-10 07:00:00", "0000-00-00 00:00:00.000"] {
+            odd.push(moment.as_bytes());
+        }
+        let batch = RecordBatch::new(
+            2,
+            vec![ColumnVector::from_typed(
+                DataType::DateTime64 { fsp: 3 },
+                TypedValues::Utf8(odd),
+                ValidityMask::from_bools(&[true, true]),
+            )],
+        )
+        .expect("batch");
+        let _ = crate::counters::take_exec_counters();
+        let order = ColumnarSorted::new(
+            vec![batch],
+            &[key(0, true, true)],
+            None,
+            Collation::default(),
+            None,
+            &memory,
+        )
+        .expect("sorted")
+        .into_order();
+        assert_eq!(crate::counters::take_exec_counters().sort_keys_spelled, 0);
+        assert_eq!(order, vec![(0, 1), (0, 0)]);
     }
 
     #[test]
