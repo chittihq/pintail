@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2782;
+const EXPECTED_CASES: usize = 2790;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4579,6 +4579,55 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT e.id, COUNT(*) OVER (PARTITION BY e.tag), \
              RANK() OVER (ORDER BY e.tag, u.name COLLATE utf8mb4_bin) \
              FROM events e JOIN users u ON u.id = e.id ORDER BY e.id",
+        ),
+        // SUM and AVG read a temporal value as its number and a JSON
+        // value as the float its scalar converts to.
+        ordered(
+            "sum and average of temporal and json values",
+            "SELECT SUM(clock), AVG(clock), SUM(day), AVG(day), SUM(dt0), AVG(dt0), SUM(dt3), \
+             AVG(dt3), SUM(dt6), AVG(stamp), SUM(DISTINCT day), COUNT(clock) FROM bounds",
+        ),
+        ordered(
+            "sum and average of temporal and json values",
+            "SELECT id > 4 AS k, SUM(clock), AVG(clock), SUM(dt3), AVG(day) FROM bounds \
+             GROUP BY id > 4 ORDER BY k",
+        ),
+        ordered(
+            "sum and average of temporal and json values",
+            "SELECT id, SUM(clock) OVER (ORDER BY id), AVG(day) OVER (), \
+             SUM(dt3) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) \
+             FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "sum and average of temporal and json values",
+            "SELECT status, SUM(placed_at), AVG(placed_at), SUM(TIME(placed_at)), \
+             AVG(DATE(placed_at)), SUM(TIMEDIFF(placed_at, '2024-01-01 00:00:00')) \
+             FROM orders GROUP BY status ORDER BY status",
+        ),
+        ordered(
+            "sum and average of temporal and json values",
+            "SELECT SUM(CAST('10:11:12.345' AS TIME(3))), AVG(CAST('10:11:12.345' AS TIME(3))), \
+             SUM(TIME '00:00:01'), AVG(DATE '2024-01-15'), SUM(TIMESTAMP '2024-01-15 10:00:00.5')",
+        ),
+        ordered(
+            "sum and average of temporal and json values",
+            "SELECT SUM(meta->'$.score'), AVG(meta->'$.score'), SUM(meta->'$.tags'), SUM(meta), \
+             AVG(meta->'$.items[0]'), SUM(DISTINCT meta->'$.items[1]'), SUM(meta->'$.tags[0]'), \
+             COUNT(meta->'$.score') FROM orders",
+        ),
+        ordered(
+            "sum and average of temporal and json values",
+            "SELECT user_id, SUM(meta->'$.score'), AVG(meta->'$.items[0]'), \
+             SUM(SUM(JSON_EXTRACT(meta, '$.score'))) OVER (ORDER BY user_id) FROM orders \
+             GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "sum and average of temporal and json values",
+            "SELECT CAST(CAST('true' AS JSON) AS DOUBLE), CAST(CAST('false' AS JSON) AS SIGNED), \
+             CAST(CAST('null' AS JSON) AS DOUBLE), CAST(CAST('\\\"1e2x\\\"' AS JSON) AS DOUBLE), \
+             CAST(CAST('\\\"12\\\"' AS JSON) AS SIGNED), CAST(CAST('\\\" 7.5\\\"' AS JSON) AS DECIMAL(10,2)), \
+             CAST(CAST('-0.5' AS JSON) AS DOUBLE), CAST(CAST('[5]' AS JSON) AS DOUBLE), \
+             CAST(JSON_OBJECT('a', 1) AS DOUBLE)",
         ),
     ]
     .into_iter()

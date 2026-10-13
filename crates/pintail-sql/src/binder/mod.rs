@@ -6730,6 +6730,16 @@ fn numeric_aggregate_input(
     ) {
         expr.map(|value| {
             let value = implicit_day_number(&value).unwrap_or(value);
+            // A TIME, DATE or DATETIME sums as the number it reads as -
+            // HHMMSS, YYYYMMDD, YYYYMMDDHHMMSS and any fraction - and a JSON
+            // value as the float its scalar converts to.
+            let value = match value.data_type {
+                Some(
+                    DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. },
+                ) => temporal_as_number(value),
+                Some(DataType::Json) => cast_to(value, DataType::Float64),
+                _ => value,
+            };
             if matches!(
                 function,
                 AggregateFunction::StdDev { .. } | AggregateFunction::Variance { .. }

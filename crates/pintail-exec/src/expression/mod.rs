@@ -6217,6 +6217,24 @@ fn numeric_cast_operand<'a>(
             | DataType::Float32
             | DataType::Float64
     );
+    // A JSON scalar converts as the value it holds: a string as its text, a
+    // boolean as 1 or 0. A JSON null, an array and an object are 0.
+    if numeric
+        && matches!(argument_types.first(), Some(Some(DataType::Json)))
+        && let Value::Utf8(text) = value
+        && let Ok(document) = serde_json::from_str::<serde_json::Value>(text)
+    {
+        match document {
+            serde_json::Value::String(text) => {
+                return std::borrow::Cow::Owned(Value::Utf8(text));
+            }
+            serde_json::Value::Bool(truth) => {
+                return std::borrow::Cow::Owned(Value::Int64(i64::from(truth)));
+            }
+            serde_json::Value::Number(_) => {}
+            _ => return std::borrow::Cow::Owned(Value::Int64(0)),
+        }
+    }
     if numeric && matches!(argument_types.first(), Some(Some(DataType::Time64 { .. }))) {
         // An integer target reads a whole-second TIME straight from its
         // text; the general path renders the number only to parse it back.
