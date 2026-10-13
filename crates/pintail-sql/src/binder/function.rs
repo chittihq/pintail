@@ -895,6 +895,18 @@ pub(super) fn bind_scalar_function(
                 replace: true,
             }
         }
+        "JSON_ARRAY_APPEND" if args.len() >= 3 && args.len() % 2 == 1 => {
+            wrap_json_modify_values(&mut args);
+            ScalarFunction::JsonArrayModify { insert: false }
+        }
+        "JSON_ARRAY_INSERT" if args.len() >= 3 && args.len() % 2 == 1 => {
+            wrap_json_modify_values(&mut args);
+            ScalarFunction::JsonArrayModify { insert: true }
+        }
+        "JSON_MERGE_PRESERVE" if args.len() >= 2 => ScalarFunction::JsonMergePreserve,
+        // The older name of the same merge; its own arm, as for the clock names.
+        #[allow(clippy::match_same_arms)]
+        "JSON_MERGE" if args.len() >= 2 => ScalarFunction::JsonMergePreserve,
         "JSON_REMOVE" if args.len() >= 2 => ScalarFunction::JsonRemove,
         "JSON_MERGE_PATCH" if args.len() >= 2 => ScalarFunction::JsonMergePatch,
         "JSON_DEPTH" if args.len() == 1 => ScalarFunction::JsonDepth,
@@ -2635,6 +2647,8 @@ pub(super) fn bind_scalar(
         | ScalarFunction::JsonSearch
         | ScalarFunction::JsonModify { .. }
         | ScalarFunction::JsonRemove
+        | ScalarFunction::JsonMergePreserve
+        | ScalarFunction::JsonArrayModify { .. }
         | ScalarFunction::JsonMergePatch => (Some(DataType::Json), true),
         // NULL arguments become JSON nulls, never a NULL result.
         ScalarFunction::JsonObject | ScalarFunction::JsonArray => (Some(DataType::Json), false),
@@ -3327,7 +3341,11 @@ pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Res
 /// so the evaluator can just parse everything.
 fn wrap_json_modify_values(args: &mut [BoundExpr]) {
     for value in args.iter_mut().skip(2).step_by(2) {
-        wrap_json_scalar(value);
+        // An exact decimal is written as a JSON number, which its text
+        // already spells; quoting it would write a string.
+        if !matches!(value.data_type, Some(DataType::Decimal { .. })) {
+            wrap_json_scalar(value);
+        }
     }
 }
 

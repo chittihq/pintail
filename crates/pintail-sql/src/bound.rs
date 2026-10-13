@@ -1126,6 +1126,16 @@ pub enum ScalarFunction {
     JsonRemove,
     /// `JSON_MERGE_PATCH(doc, doc, ...)`: RFC 7386, folded left.
     JsonMergePatch,
+    /// `JSON_MERGE_PRESERVE(doc, doc, ...)`: arrays concatenate, objects
+    /// merge member by member, and anything else joins as array cells.
+    JsonMergePreserve,
+    /// `JSON_ARRAY_APPEND(doc, path, value, ...)`, or `JSON_ARRAY_INSERT`
+    /// when `insert`: a value added at the end of the array a path
+    /// selects, or placed before the array cell a path names.
+    JsonArrayModify {
+        /// Whether the value is inserted before a cell rather than appended.
+        insert: bool,
+    },
     /// `JSON_DEPTH(doc)`.
     JsonDepth,
     /// `JSON_QUOTE(string)`: also the binder's marker that a modification

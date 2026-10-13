@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2818;
+const EXPECTED_CASES: usize = 2823;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4813,6 +4813,56 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT id FROM orders WHERE placed_at > '2025-1-1' OR placed_at = '20240301' \
              OR DATE(placed_at) = '24-2-29' OR placed_at BETWEEN '2024/06/01' AND '2024.06.30' \
              ORDER BY id",
+        ),
+        ordered(
+            "json array append insert and merge preserve",
+            "SELECT JSON_ARRAY_APPEND('[1,2]', '$', 3), JSON_ARRAY_APPEND('[1,[2,3]]', '$[1]', 4), \
+             JSON_ARRAY_APPEND('{\\\"a\\\":1}', '$.a', 2), JSON_ARRAY_APPEND('{\\\"a\\\":1}', '$', 2), \
+             JSON_ARRAY_APPEND('[1]', '$[0]', 'x', '$[0]', 2.5), JSON_ARRAY_APPEND('[1]', '$.missing', 2), \
+             JSON_ARRAY_APPEND('[1]', '$', NULL), JSON_ARRAY_APPEND(NULL, '$', 1), \
+             JSON_ARRAY_APPEND('[1]', NULL, 1), JSON_ARRAY_APPEND('5', '$', 6), \
+             JSON_ARRAY_APPEND('[1]', '$', CAST('{\\\"k\\\":[1]}' AS JSON)), \
+             JSON_ARRAY_APPEND('[1]', '$', '{\\\"k\\\":1}'), JSON_ARRAY_APPEND('[[1],2]', '$[last]', 9), \
+             JSON_ARRAY_APPEND('[1]', '$', TRUE, '$', DATE '2024-01-05')",
+        ),
+        ordered(
+            "json array append insert and merge preserve",
+            "SELECT JSON_ARRAY_INSERT('[1,2]', '$[0]', 0), JSON_ARRAY_INSERT('[1,2]', '$[1]', 'x'), \
+             JSON_ARRAY_INSERT('[1,2]', '$[9]', 3), JSON_ARRAY_INSERT('{\\\"a\\\":[1,2]}', '$.a[1]', 9), \
+             JSON_ARRAY_INSERT('{\\\"a\\\":1}', '$.a[0]', 9), JSON_ARRAY_INSERT('[1,2,3]', '$[last]', 9), \
+             JSON_ARRAY_INSERT('[1,2,3]', '$[last-1]', 9), \
+             JSON_ARRAY_INSERT('[1,2]', '$[0]', 'a', '$[0]', 'b'), \
+             JSON_ARRAY_INSERT('[1,[2]]', '$[1][0]', NULL), JSON_ARRAY_INSERT(NULL, '$[0]', 1), \
+             JSON_ARRAY_INSERT('[]', '$[0]', 1), JSON_ARRAY_INSERT('[1]', '$[last-5]', 0), \
+             JSON_ARRAY_INSERT('5', '$[0]', 1)",
+        ),
+        ordered(
+            "json array append insert and merge preserve",
+            "SELECT JSON_MERGE_PRESERVE('[1]', '{\\\"a\\\":1}'), JSON_MERGE('[1]', '[2]'), \
+             JSON_MERGE_PRESERVE('{\\\"a\\\":1,\\\"b\\\":2}', '{\\\"a\\\":3,\\\"c\\\":4}'), \
+             JSON_MERGE_PRESERVE('1', '2'), \
+             JSON_MERGE_PRESERVE('{\\\"a\\\":[1]}', '{\\\"a\\\":{\\\"x\\\":1}}'), \
+             JSON_MERGE_PRESERVE('{\\\"a\\\":{\\\"x\\\":1}}', '{\\\"a\\\":{\\\"x\\\":2,\\\"y\\\":3}}'), \
+             JSON_MERGE_PRESERVE('[1]', '2', '\\\"x\\\"', 'null'), JSON_MERGE_PRESERVE(NULL, '[1]'), \
+             JSON_MERGE_PRESERVE('[1]', NULL), \
+             JSON_MERGE_PRESERVE('{\\\"a\\\":null}', '{\\\"a\\\":null}'), \
+             JSON_MERGE_PRESERVE('true', '{\\\"z\\\":1,\\\"aa\\\":2}'), JSON_MERGE_PRESERVE('{}', '[]'), \
+             JSON_TYPE(JSON_MERGE_PRESERVE('1', '2'))",
+        ),
+        ordered(
+            "json array append insert and merge preserve",
+            "SELECT id, JSON_ARRAY_APPEND(meta, '$.tags', id), JSON_ARRAY_INSERT(meta, '$.items[0]', status), \
+             JSON_MERGE_PRESERVE(meta, JSON_OBJECT('score', user_id, 'extra', id)), \
+             JSON_LENGTH(JSON_ARRAY_APPEND(meta, '$', 1)) FROM orders ORDER BY id",
+        ),
+        // A NULL value written into a document is the JSON null, and an
+        // exact decimal a JSON number.
+        ordered(
+            "json array append insert and merge preserve",
+            "SELECT JSON_SET('{\\\"a\\\":1}', '$.a', NULL), JSON_INSERT('[1]', '$[1]', NULL), \
+             JSON_REPLACE('{\\\"a\\\":1}', '$.a', NULL), JSON_SET('{}', '$.a', 2.5), \
+             JSON_SET('{}', '$.a', 'x', '$.b', 2.5), JSON_REPLACE('{\\\"a\\\":1,\\\"b\\\":2}', '$.a', 0.5, '$.b', 1.5), \
+             JSON_ARRAY_APPEND('[1]', '$', 1, '$', 2.5)",
         ),
         // FORMAT's third argument; `format_locale_cases` covers every locale.
         ordered(

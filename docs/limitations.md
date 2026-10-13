@@ -104,7 +104,9 @@ stays readable as a list of things to fix.
   six fractional digits (`"2024-01-15 10:00:00.000000"`) and Pintail emits the
   value's own width. Reading a document back still normalizes numbers through
   the JSON parser, so a DECIMAL extracted out of a document loses trailing
-  zeros; only construction is exact (#8).
+  zeros, and so does one written into a document by `JSON_SET`,
+  `JSON_INSERT`, `JSON_REPLACE`, `JSON_ARRAY_APPEND` or `JSON_ARRAY_INSERT`
+  (`12.50` is written as `12.5`); only construction is exact (#8).
 - JSON-to-JSON comparison, `IN`/`BETWEEN`, ordering, grouping, and
   DISTINCT/set duplicate handling follow MySQL's JSON type-precedence ladder
   (numbers compare numerically across integer/double spellings; objects are

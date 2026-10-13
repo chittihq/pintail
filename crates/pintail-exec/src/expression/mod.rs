@@ -1695,7 +1695,10 @@ impl CompiledExpr {
                     ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } | ScalarFunction::NormalizeTimestampOffset => first.max(128),
                     // Modification results hold the document plus every
                     // inserted value and separators; a merge holds both docs.
-                    ScalarFunction::JsonModify { .. } | ScalarFunction::JsonMergePatch => args
+                    ScalarFunction::JsonModify { .. }
+                    | ScalarFunction::JsonArrayModify { .. }
+                    | ScalarFunction::JsonMergePreserve
+                    | ScalarFunction::JsonMergePatch => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
                         .fold(0_usize, usize::saturating_add)
@@ -2006,7 +2009,10 @@ impl CompiledExpr {
                     ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } | ScalarFunction::NormalizeTimestampOffset => first.max(128),
                     // Modification results hold the document plus every
                     // inserted value and separators; a merge holds both docs.
-                    ScalarFunction::JsonModify { .. } | ScalarFunction::JsonMergePatch => args
+                    ScalarFunction::JsonModify { .. }
+                    | ScalarFunction::JsonArrayModify { .. }
+                    | ScalarFunction::JsonMergePreserve
+                    | ScalarFunction::JsonMergePatch => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
                         .fold(0_usize, usize::saturating_add)
@@ -2208,6 +2214,8 @@ const fn bounded_by_packet(function: ScalarFunction) -> bool {
             | ScalarFunction::JsonObject
             | ScalarFunction::JsonArray
             | ScalarFunction::JsonModify { .. }
+            | ScalarFunction::JsonArrayModify { .. }
+            | ScalarFunction::JsonMergePreserve
             | ScalarFunction::JsonMergePatch
             | ScalarFunction::JsonPretty
     )
@@ -2787,6 +2795,11 @@ fn evaluate_eager_scalar_inner(
                 | ScalarFunction::Char
                 | ScalarFunction::JsonObject
                 | ScalarFunction::JsonArray
+                // A NULL value written into a document is the JSON null;
+                // only a NULL document or path makes the result NULL, and
+                // each of these decides that for itself.
+                | ScalarFunction::JsonModify { .. }
+                | ScalarFunction::JsonArrayModify { .. }
         )
     {
         return Ok(Value::Null);
@@ -3001,6 +3014,73 @@ fn evaluate_eager_scalar_inner(
                 json_remove_in_place(&mut document, &steps);
             }
             Ok(Value::Utf8(mysql_json_text(&document)))
+        }
+        ScalarFunction::JsonArrayModify { insert } => {
+            // A NULL document or path is NULL; a NULL value is the JSON null.
+            if matches!(values[0], Value::Null)
+                || values[1..]
+                    .iter()
+                    .step_by(2)
+                    .any(|path| matches!(path, Value::Null))
+            {
+                return Ok(Value::Null);
+            }
+            let mut document = parse_json_argument(&values[0])?;
+            for pair in values[1..].chunks(2) {
+                let steps = json_path_steps(&scalar_string(&pair[0])?)?;
+                if steps.iter().any(JsonStep::multi) {
+                    return Err(ExecError::InvalidExpressionType);
+                }
+                let new_value = sql_value_to_json(&pair[1]);
+                // An insert names the cell it lands before; its target is
+                // the array that cell is in. An append targets the path.
+                let (target, cell) = match (insert, steps.split_last()) {
+                    (false, _) => (steps.as_slice(), None),
+                    (true, Some((cell @ (JsonStep::Index(_) | JsonStep::LastIndex(_)), array))) => {
+                        (array, Some(cell))
+                    }
+                    (true, _) => return Err(ExecError::InvalidExpressionType),
+                };
+                let mut node = Some(&mut document);
+                for step in target {
+                    node = node.and_then(|node| json_step_into(node, step));
+                }
+                match (node, cell) {
+                    (Some(serde_json::Value::Array(items)), Some(cell)) => {
+                        let index = match cell {
+                            JsonStep::Index(index) => *index,
+                            JsonStep::LastIndex(back) => items.len().saturating_sub(1 + back),
+                            _ => items.len(),
+                        };
+                        items.insert(index.min(items.len()), new_value);
+                    }
+                    (Some(serde_json::Value::Array(items)), None) => items.push(new_value),
+                    // Appending to anything else wraps it as the first cell.
+                    (Some(other), None) => {
+                        let existing = std::mem::take(other);
+                        *other = serde_json::Value::Array(vec![existing, new_value]);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(json_text_result(
+                if insert {
+                    "json_array_insert"
+                } else {
+                    "json_array_append"
+                },
+                mysql_json_text(&document),
+            ))
+        }
+        ScalarFunction::JsonMergePreserve => {
+            let mut merged = parse_json_argument(&values[0])?;
+            for next in &values[1..] {
+                merged = json_merge_preserve(merged, parse_json_argument(next)?);
+            }
+            Ok(json_text_result(
+                "json_merge_preserve",
+                mysql_json_text(&merged),
+            ))
         }
         ScalarFunction::JsonMergePatch => {
             let mut merged = parse_json_argument(&values[0])?;
@@ -9254,6 +9334,35 @@ fn json_merge_patch(target: serde_json::Value, patch: serde_json::Value) -> serd
         }
     }
     serde_json::Value::Object(merged)
+}
+
+/// A merge that keeps every value: two objects merge member by member,
+/// merging again where both hold a key; two arrays concatenate; and
+/// anything else is wrapped as a one-cell array first, so a scalar beside
+/// an array becomes its neighbour and two scalars become a pair.
+fn json_merge_preserve(left: serde_json::Value, right: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value as Json;
+    match (left, right) {
+        (Json::Object(mut members), Json::Object(additions)) => {
+            for (key, value) in additions {
+                let merged = match members.remove(&key) {
+                    Some(existing) => json_merge_preserve(existing, value),
+                    None => value,
+                };
+                members.insert(key, merged);
+            }
+            Json::Object(members)
+        }
+        (left, right) => {
+            let cells = |value: Json| match value {
+                Json::Array(items) => items,
+                other => vec![other],
+            };
+            let mut items = cells(left);
+            items.extend(cells(right));
+            Json::Array(items)
+        }
+    }
 }
 
 fn json_depth(value: &serde_json::Value) -> i64 {
