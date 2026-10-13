@@ -1666,7 +1666,7 @@ impl TableStore {
             .ok_or(StoreError::SequenceOverflow)?;
         let mut segment_path = None;
         if !rows.is_empty() {
-            let segment = segment::write(
+            let segment = segment::write_spread(
                 &self.directory,
                 self.manifest.next_segment_id,
                 &self.schema,
@@ -1779,7 +1779,7 @@ impl TableStore {
         // the columnar direct path it unlocks applies no tombstone filter — so
         // a flush that carries even one tombstone stays off the direct path.
         let unique_keys = rows.iter().all(|row| !row.is_deleted());
-        let segment = segment::write(
+        let segment = segment::write_spread(
             &self.directory,
             self.manifest.next_segment_id,
             &self.schema,

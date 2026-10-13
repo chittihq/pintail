@@ -1024,7 +1024,6 @@ fn key_mode_tag(key_mode: KeyMode) -> u8 {
     }
 }
 
-#[allow(clippy::too_many_lines)]
 pub(crate) fn write(
     directory: &Path,
     id: u64,
@@ -1033,6 +1032,55 @@ pub(crate) fn write(
     block_rows: usize,
     compression: Compression,
     unique_keys: bool,
+) -> Result<SegmentMeta, StoreError> {
+    write_columns(
+        directory,
+        id,
+        schema,
+        rows,
+        block_rows,
+        compression,
+        unique_keys,
+        false,
+    )
+}
+
+/// [`write`] with the columns encoded across the ingest threads
+/// ([`crate::ingest_pool`]). Each column's bytes depend on that column
+/// alone and are laid down in schema order, so the file is the one
+/// [`write`] produces. For the writes replication waits on - a copied
+/// chunk, a flush; a merge keeps to its own paced thread.
+pub(crate) fn write_spread(
+    directory: &Path,
+    id: u64,
+    schema: &TableSchema,
+    rows: &[StoredRow],
+    block_rows: usize,
+    compression: Compression,
+    unique_keys: bool,
+) -> Result<SegmentMeta, StoreError> {
+    write_columns(
+        directory,
+        id,
+        schema,
+        rows,
+        block_rows,
+        compression,
+        unique_keys,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+fn write_columns(
+    directory: &Path,
+    id: u64,
+    schema: &TableSchema,
+    rows: &[StoredRow],
+    block_rows: usize,
+    compression: Compression,
+    unique_keys: bool,
+    spread: bool,
 ) -> Result<SegmentMeta, StoreError> {
     if rows.is_empty() {
         return Err(StoreError::FormatLimit(
@@ -1093,14 +1141,32 @@ pub(crate) fn write(
     let mut column_offsets = Vec::with_capacity(specs.len());
     let mut descriptors = Vec::with_capacity(specs.len() * COLUMN_DESCRIPTOR_LENGTH);
     let mut sketches = BTreeMap::new();
+    let encode = |spec: &ColumnSpec| {
+        // A test writes an earlier format through a per-thread switch,
+        // which the thread encoding this column has to share.
+        #[cfg(test)]
+        write_format_version_for_test(format_version);
+        let mut column = Encoder::new();
+        let sketch = write_column(&mut column, spec, rows, block_rows, compression)?;
+        Ok::<_, StoreError>((column.finish(), sketch))
+    };
+    // Spread, every column is encoded before the first is written; kept
+    // on this thread, each is written as it is encoded and then dropped.
+    let mut spread_columns = if spread {
+        Some(
+            crate::ingest_pool::ingest_map(specs.iter().collect(), |_, spec| encode(spec))?
+                .into_iter(),
+        )
+    } else {
+        None
+    };
     for spec in &specs {
         column_offsets.push(position as u64);
-        let mut column = Encoder::new();
-        sketches.insert(
-            spec.id,
-            write_column(&mut column, spec, rows, block_rows, compression)?,
-        );
-        let column = column.finish();
+        let (column, sketch) = match spread_columns.as_mut().and_then(Iterator::next) {
+            Some(encoded) => encoded,
+            None => encode(spec)?,
+        };
+        sketches.insert(spec.id, sketch);
         descriptors.extend_from_slice(&column[..COLUMN_DESCRIPTOR_LENGTH]);
         file.write_all(&column)
             .map_err(|error| StoreError::io(format!("write {}", temporary.display()), error))?;
@@ -7682,6 +7748,80 @@ mod range_read_tests {
         let again =
             super::sparse_index_shared(directory.path(), &meta, &schema).expect("sparse index");
         assert!(!std::sync::Arc::ptr_eq(&sparse, &again));
+    }
+
+    /// Columns encoded across the ingest threads land in schema order, so
+    /// the file does not depend on how many threads encoded it.
+    #[test]
+    fn a_segment_written_across_threads_is_the_same_file() {
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "label", DataType::Utf8, true),
+                Column::new(
+                    3,
+                    "amount",
+                    DataType::Decimal {
+                        precision: 12,
+                        scale: 2,
+                    },
+                    true,
+                ),
+                Column::new(4, "count", DataType::Int64, false),
+            ],
+        )
+        .expect("schema");
+        let rows = (0..20_000_u64)
+            .map(|id| {
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                    vec![
+                        Value::UInt64(id),
+                        if id % 7 == 0 {
+                            Value::Null
+                        } else {
+                            Value::Utf8(format!("label-{}", id % 311))
+                        },
+                        Value::Utf8(format!("{id}.25")),
+                        Value::Int64(i64::try_from(id % 97).expect("small") - 40),
+                    ],
+                    1,
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        let narrow = tempfile::tempdir().expect("temporary directory");
+        let wide = tempfile::tempdir().expect("temporary directory");
+        let arguments = (1, &schema, rows.as_slice(), 1_024, Compression::AdaptiveLz4);
+        let (id, schema, rows, block_rows, compression) = arguments;
+        let one = write(
+            narrow.path(),
+            id,
+            schema,
+            rows,
+            block_rows,
+            compression,
+            true,
+        )
+        .expect("write on one thread");
+        let spread_before = crate::ingest_batches_spread();
+        let many =
+            super::write_spread(wide.path(), id, schema, rows, block_rows, compression, true)
+                .expect("write across threads");
+        if crate::ingest_threads() > 1 {
+            assert!(
+                crate::ingest_batches_spread() > spread_before,
+                "the columns were handed to the ingest threads"
+            );
+        }
+        assert_eq!(one.file_name, many.file_name);
+        assert_eq!(
+            std::fs::read(narrow.path().join(&one.file_name)).expect("one-thread file"),
+            std::fs::read(wide.path().join(&many.file_name)).expect("spread file"),
+        );
+        assert_eq!(one.bloom, many.bloom);
+        assert_eq!(one.row_count, many.row_count);
     }
 
     #[test]

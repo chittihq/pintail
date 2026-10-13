@@ -993,17 +993,17 @@ async fn snapshot_table(
             // encoded never stalls the server's requests or another worker.
             let write_started = Instant::now();
             let (outcome, chunk_bytes) = run_blocking(|| {
-                let stored_rows = rows
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, row)| {
-                        convert_row(
-                            &target.source,
-                            row,
-                            u64::try_from(row_offset.saturating_add(index)).unwrap_or(u64::MAX),
-                        )
-                    })
-                    .collect::<Result<Vec<_>, SnapshotError>>()?;
+                // Each row converts from its own source row and nothing
+                // else, so the chunk's rows convert across the ingest
+                // threads and come back in the order they were read.
+                let source = &target.source;
+                let stored_rows = pintail_store::ingest_map(rows, |index, row| {
+                    convert_row(
+                        source,
+                        row,
+                        u64::try_from(row_offset.saturating_add(index)).unwrap_or(u64::MAX),
+                    )
+                })?;
                 let chunk_bytes = stored_rows
                     .iter()
                     .map(StoredRow::estimated_bytes)

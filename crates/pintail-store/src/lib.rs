@@ -9,6 +9,7 @@
 mod codec;
 mod database;
 mod error;
+mod ingest_pool;
 mod maintenance;
 mod manifest;
 mod memtable;
@@ -20,6 +21,7 @@ mod wal;
 
 pub use database::DatabaseStore;
 pub use error::StoreError;
+pub use ingest_pool::{ingest_batches_spread, ingest_map, ingest_threads};
 pub use maintenance::{
     CopyInFlight, MaintenanceStatus, copies_in_flight, copy_started, maintenance_status,
     merge_threads, merge_write_rate, segment_upgrade_deferral, segment_upgrade_enabled,

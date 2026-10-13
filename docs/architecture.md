@@ -144,7 +144,19 @@ upgrade waits. The
 `pintail paths:` startup line reports `segment_upgrade=on|off`, and
 `GET /api/storage` reports `segment_upgrade`: the upgrades running and done,
 and each table's segments by format version. A table whose last old segment
-is rewritten logs `finished upgrading` at info. A polling-mode database is
+is rewritten logs `finished upgrading` at info.
+
+The writes replication waits on - a chunk of a table copy and a memtable
+flush - encode a segment's columns across a pool of ingest threads, and a
+copy converts a chunk's source rows across the same pool. Each column's
+bytes depend on that column alone and are written in schema order, so the
+file is the one a single thread writes. The pool is half the machine's
+threads, at most eight (`PINTAIL_INGEST_THREADS` sets it; `1` keeps the work
+on the calling thread), and is separate from the scan pool, so a copy does
+not take the threads statements are answered on. Merges and upgrades do not
+use it: they keep their own paced, low-priority threads.
+
+A polling-mode database is
 swept the same way: a polling cycle that read every table starts at most
 one upgrade when it ends, under the same conditions, and its tables take
 turns.
