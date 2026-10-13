@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2884;
+const EXPECTED_CASES: usize = 2894;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5120,6 +5120,47 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "table value constructor",
             "VALUES ROW(1, 2.5, 'x'), ROW(NULL, 3, 'yy') UNION ALL SELECT 7, 8, 'z' ORDER BY 3",
+        ),
+        // INTERVAL(N, ...), QUOTE, MAKE_SET and EXPORT_SET, each the expression it stands for.
+        ordered(
+            "functions composed of others",
+            "SELECT INTERVAL(23, 1, 15, 17, 30, 44, 200), INTERVAL(10, 1, 10, 100, 1000), INTERVAL(22, 23, 30, 44, 200), INTERVAL(0, 1), INTERVAL(NULL, 1, 2), INTERVAL(5, NULL, 3, NULL, 9), INTERVAL(5, 1), INTERVAL(1.5, 1, 1.4, 1.5, 1.6), INTERVAL('3', 1, '2', 4), INTERVAL(3, 5, 1, 4), INTERVAL(-1, -5, -1, 0)",
+        ),
+        ordered(
+            "functions composed of others",
+            "SELECT INTERVAL(10, 9.99, 10.0, 10.01), INTERVAL(2e0, 1, 2, 3), INTERVAL('b', 'a', 'c'), INTERVAL(18446744073709551615, 1, 9223372036854775808), INTERVAL(5, 5, 5, 5), INTERVAL(1.5, '1.4x', 2), INTERVAL(5, 3, NULL), INTERVAL(5, 7, NULL, 4)",
+        ),
+        ordered(
+            "functions composed of others",
+            "SELECT id, INTERVAL(score, 0, 25, 50, 75), INTERVAL(id, 3, score / 10, 9), placed + INTERVAL (1) DAY, INTERVAL (1 + 1) DAY + placed FROM (SELECT id, score, DATE '2024-01-30' AS placed FROM events) e ORDER BY id",
+        ),
+        ordered(
+            "functions composed of others",
+            "SELECT INTERVAL(total, 1, 10, 100, 1000) AS band, COUNT(*) FROM orders GROUP BY band ORDER BY band",
+        ),
+        ordered(
+            "functions composed of others",
+            "SELECT QUOTE('Don''t!'), QUOTE(NULL), QUOTE(''), QUOTE('a\\\\b'), QUOTE(12), QUOTE(1.50), QUOTE('e\"x'), LENGTH(QUOTE(NULL)), QUOTE(DATE '2024-01-05'), HEX(QUOTE(CONCAT('a', CHAR(0), 'b', CHAR(26), 'c', CHAR(10), CHAR(13), CHAR(9), '''', '\\\\')))",
+        ),
+        ordered(
+            "functions composed of others",
+            "SELECT id, QUOTE(name), QUOTE(note), QUOTE(score), QUOTE(label), QUOTE(tag) FROM events ORDER BY id",
+        ),
+        ordered(
+            "functions composed of others",
+            "SELECT MAKE_SET(1, 'a', 'b', 'c'), MAKE_SET(1 | 4, 'hello', 'nice', 'world'), MAKE_SET(1 | 4, 'hello', 'nice', NULL, 'world'), MAKE_SET(0, 'a', 'b', 'c'), MAKE_SET(NULL, 'a'), MAKE_SET(7, 'a', NULL, 'c'), MAKE_SET(8, 'a', 'b'), MAKE_SET(-1, 'a', 'b', 'c'), MAKE_SET(3, '', 'b'), MAKE_SET(3, 'a', ''), MAKE_SET('5', 'a', 'b', 'c'), MAKE_SET(2.6, 'a', 'b', 'c'), MAKE_SET(3, 1, 2)",
+        ),
+        ordered(
+            "functions composed of others",
+            "SELECT id, MAKE_SET(score, 'one', 'two', 'four', name, note, tag), MAKE_SET(id, note, label) FROM events ORDER BY id",
+        ),
+        ordered(
+            "functions composed of others",
+            "SELECT EXPORT_SET(5, 'Y', 'N', ',', 4), EXPORT_SET(6, '1', '0', ',', 10), EXPORT_SET(5, 'Y', 'N'), EXPORT_SET(5, 'Y', 'N', '-'), EXPORT_SET(NULL, 'Y', 'N'), EXPORT_SET(5, NULL, 'N'), EXPORT_SET(5, 'Y', NULL), EXPORT_SET(5, 'Y', 'N', NULL), EXPORT_SET(5, 'Y', 'N', ',', NULL), EXPORT_SET(5, 'Y', 'N', ',', 0), EXPORT_SET(5, 'Y', 'N', ',', -1), EXPORT_SET(5, 'Y', 'N', ',', 65), EXPORT_SET(-1, '1', '0', '', 8)",
+        ),
+        ordered(
+            "functions composed of others",
+            "SELECT id, EXPORT_SET(score, '1', '0', '', 8), EXPORT_SET(id, name, note, '/', 3), EXPORT_SET(5, 'yes', 'no', ' | ', 3), EXPORT_SET(18446744073709551615, '1', '0', '', 64) FROM events ORDER BY id",
         ),
     ]
     .into_iter()

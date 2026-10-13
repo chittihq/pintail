@@ -1003,7 +1003,7 @@ pub(super) fn bind_scalar_function(
         }
         // Bound before this match as another expression; a call that reaches
         // here has a number of arguments that spelling does not take.
-        "ISNULL" | "BIT_LENGTH" | "STRCMP" => {
+        "ISNULL" | "BIT_LENGTH" | "STRCMP" | "QUOTE" | "MAKE_SET" | "EXPORT_SET" => {
             return Err(BindError::ParameterCount(function_name));
         }
         // A function this match knows, called with a number of arguments
@@ -1062,8 +1062,14 @@ fn respelled_call(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<Option<Expr>, BindError> {
     use sqlparser::ast::{BinaryOperator, CastKind, Ident, ObjectName};
-    // Every scalar call passes through here; only these three go further.
-    if !matches!(name, "ISNULL" | "BIT_LENGTH" | "STRCMP") {
+    // Every scalar call passes through here; only these go further.
+    let composed = name == crate::interval::RANGE_FUNCTION;
+    if !composed
+        && !matches!(
+            name,
+            "ISNULL" | "BIT_LENGTH" | "STRCMP" | "QUOTE" | "MAKE_SET" | "EXPORT_SET"
+        )
+    {
         return Ok(None);
     }
     let Some(operands) = arguments
@@ -1078,7 +1084,17 @@ fn respelled_call(
         return Ok(None);
     };
     let nested = |operand: &Expr| Expr::Nested(Box::new(operand.clone()));
+    if composed {
+        return Ok(range_index(&operands));
+    }
     Ok(match (name, operands.as_slice()) {
+        ("QUOTE", [operand]) => Some(quoted(function, operand)),
+        ("MAKE_SET", [bits, members @ ..]) if !members.is_empty() => {
+            Some(made_set(function, bits, members))
+        }
+        ("EXPORT_SET", [bits, on, off, rest @ ..]) if rest.len() <= 2 => {
+            Some(exported_set(function, bits, on, off, rest)?)
+        }
         ("ISNULL", [operand]) => Some(Expr::IsNull(Box::new(nested(operand)))),
         ("BIT_LENGTH", [_]) => {
             let mut length = function.clone();
@@ -1133,6 +1149,211 @@ fn respelled_call(
         }
         _ => None,
     })
+}
+
+fn number(text: impl Into<String>) -> Expr {
+    Expr::Value(SqlValue::Number(text.into(), false).with_empty_span())
+}
+
+fn text(value: &str) -> Expr {
+    Expr::Value(SqlValue::SingleQuotedString(value.to_owned()).with_empty_span())
+}
+
+fn null() -> Expr {
+    Expr::Value(SqlValue::Null.with_empty_span())
+}
+
+fn operation(left: Expr, op: sqlparser::ast::BinaryOperator, right: Expr) -> Expr {
+    Expr::Nested(Box::new(Expr::BinaryOp {
+        left: Box::new(left),
+        op,
+        right: Box::new(right),
+    }))
+}
+
+/// `CASE WHEN c1 THEN r1 ... [ELSE e] END`.
+fn searched_case(branches: Vec<(Expr, Expr)>, otherwise: Option<Expr>) -> Expr {
+    Expr::Case {
+        case_token: sqlparser::ast::helpers::attached_token::AttachedToken::empty(),
+        end_token: sqlparser::ast::helpers::attached_token::AttachedToken::empty(),
+        operand: None,
+        conditions: branches
+            .into_iter()
+            .map(|(condition, result)| sqlparser::ast::CaseWhen { condition, result })
+            .collect(),
+        else_result: otherwise.map(Box::new),
+    }
+}
+
+/// A call of `name` over `arguments`, written where `function` was.
+fn call_of(function: &Function, name: &str, arguments: Vec<Expr>) -> Expr {
+    let mut call = function.clone();
+    call.name = sqlparser::ast::ObjectName::from(vec![sqlparser::ast::Ident::new(name)]);
+    call.args = FunctionArguments::List(sqlparser::ast::FunctionArgumentList {
+        duplicate_treatment: None,
+        args: arguments
+            .into_iter()
+            .map(|argument| FunctionArg::Unnamed(FunctionArgExpr::Expr(argument)))
+            .collect(),
+        clauses: Vec::new(),
+    });
+    Expr::Function(call)
+}
+
+/// `INTERVAL(N, N1, N2, ...)`: the position of the first listed value above
+/// `N`, counting from zero, or the number of values when none is; -1 for a
+/// NULL `N`. Every argument is read as a number, and a NULL listed value is
+/// passed over, which a comparison that is not true does by itself.
+///
+/// `MySQL` searches a list of more than eight constants by halving; over a
+/// list in ascending order, which is what the function is defined for, that
+/// finds the same position.
+fn range_index(operands: &[&Expr]) -> Option<Expr> {
+    use sqlparser::ast::BinaryOperator;
+    let [subject, values @ ..] = operands else {
+        return None;
+    };
+    if values.is_empty() {
+        return None;
+    }
+    let numeric = |operand: &Expr| operation(operand.clone(), BinaryOperator::Plus, number("0"));
+    let mut branches = vec![(
+        Expr::IsNull(Box::new(Expr::Nested(Box::new((*subject).clone())))),
+        Expr::UnaryOp {
+            op: sqlparser::ast::UnaryOperator::Minus,
+            expr: Box::new(number("1")),
+        },
+    )];
+    for (index, value) in values.iter().enumerate() {
+        branches.push((
+            operation(numeric(value), BinaryOperator::Gt, numeric(subject)),
+            number(index.to_string()),
+        ));
+    }
+    Some(searched_case(
+        branches,
+        Some(number(values.len().to_string())),
+    ))
+}
+
+/// `QUOTE(str)`: the text as a string literal that reads back as itself -
+/// in single quotes, with a backslash before each backslash and single
+/// quote, and the NUL and Control-Z bytes written `\0` and `\Z`. A NULL is
+/// the unquoted word `NULL`.
+fn quoted(function: &Function, operand: &Expr) -> Expr {
+    let mut escaped = Expr::Nested(Box::new(operand.clone()));
+    for (from, to) in [
+        ("\\", "\\\\"),
+        ("'", "\\'"),
+        ("\0", "\\0"),
+        ("\u{1a}", "\\Z"),
+    ] {
+        escaped = call_of(function, "REPLACE", vec![escaped, text(from), text(to)]);
+    }
+    searched_case(
+        vec![(
+            Expr::IsNull(Box::new(Expr::Nested(Box::new(operand.clone())))),
+            text("NULL"),
+        )],
+        Some(call_of(
+            function,
+            "CONCAT",
+            vec![text("'"), escaped, text("'")],
+        )),
+    )
+}
+
+/// The value `1 << bit` as a literal.
+fn bit_mask(bit: usize) -> Expr {
+    number((1_u64 << bit).to_string())
+}
+
+/// Whether `bits` has `bit` set; never true past the sixty-fourth.
+fn bit_set(bits: &Expr, bit: usize) -> Expr {
+    use sqlparser::ast::BinaryOperator;
+    if bit >= 64 {
+        return operation(number("0"), BinaryOperator::NotEq, number("0"));
+    }
+    operation(
+        operation(bits.clone(), BinaryOperator::BitwiseAnd, bit_mask(bit)),
+        BinaryOperator::NotEq,
+        number("0"),
+    )
+}
+
+/// `MAKE_SET(bits, str1, str2, ...)`: the strings whose bit is set, joined
+/// by commas. A NULL string is left out, and NULL `bits` is NULL.
+fn made_set(function: &Function, bits: &Expr, members: &[&Expr]) -> Expr {
+    let bits = Expr::Nested(Box::new(bits.clone()));
+    let mut arguments = vec![text(",")];
+    for (bit, member) in members.iter().enumerate() {
+        arguments.push(searched_case(
+            vec![(bit_set(&bits, bit), (*member).clone())],
+            None,
+        ));
+    }
+    searched_case(
+        vec![(Expr::IsNull(Box::new(bits)), null())],
+        Some(call_of(function, "CONCAT_WS", arguments)),
+    )
+}
+
+/// `EXPORT_SET(bits, on, off[, separator[, count]])`: `on` or `off` for
+/// each of the low `count` bits, lowest first, joined by the separator - a
+/// comma and sixty-four bits unless given. Any NULL argument is NULL. The
+/// count has to be written as a whole number; a count that is not between
+/// zero and sixty-four is sixty-four.
+fn exported_set(
+    function: &Function,
+    bits: &Expr,
+    on: &Expr,
+    off: &Expr,
+    rest: &[&Expr],
+) -> Result<Expr, BindError> {
+    use sqlparser::ast::BinaryOperator;
+    let unsupported = || BindError::UnsupportedExpression(function.to_string());
+    let count = match rest.get(1) {
+        None => 64,
+        Some(Expr::Value(value)) => match &value.value {
+            SqlValue::Null => return Ok(null()),
+            SqlValue::Number(digits, _) => {
+                digits.parse::<usize>().map_err(|_| unsupported())?.min(64)
+            }
+            _ => return Err(unsupported()),
+        },
+        Some(Expr::UnaryOp {
+            op: sqlparser::ast::UnaryOperator::Minus,
+            expr,
+        }) if matches!(expr.as_ref(), Expr::Value(value)
+            if matches!(&value.value, SqlValue::Number(digits, _) if digits.parse::<u64>().is_ok())) =>
+        {
+            64
+        }
+        Some(_) => return Err(unsupported()),
+    };
+    let nested = |operand: &Expr| Expr::Nested(Box::new(operand.clone()));
+    let (bits, on, off) = (nested(bits), nested(on), nested(off));
+    let separator = rest
+        .first()
+        .map_or_else(|| text(","), |separator| nested(separator));
+    let missing = [&bits, &on, &off, &separator]
+        .into_iter()
+        .map(|operand| Expr::IsNull(Box::new(operand.clone())))
+        .reduce(|left, right| operation(left, BinaryOperator::Or, right))
+        .ok_or_else(unsupported)?;
+    let joined = if count == 0 {
+        text("")
+    } else {
+        let mut arguments = vec![separator];
+        for bit in 0..count {
+            arguments.push(searched_case(
+                vec![(bit_set(&bits, bit), on.clone())],
+                Some(off.clone()),
+            ));
+        }
+        call_of(function, "CONCAT_WS", arguments)
+    };
+    Ok(searched_case(vec![(missing, null())], Some(joined)))
 }
 
 fn bind_timestamp_add(

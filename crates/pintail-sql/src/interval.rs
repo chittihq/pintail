@@ -179,8 +179,55 @@ impl CompoundUnit {
 }
 
 pub(crate) fn rewrite(tokens: &mut Vec<TokenWithSpan>) {
+    name_range_function(tokens);
     fold_literals(tokens);
     wrap_expressions(tokens);
+}
+
+/// The name `INTERVAL(N, N1, N2, ...)` is parsed under.
+pub(crate) const RANGE_FUNCTION: &str = "PINTAIL_RANGE_OF";
+
+/// `INTERVAL(N, N1, N2, ...)` is a function - the number of listed values
+/// not above `N` - and shares its first word with the interval of date
+/// arithmetic. A comma directly inside the parentheses tells them apart:
+/// `INTERVAL (1) DAY` is arithmetic, `INTERVAL(1, 2)` the function. The
+/// function is renamed here so the grammar reads an ordinary call; the
+/// token keeps its span, so the statement's text still names it.
+fn name_range_function(tokens: &mut [TokenWithSpan]) {
+    // Most statements have no INTERVAL at all, and pay only this look.
+    if !tokens.iter().any(|token| is_interval(&token.token)) {
+        return;
+    }
+    let significant = significant(tokens);
+    for (at, &keyword) in significant.iter().enumerate() {
+        if !is_interval(&tokens[keyword].token)
+            || significant
+                .get(at + 1)
+                .is_none_or(|&next| tokens[next].token != Token::LParen)
+        {
+            continue;
+        }
+        let mut depth = 0_usize;
+        let mut list = false;
+        let mut closed = false;
+        for &index in &significant[at + 1..] {
+            match tokens[index].token {
+                Token::LParen => depth += 1,
+                Token::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        closed = true;
+                        break;
+                    }
+                }
+                Token::Comma if depth == 1 => list = true,
+                _ => {}
+            }
+        }
+        if list && closed {
+            tokens[keyword].token = word_token(RANGE_FUNCTION);
+        }
+    }
 }
 
 fn significant(tokens: &[TokenWithSpan]) -> Vec<usize> {
