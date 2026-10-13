@@ -3282,3 +3282,101 @@ fn dsn_host(host: &str) -> String {
         bare.to_owned()
     }
 }
+
+/// A probe lists the source's tables and then reads each one's shape, one
+/// statement at a time, while the source keeps executing. A table dropped
+/// after it was listed is left out of the report; it must not fail the
+/// probe, because a change-capture cycle reprobes at every schema change
+/// and a failed reprobe fails the cycle for every table of the database.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_probe_leaves_out_tables_dropped_while_it_runs() {
+    const CHURNED: usize = 12;
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE anchor (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64));\
+             CREATE TABLE zenith (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64));",
+        )
+        .expect("churn source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("churn DSN"));
+    let owner = Pool::new(
+        Opts::from_url(
+            &mysql
+                .dsn()
+                .replacen("pintail:pintail@", "root:pintail-root@", 1),
+        )
+        .expect("churn owner DSN"),
+    );
+
+    // Tables that sort between the two that stay, created and dropped in a
+    // loop for as long as the probes run.
+    let stop = Arc::new(AtomicBool::new(false));
+    let churn = {
+        let stop = Arc::clone(&stop);
+        let owner = owner.clone();
+        tokio::spawn(async move {
+            let mut connection = owner.get_conn().await.expect("churn connection");
+            let mut rounds = 0_u64;
+            while !stop.load(Ordering::Acquire) {
+                for index in 0..CHURNED {
+                    connection
+                        .query_drop(format!(
+                            "CREATE TABLE churn_{index:02} (id BIGINT UNSIGNED PRIMARY KEY, \
+                               label VARCHAR(16), KEY by_label (label))"
+                        ))
+                        .await
+                        .expect("create churned table");
+                }
+                for index in 0..CHURNED {
+                    connection
+                        .query_drop(format!("DROP TABLE churn_{index:02}"))
+                        .await
+                        .expect("drop churned table");
+                }
+                rounds += 1;
+            }
+            rounds
+        })
+    };
+
+    let mut partial_listings = 0_usize;
+    for attempt in 0..150 {
+        let report = probe(&pool, "app")
+            .await
+            .unwrap_or_else(|error| panic!("probe {attempt} failed under table churn: {error}"));
+        let names = report
+            .tables
+            .iter()
+            .map(|table| table.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            names.contains(&"anchor") && names.contains(&"zenith"),
+            "probe {attempt} lost a table nobody dropped: {names:?}"
+        );
+        for table in &report.tables {
+            assert!(
+                !table.columns.is_empty(),
+                "probe {attempt} reported {} without columns",
+                table.name
+            );
+        }
+        let churned = names.len() - 2;
+        if churned > 0 && churned < CHURNED {
+            partial_listings += 1;
+        }
+    }
+    stop.store(true, Ordering::Release);
+    let rounds = churn.await.expect("churn task");
+    assert!(rounds > 0, "the churn never completed a round");
+    // The probes really did run across creations and drops, not beside them.
+    assert!(
+        partial_listings > 0,
+        "no probe saw the source mid-churn in {rounds} rounds"
+    );
+    owner.disconnect().await.expect("disconnect churn owner");
+    pool.disconnect().await.expect("disconnect churn pool");
+}

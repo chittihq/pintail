@@ -664,6 +664,7 @@ pub async fn probe_with(
     pintail_log::log_info!("probe start db={database} tables={total}");
     let mut counting_spent = std::time::Duration::ZERO;
     let mut tables = Vec::with_capacity(raw_tables.len());
+    let mut vanished = Vec::new();
     let mut warnings = Vec::new();
     for (index, (name, engine, estimated_rows)) in raw_tables.into_iter().enumerate() {
         // Per table, so a single pathological table is identifiable rather
@@ -685,7 +686,7 @@ pub async fn probe_with(
             }
             RowCounts::Estimated => None,
         };
-        let table = probe_table(
+        let probed = probe_table(
             &mut connection,
             database,
             name,
@@ -700,14 +701,46 @@ pub async fn probe_with(
             index + 1,
             table_started.elapsed().as_millis()
         );
+        match probed {
+            Some(table) => tables.push(table),
+            None => vanished.push(probed_name),
+        }
+    }
+    // The listing above and each table's own reads are separate statements,
+    // and the source keeps executing between them. A table dropped after it
+    // was listed has no shape to report; one dropped while its shape was
+    // being read may have been read in part (its columns, then no keys). A
+    // second listing after the last table tells which names survived the
+    // walk, and only those are reported: the source as this probe found it
+    // holds no such table, which is what a probe one statement later would
+    // have said. Failing the probe instead refused every other table of the
+    // database for a drop that concerned none of them.
+    if !tables.is_empty() {
+        let surviving: Vec<String> = connection
+            .exec(
+                "SELECT TABLE_NAME FROM information_schema.TABLES \
+                 WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'",
+                (database,),
+            )
+            .await?;
+        vanished.extend(retain_surviving(&mut tables, &surviving));
+    }
+    if !vanished.is_empty() {
+        pintail_log::log_info!(
+            "probe db={database} left out {} tables dropped while it ran: {}",
+            vanished.len(),
+            vanished.join(", ")
+        );
+    }
+    for table in &tables {
         warnings.extend(
             table
                 .warnings
                 .iter()
                 .map(|warning| format!("{}: {warning}", table.name)),
         );
-        tables.push(table);
     }
+    let total = tables.len();
     pintail_log::log_info!(
         "probe done db={database} tables={total} warnings={} {}ms",
         warnings.len(),
@@ -730,6 +763,23 @@ pub async fn probe_with(
     })
 }
 
+/// Keeps the probed tables whose names a later listing of the source still
+/// holds, and returns the names of the rest. Names compare exactly: a source
+/// with case-sensitive table names can hold two that differ only in case.
+fn retain_surviving(tables: &mut Vec<SourceTable>, surviving: &[String]) -> Vec<String> {
+    let mut gone = Vec::new();
+    tables.retain(|table| {
+        let kept = surviving.contains(&table.name);
+        if !kept {
+            gone.push(table.name.clone());
+        }
+        kept
+    });
+    gone
+}
+
+/// Reads one listed table's shape. `None` when the source no longer holds
+/// the table: it was dropped after the listing that named it.
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::too_many_arguments)]
 async fn probe_table(
@@ -740,7 +790,7 @@ async fn probe_table(
     estimated_rows: Option<u64>,
     rows_are_exact: bool,
     flavor: SourceFlavor,
-) -> Result<SourceTable, ProbeError> {
+) -> Result<Option<SourceTable>, ProbeError> {
     type IndexRow = (String, u8, u32, Option<String>, Option<u64>);
     let column_rows: Vec<mysql_async::Row> = connection
         .exec(
@@ -805,9 +855,9 @@ async fn probe_table(
         })
         .collect::<Result<Vec<_>, ProbeError>>()?;
     if raw_columns.is_empty() {
-        return Err(ProbeError::InvalidMetadata(format!(
-            "table {table} has no columns"
-        )));
+        // Every table has at least one column, so a listed table without
+        // any is one the source dropped since.
+        return Ok(None);
     }
 
     let index_rows: Vec<IndexRow> = connection
@@ -952,7 +1002,7 @@ async fn probe_table(
         )));
     }
 
-    Ok(SourceTable {
+    Ok(Some(SourceTable {
         name: table,
         engine,
         estimated_rows,
@@ -969,7 +1019,7 @@ async fn probe_table(
         secondary_indexes: secondary,
         warnings,
         source_column_count,
-    })
+    }))
 }
 
 fn derive_capabilities(
@@ -2047,6 +2097,19 @@ mod stabilization_tests {
             warnings: Vec::new(),
             source_column_count: 2,
         }
+    }
+
+    #[test]
+    fn a_table_absent_from_the_later_listing_is_left_out_by_exact_name() {
+        let named = |name: &str| SourceTable {
+            name: name.to_owned(),
+            ..table(vec![identifier()])
+        };
+        let mut tables = vec![named("ledger"), named("Ledger"), named("scratch")];
+        let gone = super::retain_surviving(&mut tables, &["Ledger".to_owned(), "other".to_owned()]);
+        assert_eq!(gone, ["ledger", "scratch"]);
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].name, "Ledger");
     }
 
     fn identifier() -> SourceColumn {
