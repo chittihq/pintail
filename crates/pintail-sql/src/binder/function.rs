@@ -1042,6 +1042,10 @@ fn respelled_call(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<Option<Expr>, BindError> {
     use sqlparser::ast::{BinaryOperator, CastKind, Ident, ObjectName};
+    // Every scalar call passes through here; only these three go further.
+    if !matches!(name, "ISNULL" | "BIT_LENGTH" | "STRCMP") {
+        return Ok(None);
+    }
     let Some(operands) = arguments
         .args
         .iter()

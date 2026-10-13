@@ -36,8 +36,14 @@ pub(crate) fn literal(expression: &Expr) -> Option<Value> {
         if !bare || function.over.is_some() {
             return None;
         }
-        let name = format!("{}()", function.name.to_string().to_ascii_lowercase());
-        return VARIABLES.with(|cell| cell.borrow().as_ref()?.get(&name).cloned());
+        // Nothing is pinned for most statements; the name is only spelled
+        // out when something is.
+        return VARIABLES.with(|cell| {
+            let variables = cell.borrow();
+            let variables = variables.as_ref().filter(|pinned| !pinned.is_empty())?;
+            let name = format!("{}()", function.name.to_string().to_ascii_lowercase());
+            variables.get(&name).cloned()
+        });
     }
     // `CURRENT_USER` is also written without its parentheses.
     if let Expr::Identifier(identifier) = expression
