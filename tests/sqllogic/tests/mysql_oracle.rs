@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2970;
+const EXPECTED_CASES: usize = 2971;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5148,6 +5148,11 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "window over a time key",
             "SELECT id, dt6, COUNT(*) OVER (ORDER BY dt6 RANGE BETWEEN INTERVAL 1 SECOND PRECEDING AND INTERVAL 1 SECOND FOLLOWING) AS c, COUNT(*) OVER (ORDER BY dt3 RANGE INTERVAL 30 DAY PRECEDING) AS d FROM bounds ORDER BY id",
+        ),
+        // Two bounds on one side written the wrong way round make an empty frame: a count is 0 and a value NULL.
+        ordered(
+            "empty window frame",
+            "SELECT id, COUNT(*) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) AS c, SUM(score) OVER (ORDER BY id ROWS BETWEEN 2 FOLLOWING AND 1 FOLLOWING) AS s, MAX(score) OVER (ORDER BY score RANGE BETWEEN 10 PRECEDING AND 20 PRECEDING) AS m, FIRST_VALUE(name) OVER (ORDER BY id ROWS BETWEEN 3 PRECEDING AND 4 PRECEDING) AS f, LAG(score, 1, 0) OVER (ORDER BY id ROWS BETWEEN 5 FOLLOWING AND 1 FOLLOWING) AS l FROM events ORDER BY id",
         ),
         ordered(
             "bit literal arithmetic",

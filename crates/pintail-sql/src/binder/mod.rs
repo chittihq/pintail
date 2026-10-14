@@ -7692,9 +7692,10 @@ fn bind_window_frame(
         None => BoundFrameBound::CurrentRow,
         Some(edge) => bound(edge, false)?,
     };
-    // MySQL rejects a frame whose start follows its end. Accepting it here
-    // produced an empty frame and a NULL for every row — a plausible answer
-    // to a query that should not have bound.
+    // MySQL refuses a frame whose start is a later KIND of bound than its
+    // end (`CURRENT ROW AND 1 PRECEDING`). Two bounds on one side written
+    // the wrong way round (`1 PRECEDING AND 2 PRECEDING`) it accepts: the
+    // frame is empty for every row, so a count is 0 and a value NULL.
     let rank = |edge: BoundFrameBound| match edge {
         BoundFrameBound::UnboundedPreceding => 0_u8,
         BoundFrameBound::Preceding(_) => 1,
@@ -7702,32 +7703,7 @@ fn bind_window_frame(
         BoundFrameBound::Following(_) => 3,
         BoundFrameBound::UnboundedFollowing => 4,
     };
-    let comparable_value = |offset: BoundFrameOffset| match offset {
-        BoundFrameOffset::Rows(value) => Some((i128::from(value), 0_u8)),
-        BoundFrameOffset::Numeric { units, scale } => Some((units, scale)),
-        BoundFrameOffset::Interval { .. } => None,
-    };
-    let offset_cmp = |left: BoundFrameOffset, right: BoundFrameOffset| {
-        let ((left, left_scale), (right, right_scale)) =
-            comparable_value(left).zip(comparable_value(right))?;
-        let scale = left_scale.max(right_scale);
-        let rescale = |units: i128, from: u8| {
-            10_i128
-                .checked_pow(u32::from(scale - from))
-                .and_then(|factor| units.checked_mul(factor))
-        };
-        Some(rescale(left, left_scale)?.cmp(&rescale(right, right_scale)?))
-    };
-    let reversed_within_side = match (start, end) {
-        (BoundFrameBound::Preceding(start), BoundFrameBound::Preceding(end)) => {
-            offset_cmp(start, end) == Some(std::cmp::Ordering::Less)
-        }
-        (BoundFrameBound::Following(start), BoundFrameBound::Following(end)) => {
-            offset_cmp(start, end) == Some(std::cmp::Ordering::Greater)
-        }
-        _ => false,
-    };
-    if rank(start) > rank(end) || reversed_within_side {
+    if rank(start) > rank(end) {
         return Err(BindError::UnsupportedQueryClause(format!(
             "window frame start follows its end on {function}"
         )));

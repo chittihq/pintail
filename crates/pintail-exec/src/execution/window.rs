@@ -1631,6 +1631,9 @@ fn compute_window_column(
                     .min(len),
                 Edge::UnboundedFollowing => len,
             };
+            // Two bounds on one side written the wrong way round make a
+            // frame with no rows in it.
+            let end = end.max(start);
             if frame.range {
                 range_extent.set(Some((peer_start(index), frame, (start, end))));
             }
