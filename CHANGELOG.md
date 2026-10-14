@@ -61,6 +61,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - A correlated scalar subquery that takes the first row by a table's
     single-column integer key beyond an outer value (`ORDER BY key LIMIT
     1`) reads the table once and finds each row by position.
+- More correlated and join shapes answered without per-row or per-pair
+  work (time lost to MySQL across the query corpus fell from 30.8 s to
+  23.6 s, and Pintail timeouts from 25 to 15):
+  - A correlated `IN`/`NOT IN` whose members differ for every outer row
+    (for example `inner.id <> outer.id`) is answered by indexed questions
+    of its table: one case went from a timeout to 0.22 s (MySQL 3.6 s).
+    A dependent index also keys on `BOOLEAN` equalities.
+  - `COUNT(*)` over an equality join that pairs many rows per key, or
+    over an inequality, `<>` or `<=>` join, is counted without producing
+    the pairs; several such counts that timed out in both engines now
+    answer in 20–120 ms.
+  - Multi-argument `COUNT(DISTINCT a, b)` keys rows by its components'
+    types instead of a JSON array per row (about three times faster).
+  - `STRCMP` orders its two sides once.
 - `UNIX_TIMESTAMP` of a `TIMESTAMP` column reads the stored instant
   instead of converting through the session time zone (about nine times
   faster on the measured cases).
@@ -139,6 +153,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Multi-argument `COUNT(DISTINCT a, b)` pads and folds a binary or
+  `general_ci` text component by that component's own rules; it could
+  count two equal values as distinct.
 - `ENUM` and `SET` values in more contexts:
   - `IF`, `CASE` and `NULLIF` over an `ENUM` or `SET` answer the chosen
     branch's position in a numeric context, and an `ENUM`'s truth value
