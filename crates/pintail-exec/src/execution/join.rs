@@ -4999,6 +4999,65 @@ impl RangeIndex {
     }
 }
 
+/// The right side of a join's inequalities sorted once, to count the right
+/// rows each left row's bounds reach instead of pairing it with them.
+pub(super) struct RangeCounter {
+    index: RangeIndex,
+}
+
+impl RangeCounter {
+    /// `None` unless every inequality bounds the one right side in a
+    /// domain that orders as SQL compares: the count is then exactly the
+    /// span the bounds leave.
+    pub(super) fn compile(
+        ranges: &[RangeKey],
+        left_columns: &[BoundColumn],
+        right_columns: &[BoundColumn],
+        collation: Collation,
+    ) -> Result<Option<Self>, ExecError> {
+        Ok(
+            RangeIndex::compile(ranges, left_columns, right_columns, collation)?
+                .filter(|index| index.bounds.len() == ranges.len())
+                .map(|index| Self { index }),
+        )
+    }
+
+    /// Takes one right row. `false` when its value is not one the domain
+    /// reads, which no count here answers for.
+    pub(super) fn push(&mut self, batch: &RecordBatch, row: usize) -> Result<bool, ExecError> {
+        match self
+            .index
+            .domain
+            .value(self.index.right.evaluate(batch, row)?)
+        {
+            Ok(Some(value)) => self.index.sorted.push((value, 0)),
+            // NULL is on neither side of any inequality.
+            Ok(None) => {}
+            Err(()) => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    /// Orders the rows taken; no row is taken after it.
+    pub(super) fn seal(&mut self) {
+        self.index.sorted.sort_by(|left, right| left.0.cmp(&right.0));
+    }
+
+    /// Right rows taken so far.
+    pub(super) fn len(&self) -> usize {
+        self.index.sorted.len()
+    }
+
+    /// The right rows the left row's bounds reach, or `None` when a bound
+    /// is not one the domain reads.
+    pub(super) fn count(&self, batch: &RecordBatch, row: usize) -> Result<Option<u64>, ExecError> {
+        Ok(self
+            .index
+            .span(batch, row)?
+            .map(|(low, high)| (high - low) as u64))
+    }
+}
+
 impl LoopKeys {
     /// `None` when there are no keys, or a pair has no hashable mode - the
     /// join then tests every pair, which is always correct.

@@ -46,6 +46,12 @@ fn reading(id: u64) -> Reading {
     }
 }
 
+/// Which half of the table a row is in: about a thousand rows share each,
+/// and every thirteenth row has none.
+fn half(row: &Reading) -> Option<i64> {
+    (row.id % 13 != 0).then(|| i64::try_from(row.id % 2).expect("small"))
+}
+
 fn schema() -> TableSchema {
     TableSchema::new(
         1,
@@ -54,6 +60,7 @@ fn schema() -> TableSchema {
             Column::new(2, "slot", DataType::DateTime64 { fsp: 0 }, true),
             Column::new(3, "zone", DataType::Utf8, true),
             Column::new(4, "pair", DataType::Int64, false),
+            Column::new(5, "half", DataType::Int64, true),
         ],
     )
     .expect("schema")
@@ -72,10 +79,11 @@ fn run(sql: &str) -> (Vec<Vec<Value>>, ExecCounters) {
                         PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
                         vec![
                             Value::UInt64(id),
-                            row.slot.map_or(Value::Null, Value::Utf8),
+                            row.slot.clone().map_or(Value::Null, Value::Utf8),
                             row.zone
                                 .map_or(Value::Null, |zone| Value::Utf8(zone.to_owned())),
                             Value::Int64(row.pair),
+                            half(&row).map_or(Value::Null, Value::Int64),
                         ],
                         1,
                         false,
@@ -197,6 +205,167 @@ fn many_rows_per_key_are_counted_by_key() {
         assert_eq!(answer.len(), 1, "{sql}");
         assert_eq!(answer[0][0], Value::UInt64(expected), "{sql}");
         assert_eq!(counters.join_pairs_counted, expected, "{sql}");
+    }
+}
+
+/// Every pair of rows the model accepts, counted the slow way: per left
+/// row, the right rows `accepts` pairs it with.
+fn paired(accepts: impl Fn(&Reading, &Reading) -> bool) -> Vec<(Reading, Vec<Reading>)> {
+    let rows = (0..ROWS).map(reading).collect::<Vec<_>>();
+    rows.iter()
+        .map(|left| {
+            (
+                left.clone(),
+                rows.iter()
+                    .filter(|right| accepts(left, right))
+                    .cloned()
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn an_inequality_is_counted_without_its_pairs() {
+    // `<>` over a key, and over text with NULLs: a NULL pairs with nothing.
+    let unequal_ids = ROWS * (ROWS - 1);
+    let (answer, counters) =
+        run("SELECT COUNT(*) FROM readings a JOIN readings b ON a.id <> b.id");
+    assert_eq!(answer, vec![vec![Value::UInt64(unequal_ids)]]);
+    assert_eq!(counters.join_pairs_counted, unequal_ids);
+
+    let zones = paired(|left, right| {
+        matches!((folded(left), folded(right)), (Some(a), Some(b)) if a != b)
+    });
+    let unequal_zones = zones.iter().map(|(_, right)| right.len() as u64).sum::<u64>();
+    let (answer, counters) =
+        run("SELECT COUNT(*), COUNT(b.slot) FROM readings a JOIN readings b ON b.zone <> a.zone");
+    let with_slot = zones
+        .iter()
+        .flat_map(|(_, right)| right)
+        .filter(|right| right.slot.is_some())
+        .count() as u64;
+    assert_eq!(
+        answer,
+        vec![vec![Value::UInt64(unequal_zones), Value::UInt64(with_slot)]]
+    );
+    assert_eq!(counters.join_pairs_counted, unequal_zones);
+}
+
+#[test]
+fn a_range_is_counted_per_left_row() {
+    // Inner: a left row with no earlier row has no group.
+    let earlier = paired(|left, right| right.id < left.id);
+    let sql = "SELECT a.id, COUNT(b.id), COUNT(*), COUNT(b.zone) FROM readings a \
+               JOIN readings b ON b.id < a.id GROUP BY a.id ORDER BY a.id";
+    let (answer, counters) = run(sql);
+    let expected = earlier
+        .iter()
+        .filter(|(_, right)| !right.is_empty())
+        .map(|(left, right)| {
+            vec![
+                Value::UInt64(left.id),
+                Value::UInt64(right.len() as u64),
+                Value::UInt64(right.len() as u64),
+                Value::UInt64(right.iter().filter(|row| row.zone.is_some()).count() as u64),
+            ]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(answer.len(), expected.len(), "{sql}");
+    assert_eq!(answer, expected, "{sql}");
+    assert_eq!(
+        counters.join_pairs_counted,
+        earlier.iter().map(|(_, right)| right.len() as u64).sum::<u64>()
+    );
+
+    // Left, with a conjunct on the right side alone and a window of two
+    // bounds: an unpaired left row is one row whose right side is NULL.
+    let window = paired(|left, right| {
+        right.pair < left.pair && right.pair >= left.pair - 3 && right.id > 2
+    });
+    let sql = "SELECT a.id, COUNT(b.id), COUNT(*), COUNT(b.slot) FROM readings a \
+               LEFT JOIN readings b ON b.pair < a.pair AND b.pair >= a.pair - 3 AND b.id > 2 \
+               GROUP BY a.id ORDER BY a.id";
+    let (answer, counters) = run(sql);
+    let expected = window
+        .iter()
+        .map(|(left, right)| {
+            vec![
+                Value::UInt64(left.id),
+                Value::UInt64(right.len() as u64),
+                Value::UInt64(right.len().max(1) as u64),
+                Value::UInt64(right.iter().filter(|row| row.slot.is_some()).count() as u64),
+            ]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(answer, expected, "{sql}");
+    assert_eq!(
+        counters.join_pairs_counted,
+        window.iter().map(|(_, right)| right.len() as u64).sum::<u64>()
+    );
+
+    // Grouped by a left column many rows share, with a filter on the left
+    // side in the condition.
+    let by_zone = paired(|left, right| right.pair <= left.pair && left.id % 2 == 0);
+    let sql = "SELECT a.zone, COUNT(*) FROM readings a JOIN readings b \
+               ON b.pair <= a.pair AND a.id % 2 = 0 GROUP BY a.zone ORDER BY a.zone";
+    let (answer, _) = run(sql);
+    let mut groups: BTreeMap<Option<String>, u64> = BTreeMap::new();
+    for (left, right) in &by_zone {
+        if !right.is_empty() {
+            *groups.entry(folded(left)).or_default() += right.len() as u64;
+        }
+    }
+    let counts = answer
+        .iter()
+        .map(|row| match &row[1] {
+            Value::UInt64(count) => *count,
+            Value::Int64(count) => u64::try_from(*count).expect("count"),
+            other => panic!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(counts, groups.values().copied().collect::<Vec<_>>(), "{sql}");
+}
+
+/// An equality join grouped by its left side, where each key holds over a
+/// thousand right rows: under `=` a NULL key pairs with nothing, under
+/// `<=>` with the other NULLs, and a left join keeps the unpaired rows.
+#[test]
+fn an_equality_grouped_by_its_left_side_is_counted_per_left_row() {
+    for (operator, left_join) in [("=", false), ("=", true), ("<=>", true), ("<=>", false)] {
+        let pairs_of = paired(|left, right| match (half(left), half(right)) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => operator == "<=>",
+            _ => false,
+        });
+        let sql = format!(
+            "SELECT a.id, COUNT(b.id), COUNT(*), COUNT(b.zone) FROM readings a {} JOIN \
+             readings b ON a.half {operator} b.half GROUP BY a.id ORDER BY a.id",
+            if left_join { "LEFT" } else { "INNER" }
+        );
+        let (answer, counters) = run(&sql);
+        let expected = pairs_of
+            .iter()
+            .filter(|(_, right)| left_join || !right.is_empty())
+            .map(|(left, right)| {
+                vec![
+                    Value::UInt64(left.id),
+                    Value::UInt64(right.len() as u64),
+                    Value::UInt64(right.len().max(1) as u64),
+                    Value::UInt64(right.iter().filter(|row| row.zone.is_some()).count() as u64),
+                ]
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(answer.len(), expected.len(), "{sql}");
+        assert_eq!(answer, expected, "{sql}");
+        assert_eq!(
+            counters.join_pairs_counted,
+            pairs_of
+                .iter()
+                .map(|(_, right)| right.len() as u64)
+                .sum::<u64>(),
+            "{sql}"
+        );
     }
 }
 

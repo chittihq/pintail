@@ -3,6 +3,7 @@ pub use aggregate::take_fold_phase_timings;
 pub use aggregate::{SettledMemoStats, settled_memo_stats};
 mod budget;
 mod columnar_sort;
+mod counted_join;
 mod deferred_projection;
 mod dependent_index;
 pub(crate) mod distinct_keys;
@@ -6979,7 +6980,22 @@ fn build_operator_inner(
             group_by,
             mut aggregates,
         } => {
-            let (input, columns) = build_operator(*input, provider, memory, collation)?;
+            // Counts over a join on an inequality are taken from how many
+            // rows each left row pairs with; the join is not run.
+            let (input, columns) = match counted_join::plan(
+                &input,
+                &group_by,
+                &aggregates,
+                provider,
+                memory,
+                collation,
+            )? {
+                Some(counted) => {
+                    aggregates = counted.aggregates;
+                    (counted.input, counted.columns)
+                }
+                None => build_operator(*input, provider, memory, collation)?,
+            };
             let (input, columns) = precompute_dependent_aggregate_arguments(
                 input,
                 columns,
