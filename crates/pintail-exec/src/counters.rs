@@ -91,6 +91,9 @@ pub struct ExecCounters {
     pub membership_probe_builds: u64,
     /// Outer rows those indexes answered without reading a member.
     pub membership_probes: u64,
+    /// Pairs of an inner equality join a `COUNT(*)` counted from how many
+    /// build rows each key holds, without producing them.
+    pub join_pairs_counted: u64,
 }
 
 thread_local! {
@@ -126,6 +129,7 @@ thread_local! {
             tuple_keys_spelled: 0,
             membership_probe_builds: 0,
             membership_probes: 0,
+            join_pairs_counted: 0,
         })
     };
 }

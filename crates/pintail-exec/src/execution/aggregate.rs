@@ -4292,6 +4292,157 @@ fn variance_step(count: f64, mean: f64, spread: f64, observation: f64) -> (f64, 
     (moved, spread + delta * (observation - moved))
 }
 
+/// Build rows a counted join reads at most before it decides: the rows are
+/// held until then, to hand back to the join when it keeps its own path.
+const COUNTED_JOIN_BUILD_ROWS: u64 = 1 << 20;
+
+/// Build rows per distinct key from which a join is counted by key: below
+/// it the join's pairs are few enough to produce, on the paths that
+/// produce them in parallel.
+const COUNTED_JOIN_ROWS_PER_KEY: u64 = 16;
+
+/// Batches already read from an operator, handed back as its input.
+struct ReplayStream {
+    batches: std::collections::VecDeque<RecordBatch>,
+}
+
+impl crate::BatchStream for ReplayStream {
+    fn next_batch(&mut self, _available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
+        Ok(self.batches.pop_front())
+    }
+
+    fn retained_bytes(&self) -> usize {
+        0
+    }
+
+    fn next_batch_memory_upper_bound(&self, _budget: usize) -> usize {
+        0
+    }
+}
+
+/// One row's join key on `side`, `None` when a component is NULL under a
+/// key that NULL never matches.
+fn counted_join_key(
+    batch: &RecordBatch,
+    row: usize,
+    primary: &CompiledExpr,
+    key_mode: JoinKeyMode,
+    extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
+    side: super::join::JoinSide,
+) -> Result<Option<super::join::JoinHashKey>, ExecError> {
+    let Some(key) = normalized_join_key(primary.evaluate(batch, row)?, key_mode)? else {
+        return Ok(None);
+    };
+    super::join::composite_join_key(key, batch, row, extra_keys, side)
+}
+
+/// `COUNT(*)` over an inner join on equalities alone, without producing a
+/// pair: each probe row joins as many rows as the build holds under its
+/// key, so the count is those numbers added up.
+///
+/// A self-join on a column of a few values pairs every row with every row
+/// of its value: a quarter of a million rows over twenty-six values are
+/// two and a half billion pairs, and four hundred thousand numbers to add.
+/// The keys are the join's own (`normalized_join_key`), so two rows pair
+/// here exactly when the join pairs them.
+///
+/// `None`, with `input` left as it would have been, for any other
+/// operator, a join that has started, a build whose size is unknown or
+/// large, and a build of few rows per key - a join on a unique key
+/// produces no more pairs than it probes, and keeps the paths that probe
+/// in parallel.
+fn count_join_pairs(
+    input: &mut PullOperator,
+    memory: &MemoryTracker,
+) -> Result<Option<u64>, ExecError> {
+    let PullOperator::HashJoin {
+        left,
+        right,
+        kind: BoundJoinKind::Inner,
+        left_key,
+        right_key,
+        extra_keys,
+        key_mode,
+        state: None,
+        residual: None,
+        build_estimate: Some(build_rows),
+        ..
+    } = input
+    else {
+        return Ok(None);
+    };
+    if *build_rows > COUNTED_JOIN_BUILD_ROWS {
+        return Ok(None);
+    }
+    let entry_bytes = size_of::<super::join::JoinHashKey>()
+        .saturating_add(size_of::<u64>())
+        .saturating_add(HASH_ENTRY_OVERHEAD);
+    let mut counts: HashMap<super::join::JoinHashKey, u64> = HashMap::new();
+    let mut held = std::collections::VecDeque::new();
+    let mut reserved = 0_usize;
+    let mut rows = 0_u64;
+    while let Some(batch) = right.next_batch(memory)? {
+        memory.check_interruption()?;
+        for row in batch.selection().selected_rows() {
+            let Some(key) = counted_join_key(
+                &batch,
+                row,
+                right_key,
+                *key_mode,
+                extra_keys,
+                super::join::JoinSide::Build,
+            )?
+            else {
+                continue;
+            };
+            rows += 1;
+            match counts.entry(key) {
+                Entry::Occupied(mut entry) => *entry.get_mut() += 1,
+                Entry::Vacant(entry) => {
+                    memory.reserve(entry_bytes)?;
+                    reserved = reserved.saturating_add(entry_bytes);
+                    entry.insert(1);
+                }
+            }
+        }
+        held.push_back(batch);
+    }
+    if rows < COUNTED_JOIN_ROWS_PER_KEY.saturating_mul(counts.len() as u64) || rows == 0 {
+        memory.release(reserved);
+        let expected_types = held.front().map_or_else(Vec::new, |batch: &RecordBatch| {
+            batch.columns().iter().map(ColumnVector::data_type).collect()
+        });
+        **right = PullOperator::Scan {
+            stream: Box::new(ReplayStream { batches: held }),
+            expected_types,
+        };
+        return Ok(None);
+    }
+    drop(held);
+    let mut pairs = 0_u64;
+    while let Some(batch) = left.next_batch(memory)? {
+        memory.check_interruption()?;
+        for row in batch.selection().selected_rows() {
+            if let Some(key) = counted_join_key(
+                &batch,
+                row,
+                left_key,
+                *key_mode,
+                extra_keys,
+                super::join::JoinSide::Probe,
+            )? && let Some(count) = counts.get(&key)
+            {
+                pairs = pairs.checked_add(*count).ok_or(ExecError::NumericOverflow)?;
+            }
+        }
+    }
+    memory.release(reserved);
+    crate::counters::count(|counters| {
+        counters.join_pairs_counted = counters.join_pairs_counted.saturating_add(pairs);
+    });
+    Ok(Some(pairs))
+}
+
 #[allow(clippy::too_many_lines)]
 fn build_hash_aggregate_scan(
     input: &mut PullOperator,
@@ -4309,6 +4460,16 @@ fn build_hash_aggregate_scan(
                 && !aggregate.distinct
         })
     {
+        if let Some(pairs) = count_join_pairs(input, memory)? {
+            let row = vec![Value::UInt64(pairs); aggregates.len()];
+            memory.reserve(estimated_row_payload_bytes(&row))?;
+            return Ok(MaterializedRows {
+                rows: vec![row],
+                position: 0,
+                spilled: None,
+                ready: None,
+            });
+        }
         let mut count = 0_u64;
         let mut add = |rows: usize| {
             count = count

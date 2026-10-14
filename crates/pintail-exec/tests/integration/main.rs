@@ -19,6 +19,7 @@ mod conditional_count_windows;
 mod connection_collation_scan;
 mod constant_predicate_folds;
 mod correlated_self_join;
+mod counted_join_pairs;
 mod date_literal_fold;
 mod date_part_grouping;
 mod decimal_average_exactness;
