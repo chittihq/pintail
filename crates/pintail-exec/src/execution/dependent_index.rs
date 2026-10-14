@@ -154,6 +154,8 @@ enum Answer {
 #[derive(Clone, Copy)]
 enum PlannedForm {
     Integer,
+    /// A BOOLEAN column against a BOOLEAN value.
+    Boolean,
     /// Text under the collation the equality compiles to: the named one,
     /// or the plan's when the operands name none.
     Text(Option<&'static str>),
@@ -749,6 +751,7 @@ fn materialize_query(
 fn key_mode(form: PlannedForm, fallback: Collation) -> JoinKeyMode {
     let form = match form {
         PlannedForm::Integer => KeyForm::Integer,
+        PlannedForm::Boolean => KeyForm::Boolean,
         PlannedForm::Text(named) => KeyForm::CollatedText(match named {
             Some(name) => match Collation::from_mysql_name(name) {
                 Some(collation) => collation,
@@ -1273,6 +1276,7 @@ fn key_part(value: Value, mode: JoinKeyMode) -> KeyValue {
     let expected = match (&value, mode.form) {
         (Value::Null, _) => return KeyValue::Null,
         (Value::Int64(_) | Value::UInt64(_), KeyForm::Integer)
+        | (Value::Boolean(_), KeyForm::Boolean)
         | (Value::Utf8(_), KeyForm::CollatedText(_)) => true,
         _ => false,
     };
@@ -1283,7 +1287,8 @@ fn key_part(value: Value, mode: JoinKeyMode) -> KeyValue {
         Ok(Some(
             key @ (JoinHashKey::CollatedText(_)
             | JoinHashKey::NegativeInteger(_)
-            | JoinHashKey::NonNegativeInteger(_)),
+            | JoinHashKey::NonNegativeInteger(_)
+            | JoinHashKey::Scalar(Value::Boolean(_))),
         )) => KeyValue::Key(key),
         Ok(None) => KeyValue::Null,
         _ => KeyValue::Other,
@@ -1349,6 +1354,14 @@ fn equality_key(conjunct: &BoundExpr) -> Option<(&BoundColumn, &BoundExpr, Plann
     let (inner_type, outer_type) = (inner_side.data_type?, outer.data_type?);
     if is_integer(inner.data_type) && is_integer(inner_type) && is_integer(outer_type) {
         return Some((inner, outer, PlannedForm::Integer));
+    }
+    // A flag against a flag: the two are equal exactly when they are the
+    // same truth value.
+    if inner.data_type == DataType::Boolean
+        && inner_type == DataType::Boolean
+        && outer_type == DataType::Boolean
+    {
+        return Some((inner, outer, PlannedForm::Boolean));
     }
     let text = inner.data_type == DataType::Utf8
         && inner_type == DataType::Utf8
