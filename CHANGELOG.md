@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `TIME_TRUNCATE_FRACTIONAL` now reaches casts only: date and time text
+  rounds its seventh fractional digit in every SQL mode
+  (`docs/limitations.md`).
 - A `MODIFY`/`CHANGE` that tightens a column to `NOT NULL`, narrows an
   integer, shortens a string or binary column, or drops an `ENUM` member no
   longer recopies the table when no stored value is affected; the log line
@@ -103,6 +106,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a subquery; `INTERVAL(N, N1, ...)`, `QUOTE`, `MAKE_SET`, `EXPORT_SET`;
   `TIMESTAMPDIFF(MICROSECOND, ...)`; and `STRCMP` over date and time
   columns where MySQL compares their text.
+- Window and JSON surface (the oracle is now 2,987 cases): window
+  `ORDER BY` over a JSON key; `RANGE` frames in `HOUR`, `MINUTE` and
+  `SECOND` over `TIME` keys; empty window frames such as `1 PRECEDING AND
+  2 PRECEDING`; `RESPECT NULLS` on `LEAD`, `LAG`, `FIRST_VALUE`,
+  `LAST_VALUE` and `NTH_VALUE`; window functions in a scalar subquery
+  without `FROM`; JSON values in arithmetic and as truth values;
+  `EXPORT_SET` with a computed count; and a row looked up in a table
+  value constructor (`(a, b) IN (VALUES ROW(...), ...)`). MySQL's own
+  regression suite gains 145 exact statements and refuses 148 fewer.
 - `/metrics` exposes `pintail_settled_memo_{hits,misses,stores,delta_merges}_total`,
   so a settled-memo answer can be proved a cache hit.
 - A benchmark cache study (`BENCHMARK_CACHE_STUDY=1`) that compares
@@ -121,6 +133,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `ENUM` and `SET` values in more contexts:
+  - `IF`, `CASE` and `NULLIF` over an `ENUM` or `SET` answer the chosen
+    branch's position in a numeric context, and an `ENUM`'s truth value
+    (`NOT e`, `WHERE e`) is its position's.
+  - A condition on a derived `UNION` of `ENUM` columns (`WHERE s = 3`) is
+    tested inside the branches when each is a plain `SELECT`, as MySQL
+    does.
+  - An expression around an ungrouped `MIN` or `MAX` of an `ENUM` reads
+    the label; a `SET` read through a scalar subquery or `ANY_VALUE`, and
+    a correlated subquery in a grouped query, order by the label.
+- Window functions:
+  - A window in a correlated scalar subquery is computed over that
+    subquery's rows for each outer row; it answered one value for every
+    row before.
+  - A window orders a `TIME` key by its duration; negative and
+    three-digit-hour values sorted as text.
+- `IN (subquery)` compares mixed types as `=` does: `text IN (SELECT
+  decimal)` and `time IN (SELECT int)` matched nothing.
+- `SUM(DISTINCT)` and `AVG(DISTINCT)` over text add each distinct number
+  once, instead of each distinct string.
+- Bit literals are signed in integer arithmetic (`b'1' - 2` was refused),
+  and hex and bit literals are numbers in numeric functions and sums
+  (`ABS(0xFF)` and `SUM(0xFF)` answered 0).
+- JSON `false`, `null`, `""` and `[]` in `WHERE` follow MySQL's truth
+  rules, and a JSON double prints as a `DOUBLE` does (`1.0`, `1e20`).
+- Date and time text rounds its seventh fractional digit instead of
+  cutting it.
+- An unaliased column is no longer named with the space that follows it,
+  and unary plus over text is the text.
 - A schema probe no longer fails when a table is dropped while it runs.
   Under change capture this could fail a replication cycle and mark every
   table of the database as errored after a routine `CREATE`/`DROP`
