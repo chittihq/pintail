@@ -77,6 +77,10 @@ pub(crate) struct DependentMemo {
     /// Per subquery slot, the hash index answering it in place of per-row
     /// executions, once one is planned (`dependent_index`).
     pub(super) indexes: HashMap<SubquerySlot, IndexState>,
+    /// Per `IN` subquery slot, the indexes that answer it by three
+    /// yes-or-no questions of its table (`membership_probe`), or the fact
+    /// that its shape has none.
+    pub(super) probes: HashMap<SubquerySlot, super::membership_probe::ProbeState>,
     pub(super) index_stats: IndexStats,
     /// Per subquery slot, the answers its set-at-a-time form has given
     /// (`outer_set`), or the fact that it declined.
@@ -109,6 +113,7 @@ impl DependentMemo {
             hits: 0,
             misses: 0,
             indexes: HashMap::new(),
+            probes: HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: HashMap::new(),
             refusals_noted: Vec::new(),
@@ -284,6 +289,9 @@ impl DependentMemo {
             if let IndexState::Built(index) = state {
                 index.release(memory);
             }
+        }
+        for state in self.probes.values_mut() {
+            state.release(memory);
         }
         DependentMemoStats {
             hits: self.hits,
@@ -500,6 +508,7 @@ mod tests {
             hits: 0,
             misses: 0,
             indexes: std::collections::HashMap::new(),
+            probes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
             refusals_noted: Vec::new(),
@@ -536,6 +545,7 @@ mod tests {
             hits: 0,
             misses: 0,
             indexes: std::collections::HashMap::new(),
+            probes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
             refusals_noted: Vec::new(),
@@ -575,6 +585,7 @@ mod tests {
             hits: 0,
             misses: 0,
             indexes: std::collections::HashMap::new(),
+            probes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
             refusals_noted: Vec::new(),
@@ -617,6 +628,7 @@ mod tests {
             hits: 0,
             misses: 0,
             indexes: std::collections::HashMap::new(),
+            probes: std::collections::HashMap::new(),
             index_stats: IndexStats::default(),
             outer_sets: std::collections::HashMap::new(),
             refusals_noted: Vec::new(),

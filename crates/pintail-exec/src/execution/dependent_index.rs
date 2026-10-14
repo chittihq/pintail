@@ -296,6 +296,15 @@ pub(super) fn plan(query: &BoundQuery, form: SubqueryForm) -> Result<IndexState,
     })
 }
 
+/// How many keys a planned index looks its rows up by, and whether some
+/// conjunct reads the outer row without being one of them.
+pub(super) fn shape(plan: &IndexPlan) -> (usize, bool) {
+    (
+        plan.keys.len(),
+        plan.residual.is_some() || plan.bound.is_some() || plan.ordered.is_some(),
+    )
+}
+
 /// Inner rows a built index holds.
 pub(super) fn indexed_rows(index: &SubqueryIndex) -> u64 {
     let ordered = index.ordered.as_ref().map_or(0, |ordered| {
@@ -1484,7 +1493,7 @@ fn conjoin(conjuncts: Vec<BoundExpr>) -> Option<BoundExpr> {
 
 /// Whether an expression is built only from the node kinds the index
 /// evaluates row by row: no subqueries, no aggregate or window slots.
-fn plain_expression(expression: &BoundExpr) -> bool {
+pub(super) fn plain_expression(expression: &BoundExpr) -> bool {
     match &expression.kind {
         BoundExprKind::Column(_) | BoundExprKind::Literal(_) => true,
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {

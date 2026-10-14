@@ -13,6 +13,7 @@ mod join;
 pub(crate) use join::{PROBE_PREFETCH_BUILD_RATIO, PROBE_PREFETCH_ROWS};
 mod key_lookup;
 pub(crate) mod membership;
+mod membership_probe;
 mod memo;
 mod morsel;
 mod order;
@@ -4494,6 +4495,17 @@ pub(super) fn resolve_dependent_expr_subqueries(
                 )
                 .and_then(Collation::from_mysql_name)
                 .unwrap_or(context.collation);
+            // Members that differ for every outer row are not read at all
+            // where three questions of their table answer for them.
+            if let Some(value) =
+                membership_probe_answer(slot, expr, query, member_collation, context, memo)?
+            {
+                expression.kind = BoundExprKind::Literal(match value {
+                    Value::Boolean(value) => Value::Boolean(value != *negated),
+                    other => other,
+                });
+                return Ok(());
+            }
             let members = match query.outer_set.clone() {
                 Some(form) if form.kind == pintail_sql::OuterSetKind::Members => {
                     outer_set::rows(slot, query, &form, context, memo)?
@@ -4741,6 +4753,64 @@ fn membership_answer(
         Value::Boolean(value) => Value::Boolean(value != negated),
         other => other,
     }))
+}
+
+/// Answers a dependent `IN (subquery)` - TRUE, FALSE or NULL, before any
+/// negation - from its slot's probes when the shape has them
+/// (`membership_probe`), or `None` for the paths that read its members.
+/// The probes are planned and built on the slot's first row: a build reads
+/// the subquery's table once, which is what answering that one row by
+/// executing the subquery reads.
+fn membership_probe_answer(
+    slot: memo::SubquerySlot,
+    needle: &BoundExpr,
+    query: &BoundQuery,
+    member_collation: Collation,
+    context: &DependentRow<'_>,
+    memo: &mut DependentMemo,
+) -> Result<Option<Value>, ExecError> {
+    use membership_probe::ProbeState;
+    if !memo.memoizable(slot) {
+        return Ok(None);
+    }
+    let state = memo.probes.entry(slot).or_insert_with(|| {
+        match membership_probe::build(needle, query, member_collation, context) {
+            Ok(probes) => {
+                context.memory.note_subquery(
+                    "membership probes built",
+                    &subquery_tables(query),
+                    membership_probe::indexed_rows(&probes),
+                );
+                crate::counters::count(|counters| {
+                    counters.membership_probe_builds =
+                        counters.membership_probe_builds.saturating_add(1);
+                });
+                ProbeState::Built(Box::new(probes))
+            }
+            Err(reason) => {
+                // Members shared by a key are the common case and have
+                // their own answer; every other refusal is worth reading.
+                if reason != membership_probe::SHARED_MEMBERS {
+                    context.memory.note_decline(
+                        "no membership probes",
+                        reason,
+                        &subquery_tables(query),
+                    );
+                }
+                ProbeState::Declined
+            }
+        }
+    });
+    let ProbeState::Built(probes) = state else {
+        return Ok(None);
+    };
+    let found = membership_probe::answer(probes, context)?;
+    if found.is_some() {
+        crate::counters::count(|counters| {
+            counters.membership_probes = counters.membership_probes.saturating_add(1);
+        });
+    }
+    Ok(found)
 }
 
 /// Answers a dependent `EXISTS` (as a boolean) or scalar subquery (as its

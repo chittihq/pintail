@@ -75,6 +75,7 @@ mod live_replication_queries;
 mod long_fused_rounds;
 mod low_cardinality_text;
 mod membership_lookup;
+mod membership_probes;
 mod memory_probe;
 mod memtable_dimension_scan;
 mod memtable_overlay;

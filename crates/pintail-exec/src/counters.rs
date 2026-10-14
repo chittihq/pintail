@@ -85,6 +85,12 @@ pub struct ExecCounters {
     /// Rows a multi-argument `COUNT(DISTINCT)` read a batch at a time to
     /// spell their keys from the components' packed columns.
     pub tuple_keys_spelled: u64,
+    /// Correlated `IN (subquery)` slots whose members differ for every
+    /// outer row, given indexes that answer them by yes-or-no questions of
+    /// the subquery's table.
+    pub membership_probe_builds: u64,
+    /// Outer rows those indexes answered without reading a member.
+    pub membership_probes: u64,
 }
 
 thread_local! {
@@ -118,6 +124,8 @@ thread_local! {
             calendar_copies_packed: 0,
             instants_read: 0,
             tuple_keys_spelled: 0,
+            membership_probe_builds: 0,
+            membership_probes: 0,
         })
     };
 }
