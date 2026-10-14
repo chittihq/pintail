@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2958;
+const EXPECTED_CASES: usize = 2962;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5105,6 +5105,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "json double text",
             "SELECT JSON_EXTRACT('[1e20, 1E+2, 1.0e-7]', '$[0]', '$[1]', '$[2]'), CAST('[1e15, 1e2, 0.1e1, -0.0]' AS JSON)",
+        ),
+        // Date and time text is read to the microsecond: a seventh fractional digit rounds the sixth.
+        ordered(
+            "datetime text rounds to microseconds",
+            "SELECT SECOND('2024-01-01 00:00:01.9999995'), MICROSECOND('2024-01-01 00:00:01.1234565'), MICROSECOND('2024-01-01 00:00:01.12345649'), TIMESTAMPDIFF(MICROSECOND, '2024-01-01 00:00:00', '2024-01-01 00:00:00.9999995'), DATE('2024-01-01 23:59:59.9999995'), DAYOFMONTH('2024-01-31 23:59:59.9999995')",
+        ),
+        ordered(
+            "datetime text rounds to microseconds",
+            "SELECT EXTRACT(SECOND FROM '2024-01-01 00:00:00.9999995'), EXTRACT(DAY_MICROSECOND FROM '2024-01-01 23:59:59.9999995'), EXTRACT(HOUR FROM '2024-01-01 23:59:59.9999995'), EXTRACT(DAY FROM '2024-01-31 23:59:59.9999995'), HOUR('2024-01-01 23:59:59.9999995')",
+        ),
+        ordered(
+            "datetime text rounds to microseconds",
+            "SELECT CAST('2024-01-01 00:00:01.1234995' AS DATETIME(3)), CAST('2024-01-01 00:00:01.4999995' AS DATETIME(0)), CONVERT_TZ('2024-01-01 23:59:59.9999995', '+00:00', '+01:00'), DATE_ADD('2024-01-01 00:00:00.9999995', INTERVAL 0 SECOND), TO_SECONDS('2024-01-01 00:00:00.9999995')",
+        ),
+        ordered(
+            "datetime text rounds to microseconds",
+            "SELECT id, TIMESTAMPDIFF(MICROSECOND, placed_at, '2025-06-01 00:00:00.0000005'), DATEDIFF('2025-01-01', CONCAT(DATE(placed_at), ' 23:59:59.9999995')) FROM orders ORDER BY id",
         ),
         // IPv4 and IPv6 text to bytes and back, as MySQL reads and prints them.
         ordered(

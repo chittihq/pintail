@@ -5499,39 +5499,28 @@ fn evaluate_eager_scalar_inner(
                 Some(Utc::now().timestamp_micros())
             } else {
                 let text = scalar_string(&values[0])?;
-                // A seventh fractional digit rounds the microsecond.
-                let rounds_up = text.rsplit_once('.').is_some_and(|(_, fraction)| {
-                    fraction.len() > 6
-                        && fraction.bytes().all(|byte| byte.is_ascii_digit())
-                        && fraction.as_bytes()[6] >= b'5'
-                });
-                parse_mysql_datetime(&text)
-                    .ok()
-                    .and_then(|value| {
-                        value.checked_add_signed(chrono::Duration::microseconds(i64::from(
-                            rounds_up,
-                        )))
-                    })
-                    .and_then(|value| {
-                        if let Some(zone) = &zone {
-                            let utc = convert_tz(
-                                &value.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
-                                zone,
-                                "+00:00",
-                            )?;
-                            Some(
-                                parse_mysql_datetime(&utc)
-                                    .ok()?
-                                    .and_utc()
-                                    .timestamp_micros(),
-                            )
-                        } else {
-                            Local
-                                .from_local_datetime(&value)
-                                .earliest()
-                                .map(|value| value.timestamp_micros())
-                        }
-                    })
+                // The text is read to the microsecond, a seventh fractional
+                // digit rounding the sixth.
+                parse_mysql_datetime(&text).ok().and_then(|value| {
+                    if let Some(zone) = &zone {
+                        let utc = convert_tz(
+                            &value.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
+                            zone,
+                            "+00:00",
+                        )?;
+                        Some(
+                            parse_mysql_datetime(&utc)
+                                .ok()?
+                                .and_utc()
+                                .timestamp_micros(),
+                        )
+                    } else {
+                        Local
+                            .from_local_datetime(&value)
+                            .earliest()
+                            .map(|value| value.timestamp_micros())
+                    }
+                })
             };
             let micros = micros
                 .filter(|micros| (0..=UNIX_TIMESTAMP_MAX_MICROS).contains(micros))
@@ -6555,6 +6544,13 @@ fn cast_datetime_precision(
         + i128::from(parsed.timestamp_subsec_nanos());
     let quantum = 10_i128.pow(u32::from(9 - fsp.min(6)));
     let truncate = matches!(policy, Some(Value::UInt64(bits)) if bits & 8 != 0);
+    // The text is read to the microsecond first and the cast rounds that:
+    // `.1234995` is `.123500` and then `.124` at three digits.
+    let nanos = if truncate {
+        nanos
+    } else {
+        (nanos + 500).div_euclid(1_000) * 1_000
+    };
     let rounded = (nanos + if truncate { 0 } else { quantum / 2 }).div_euclid(quantum) * quantum;
     let micros = i64::try_from(rounded / 1_000).ok()?;
     Some(pintail_types::format_datetime_micros(micros, fsp).map_or(Value::Null, Value::Utf8))
@@ -6597,10 +6593,14 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
             {
                 return Ok(kept);
             }
-            return Ok(temporal::parse_calendar_cast(&text).map_or_else(
-                |_| unreadable_datetime(&text),
-                |parsed| Value::Utf8(parsed.date().format("%Y-%m-%d").to_string()),
-            ));
+            // The date of the value the text reads as: a last microsecond
+            // rounded up is the next day.
+            return Ok(parse_mysql_datetime(&text)
+                .or_else(|_| temporal::parse_calendar_cast(&text))
+                .map_or_else(
+                    |_| unreadable_datetime(&text),
+                    |parsed| Value::Utf8(parsed.date().format("%Y-%m-%d").to_string()),
+                ));
         }
         Some(DataType::DateTime64 { fsp }) => {
             let text = scalar_string(value)?;

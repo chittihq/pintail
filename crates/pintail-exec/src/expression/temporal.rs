@@ -19,7 +19,31 @@ pub(super) fn mysql_weekday(date: NaiveDate) -> u32 {
     calc_weekday(calc_daynr(year, month, day), false)
 }
 
+/// Reads date and time text the way `MySQL` does, to the microsecond: a
+/// seventh fractional digit of five or more rounds the sixth up, carrying
+/// into the seconds and the date where it must, and the digits after it are
+/// not looked at. Every reader of such text sees the rounded value, so
+/// `SECOND('... 00:00:01.9999995')` is 2 and a cast to fewer digits rounds
+/// what this already rounded.
 pub(super) fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecError> {
+    let read = read_mysql_datetime(value)?;
+    let beyond = read.nanosecond() % 1_000;
+    if beyond == 0 {
+        return Ok(read);
+    }
+    let whole = read
+        .with_nanosecond(read.nanosecond() - beyond)
+        .unwrap_or(read);
+    Ok(if beyond >= 500 {
+        whole
+            .checked_add_signed(Duration::microseconds(1))
+            .unwrap_or(whole)
+    } else {
+        whole
+    })
+}
+
+fn read_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecError> {
     let value = value.trim();
     // Digits alone are a packed date or date and time: YYMMDD, YYYYMMDD,
     // YYMMDDHHMMSS or YYYYMMDDHHMMSS.
@@ -128,8 +152,10 @@ pub(super) fn note_text_after_datetime(value: &str) {
     ));
 }
 
+/// Reads the text of a cast, every fractional digit kept: the cast itself
+/// rounds or, under `TIME_TRUNCATE_FRACTIONAL`, cuts them.
 pub(super) fn parse_calendar_cast(text: &str) -> Result<NaiveDateTime, ExecError> {
-    parse_mysql_datetime(text)
+    read_mysql_datetime(text)
         .or_else(|_| parse_relaxed_datetime(text.trim(), true).ok_or(ExecError::InvalidDateTime))
 }
 
@@ -688,7 +714,8 @@ fn convert_tz_zones(
     bounded: bool,
     zones: impl FnOnce() -> Option<(ZoneSpec, ZoneSpec)>,
 ) -> Option<String> {
-    let trimmed = text.trim();
+    let rounded = rounded_datetime_text(text.trim(), true);
+    let trimmed = rounded.as_deref().unwrap_or(text).trim();
     let naive = canonical_datetime(trimmed)
         .ok_or(())
         .or_else(|()| NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S%.f"))
@@ -1224,6 +1251,19 @@ fn datetime_clock(body: &str) -> DatetimeText {
             calendar: Some(calendar),
         })
     };
+    // The clock of a day's last microsecond rounded up is that day's hour
+    // 24, not the next day's midnight.
+    if let Some(rounded) = rounded_datetime_text(trimmed, false)
+        && end_of_day(&rounded).is_some()
+    {
+        let field = |range: std::ops::Range<usize>| {
+            rounded
+                .get(range)
+                .and_then(|digits| digits.parse().ok())
+                .unwrap_or(0)
+        };
+        return clock([field(0..4), field(5..7), field(8..10)], 24, 0, 0, 0);
+    }
     if let Ok(value) = parse_mysql_datetime(trimmed) {
         return clock(
             [
@@ -1430,6 +1470,14 @@ pub(super) fn date_part_of(value: &Value, integer: bool, part: DatePart) -> Resu
                     let number: u128 = text.parse().map_err(|_| ExecError::InvalidDateTime)?;
                     Some(packed_time(number).ok_or(ExecError::InvalidDateTime)?)
                 } else {
+                    if part == DatePart::Hour
+                        && rounded_datetime_text(text.trim(), false)
+                            .as_deref()
+                            .and_then(end_of_day)
+                            .is_some()
+                    {
+                        return Ok(24);
+                    }
                     match parse_mysql_datetime(&text) {
                         Ok(datetime) => return Ok(date_part(datetime, part)),
                         // A date whose year is one digit, or whose parts
@@ -1463,12 +1511,55 @@ pub(super) fn date_part_of(value: &Value, integer: bool, part: DatePart) -> Resu
 
 /// EXTRACT carries a duration's sign across every requested clock field.
 /// A calendar input contributes its day; a duration folds days into hours.
+/// The day of the month of text [`rounded_datetime_text`] rounded up to the
+/// hour 24.
+fn end_of_day(rounded: &str) -> Option<i64> {
+    (rounded.get(11..13) == Some("24"))
+        .then(|| rounded.get(8..10)?.parse().ok())
+        .flatten()
+}
+
+/// A date and time written with more than six fractional digits, as the
+/// rounded value it is read as; `None` for anything else, a TIME included.
+///
+/// Read as a date and time the rounding carries `into_date`. Read for its
+/// clock alone - EXTRACT of an hour, minute or second unit, `HOUR` - it does
+/// not: the last microsecond of a day rounds up to the hour 24 of the same
+/// day, as `MySQL` answers it.
+fn rounded_datetime_text(text: &str, into_date: bool) -> Option<String> {
+    let (whole, fraction) = text.rsplit_once('.')?;
+    if fraction.len() <= 6 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let (date, clock) = super::canonical_temporal_parts(whole, true)?;
+    clock?;
+    let read = parse_mysql_datetime(text).ok()?;
+    if !into_date && read.format("%Y-%m-%d").to_string() != date {
+        return Some(format!("{date} 24:00:00.000000"));
+    }
+    Some(read.format("%Y-%m-%d %H:%M:%S%.6f").to_string())
+}
+
 pub(super) fn extract_time(
     value: &Value,
     leading: DatePart,
     trailing: DatePart,
 ) -> Result<i64, ExecError> {
     let text = scalar_string(value)?;
+    let rounded = rounded_datetime_text(text.trim(), false);
+    let index = |part| match part {
+        DatePart::Day => 0,
+        DatePart::Hour => 1,
+        DatePart::Minute => 2,
+        _ => 3,
+    };
+    // The hour 24 of a day is no clock a calendar reads back.
+    if let Some(day) = rounded.as_deref().and_then(end_of_day) {
+        return Ok([day, 24, 0, 0][index(leading)..=index(trailing)]
+            .iter()
+            .fold(0, |total, part| total * 100 + part));
+    }
+    let text = rounded.as_deref().unwrap_or(&text);
     let text = text.trim();
     let whole = text.split_once('.').map_or(text, |(whole, _)| whole);
     let unsigned = whole.trim_start_matches(['-', '+']);
@@ -1508,12 +1599,6 @@ pub(super) fn extract_time(
     let seconds =
         i64::try_from(time.micros.abs() / 1_000_000).map_err(|_| ExecError::NumericOverflow)?;
     let fields = [day, seconds / 3_600, seconds / 60 % 60, seconds % 60];
-    let index = |part| match part {
-        DatePart::Day => 0,
-        DatePart::Hour => 1,
-        DatePart::Minute => 2,
-        _ => 3,
-    };
     let number = fields[index(leading)..=index(trailing)]
         .iter()
         .fold(0, |total, part| total * 100 + part);
@@ -1524,6 +1609,16 @@ pub(super) fn extract_time(
 /// always six decimal places in a composite result.
 pub(super) fn extract_micros(value: &Value, leading: Option<DatePart>) -> Result<i64, ExecError> {
     let text = scalar_string(value)?;
+    let rounded = rounded_datetime_text(text.trim(), false);
+    if rounded.as_deref().and_then(end_of_day).is_some() {
+        return match leading {
+            Some(leading) => extract_time(value, leading, DatePart::Second)?
+                .checked_mul(1_000_000)
+                .ok_or(ExecError::NumericOverflow),
+            None => Ok(0),
+        };
+    }
+    let text = rounded.as_deref().unwrap_or(&text);
     let text = text.trim();
     let clock = super::canonical_temporal_parts(text, true)
         .map_or(text, |(_, clock)| clock.unwrap_or("00:00:00"));
