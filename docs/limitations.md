@@ -161,25 +161,37 @@ stays readable as a list of things to fix.
   after the column was altered - has no index and stays plain text, so it
   orders lexically against the labelled values rather than being given an
   invented position. Where MySQL hands an ENUM or SET on as a string,
-  Pintail does for the column of a set operation (`UNION`, `INTERSECT`,
-  `EXCEPT`, a recursive CTE) and, over an ENUM column, for a scalar
-  subquery, a window function's value and a written `ANY_VALUE`. Still
-  different, measured:
-  - `IF`, `CASE` and `NULLIF` over ENUM or SET columns read as their text
-    in a numeric context (`IF(c, e1, e2) + 0` is 0, and `IF(c, e1, e2) = 3`
-    compares the label with 3), where MySQL reads the chosen branch's
-    position. Both order the result as text.
-  - `MIN(e) + 0` and `MAX(e) + 0` read the position, where MySQL reads the
-    label as a number.
-  - A SET column through a scalar subquery or `ANY_VALUE` still orders by
-    its declaration, and so does an ENUM through a correlated scalar
-    subquery in the select list when the subquery aggregates it or the
-    query around it is grouped.
-  - A number compared with a set operation's column from the query around
-    it (`WHERE s = 3` over a derived `UNION`) is compared with the label's
-    text. MySQL moves such a comparison into the branches when it can, and
-    there it compares the ENUM's position; with a `LIMIT` in the derived
-    table it compares the text, as Pintail does.
+  Pintail does: the column of a set operation (`UNION`, `INTERSECT`,
+  `EXCEPT`, a recursive CTE), a scalar subquery, a window function's value
+  and a written `ANY_VALUE`. Still different, measured:
+  - `IF`, `CASE` and `NULLIF` over ENUM or SET columns answer the chosen
+    branch's position in arithmetic, in a comparison with a number, in
+    `IN` and `BETWEEN` over numbers, in the numeric functions, in `SUM` and
+    `AVG` and as a truth value, as MySQL does. In an `IN` list mixing
+    numbers with strings (`IF(c, e1, e2) IN ('label', 1)`) the value is
+    compared as text with every member, where MySQL compares it with each
+    member in that member's own way. Where MySQL finds the rows by looking
+    the value up in an index - a join or a filter against an indexed
+    column - it reads the label as a number instead of the position;
+    Pintail reads the position there too.
+  - `MIN(e) + 0` and `MAX(e) + 0` in a grouped query read the position.
+    MySQL's reading follows how it groups: the position where it groups
+    through a temporary table, and the label read as a number where it
+    reads the groups in index order, under `WITH ROLLUP` or beside a
+    `DISTINCT` aggregate. Without `GROUP BY` both read the label. A derived
+    table that selects an ungrouped `MIN(e)` or `MAX(e)` hands the label on
+    as text, where MySQL's outer query still reads its position.
+  - A condition on a derived set operation is tested inside its branches,
+    where an ENUM compares by position, when it stands in `WHERE`, reads
+    only that derived table, and every branch is a SELECT without
+    `GROUP BY`, aggregates, window functions, `ORDER BY` or `LIMIT`. MySQL
+    moves such a condition in more cases, and in these Pintail compares the
+    label's text above the set operation instead: a branch that groups or
+    orders, a derived table selected through another derived table or
+    written as a CTE, a condition in an inner join's `ON`, a derived table
+    on the optional side of an outer join that the `WHERE` clause turns
+    into an inner one, and a comparison with a constant subquery
+    (`s = (SELECT 3)`).
 - Locale-specific collation profiles remain unsupported, and so do the `NONE`
   and `SYSCONST` coercibility rungs: an expression mixing collations carries
   its resolved one rather than `NONE` (#10).
@@ -193,14 +205,22 @@ stays readable as a list of things to fix.
   single zone letter. `CONVERT_TZ` and a comparison of computed text with a
   DATE or DATETIME column do not read a date that other text follows
   (`CONCAT(d, 'Z') = d` is 0 where MySQL answers 1).
-- Date and time text written with a seventh fractional digit of exactly 5
-  is cut at six digits by `SECOND`, `MICROSECOND` and `TIMESTAMPDIFF`, where
-  MySQL rounds it up: `TIMESTAMPDIFF(MICROSECOND, '2024-01-01 00:00:00',
-  '2024-01-01 00:00:00.9999995')` is 999999, and MySQL answers 1000000.
-- A bit literal of sixty-four bits whose first is set (`b'1...'`, `0b1...`)
-  is unsigned in arithmetic, so adding zero to sixty-four ones gives
-  18446744073709551615 where MySQL reads the literal as signed and gives
-  -1. Bit operators, comparisons and casts agree.
+- TIME text written with more than six fractional digits is rounded by
+  its seventh digit. MySQL rounds a TIME up when the LAST digit written is
+  five or more, whatever the seventh is: `MICROSECOND('00:00:01.12345649')`
+  is 123457 there and `MICROSECOND('00:00:01.12345651')` is 123456, and
+  Pintail answers 123456 and 123457. Date and time text follows MySQL (the
+  seventh digit rounds the sixth). A date and time written as a number
+  with a seventh fractional digit (`MICROSECOND(20240101000001.1234565)`)
+  is cut at six digits, where MySQL rounds it.
+- `DIV` over a bit literal of sixty-four bits whose first is set divides
+  the unsigned number (`b'1000...' DIV 1` is 9223372036854775808), where
+  MySQL refuses a quotient past the signed range. A negated hex or bit
+  literal past 2^53 prints with an exponent (`-0x8000000000000000` is
+  `-9.223372036854776e18`), where MySQL prints the same DOUBLE without one.
+  A remainder whose dividend is negative and whose divisor is an unsigned
+  BIGINT is refused as out of range, where MySQL answers it (`-255 %
+  CAST(7 AS UNSIGNED)` is -3).
 
 - Unix timestamp conversions round excess fractional digits to microseconds;
   `TIME_TRUNCATE_FRACTIONAL` does not switch them to truncation.
