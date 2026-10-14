@@ -38,6 +38,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A filter comparing a `TIMESTAMP` column with a constant outside the
   type's range is decided without reading rows (6.9 ms to 0.5 ms on a
   2M-row table).
+- A scan whose batches are folded where they are decoded reads one short
+  round and then long ones while no other scan is folding, instead of a
+  fixed four slices per thread per round; round ends had been 10–20% of a
+  20M-row statement's time. On the benchmark, Q2–Q6 and Q8 run 10–25%
+  faster with 6–15% less CPU, and mixed-workload throughput and p95 are
+  unchanged (`benchmark/evidence/query-path-overhead.md`).
 - Opening a scan no longer copies each segment's manifest entry, and a
   scan asks the file system about each segment file, and opens it, once
   instead of once per slice. A full-table `COUNT(*)` answered from segment
