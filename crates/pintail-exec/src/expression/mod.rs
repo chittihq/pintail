@@ -5,6 +5,7 @@ mod spatial;
 mod sql_regex;
 mod str_to_date;
 mod temporal;
+pub(crate) mod tuple_key;
 mod vector;
 
 use temporal::{
@@ -560,6 +561,9 @@ pub(crate) enum CompiledExpr {
 
     Column(usize),
     Literal(Value),
+    /// The text a multi-argument `COUNT(DISTINCT)` counts a row by, NULL
+    /// when any component is (see [`tuple_key`]).
+    TupleKey(Vec<tuple_key::TupleComponent>),
     Unary {
         op: UnaryOp,
         expr: Box<Self>,
@@ -1207,6 +1211,9 @@ impl CompiledExpr {
             Self::Unary { expr, .. }
             | Self::IsNull { expr, .. }
             | Self::PreparedIn { expr, .. } => expr.has_variable_effects(),
+            Self::TupleKey(components) => components
+                .iter()
+                .any(|component| component.expr.has_variable_effects()),
             Self::Column(_) | Self::Literal(_) => false,
         }
     }
@@ -1218,6 +1225,20 @@ impl CompiledExpr {
     pub(crate) fn deterministic_signature(&self) -> Option<String> {
         match self {
             Self::PreparedIn { .. } => None,
+            Self::TupleKey(components) => {
+                let mut signature = String::from("t(");
+                for component in components {
+                    signature = format!(
+                        "{signature}{}{:?}{:?}{:?},",
+                        component.expr.deterministic_signature()?,
+                        component.data_type,
+                        component.units,
+                        component.weigh
+                    );
+                }
+                signature.push(')');
+                Some(signature)
+            }
             Self::Column(index) => Some(format!("c{index}")),
             Self::Literal(value) => Some(format!("l{value:?}")),
             Self::Unary {
@@ -1312,6 +1333,7 @@ impl CompiledExpr {
                     "compiled column index is outside the input batch",
                 )),
             Self::Literal(value) => Ok(value.clone()),
+            Self::TupleKey(components) => tuple_key::evaluate(components, batch, row),
             Self::Unary {
                 op,
                 expr,
@@ -1595,6 +1617,21 @@ impl CompiledExpr {
             Self::PreparedIn { expr, .. } => {
                 expr.allocation_upper_bound(batch, row).saturating_mul(16)
             }
+            // Each component as a value, and the key that quotes it.
+            // Each component as a value, and the key that spells it. Only
+            // text is as long as its row: a number or a calendar value has
+            // one bound, which leaves the bound uniform over a batch.
+            Self::TupleKey(components) => components.iter().fold(0_usize, |total, component| {
+                total.saturating_add(if component.data_type == Some(DataType::Utf8) {
+                    component
+                        .expr
+                        .allocation_upper_bound(batch, row)
+                        .saturating_mul(3)
+                        .saturating_add(tuple_key::SEGMENT_BYTES)
+                } else {
+                    tuple_key::SEGMENT_BYTES * 3
+                })
+            }),
             Self::Column(index) => batch
                 .column(*index)
                 .and_then(|column| column.scalar_heap_bytes(row))
@@ -1915,6 +1952,9 @@ impl CompiledExpr {
             Self::Unary { expr, .. }
             | Self::IsNull { expr, .. }
             | Self::PreparedIn { expr, .. } => expr.reads_uniform(batch),
+            Self::TupleKey(components) => components.iter().all(|component| {
+                component.data_type != Some(DataType::Utf8) || component.expr.reads_uniform(batch)
+            }),
             Self::Binary { left, right, .. } => {
                 left.reads_uniform(batch) && right.reads_uniform(batch)
             }
@@ -1955,6 +1995,17 @@ impl CompiledExpr {
                 }
             }
             Self::PreparedIn { .. } | Self::IsNull { .. } => 1,
+            Self::TupleKey(components) => components.iter().fold(0_usize, |total, component| {
+                total.saturating_add(if component.data_type == Some(DataType::Utf8) {
+                    component
+                        .expr
+                        .string_value_upper_bound(batch, row)
+                        .saturating_mul(2)
+                        .saturating_add(tuple_key::SEGMENT_BYTES)
+                } else {
+                    tuple_key::SEGMENT_BYTES
+                })
+            }),
             Self::Scalar {
                 function,
                 args,

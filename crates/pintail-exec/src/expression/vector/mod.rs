@@ -186,6 +186,16 @@ fn kernel(
         CompiledExpr::IsNull { expr, negated } => {
             compare::is_null_column(batch, expr, *negated, data_type, effects)
         }
+        CompiledExpr::TupleKey(components) => {
+            if data_type.is_some_and(|declared| declared != DataType::Utf8) {
+                return None;
+            }
+            attempt(effects, |effects| {
+                super::tuple_key::column(batch, components, |component, declared| {
+                    kernel(component, batch, declared, effects)
+                })
+            })
+        }
         CompiledExpr::Unary {
             op,
             expr: argument,

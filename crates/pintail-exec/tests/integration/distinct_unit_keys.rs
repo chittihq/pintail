@@ -340,6 +340,91 @@ fn check_distinct(fixture: &Fixture, state: &str, failures: &mut Vec<String>) {
     }
 }
 
+/// What a row holds for one component of a tuple, as the class `MySQL`
+/// counts it by; `None` when it is NULL.
+fn component(id: u64, row: &Model, expression: &str) -> Option<String> {
+    match expression {
+        "id % 4" => Some((id % 4).to_string()),
+        "id % 5 = 0" => Some(id.is_multiple_of(5).to_string()),
+        "region" => Some(row.region.to_owned()),
+        "cost" => row.cost.clone(),
+        column => value_of(row, column).map(|text| class(column, text)),
+    }
+}
+
+/// Tuples over packed units, integers, computed values and text, with a
+/// column repeated and with three components.
+const TUPLES: [&[&str]; 8] = [
+    &["seen", "day"],
+    &["stamp", "id % 5 = 0"],
+    &["price", "cost"],
+    &["day", "label_ai"],
+    &["label_bin", "id % 4"],
+    &["region", "id % 4"],
+    &["label_ai", "price", "day"],
+    &["seen", "seen"],
+];
+
+/// `COUNT(DISTINCT a, b, ...)` against the model: a row counts when no
+/// component is NULL, and two rows are one when every component is the
+/// same value.
+fn check_tuples(fixture: &Fixture, state: &str, failures: &mut Vec<String>) {
+    let print = std::env::var_os("DISTINCT_KEYS_DUMP").is_some();
+    for (filter, keep) in [("", 3_u64), ("WHERE id % 3 <> 1", 1), ("WHERE id < 0", 0)] {
+        let kept = |id: u64| keep == 3 || (keep == 1 && id % 3 != 1);
+        for tuple in TUPLES {
+            let expected = |region: Option<&str>| {
+                fixture
+                    .rows
+                    .iter()
+                    .filter(|(id, row)| kept(**id) && region.is_none_or(|name| row.region == name))
+                    .filter_map(|(id, row)| {
+                        tuple
+                            .iter()
+                            .map(|expression| component(*id, row, expression))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .collect::<BTreeSet<_>>()
+                    .len() as u64
+            };
+            let arguments = tuple.join(", ");
+            let sql = format!("SELECT COUNT(DISTINCT {arguments}) FROM kites {filter}");
+            let answer = run(fixture, &sql);
+            if print {
+                println!("{state}\t{sql}\t{answer:?}");
+            }
+            if answer != vec![vec![Value::UInt64(expected(None))]] {
+                failures.push(format!("{state}: {sql}: {answer:?} != {}", expected(None)));
+            }
+            if keep == 0 {
+                continue;
+            }
+            let sql = format!(
+                "SELECT region, COUNT(DISTINCT {arguments}) FROM kites {filter} \
+                 GROUP BY region ORDER BY region"
+            );
+            let answer = run(fixture, &sql);
+            if print {
+                println!("{state}\t{sql}\t{answer:?}");
+            }
+            let mut regions = REGIONS;
+            regions.sort_unstable();
+            let wanted: Vec<Vec<Value>> = regions
+                .iter()
+                .map(|region| {
+                    vec![
+                        Value::Utf8((*region).to_owned()),
+                        Value::UInt64(expected(Some(region))),
+                    ]
+                })
+                .collect();
+            if answer != wanted {
+                failures.push(format!("{state}: {sql}: {answer:?} != {wanted:?}"));
+            }
+        }
+    }
+}
+
 fn check_moments(fixture: &Fixture, state: &str, failures: &mut Vec<String>) {
     let print = std::env::var_os("DISTINCT_KEYS_DUMP").is_some();
     for filter in ["WHERE id % 5 <> 2", "WHERE id % 2 = 0", "WHERE id < 0"] {
@@ -401,6 +486,56 @@ fn distinct_counts_and_decimal_moments_fold_exactly() {
     check_distinct(&fixture, "memtable", &mut failures);
     check_moments(&fixture, "memtable", &mut failures);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A tuple counts the same rows from packed batches, from memtable rows
+/// that repeat stored values, and with a group for each region.
+#[test]
+fn tuple_counts_match_the_rows() {
+    let mut fixture = fixture();
+    let mut failures = Vec::new();
+    check_tuples(&fixture, "packed", &mut failures);
+    fixture.write_memtable();
+    check_tuples(&fixture, "memtable", &mut failures);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A tuple's rows are keyed a batch at a time from the components' packed
+/// columns, a computed component included when it has a column kernel:
+/// every selected row is counted as spelled that way. A regression to the
+/// per-row key would still answer correctly.
+#[test]
+fn a_tuple_is_keyed_by_column() {
+    let fixture = fixture();
+    for tuple in [
+        "seen, day",
+        "stamp, id > 30000",
+        "price, cost",
+        "day, label_ai",
+        "label_bin, id",
+        "label_ai, price, day",
+    ] {
+        let sql = format!("SELECT COUNT(DISTINCT {tuple}) FROM kites WHERE id % 7 <> 3");
+        let snapshot = fixture.table.snapshot();
+        let provider =
+            SnapshotScanProvider::new([(DatabaseId::new(1), TableId::new(1), &snapshot)])
+                .expect("provider");
+        let bound = Binder::new(&fixture.catalog, Some("app"))
+            .bind(&parse_statement(&sql).expect("parse"))
+            .expect("bind");
+        let plan = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("plan");
+        let _ = pintail_exec::take_exec_counters();
+        let mut execution =
+            Execution::start(plan, &provider, 256 << 20, Collation::default()).expect("execution");
+        while execution.next_batch().expect("batch").is_some() {}
+        let counters = pintail_exec::take_exec_counters();
+        let kept = (0..ROWS).filter(|id| id % 7 != 3).count() as u64;
+        assert_eq!(counters.tuple_keys_spelled, kept, "{sql}");
+    }
 }
 
 /// The folds are the ones that ran: a regression to the per-row update

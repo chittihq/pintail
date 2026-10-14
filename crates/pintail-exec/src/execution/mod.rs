@@ -44,6 +44,7 @@ pub(crate) use join::append_collation_key;
 #[cfg(test)]
 pub(crate) use join::collator_ai_ci_key;
 pub use join::compare_collated_text;
+pub(crate) use join::normalized_collation_text;
 pub(crate) use order::integer_type as integer_key_type;
 
 use aggregate::{AggregateState, CompiledAggregate, build_hash_aggregate};

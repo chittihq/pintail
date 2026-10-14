@@ -82,6 +82,9 @@ pub struct ExecCounters {
     /// Rows whose `UNIX_TIMESTAMP` was read from a stored `TIMESTAMP`'s
     /// instant, without spelling it as text and converting that.
     pub instants_read: u64,
+    /// Rows a multi-argument `COUNT(DISTINCT)` read a batch at a time to
+    /// spell their keys from the components' packed columns.
+    pub tuple_keys_spelled: u64,
 }
 
 thread_local! {
@@ -114,6 +117,7 @@ thread_local! {
             session_texts_read: 0,
             calendar_copies_packed: 0,
             instants_read: 0,
+            tuple_keys_spelled: 0,
         })
     };
 }

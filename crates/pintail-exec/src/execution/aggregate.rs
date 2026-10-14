@@ -86,6 +86,7 @@ impl CompiledAggregate {
         // COUNT(DISTINCT col) folds col's values under COL's collation: a
         // general_ci column PAD-folds 'red' and 'red ' into one distinct
         // value whatever collation the rest of the plan resolved.
+        let plan_collation = collation;
         let collation = aggregate
             .expr
             .as_ref()
@@ -100,14 +101,32 @@ impl CompiledAggregate {
                     .and_then(Collation::from_mysql_name)
             })
             .unwrap_or(collation);
+        // A multi-argument COUNT(DISTINCT) keys each row from its
+        // components' own types rather than through the text of a tuple.
+        let tuple = (aggregate.distinct && aggregate.function == AggregateFunction::Count)
+            .then_some(aggregate.expr.as_ref())
+            .flatten()
+            .and_then(crate::expression::tuple_key::components);
+        let collation = if tuple.is_some() {
+            crate::expression::tuple_key::KEY_COLLATION
+        } else {
+            collation
+        };
         Ok(Self {
             collation,
             function: aggregate.function,
-            expr: aggregate
-                .expr
-                .as_ref()
-                .map(|expression| CompiledExpr::compile(expression, columns, collation))
-                .transpose()?,
+            expr: match tuple {
+                Some(components) => Some(CompiledExpr::tuple_key(
+                    &components,
+                    columns,
+                    plan_collation,
+                )?),
+                None => aggregate
+                    .expr
+                    .as_ref()
+                    .map(|expression| CompiledExpr::compile(expression, columns, collation))
+                    .transpose()?,
+            },
             input_type,
             binary_width: aggregate
                 .expr
