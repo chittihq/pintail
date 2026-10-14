@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2933;
+const EXPECTED_CASES: usize = 2945;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5001,6 +5001,55 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "enum choice as number",
             "SELECT u.id, (SELECT MIN(o.status) FROM orders o WHERE o.user_id = u.id) AS s, COUNT(*) FROM users u GROUP BY u.id ORDER BY s DESC, u.id",
+        ),
+        // A condition on a derived set operation is tested inside its branches, where an ENUM compares by position.
+        ordered(
+            "condition inside set branches",
+            "SELECT s FROM (SELECT status AS s FROM orders UNION ALL SELECT status FROM orders WHERE id < 4) d WHERE s = 3 ORDER BY s",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT s FROM (SELECT status AS s FROM orders UNION SELECT status FROM orders WHERE id < 4) d WHERE s > 3 ORDER BY s",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT COUNT(*) FROM (SELECT status AS s FROM orders UNION ALL SELECT name FROM users) d WHERE s IN (1, 5)",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT s, COUNT(*) FROM (SELECT status AS s FROM orders UNION ALL SELECT 'shipped') d WHERE s <> 3 GROUP BY s ORDER BY s",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT d.id, d.s FROM (SELECT id, status AS s FROM orders WHERE id < 7 UNION ALL SELECT id, status FROM orders WHERE id > 9) d WHERE d.s BETWEEN 2 AND 4 AND d.id <> 11 ORDER BY d.id",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT s FROM (SELECT status AS s FROM orders INTERSECT SELECT status FROM orders WHERE user_id < 3) d WHERE s = 5 ORDER BY s",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT s FROM (SELECT status AS s FROM orders EXCEPT SELECT 'pending') d WHERE NOT (s = 3) ORDER BY s",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT u.id, d.s FROM users u JOIN (SELECT user_id, status AS s FROM orders UNION SELECT user_id, status FROM orders) d ON d.user_id = u.id WHERE d.s = 1 ORDER BY u.id, d.s",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT s FROM (SELECT IF(total > 20, status, status) AS s FROM orders UNION ALL SELECT status FROM orders WHERE id = 1) d WHERE s = 4 ORDER BY s",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT s FROM (SELECT status AS s FROM orders UNION ALL SELECT status FROM orders LIMIT 50) d WHERE s = 3 ORDER BY s",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT s FROM (SELECT status AS s FROM orders UNION ALL SELECT status FROM orders) d WHERE s = 3 OR s = 'pending' ORDER BY s",
+        ),
+        ordered(
+            "condition inside set branches",
+            "SELECT u.id, d.s FROM users u LEFT JOIN (SELECT user_id, status AS s FROM orders UNION ALL SELECT user_id, status FROM orders) d ON d.user_id = u.id AND d.s = 3 ORDER BY u.id, d.s",
         ),
         // IPv4 and IPv6 text to bytes and back, as MySQL reads and prints them.
         ordered(

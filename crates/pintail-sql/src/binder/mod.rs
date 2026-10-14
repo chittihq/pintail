@@ -1,3 +1,4 @@
+mod branch_filter;
 mod calendar_copy;
 pub use calendar_copy::COPY_CHECK as CALENDAR_COPY_CHECK;
 mod dependency;
@@ -665,7 +666,16 @@ impl<'catalog> Binder<'catalog> {
         // before general binding; everything else re-ANDs below.
         let mut residual_filter: Option<BoundExpr> = None;
         if let Some(selection) = &select.selection {
+            let set_input = branch_filter::has_set_input(&tables);
             for conjunct in split_and_conjuncts(selection) {
+                // A condition on a derived set operation that hands on an
+                // ENUM or SET is tested inside its branches, as `MySQL`
+                // tests it.
+                if set_input
+                    && self.filter_set_branches(conjunct, selection, select, &mut from, &mut tables)
+                {
+                    continue;
+                }
                 // A row's membership in a subquery is an EXISTS here, which
                 // may decorrelate like any other.
                 let membership = match conjunct {

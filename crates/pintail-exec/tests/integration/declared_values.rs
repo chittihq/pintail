@@ -4,7 +4,9 @@
 //! An IF, CASE or NULLIF over such a column sorts, groups and prints as the
 //! label, and in a numeric context answers the number of the branch it
 //! chose. A scalar subquery, `ANY_VALUE` and a window function hand the label
-//! on as a string, a SET's as much as an ENUM's.
+//! on as a string, a SET's as much as an ENUM's. A condition on a derived
+//! set operation is tested inside its branches, against the branch's own
+//! column.
 //!
 //! The declarations make label order, position order and mask order
 //! disagree everywhere. Every expectation is `MySQL` 8.4's answer for this
@@ -367,4 +369,138 @@ const CHOICES: &[(&str, &str)] = &[
 #[test]
 fn a_choice_among_declared_values_answers_the_chosen_number() {
     check(CHOICES);
+}
+
+/// A condition on a derived set operation, inside its branches where
+/// `MySQL` moves it and above them where it does not.
+const BRANCH_CONDITIONS: &[(&str, &str)] = &[
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s = 3 ORDER BY s",
+        "mid;mid;mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION SELECT grade FROM bin) d WHERE s = 3 ORDER BY s",
+        "mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s > 1 ORDER BY s",
+        "alpha;alpha;alpha;mid;mid;mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s IN (1, 3) ORDER BY s",
+        "mid;mid;mid;zeta;zeta",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s BETWEEN 2 AND 3 ORDER BY s",
+        "alpha;alpha;alpha;mid;mid;mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE NOT (s = 3) ORDER BY s",
+        "alpha;alpha;alpha;zeta;zeta",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s + 0 = 3 ORDER BY s",
+        "mid;mid;mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s = 3 OR s = 'zeta' ORDER BY s",
+        "mid;mid;mid;zeta;zeta",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT 'mid') d WHERE s = 3 ORDER BY s",
+        "mid;mid",
+    ),
+    (
+        "SELECT s FROM (SELECT marks AS s FROM shelf UNION ALL SELECT marks FROM bin) d WHERE s = 4 ORDER BY s",
+        "a;a",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf INTERSECT SELECT grade FROM bin) d WHERE s = 3 ORDER BY s",
+        "mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf EXCEPT SELECT 'q') d WHERE s = 3 ORDER BY s",
+        "mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION SELECT grade FROM bin UNION ALL SELECT grade FROM bin) d WHERE s = 3 ORDER BY s",
+        "mid;mid",
+    ),
+    (
+        "SELECT s FROM (SELECT IF(flag, grade, grade) AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s = 3 ORDER BY s",
+        "mid;mid;mid",
+    ),
+    (
+        "SELECT s FROM (SELECT UPPER(grade) AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s = 3 ORDER BY s",
+        "mid",
+    ),
+    (
+        "SELECT COUNT(*) FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s = 3",
+        "3",
+    ),
+    (
+        "SELECT s, COUNT(*) FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s <> 3 GROUP BY s ORDER BY s",
+        "alpha|3;zeta|2",
+    ),
+    (
+        "SELECT d.id, d.s FROM (SELECT id, grade AS s FROM shelf UNION ALL SELECT id, grade FROM bin) d WHERE d.s = 3 AND d.id > 1 ORDER BY 1, 2",
+        "3|mid;6|mid",
+    ),
+    (
+        "SELECT s, t FROM (SELECT grade AS s, marks AS t FROM shelf UNION ALL SELECT grade, marks FROM bin) d WHERE s = 3 AND t = 4 ORDER BY s, t",
+        "mid|a;mid|a",
+    ),
+    (
+        "SELECT bin.id, d.s FROM bin JOIN (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE d.s = 3 AND bin.id < 3 ORDER BY 1, 2",
+        "1|mid;1|mid;1|mid;2|mid;2|mid;2|mid",
+    ),
+    (
+        "SELECT bin.id, d.s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d LEFT JOIN bin ON bin.id = 1 WHERE d.s = 3 ORDER BY 1, 2",
+        "1|mid;1|mid;1|mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf WHERE id > 1 UNION SELECT grade FROM bin WHERE id < 3) d WHERE s <> 3 ORDER BY s",
+        "alpha;zeta",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s = 'mid' ORDER BY s",
+        "mid;mid;mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s < 'n' ORDER BY s",
+        "alpha;alpha;alpha;mid;mid;mid",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin LIMIT 100) d WHERE s = 3 ORDER BY s",
+        "",
+    ),
+    (
+        "SELECT bin.id, d.s FROM bin LEFT JOIN (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d ON d.s = 3 ORDER BY 1, 2",
+        "1|NULL;2|NULL;3|NULL",
+    ),
+    (
+        "SELECT bin.id, d.s FROM bin JOIN (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE d.s = bin.id ORDER BY 1, 2",
+        "",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s = 3 AND s = 'mid' ORDER BY s",
+        "",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d WHERE s = 3 OR RAND() < 0 ORDER BY s",
+        "",
+    ),
+    (
+        "SELECT s, s = 3, s + 0 FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d ORDER BY 1, 2",
+        "NULL|NULL|NULL;alpha|0|0;alpha|0|0;alpha|0|0;mid|0|0;mid|0|0;mid|0|0;zeta|0|0;zeta|0|0",
+    ),
+    (
+        "SELECT s FROM (SELECT grade AS s FROM shelf UNION ALL SELECT grade FROM bin) d GROUP BY s HAVING s = 3 ORDER BY s",
+        "",
+    ),
+];
+
+#[test]
+fn a_condition_on_a_derived_set_operation_is_tested_in_its_branches() {
+    check(BRANCH_CONDITIONS);
 }
