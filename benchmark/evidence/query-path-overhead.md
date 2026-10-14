@@ -216,3 +216,189 @@ First executions after a restart are unchanged: Q1 3.0-3.4 ms and Q2
   on the first filtered read of a text column of 20M rows.
 - A zeroed buffer per translated code chunk (2.6% of Q3) and per fold
   worker's accumulators (1.9% of Q6).
+
+## 2026-10-14: the next layer
+
+What the items left above truly cost, measured without a sampling
+profiler, and the one change that came of it.
+
+- Base `8a98276f`; head is base plus one change to how a scan folded in
+  place is cut into rounds. Release builds, each in its own target
+  directory, one replica copy per arm.
+- Host: 8-vCPU cloud host (AMD Ryzen 9 9950X), 16 GB, one thread per core.
+  Its speed moved by up to half between sessions over the four hours, so
+  every pair below ran interleaved in the same minutes and no figure is
+  compared across tables.
+- Data, server settings, client and the two timing shapes as above; five
+  or six rounds each. Every answer of both arms equals MySQL's.
+- Noise floor: two builds of base, interleaved 6 × 15, differed by
+  0.4-3.0% per query on the median; two more same-binary pairs gave up
+  to 5%, and 7% on Q1.
+
+### What the parallel rounds cost
+
+The profile's "sleeping, waking and spinning" rows were measured again
+with counters that do not sample: `perf stat` on the server and the
+per-thread context-switch counts in `/proc`, one query back to back, the
+pools at eight threads and at one.
+
+| per statement | Q2, 8 threads | Q2, 1 | Q3, 8 | Q3, 1 | Q6, 8 | Q6, 1 | Q8, 8 | Q8, 1 |
+|---|---|---|---|---|---|---|---|---|
+| user instructions (M) | 71 | 91 | 564 | 578 | 830 | 796 | 906 | 928 |
+| kernel instructions (M) | 13.2 | 8.3 | 27.7 | 13.9 | 38.3 | 20.4 | 27.4 | 18.7 |
+| user cycles (M) | 29 | 27 | 264 | 165 | 635 | 262 | 310 | 250 |
+| kernel cycles (M) | 9.2 | 6.1 | 75 | 41 | 145 | 55 | 100 | 51 |
+| `sched_yield` calls | 4,046 | 1,798 | 6,940 | 1,860 | 9,052 | 1,995 | 5,364 | 1,799 |
+| `futex` calls | 346 | 226 | 517 | 233 | 670 | 250 | 399 | 226 |
+| context switches | 167 | 116 | 443 | 120 | 428 | 129 | 242 | 117 |
+
+- Workers that spin execute almost nothing in user space: a statement
+  runs the same user instructions on eight threads as on one.
+- What eight threads add in the kernel - yields, sleeps, wakes, and reads
+  slowed by seven neighbours - is at most the difference of the kernel
+  cycle rows: 8% of Q2's cycles, a tenth of Q3's, an eighth of Q6's and
+  Q8's. That is the true size of the profile's 13-25%.
+- The processor time a statement costs does rise with the thread count
+  (Q3: 62 ms on eight threads, 34 ms on one), but as cycles per
+  instruction, not as work: eight cores reading the same memory at once.
+  No change to the pool recovers that.
+- A statement still ran only 2.3-4.5 times faster on eight threads than
+  on one. What held it back was not the spinning but the ends of rounds.
+
+A scan folded in place was read in rounds of four slices per thread, so
+the 221 slices of the orders table took seven rounds. A round ends when
+its last slice does, with the other workers idle, and the next starts by
+waking them. Read in one round instead (an experiment build), Q2 ran 22%
+faster, Q6 16%, Q8 14%, Q5 13%, Q4 10% and Q3 9%; widening the pulled
+scan's prefetch the same way made Q3, Q4 and Q6 up to twice as slow, so
+that path is left as it was.
+
+### The change: long rounds after a short first one
+
+The round's width bounded two things: the batches a round may hand back
+to the caller, and how far it read. Only the first has to be small. The
+store now hands slices out in the scan's order, one to a worker as it
+finishes its last, and stops where the caller says, so the slices a
+round decoded are always its first so many. The scan operator asks for
+sixteen times as many slices after a round that handed nothing back,
+ends a round once it has handed back as many batches as a short round
+could, and goes past a short round's length only while no other scan is
+folding.
+
+Base against head, interleaved (ms, median / minimum / CPU). The host
+was in a slow, uneven state for this table; both arms of a row ran in
+the same minutes:
+
+| | base | head | median | CPU |
+|---|---|---|---|---|
+| Q1 | 1.067 / 0.621 / 0.7 | 1.046 / 0.601 / 0.9 | -2.0% | |
+| Q2 | 6.031 / 3.193 / 20.4 | 4.201 / 2.518 / 17.9 | **-30%** | -12% |
+| Q3 | 22.16 / 14.56 / 115.7 | 17.95 / 13.33 / 103.1 | **-19%** | -11% |
+| Q4 | 29.80 / 19.31 / 163.1 | 25.61 / 17.80 / 148.0 | **-14%** | -9% |
+| Q5 | 28.00 / 19.08 / 151.7 | 23.27 / 15.91 / 139.2 | **-17%** | -8% |
+| Q6 | 64.35 / 31.26 / 310.2 | 51.06 / 30.76 / 263.1 | **-21%** | -15% |
+| Q7 | 86.63 / 55.74 / 471.4 | 88.32 / 62.81 / 466.1 | +2.0% | -1% |
+| Q8 | 30.88 / 19.60 / 138.4 | 24.58 / 18.86 / 121.2 | **-20%** | -12% |
+
+Back to back, in a calmer stretch (µs per statement, median / minimum;
+CPU is user + system per statement; switches are voluntary +
+involuntary):
+
+| | base | head | median | CPU base | CPU head | switches base | head |
+|---|---|---|---|---|---|---|---|
+| Q1 | 91.3 / 88.9 | 97.3 / 89.3 | +7% | 77 | 81 | 4 | 4 |
+| Q2 | 1,942 / 1,851 | 1,451 / 1,400 | **-25%** | 9,171 | 7,134 | 241 | 72 |
+| Q3 | 13,334 / 12,615 | 12,470 / 12,311 | -6.5% | 77,532 | 74,914 | 595 | 383 |
+| Q4 | 17,967 / 16,488 | 15,708 / 15,335 | **-13%** | 110,359 | 100,998 | 591 | 324 |
+| Q5 | 17,048 / 15,896 | 15,088 / 14,611 | **-11%** | 102,159 | 93,881 | 570 | 339 |
+| Q6 | 44,245 / 36,805 | 33,062 / 28,442 | **-25%** | 230,650 | 180,550 | 610 | 432 |
+| Q7 | 65,711 / 63,771 | 64,827 / 62,254 | -1.3% | 373,797 | 367,956 | 971 | 798 |
+| Q8 | 23,624 / 19,197 | 18,770 / 18,426 | **-21%** | 102,992 | 87,213 | 365 | 89 |
+
+Q1 reads no slice and is unchanged: its minimum is the same and its
+rounds were 172, 111, 91, 91, 89 against 134, 111, 91, 97, 89. Q7 did not
+move in any session: its filter keeps two rows in five and it counts
+distinct users, and the time of its rounds is the work in them. An
+earlier pair of the same change, in another session, read Q2 -16%,
+Q3 -10%, Q4 -11%, Q5 -12%, Q6 -16%, Q7 +2%, Q8 -11%.
+
+The mixed workload (Q2-Q8 round-robin per call, five 8 s rounds per arm,
+arms alternating; statements per second as minimum / median / maximum,
+then the median of the rounds' p95 in ms):
+
+| clients | base | head | p95 base | p95 head |
+|---|---|---|---|---|
+| 1 | 23.4 / 34.7 / 36.7 | 28.7 / 32.8 / 39.7 | 67 | 75 |
+| 4 | 37.0 / 46.5 / 52.6 | 45.0 / 48.3 / 55.5 | 207 | 194 |
+| 8 | 78.3 / 94.3 / 99.8 | 82.0 / 99.1 / 103.5 | 205 | 187 |
+| 16 | 152.2 / 159.7 / 177.0 | 142.6 / 183.9 / 201.3 | 250 | 202 |
+| 32 | 230.8 / 323.9 / 361.8 | 256.1 / 302.4 / 329.8 | 246 | 262 |
+
+The rounds of one arm spread by 20-55%, so no row is a difference: the
+mixed workload neither gained nor lost. It runs with seven of eight
+cores busy, where the workers one statement's round leaves idle are
+another statement's to use.
+
+### Tried and changed: long rounds whatever else is running
+
+The first form of the change ran long rounds unconditionally. Alone, a
+statement gained the same. Under the mixed workload the median latency
+fell and the tail rose: at 8, 16 and 32 clients p50 went from 78, 84 and
+101 ms to 72, 62 and 86, and p95 from 194, 232 and 304 ms to 256, 271
+and 384. A short round is also how statements take turns - each round
+queues behind the rounds others have asked for - and a round sixteen
+times as long made a statement wait that much longer for its turn.
+Hence the last clause above: with another scan folding, a round stops at
+a short round's length, and the tail is where it was.
+
+### Tried and dropped: raw blocks held in the block cache
+
+The page-cache copy and the checksum were measured by removing them.
+
+| experiment (interleaved median against the same build without it) | Q2 | Q3 | Q4 | Q5 | Q6 | Q7 | Q8 |
+|---|---|---|---|---|---|---|---|
+| checksum not computed at all | -3.2% | -3.4% | +0.4% | -3.1% | -3.5% | -2.6% | -1.8% |
+| raw blocks held at once, 2 GiB budget | +1.2% | -6.9% | -2.9% | -3.9% | -4.0% | -4.8% | -3.6% |
+| raw blocks held on the second ask, default budget (122 MiB) | +2.8% | -7.9% | -6.9% | -1.9% | -5.8% | -5.9% | -6.0% |
+| the same, 16 MiB budget | +1.4% | +30% | +21% | +23% | +25% | +13% | +41% |
+| held only in spare room, default budget, on top of the long rounds | -2.4% | -1.9% | -3.4% | -2.7% | -0.5% | -8.3% | -5.1% |
+| the same, 16 MiB budget | +4.0% | +0.7% | -4.0% | +1.4% | -5.0% | -0.3% | +0.3% |
+
+- Verifying a block's checksum once per file identity can gain at most
+  the first row, which is the floor, less the lookup that would replace
+  the hash. Not worth a weaker check.
+- Holding raw blocks removes the system time (Q3: 16.2 ms a statement to
+  3.5) and gives part of it back as user time, the decoder now reading
+  memory the read used to bring into the core's cache (Q8: 64.8 ms to
+  72.1). Net 4-8% of CPU and 3-8% of wall while everything the queries
+  return to fits the budget, for 100-145 MB more resident memory.
+- Where it does not fit - the fourth row, a budget a tenth of the
+  scanned columns, which is where any table larger than the cache lives -
+  every read copies a block in and pushes one out, and statements ran a
+  fifth to two fifths slower, the mixed workload 20-30% slower.
+- Admitting raw blocks only into room nothing else holds removes that
+  loss (last row) and, after the long rounds, leaves 2-5% on five of the
+  seven queries, inside or at the floor, with 124 MB more resident
+  memory and a cache that keeps whatever filled it first. Dropped: the
+  gain does not clear the floor on most queries and the cache's default
+  budget is a decision about memory, not about scans.
+
+### Not changed, with what each is worth
+
+- The hand-off of a statement to a worker thread: `SELECT 1` answered on
+  the connection's own thread takes 27 µs back to back and 46 µs when
+  sent to a worker, so the hand-off is about 19 µs of Q1's 71-91 µs. To
+  run a statement answered from segment aggregates in place, admission
+  has to prove before executing that it will be - that every segment
+  carries its aggregates, none overlaps another and the memtable holds
+  only new keys - or a table scan runs on a connection's thread. Not
+  attempted.
+- The remaining `stat` per segment per scan and the path-keyed lookups
+  per slice: not measured again. A scan could keep, beside the identity
+  it already keeps per segment, the block directory and the cache slot
+  found under that identity, which keeps an in-place change noticed at
+  the next scan.
+- The log line, the plan copy and the session settings of a statement:
+  not measured again.
+- Postings rebuilt on first use after a restart: not attempted; keeping
+  them is a change to the segment format.
