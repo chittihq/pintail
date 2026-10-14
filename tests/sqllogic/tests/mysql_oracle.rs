@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2955;
+const EXPECTED_CASES: usize = 2958;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5092,6 +5092,19 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "window function in a scalar subquery",
             "SELECT id FROM events WHERE id IN ((SELECT DENSE_RANK() OVER (ORDER BY NULL))) ORDER BY id",
+        ),
+        // A JSON double prints as the DOUBLE does, with a fraction where it would read as an integer.
+        ordered(
+            "json double text",
+            "SELECT CAST(1e0 AS JSON), CAST(score * 1e0 AS JSON), CAST(1e15 AS JSON), CAST(1.5e-7 AS JSON), JSON_ARRAY(1e20, 2.5e-10, 1e15, 123456789012345e0) FROM events WHERE id = 1",
+        ),
+        ordered(
+            "json double text",
+            "SELECT id, CAST(SUM(score * 1e0) OVER (ORDER BY id) AS JSON) FROM events ORDER BY id",
+        ),
+        ordered(
+            "json double text",
+            "SELECT JSON_EXTRACT('[1e20, 1E+2, 1.0e-7]', '$[0]', '$[1]', '$[2]'), CAST('[1e15, 1e2, 0.1e1, -0.0]' AS JSON)",
         ),
         // IPv4 and IPv6 text to bytes and back, as MySQL reads and prints them.
         ordered(

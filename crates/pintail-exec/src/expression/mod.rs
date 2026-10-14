@@ -6626,6 +6626,11 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
             );
         }
         Some(DataType::Json) => {
+            // A DOUBLE is a JSON double whatever it prints as: 1e0 is the
+            // document `1.0`, where its text `1` would parse as an integer.
+            if matches!(value, Value::Float64(_)) {
+                return Ok(Value::Utf8(mysql_json_text(&json_value_of(value))));
+            }
             let document = serde_json::from_str(&scalar_string(value)?)
                 .map_err(|_| ExecError::InvalidExpressionType)?;
             return Ok(Value::Utf8(mysql_json_text(&document)));

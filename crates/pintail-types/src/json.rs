@@ -37,12 +37,27 @@ pub fn mysql_json_text(value: &serde_json::Value) -> String {
                 }
                 output.push('}');
             }
+            serde_json::Value::Number(number) if number.is_f64() => {
+                output.push_str(&double_text(number.as_f64().unwrap_or_default()));
+            }
             other => output.push_str(&other.to_string()),
         }
     }
     let mut output = String::new();
     write(value, &mut output);
     output
+}
+
+/// A JSON double as `MySQL` prints it: the text the DOUBLE itself prints
+/// as, with `.0` added where that text would read as an integer. That text
+/// is positional up to fifteen whole digits and down to fifteen decimal
+/// places, and carries an unsigned, unpadded exponent past either.
+fn double_text(value: f64) -> String {
+    let mut text = crate::Float64::new(value).mysql_text();
+    if !text.contains(['.', 'e']) {
+        text.push_str(".0");
+    }
+    text
 }
 
 /// Renders JSON document text as `MySQL` prints it, keeping each number as
@@ -257,7 +272,10 @@ impl Parser<'_> {
         let parsed = serde_json::from_str::<serde_json::Number>(token)
             .map_err(|error| format!("invalid number at offset {start}: {error}"))?;
         Ok(Node::Literal(if token.contains(['e', 'E']) {
-            parsed.to_string()
+            parsed
+                .as_f64()
+                .filter(|_| parsed.is_f64())
+                .map_or_else(|| parsed.to_string(), double_text)
         } else {
             token.to_owned()
         }))
@@ -281,8 +299,8 @@ mod tests {
                 "[-0.001, 123456789012345678901234567890.10]",
             ),
             (
-                "[1e2, 1.5E-7, 18446744073709551615]",
-                "[100.0, 1.5e-7, 18446744073709551615]",
+                "[1e2, 1.5E-7, 1e20, 1E+15, 2.5e-16, 18446744073709551615]",
+                "[100.0, 0.00000015, 1e20, 1e15, 2.5e-16, 18446744073709551615]",
             ),
             (r#"{"k": 1, "k": 2}"#, r#"{"k": 2}"#),
             ("  \"text\" ", "\"text\""),
