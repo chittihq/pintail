@@ -232,7 +232,10 @@ fn kernel(
             right,
             data_type: Some(DataType::Int64),
             ..
-        } => numeric::integer_column(batch, *op, left, right, data_type, effects),
+        } => attempt(effects, |effects| {
+            compare::comparison_sign_column(batch, *op, left, right, data_type, effects)
+        })
+        .or_else(|| numeric::integer_column(batch, *op, left, right, data_type, effects)),
         CompiledExpr::Scalar {
             function:
                 function @ (ScalarFunction::If | ScalarFunction::Coalesce | ScalarFunction::NullIf),

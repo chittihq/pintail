@@ -65,6 +65,25 @@ pub(super) fn comparison_column(
                 .map(|ordering| ordering.map(|ordering| holds(op, ordering))),
         );
     }
+    let equality = matches!(op, BinaryOp::Equal | BinaryOp::NotEqual);
+    let orderings = operand_orderings(batch, left, right, collation, equality, effects)?;
+    truth_column(
+        orderings
+            .into_iter()
+            .map(|ordering| ordering.map(|ordering| holds(op, ordering))),
+    )
+}
+
+/// Each row's ordering of `left` and `right` as a comparison of the two
+/// reads them; `equality` admits the orderings only `=` and `<>` may read.
+fn operand_orderings(
+    batch: &RecordBatch,
+    left: &CompiledExpr,
+    right: &CompiledExpr,
+    collation: Collation,
+    equality: bool,
+    effects: &mut Effects,
+) -> Option<Orderings> {
     let left = operand(batch, left, effects)?;
     let right = operand(batch, right, effects)?;
     // A comparison of two constants is answered rather than declined, even
@@ -74,8 +93,7 @@ pub(super) fn comparison_column(
     // declining them took the whole predicate - the column comparison
     // inside it included - to the row path.
     let rows = batch.row_count();
-    let equality = matches!(op, BinaryOp::Equal | BinaryOp::NotEqual);
-    let orderings = integer_orderings(&left, &right, rows)
+    integer_orderings(&left, &right, rows)
         .or_else(|| temporal_orderings(&left, &right, rows))
         .or_else(|| {
             equality
@@ -83,12 +101,67 @@ pub(super) fn comparison_column(
                 .flatten()
         })
         .or_else(|| float_orderings(&left, &right, rows))
-        .or_else(|| text_orderings(&left, &right, rows, collation))?;
-    truth_column(
+        .or_else(|| text_orderings(&left, &right, rows, collation))
+}
+
+/// `(a > b) - (a < b)`: the sign of one comparison, which is how a
+/// three-way comparison of two values is spelled. The two sides are read
+/// once and ordered once, and each row answers -1, 0 or 1 - NULL where
+/// either side is. `None` for any other subtraction.
+pub(super) fn comparison_sign_column(
+    batch: &RecordBatch,
+    op: BinaryOp,
+    left: &CompiledExpr,
+    right: &CompiledExpr,
+    data_type: Option<DataType>,
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
+    if op != BinaryOp::Subtract || data_type.is_some_and(|declared| declared != DataType::Int64) {
+        return None;
+    }
+    let (
+        CompiledExpr::Binary {
+            op: BinaryOp::Greater,
+            left: greater_left,
+            right: greater_right,
+            collation,
+            ..
+        },
+        CompiledExpr::Binary {
+            op: BinaryOp::Less,
+            left: less_left,
+            right: less_right,
+            collation: less_collation,
+            ..
+        },
+    ) = (left, right)
+    else {
+        return None;
+    };
+    if greater_left != less_left || greater_right != less_right || collation != less_collation {
+        return None;
+    }
+    // Decimals the binder cast to a common type order as the comparison
+    // itself orders them.
+    let orderings = super::numeric::scaled_orderings(batch, greater_left, greater_right, effects)
+        .or_else(|| {
+            operand_orderings(
+                batch,
+                greater_left,
+                greater_right,
+                *collation,
+                false,
+                effects,
+            )
+        })?;
+    ColumnVector::new(
+        DataType::Int64,
         orderings
             .into_iter()
-            .map(|ordering| ordering.map(|ordering| holds(op, ordering))),
+            .map(|ordering| ordering.map_or(Value::Null, |ordering| Value::Int64(ordering as i64)))
+            .collect(),
     )
+    .ok()
 }
 
 /// Doubles already converted by the binder, including text/decimal
@@ -715,6 +788,77 @@ mod tests {
                     let expression = with_collation(expression.clone(), name);
                     assert!(agrees_with_rows(&expression, &batch, DataType::Boolean));
                 }
+            }
+        }
+    }
+
+    /// `(a > b) - (a < b)` answers the sign of one comparison - what a
+    /// three-way comparison of two values binds as - and NULL where either
+    /// side is, for integers, calendar values and text under each
+    /// collation. Any other subtraction of comparisons is not the sign.
+    #[test]
+    fn the_sign_of_a_comparison_matches_row_evaluation() {
+        let batch = fixture();
+        let pairs = [
+            (column(0), column(1)),
+            (column(0), CompiledExpr::Literal(Value::Int64(3))),
+            (column(3), text("2024-06-15 00:00:00")),
+            (column(4), column(4)),
+            (column(5), column(6)),
+            (column(5), text("alpha")),
+            (text("beta"), column(6)),
+        ];
+        for (left, right) in &pairs {
+            for name in ["utf8mb4_general_ci", "utf8mb4_0900_ai_ci", "utf8mb4_bin"] {
+                let side = |op| {
+                    with_collation(
+                        binary(op, left.clone(), right.clone(), DataType::Boolean),
+                        name,
+                    )
+                };
+                let sign = binary(
+                    BinaryOp::Subtract,
+                    side(BinaryOp::Greater),
+                    side(BinaryOp::Less),
+                    DataType::Int64,
+                );
+                assert!(
+                    agrees_with_rows(&sign, &batch, DataType::Int64),
+                    "{sign:?} has a kernel"
+                );
+                let mut effects = super::Effects::default();
+                let CompiledExpr::Binary {
+                    left: greater,
+                    right: less,
+                    ..
+                } = &sign
+                else {
+                    unreachable!("a subtraction");
+                };
+                assert!(
+                    super::comparison_sign_column(
+                        &batch,
+                        BinaryOp::Subtract,
+                        greater,
+                        less,
+                        Some(DataType::Int64),
+                        &mut effects
+                    )
+                    .is_some(),
+                    "{sign:?} is answered as a sign"
+                );
+                // The sides the other way round are a different number.
+                assert!(
+                    super::comparison_sign_column(
+                        &batch,
+                        BinaryOp::Subtract,
+                        less,
+                        greater,
+                        Some(DataType::Int64),
+                        &mut effects
+                    )
+                    .is_none()
+                );
             }
         }
     }
