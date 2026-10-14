@@ -9818,9 +9818,20 @@ fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> S
         Expr::Value(_) => source
             .and_then(|sql| source_text(sql, expr, clause))
             .map_or_else(|| expr.to_string(), |text| text.trim_end().to_owned()),
+        // The text as written, without the space before what follows it.
+        // Under IGNORE_SPACE `MySQL` keeps that space in the name.
         _ => source
             .and_then(|sql| source_text(sql, expr, clause))
-            .unwrap_or_else(|| expr.to_string()),
+            .map_or_else(
+                || expr.to_string(),
+                |text| {
+                    if crate::session_parse_mode().ignore_space {
+                        text
+                    } else {
+                        text.trim_end().to_owned()
+                    }
+                },
+            ),
     };
     let mut length = name.len().min(255);
     while !name.is_char_boundary(length) {
@@ -9905,6 +9916,7 @@ impl SourceClause {
                 | "FETCH"
                 | "UNION"
                 | "EXCEPT"
+        // The text as written, without the space before what follows it.
                 | "INTERSECT"
                 | "INTO"
                 | "FOR"
