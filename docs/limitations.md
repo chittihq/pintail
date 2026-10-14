@@ -65,8 +65,12 @@ stays readable as a list of things to fix.
   date-time columns. Any other theta condition, or a right input that
   spills, tests every row pair, so over large inputs it runs until the
   memory ceiling or `max_execution_time` stops it.
-- Compound temporal `RANGE` interval qualifiers reject because sqlparser does
-  not accept their MySQL spelling (#13, #25).
+- A window `RANGE` frame measures a DATE or DATETIME key in whole `YEAR`,
+  `MONTH`, `DAY`, `HOUR`, `MINUTE` or `SECOND` intervals or a compound of
+  days, hours, minutes and seconds, and a TIME key in the clock units among
+  them. A `MICROSECOND`, `WEEK` or `QUARTER` interval and a fractional
+  amount are refused, and so is a `YEAR`, `MONTH` or `DAY` interval over a
+  TIME key, where MySQL answers an empty frame for every row.
 - A window frame with a bounded start recomputes its aggregate over the frame
   width rather than sliding incrementally, because `MIN`/`MAX` cannot be
   un-accumulated when a row leaves the window. Cost is proportional to the

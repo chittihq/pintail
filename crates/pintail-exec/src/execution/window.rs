@@ -9,7 +9,7 @@ use crate::collation::Collation;
 
 use pintail_sql::{
     AggregateFunction, BoundColumn, BoundExpr, BoundExprKind, BoundOrderKey, BoundWindow,
-    WindowFunction,
+    OrderValueKind, WindowFunction,
 };
 use pintail_types::{DataType, Value};
 
@@ -23,8 +23,9 @@ use crate::expression::CompiledExpr;
 pub(super) struct CompiledWindow {
     function: CompiledWindowFunction,
     partition: Vec<CompiledExpr>,
-    /// Order keys with `(ascending, nulls_first, decimal)`.
-    order: Vec<(CompiledExpr, bool, bool, bool)>,
+    /// Order keys with `(ascending, nulls_first, value kind)`: a DECIMAL
+    /// or TIME key travels as text and compares as the value it spells.
+    order: Vec<(CompiledExpr, bool, bool, OrderValueKind)>,
     /// Explicit `ROWS`/`RANGE` frame; `None` keeps `MySQL`'s default frame.
     frame: Option<pintail_sql::BoundWindowFrame>,
     high_precision: bool,
@@ -148,7 +149,7 @@ impl CompiledWindow {
                         CompiledExpr::compile(&key.expr, columns, collation)?,
                         key.ascending,
                         key.nulls_first,
-                        matches!(key.expr.data_type, Some(DataType::Decimal { .. })),
+                        OrderValueKind::from_type(key.expr.data_type),
                     ))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -209,9 +210,7 @@ impl CompiledWindow {
     fn sort_keys_from(&self, start: usize) -> Vec<BoundOrderKey> {
         let partition = self.partition.len();
         (0..partition)
-            .map(|index| {
-                window_order_key(start + index, true, true, false, self.key_collation(index))
-            })
+            .map(|index| plain_order_key(start + index, self.key_collation(index)))
             .chain(self.order.iter().enumerate().map(
                 |(index, (_, ascending, nulls_first, decimal))| {
                     window_order_key(
@@ -325,7 +324,7 @@ pub(super) fn build_window(
         )?;
     }
     let width = column_types.len();
-    let keys = vec![window_order_key(width, true, true, false, None)];
+    let keys = vec![plain_order_key(width, None)];
     let mut sorter = WindowSorter::new(keys, collation);
     let mut reader = run.open().map_err(window_io)?;
     while let Some(payload) = reader.next().map_err(window_io)? {
@@ -644,15 +643,16 @@ fn small_partition_order(
     if keys.len() / count > SMALL_PARTITION_ROWS {
         return Ok(None);
     }
-    let order_key = |ascending: bool, nulls_first: bool, decimal: bool, position: usize| {
-        window_order_key(
-            0,
-            ascending,
-            nulls_first,
-            decimal,
-            window.key_collation(position),
-        )
-    };
+    let order_key =
+        |ascending: bool, nulls_first: bool, value_kind: OrderValueKind, position: usize| {
+            window_order_key(
+                0,
+                ascending,
+                nulls_first,
+                value_kind,
+                window.key_collation(position),
+            )
+        };
     let compare_rows = |left: &usize, right: &usize| {
         for (position, (_, ascending, nulls_first, decimal)) in window.order.iter().enumerate() {
             let ordering = compare_sort_values(
@@ -778,19 +778,21 @@ fn key_collations(window: &BoundWindow) -> Vec<Option<&'static str>> {
         .collect()
 }
 
+/// An ascending, NULLs-first key over a value that compares as it is: a
+/// partition key, or the position that keeps a sort stable.
+fn plain_order_key(index: usize, collation: Option<&'static str>) -> BoundOrderKey {
+    window_order_key(index, true, true, OrderValueKind::Ordinary, collation)
+}
+
 fn window_order_key(
     index: usize,
     ascending: bool,
     nulls_first: bool,
-    decimal: bool,
+    value_kind: OrderValueKind,
     collation: Option<&'static str>,
 ) -> BoundOrderKey {
     BoundOrderKey {
-        value_kind: if decimal {
-            pintail_sql::OrderValueKind::Decimal
-        } else {
-            pintail_sql::OrderValueKind::Ordinary
-        },
+        value_kind,
         index,
         ascending,
         nulls_first,
@@ -864,7 +866,7 @@ fn evaluate_spilled_window(
 ) -> Result<crate::spill::ClosedRun, ExecError> {
     let key_start = width + 1;
     let mut order = window.sort_keys_from(key_start);
-    order.push(window_order_key(width, true, true, false, None));
+    order.push(plain_order_key(width, None));
     let mut sorter = WindowSorter::new(order, collation);
     let mut reader = run.open().map_err(window_io)?;
     while let Some(payload) = reader.next().map_err(window_io)? {
@@ -912,7 +914,7 @@ fn evaluate_spilled_window(
                 compare_sort_values(
                     &first[key_start + index],
                     &row[key_start + index],
-                    window_order_key(0, true, true, false, window.key_collation(index)),
+                    plain_order_key(0, window.key_collation(index)),
                     collation,
                 )
                 .is_eq()
@@ -1186,7 +1188,7 @@ fn numeric_range_bound(
         offset.0,
         offset.1,
         if *ascending { !preceding } else { preceding },
-        *decimal,
+        *decimal == OrderValueKind::Decimal,
     )?;
     range_bound_for_target(window, keys, partition, &target, upper, collation)
 }
@@ -1205,25 +1207,119 @@ fn temporal_range_bound(
     upper: bool,
     collation: Collation,
 ) -> Result<usize, ExecError> {
-    let Some((_, ascending, _, _)) = window.order.first() else {
+    let Some((_, ascending, _, value_kind)) = window.order.first() else {
         return Err(ExecError::InvalidExpressionType);
     };
     let key_position = window.partition.len();
     let current_value = &keys[partition[current]][key_position];
-    let target = crate::expression::shift_temporal_value(
-        current_value,
-        interval.0,
-        interval.1,
-        if *ascending { !preceding } else { preceding },
-    )?;
-    range_bound_for_target(
-        window,
-        keys,
-        partition,
-        &NumericRangeTarget::Value(target),
-        upper,
-        collation,
-    )
+    let later = if *ascending { !preceding } else { preceding };
+    let target = if *value_kind == OrderValueKind::Time {
+        shift_time_value(current_value, interval.0, interval.1, later)?
+    } else {
+        NumericRangeTarget::Value(crate::expression::shift_temporal_value(
+            current_value,
+            interval.0,
+            interval.1,
+            later,
+        )?)
+    };
+    range_bound_for_target(window, keys, partition, &target, upper, collation)
+}
+
+/// The largest TIME, in microseconds.
+const MAX_TIME_MICROS: i64 = (838 * 3_600 + 59 * 60 + 59) * 1_000_000;
+
+/// A TIME key moved by a clock interval, in microseconds; `None` for an
+/// interval of another unit or a key that is no TIME.
+fn shifted_time_micros(
+    value: &Value,
+    amount: u64,
+    unit: pintail_sql::IntervalUnit,
+    later: bool,
+) -> Option<i64> {
+    let micros = pintail_types::parse_time_micros(value.text()?)?;
+    let seconds: i64 = match unit {
+        pintail_sql::IntervalUnit::Hour => 3_600,
+        pintail_sql::IntervalUnit::Minute => 60,
+        pintail_sql::IntervalUnit::Second => 1,
+        _ => return None,
+    };
+    let span = i64::try_from(amount)
+        .ok()
+        .and_then(|amount| amount.checked_mul(seconds))
+        .and_then(|span| span.checked_mul(1_000_000))
+        .unwrap_or(i64::MAX);
+    Some(if later {
+        micros.saturating_add(span)
+    } else {
+        micros.saturating_sub(span)
+    })
+}
+
+/// The bound a TIME key moved by a clock interval makes, spelled with the
+/// fractional digits the key itself carries so it compares against the keys
+/// it bounds. A bound past the largest TIME lies beyond every key, which is
+/// how `MySQL` measures it; one below the smallest is answered before any
+/// bound is searched for (see [`first_time_underflow`]).
+fn shift_time_value(
+    value: &Value,
+    amount: u64,
+    unit: pintail_sql::IntervalUnit,
+    later: bool,
+) -> Result<NumericRangeTarget, ExecError> {
+    let shifted =
+        shifted_time_micros(value, amount, unit, later).ok_or(ExecError::InvalidDateTime)?;
+    if shifted > MAX_TIME_MICROS {
+        return Ok(NumericRangeTarget::PositiveInfinity);
+    }
+    if shifted < -MAX_TIME_MICROS {
+        return Ok(NumericRangeTarget::NegativeInfinity);
+    }
+    let fsp = value
+        .text()
+        .and_then(|text| text.rsplit_once('.'))
+        .map_or(0, |(_, fraction)| {
+            u8::try_from(fraction.len().min(6)).unwrap_or(6)
+        });
+    Ok(NumericRangeTarget::Value(Value::Utf8(
+        pintail_types::format_time_micros(shifted, fsp),
+    )))
+}
+
+/// The first row of a partition whose RANGE frame has a bound below the
+/// smallest TIME. `MySQL` computes that bound as it reaches the row, finds
+/// no TIME to hold it, and from that row on gives every row of the
+/// partition an empty frame; rows it reached earlier keep theirs, and so
+/// do rows whose key is NULL. `None`
+/// when the frame is not measured in clock intervals over a TIME key or no
+/// bound falls that low.
+fn first_time_underflow(
+    window: &CompiledWindow,
+    keys: &[Vec<Value>],
+    partition: &[usize],
+) -> Option<usize> {
+    use pintail_sql::{BoundFrameBound as Edge, BoundFrameOffset as Offset};
+    let frame = window.frame.filter(|frame| frame.range)?;
+    let (_, ascending, _, value_kind) = window.order.first()?;
+    if *value_kind != OrderValueKind::Time {
+        return None;
+    }
+    let earlier = |edge: Edge| match edge {
+        Edge::Preceding(Offset::Interval { value, unit }) if *ascending => Some((value, unit)),
+        Edge::Following(Offset::Interval { value, unit }) if !*ascending => Some((value, unit)),
+        _ => None,
+    };
+    let bounds = [earlier(frame.start), earlier(frame.end)];
+    if bounds.iter().all(Option::is_none) {
+        return None;
+    }
+    let key_position = window.partition.len();
+    partition.iter().position(|row| {
+        bounds.iter().flatten().any(|(value, unit)| {
+            shifted_time_micros(&keys[*row][key_position], *value, *unit, false)
+                .is_some_and(|shifted| shifted < -MAX_TIME_MICROS)
+        })
+    })
 }
 
 // The frame a RANGE bound resolves to depends on the window, the sorted keys,
@@ -1274,7 +1370,7 @@ fn range_bound_for_target(
                         Value::Boolean(value) => i8::from(*value).to_string(),
                         Value::Int64(value) => value.to_string(),
                         Value::UInt64(value) => value.to_string(),
-                        value if *decimal && value.text().is_some() => {
+                        value if *decimal == OrderValueKind::Decimal && value.text().is_some() => {
                             value.text().expect("guarded text").to_owned()
                         }
                         _ => return Ordering::Equal,
@@ -1295,11 +1391,7 @@ fn range_bound_for_target(
                 candidate,
                 target,
                 BoundOrderKey {
-                    value_kind: if *decimal {
-                        pintail_sql::OrderValueKind::Decimal
-                    } else {
-                        pintail_sql::OrderValueKind::Ordinary
-                    },
+                    value_kind: *decimal,
                     index: 0,
                     ascending: *ascending,
                     nulls_first: *nulls_first,
@@ -1342,15 +1434,16 @@ fn window_order(
     collation: Collation,
 ) -> Result<Vec<usize>, ExecError> {
     let partition_len = window.partition.len();
-    let order_key = |ascending: bool, nulls_first: bool, decimal: bool, position: usize| {
-        window_order_key(
-            0,
-            ascending,
-            nulls_first,
-            decimal,
-            window.key_collation(position),
-        )
-    };
+    let order_key =
+        |ascending: bool, nulls_first: bool, value_kind: OrderValueKind, position: usize| {
+            window_order_key(
+                0,
+                ascending,
+                nulls_first,
+                value_kind,
+                window.key_collation(position),
+            )
+        };
     let compare_rows = |left: usize, right: usize| {
         let left_keys = &keys[left];
         let right_keys = &keys[right];
@@ -1358,7 +1451,7 @@ fn window_order(
             let ordering = compare_sort_values(
                 &left_keys[position],
                 &right_keys[position],
-                order_key(true, true, false, position),
+                order_key(true, true, OrderValueKind::Ordinary, position),
                 collation,
             );
             if ordering != Ordering::Equal {
@@ -1398,21 +1491,22 @@ fn compute_window_column(
     collation: Collation,
 ) -> Result<Vec<Value>, ExecError> {
     let partition_len = window.partition.len();
-    let order_key = |ascending: bool, nulls_first: bool, decimal: bool, position: usize| {
-        window_order_key(
-            0,
-            ascending,
-            nulls_first,
-            decimal,
-            window.key_collation(position),
-        )
-    };
+    let order_key =
+        |ascending: bool, nulls_first: bool, value_kind: OrderValueKind, position: usize| {
+            window_order_key(
+                0,
+                ascending,
+                nulls_first,
+                value_kind,
+                window.key_collation(position),
+            )
+        };
     let same_partition = |left: usize, right: usize| {
         (0..partition_len).all(|position| {
             compare_sort_values(
                 &keys[left][position],
                 &keys[right][position],
-                order_key(true, true, false, position),
+                order_key(true, true, OrderValueKind::Ordinary, position),
                 collation,
             ) == Ordering::Equal
         })
@@ -1453,10 +1547,12 @@ fn compute_window_column(
         // per row repeated two searches for every peer.
         let range_extent =
             std::cell::Cell::new(None::<(usize, pintail_sql::BoundWindowFrame, (usize, usize))>);
+        let time_underflow = first_time_underflow(window, keys, partition);
         let frame_extent = |frame: pintail_sql::BoundWindowFrame,
                             index: usize|
          -> Result<(usize, usize), ExecError> {
             use pintail_sql::{BoundFrameBound as Edge, BoundFrameOffset as Offset};
+
             if frame.range
                 && let Some((peer, cached, extent)) = range_extent.get()
                 && cached == frame
@@ -1500,6 +1596,10 @@ fn compute_window_column(
                 .order
                 .first()
                 .is_some_and(|_| matches!(keys[partition[index]][partition_len], Value::Null));
+            // A NULL key is framed by its peers whatever came before it.
+            if !current_is_null && time_underflow.is_some_and(|first| index >= first) {
+                return Ok((index, index));
+            }
             let start = match frame.start {
                 Edge::UnboundedPreceding => 0,
                 Edge::Preceding(_) | Edge::Following(_) if frame.range && current_is_null => {

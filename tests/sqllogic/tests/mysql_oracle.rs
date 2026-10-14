@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2966;
+const EXPECTED_CASES: usize = 2970;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5131,6 +5131,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "bit literal arithmetic",
             "SELECT id, id + b'1111111111111111111111111111111111111111111111111111111111111111', id - b'10', b'1111111111111111111111111111111111111111111111111111111111111111' % 7, b'1111111111111111111111111111111111111111111111111111111111111111' + 1.0, b'1111111111111111111111111111111111111111111111111111111111111111' DIV 2, 0xFFFFFFFFFFFFFFFF + 0, b'1111111111111111111111111111111111111111111111111111111111111111' + 0 = -1 FROM users ORDER BY id",
+        ),
+        // A window orders a TIME key by its duration, and a RANGE frame over one is measured in clock intervals.
+        ordered(
+            "window over a time key",
+            "SELECT id, clock, ROW_NUMBER() OVER (ORDER BY clock) AS rn, RANK() OVER (ORDER BY clock DESC) AS rd, LAG(clock) OVER (ORDER BY clock, id) AS l FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "window over a time key",
+            "SELECT id, clock, COUNT(*) OVER (ORDER BY clock RANGE BETWEEN INTERVAL 100 HOUR PRECEDING AND INTERVAL 30 MINUTE FOLLOWING) AS c, FIRST_VALUE(id) OVER (ORDER BY clock RANGE INTERVAL 1 SECOND PRECEDING) AS f FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "window over a time key",
+            "SELECT id, COUNT(*) OVER (ORDER BY clock DESC RANGE BETWEEN INTERVAL 1 HOUR PRECEDING AND CURRENT ROW) AS c FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "window over a time key",
+            "SELECT id, dt6, COUNT(*) OVER (ORDER BY dt6 RANGE BETWEEN INTERVAL 1 SECOND PRECEDING AND INTERVAL 1 SECOND FOLLOWING) AS c, COUNT(*) OVER (ORDER BY dt3 RANGE INTERVAL 30 DAY PRECEDING) AS d FROM bounds ORDER BY id",
         ),
         ordered(
             "bit literal arithmetic",

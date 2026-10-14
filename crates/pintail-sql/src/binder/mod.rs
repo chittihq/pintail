@@ -7587,10 +7587,15 @@ fn bind_window_frame(
             return Err(unsupported());
         };
         let valid = |expr: &Expr| match expr {
-            Expr::Interval(_) => matches!(
-                order.expr.data_type,
-                Some(DataType::Date32 | DataType::DateTime64 { .. })
-            ),
+            // A TIME key takes the clock units alone.
+            Expr::Interval(interval) => match order.expr.data_type {
+                Some(DataType::Date32 | DataType::DateTime64 { .. }) => true,
+                Some(DataType::Time64 { .. }) => matches!(
+                    interval.leading_field,
+                    Some(DateTimeField::Hour | DateTimeField::Minute | DateTimeField::Second)
+                ),
+                _ => false,
+            },
             Expr::Value(_) => matches!(
                 order.expr.data_type,
                 Some(

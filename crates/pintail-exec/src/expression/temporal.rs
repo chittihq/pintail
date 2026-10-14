@@ -416,15 +416,25 @@ pub(crate) fn shift_temporal_value(
             unit,
             IntervalUnit::Year | IntervalUnit::Month | IntervalUnit::Day
         );
-    Ok(Value::Utf8(
-        shifted
-            .format(if date_only {
-                "%Y-%m-%d"
-            } else {
-                "%Y-%m-%d %H:%M:%S"
-            })
-            .to_string(),
-    ))
+    // The fractional digits the value carries stay: the result bounds a
+    // frame over values spelled the same way, and without them a key half a
+    // second past the bound compared as inside it.
+    let fraction = input
+        .rsplit_once('.')
+        .map_or(0, |(_, fraction)| fraction.len().min(6));
+    let mut text = shifted
+        .format(if date_only {
+            "%Y-%m-%d"
+        } else {
+            "%Y-%m-%d %H:%M:%S"
+        })
+        .to_string();
+    if !date_only && fraction > 0 {
+        let micros = format!("{:06}", shifted.and_utc().timestamp_subsec_micros());
+        text.push('.');
+        text.push_str(&micros[..fraction]);
+    }
+    Ok(Value::Utf8(text))
 }
 
 /// A `CONVERT_TZ` zone argument: numeric offset or IANA name.
