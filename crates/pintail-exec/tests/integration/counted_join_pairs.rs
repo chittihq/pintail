@@ -40,8 +40,8 @@ struct Reading {
 fn reading(id: u64) -> Reading {
     Reading {
         id,
-        slot: (id % 11 != 0).then(|| format!("2024-05-0{} 12:00:00", 1 + id % 5)),
-        zone: (id % 7 != 0).then(|| ZONES[usize::try_from(id % 4).expect("small")]),
+        slot: (!id.is_multiple_of(11)).then(|| format!("2024-05-0{} 12:00:00", 1 + id % 5)),
+        zone: (!id.is_multiple_of(7)).then(|| ZONES[usize::try_from(id % 4).expect("small")]),
         pair: i64::try_from(id / 2).expect("small"),
     }
 }
@@ -49,7 +49,7 @@ fn reading(id: u64) -> Reading {
 /// Which half of the table a row is in: about a thousand rows share each,
 /// and every thirteenth row has none.
 fn half(row: &Reading) -> Option<i64> {
-    (row.id % 13 != 0).then(|| i64::try_from(row.id % 2).expect("small"))
+    (!row.id.is_multiple_of(13)).then(|| i64::try_from(row.id % 2).expect("small"))
 }
 
 fn schema() -> TableSchema {
@@ -100,10 +100,10 @@ fn run(sql: &str) -> (Vec<Vec<Value>>, ExecCounters) {
         TableStatistics::with_row_count(ROWS),
     )
     .expect("entry");
-    let catalog =
-        CatalogSnapshot::new([DatabaseEntry::new(DatabaseId::new(1), "app", [entry])
-            .expect("database")])
-        .expect("catalog");
+    let catalog = CatalogSnapshot::new([
+        DatabaseEntry::new(DatabaseId::new(1), "app", [entry]).expect("database")
+    ])
+    .expect("catalog");
     let provider = SnapshotScanProvider::new([(DatabaseId::new(1), TableId::new(1), &snapshot)])
         .expect("provider");
     let bound = Binder::new(&catalog, Some("app"))
@@ -229,15 +229,16 @@ fn paired(accepts: impl Fn(&Reading, &Reading) -> bool) -> Vec<(Reading, Vec<Rea
 fn an_inequality_is_counted_without_its_pairs() {
     // `<>` over a key, and over text with NULLs: a NULL pairs with nothing.
     let unequal_ids = ROWS * (ROWS - 1);
-    let (answer, counters) =
-        run("SELECT COUNT(*) FROM readings a JOIN readings b ON a.id <> b.id");
+    let (answer, counters) = run("SELECT COUNT(*) FROM readings a JOIN readings b ON a.id <> b.id");
     assert_eq!(answer, vec![vec![Value::UInt64(unequal_ids)]]);
     assert_eq!(counters.join_pairs_counted, unequal_ids);
 
-    let zones = paired(|left, right| {
-        matches!((folded(left), folded(right)), (Some(a), Some(b)) if a != b)
-    });
-    let unequal_zones = zones.iter().map(|(_, right)| right.len() as u64).sum::<u64>();
+    let zones =
+        paired(|left, right| matches!((folded(left), folded(right)), (Some(a), Some(b)) if a != b));
+    let unequal_zones = zones
+        .iter()
+        .map(|(_, right)| right.len() as u64)
+        .sum::<u64>();
     let (answer, counters) =
         run("SELECT COUNT(*), COUNT(b.slot) FROM readings a JOIN readings b ON b.zone <> a.zone");
     let with_slot = zones
@@ -275,14 +276,16 @@ fn a_range_is_counted_per_left_row() {
     assert_eq!(answer, expected, "{sql}");
     assert_eq!(
         counters.join_pairs_counted,
-        earlier.iter().map(|(_, right)| right.len() as u64).sum::<u64>()
+        earlier
+            .iter()
+            .map(|(_, right)| right.len() as u64)
+            .sum::<u64>()
     );
 
     // Left, with a conjunct on the right side alone and a window of two
     // bounds: an unpaired left row is one row whose right side is NULL.
-    let window = paired(|left, right| {
-        right.pair < left.pair && right.pair >= left.pair - 3 && right.id > 2
-    });
+    let window =
+        paired(|left, right| right.pair < left.pair && right.pair >= left.pair - 3 && right.id > 2);
     let sql = "SELECT a.id, COUNT(b.id), COUNT(*), COUNT(b.slot) FROM readings a \
                LEFT JOIN readings b ON b.pair < a.pair AND b.pair >= a.pair - 3 AND b.id > 2 \
                GROUP BY a.id ORDER BY a.id";
@@ -301,7 +304,10 @@ fn a_range_is_counted_per_left_row() {
     assert_eq!(answer, expected, "{sql}");
     assert_eq!(
         counters.join_pairs_counted,
-        window.iter().map(|(_, right)| right.len() as u64).sum::<u64>()
+        window
+            .iter()
+            .map(|(_, right)| right.len() as u64)
+            .sum::<u64>()
     );
 
     // Grouped by a left column many rows share, with a filter on the left
@@ -324,7 +330,11 @@ fn a_range_is_counted_per_left_row() {
             other => panic!("{other:?}"),
         })
         .collect::<Vec<_>>();
-    assert_eq!(counts, groups.values().copied().collect::<Vec<_>>(), "{sql}");
+    assert_eq!(
+        counts,
+        groups.values().copied().collect::<Vec<_>>(),
+        "{sql}"
+    );
 }
 
 /// An equality join grouped by its left side, where each key holds over a

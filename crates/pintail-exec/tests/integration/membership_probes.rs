@@ -119,10 +119,10 @@ fn run(sql: &str) -> (Vec<Vec<Value>>, ExecCounters) {
         TableStatistics::with_row_count(rows.len() as u64),
     )
     .expect("entry");
-    let catalog =
-        CatalogSnapshot::new([DatabaseEntry::new(DatabaseId::new(1), "app", [entry])
-            .expect("database")])
-        .expect("catalog");
+    let catalog = CatalogSnapshot::new([
+        DatabaseEntry::new(DatabaseId::new(1), "app", [entry]).expect("database")
+    ])
+    .expect("catalog");
     let provider = SnapshotScanProvider::new([(DatabaseId::new(1), TableId::new(1), &snapshot)])
         .expect("provider");
     let bound = Binder::new(&catalog, Some("app"))
@@ -197,9 +197,7 @@ const RESIDUALS: [Residual; 5] = [
     ("q.id <> p.id", |q, p| Some(q.id != p.id)),
     ("q.id > p.id", |q, p| Some(q.id > p.id)),
     ("q.id < p.id", |q, p| Some(q.id < p.id)),
-    ("q.weight <> p.weight", |q, p| {
-        Some(q.weight? != p.weight?)
-    }),
+    ("q.weight <> p.weight", |q, p| Some(q.weight? != p.weight?)),
     ("q.id <> p.id AND q.weight >= 4", |q, p| {
         Some(q.id != p.id && q.weight? >= 4)
     }),

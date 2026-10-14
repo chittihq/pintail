@@ -145,15 +145,15 @@ pub(super) fn comparison_sign_column(
     // itself orders them.
     let orderings = super::numeric::scaled_orderings(batch, greater_left, greater_right, effects)
         .or_else(|| {
-            operand_orderings(
-                batch,
-                greater_left,
-                greater_right,
-                *collation,
-                false,
-                effects,
-            )
-        })?;
+        operand_orderings(
+            batch,
+            greater_left,
+            greater_right,
+            *collation,
+            false,
+            effects,
+        )
+    })?;
     ColumnVector::new(
         DataType::Int64,
         orderings

@@ -4410,7 +4410,11 @@ fn count_join_pairs(
     if rows < COUNTED_JOIN_ROWS_PER_KEY.saturating_mul(counts.len() as u64) || rows == 0 {
         memory.release(reserved);
         let expected_types = held.front().map_or_else(Vec::new, |batch: &RecordBatch| {
-            batch.columns().iter().map(ColumnVector::data_type).collect()
+            batch
+                .columns()
+                .iter()
+                .map(ColumnVector::data_type)
+                .collect()
         });
         **right = PullOperator::Scan {
             stream: Box::new(ReplayStream { batches: held }),
@@ -4432,7 +4436,9 @@ fn count_join_pairs(
                 super::join::JoinSide::Probe,
             )? && let Some(count) = counts.get(&key)
             {
-                pairs = pairs.checked_add(*count).ok_or(ExecError::NumericOverflow)?;
+                pairs = pairs
+                    .checked_add(*count)
+                    .ok_or(ExecError::NumericOverflow)?;
             }
         }
     }

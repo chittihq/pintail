@@ -50,9 +50,9 @@ use super::{
     ExecError, JoinKeyMode, MemoryTracker, PhysicalPlan, PullOperator, ScanProvider, batch_row,
     build_operator, estimated_row_payload_bytes, hash_join_key_mode, pair_key_collation,
 };
+use crate::RecordBatch;
 use crate::collation::Collation;
 use crate::expression::{CompiledExpr, predicate_truth};
-use crate::RecordBatch;
 
 /// Rows either side may hold before the join is left as it was.
 const MAX_SIDE_ROWS: usize = 4 << 20;
@@ -88,7 +88,10 @@ fn same_column(left: &BoundColumn, right: &BoundColumn) -> bool {
 fn reads_only(expression: &BoundExpr, columns: &[BoundColumn]) -> bool {
     match &expression.kind {
         BoundExprKind::Column(column) => {
-            !column.outer && columns.iter().any(|candidate| same_column(candidate, column))
+            !column.outer
+                && columns
+                    .iter()
+                    .any(|candidate| same_column(candidate, column))
         }
         BoundExprKind::Literal(_) => true,
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
@@ -364,15 +367,7 @@ pub(super) fn plan(
                     .enumerate()
                     .map(|(index, (left, right))| (left, right, null_safe_at(index + 1))),
             );
-            (
-                left,
-                right,
-                *kind,
-                &[][..],
-                None,
-                equal,
-                EQUAL_ROWS_PER_KEY,
-            )
+            (left, right, *kind, &[][..], None, equal, EQUAL_ROWS_PER_KEY)
         }
         _ => return Ok(None),
     };
@@ -385,17 +380,15 @@ pub(super) fn plan(
     {
         return Ok(None);
     }
-    let (mut left, left_columns) =
-        build_operator((**left).clone(), provider, memory, collation)?;
+    let (mut left, left_columns) = build_operator((**left).clone(), provider, memory, collation)?;
     let (mut right, right_columns) =
         build_operator((**right).clone(), provider, memory, collation)?;
     // A column both sides carry would name either: the sides of a
     // self-join differ by alias, and anything else is not counted here.
-    if left_columns.iter().any(|column| {
-        right_columns
-            .iter()
-            .any(|other| same_column(column, other))
-    }) {
+    if left_columns
+        .iter()
+        .any(|column| right_columns.iter().any(|other| same_column(column, other)))
+    {
         return Ok(None);
     }
     if !group_by

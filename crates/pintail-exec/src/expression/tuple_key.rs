@@ -209,7 +209,9 @@ fn write_text(key: &mut String, text: &str, weigh: Option<Collation>) {
         None => write_quoted(key, text),
         Some(collation) => {
             key.push('=');
-            key.push_str(&crate::execution::normalized_collation_text(text, collation));
+            key.push_str(&crate::execution::normalized_collation_text(
+                text, collation,
+            ));
         }
     }
 }
@@ -531,8 +533,14 @@ mod tests {
             );
         }
         let scale = UnitKind::Decimal { scale: 2 };
-        assert_eq!(spelled(&Value::Utf8("-1.50".to_owned()), Some(scale)), "#-150");
-        assert_eq!(spelled(&Value::Utf8("-1.5".to_owned()), Some(scale)), "\"-1.5\"");
+        assert_eq!(
+            spelled(&Value::Utf8("-1.50".to_owned()), Some(scale)),
+            "#-150"
+        );
+        assert_eq!(
+            spelled(&Value::Utf8("-1.5".to_owned()), Some(scale)),
+            "\"-1.5\""
+        );
     }
 
     /// No two different values of one component spell the same key, and a

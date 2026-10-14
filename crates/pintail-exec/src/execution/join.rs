@@ -5040,7 +5040,9 @@ impl RangeCounter {
 
     /// Orders the rows taken; no row is taken after it.
     pub(super) fn seal(&mut self) {
-        self.index.sorted.sort_by(|left, right| left.0.cmp(&right.0));
+        self.index
+            .sorted
+            .sort_by(|left, right| left.0.cmp(&right.0));
     }
 
     /// Right rows taken so far.
