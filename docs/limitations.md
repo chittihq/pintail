@@ -274,6 +274,10 @@ stays readable as a list of things to fix.
   text or a number across rows is refused where MySQL makes it a string. A
   quantified comparison with one (`x = ANY (VALUES ROW(1), ROW(2))`) does
   not parse.
+- A DATE or DATETIME looked up in a subquery that selects a number column
+  (`d IN (SELECT n FROM t)`) is compared with the numbers as text and
+  matches none, where MySQL reads them as dates. Compared with `=`, or
+  with the numbers written out in a list, it matches.
 - A row compared with a subquery (`(a, b) = (SELECT x, y ...)`) is refused
   when the subquery refers to the outer row and also uses `DISTINCT`,
   `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT` or a set operation.

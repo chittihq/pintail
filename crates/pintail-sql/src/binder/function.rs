@@ -2108,6 +2108,15 @@ pub(super) fn bind_in_list(
             },
         );
     }
+    in_list_of(args, negated)
+}
+
+/// `args[0] IN (args[1..])` over bound operands, compared under the one
+/// type `MySQL` settles on for the list. A list written out and a list a
+/// constant subquery produces - `x IN ((SELECT 1))` - go through the same
+/// settling, so a TIME or text `x` meets a number there the way it meets
+/// one written in the list.
+pub(super) fn in_list_of(args: Vec<BoundExpr>, negated: bool) -> Result<BoundExpr, BindError> {
     let args = super::unify_temporal_list(args);
     let args = super::unify_time_list(args);
     let subject = args[0].clone();

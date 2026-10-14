@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2981;
+const EXPECTED_CASES: usize = 2985;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5198,6 +5198,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "json arithmetic and truth",
             "SELECT id, JSON_EXTRACT(meta, '$.score') IS TRUE, NOT JSON_EXTRACT(meta, '$.tags'), JSON_EXTRACT(meta, '$.tags[0]') AND 1, IF(JSON_EXTRACT(meta, '$.score'), 'y', 'n'), JSON_EXTRACT(meta, '$.items') OR 0 FROM orders ORDER BY id",
+        ),
+        // A value is looked up in a subquery as `=` compares the two: text beside a DECIMAL as doubles, a TIME beside a number as a time.
+        ordered(
+            "in subquery compares as equality",
+            "SELECT id, CAST(id AS CHAR) IN (SELECT total FROM orders) AS t, CONCAT(id, '.00') IN (SELECT total FROM orders) AS u, id IN (SELECT CAST(total AS CHAR) FROM orders) AS v FROM users ORDER BY id",
+        ),
+        ordered(
+            "in subquery compares as equality",
+            "SELECT id FROM orders WHERE total IN (SELECT CONCAT(score, '') FROM events) ORDER BY id",
+        ),
+        ordered(
+            "in subquery compares as equality",
+            "SELECT id, clock IN (SELECT id - 4 FROM bounds) AS m, clock IN ((SELECT 0)) AS z, frac IN ((SELECT '1.5')) AS f FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "in subquery compares as equality",
+            "SELECT SUM(DISTINCT score) FROM events GROUP BY score HAVING CAST(score AS CHAR) IN ((SELECT AVG(10) OVER ())) ORDER BY 1",
         ),
         ordered(
             "bit literal arithmetic",

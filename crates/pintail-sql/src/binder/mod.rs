@@ -5049,6 +5049,7 @@ fn bind_in_subquery(
             // midnight: both sides are read as DATETIME(6), the subquery's
             // column where it is produced.
             let (expr, value) = unify_temporal_operands(expr, query.projection[0].expr.clone());
+            let (expr, value) = membership_operands(expr, value);
             // The set-at-a-time form projects the member as written.
             if query.projection[0].expr != value {
                 query.outer_set = None;
@@ -5070,14 +5071,38 @@ fn bind_in_subquery(
     };
     let mut args = vec![expr];
     args.extend(values);
-    let args = rewrite_json_comparison_list(args);
     if args[1..]
         .iter()
         .any(|value| !comparable(args[0].data_type, value.data_type))
     {
         return Err(BindError::InvalidScalarFunction("IN subquery".to_owned()));
     }
-    bind_scalar(ScalarFunction::InList { negated }, args)
+    function::in_list_of(args, negated)
+}
+
+/// The two sides of `x IN (SELECT y ...)` as the values `x = y` compares.
+/// A set is searched by value, so both sides have to be in one domain
+/// before it is built: text beside a DECIMAL or a DOUBLE is the DOUBLE it
+/// reads as and the DECIMAL with it, a TIME beside a number or text is
+/// compared as a time, and a date beside a number as the number it spells.
+/// Left as written, `'1' IN (SELECT 1.00)` looked for the text `1` among
+/// `1.00` and `time_col IN (SELECT 1)` for a time among integers.
+fn membership_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    let (left, right) = unify_time_operands(left, right);
+    let (left, right) = text_as_number(left, right);
+    let double =
+        |expr: &BoundExpr| matches!(expr.data_type, Some(DataType::Float32 | DataType::Float64));
+    let decimal = |expr: &BoundExpr| matches!(expr.data_type, Some(DataType::Decimal { .. }));
+    let mixed = (double(&left) && (decimal(&right) || is_plain_text(&right)))
+        || (double(&right) && (decimal(&left) || is_plain_text(&left)));
+    if mixed {
+        (
+            cast_to(left, DataType::Float64),
+            cast_to(right, DataType::Float64),
+        )
+    } else {
+        (left, right)
+    }
 }
 
 fn bind_constant_subquery(query: &Query) -> Result<Vec<BoundExpr>, BindError> {
