@@ -153,6 +153,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A stream-following CDC cycle could stop applying changes with no error:
+  it ended inside a transaction opened by an anonymous GTID event or
+  `BEGIN`, or with a large row event still arriving, and every following
+  cycle repeated the same empty window. A cycle now never ends inside a
+  transaction, reads on to the source's log end when its window closes,
+  and bounds every wait on the source (`stream_stall`, 30 s).
 - Multi-argument `COUNT(DISTINCT a, b)` pads and folds a binary or
   `general_ci` text component by that component's own rules; it could
   count two equal values as distinct.
