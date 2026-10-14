@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2985;
+const EXPECTED_CASES: usize = 2987;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5215,6 +5215,15 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "in subquery compares as equality",
             "SELECT SUM(DISTINCT score) FROM events GROUP BY score HAVING CAST(score AS CHAR) IN ((SELECT AVG(10) OVER ())) ORDER BY 1",
+        ),
+        // SUM(DISTINCT) and AVG(DISTINCT) over text add each distinct number once.
+        ordered(
+            "distinct sum over text",
+            "SELECT SUM(DISTINCT note), COUNT(DISTINCT note), SUM(DISTINCT CONCAT(score DIV 20, '.0')), SUM(DISTINCT CONCAT(score DIV 20)), AVG(DISTINCT CONCAT('0', score DIV 40)) FROM events",
+        ),
+        ordered(
+            "distinct sum over text",
+            "SELECT CONCAT(score DIV 30) AS k, SUM(DISTINCT CONCAT(score DIV 30)), AVG(DISTINCT CONCAT(score DIV 30, '.0')), COUNT(*) FROM events GROUP BY k ORDER BY k",
         ),
         ordered(
             "bit literal arithmetic",

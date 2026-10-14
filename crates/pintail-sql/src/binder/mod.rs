@@ -6962,6 +6962,25 @@ fn bind_aggregate(
     } else {
         numeric_aggregate_input(aggregate_function, expr)
     };
+    // SUM(DISTINCT) and AVG(DISTINCT) over text add each distinct NUMBER
+    // once: `'1'`, `'1.0'` and `'01'` are one value to them, where
+    // COUNT(DISTINCT) counts three strings. The text is read as the DOUBLE
+    // it sums as before the duplicates are removed.
+    let expr = if distinct
+        && matches!(
+            aggregate_function,
+            AggregateFunction::Sum | AggregateFunction::Average
+        ) {
+        expr.map(|value| {
+            if value.data_type == Some(DataType::Utf8) {
+                cast_to(value, DataType::Float64)
+            } else {
+                value
+            }
+        })
+    } else {
+        expr
+    };
     let expr = bit_aggregate_input(aggregate_function, expr, arguments.args.first());
     let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
     let charset = expr

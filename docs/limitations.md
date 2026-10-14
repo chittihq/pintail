@@ -278,6 +278,8 @@ stays readable as a list of things to fix.
   (`d IN (SELECT n FROM t)`) is compared with the numbers as text and
   matches none, where MySQL reads them as dates. Compared with `=`, or
   with the numbers written out in a list, it matches.
+- `SUM(DISTINCT d)` or `AVG(DISTINCT d)` over a DECIMAL column that is
+  also a `GROUP BY` key of the query is refused as a numeric overflow.
 - A row compared with a subquery (`(a, b) = (SELECT x, y ...)`) is refused
   when the subquery refers to the outer row and also uses `DISTINCT`,
   `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT` or a set operation.
