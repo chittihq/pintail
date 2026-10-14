@@ -304,6 +304,7 @@ fn count_column(index: usize) -> BoundColumn {
         nullable: false,
         collation: None,
         enum_labels: None,
+        declared_set: false,
         geometry: false,
         timestamp: false,
         binary_width: None,
