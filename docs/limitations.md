@@ -270,11 +270,10 @@ stays readable as a list of things to fix.
 - A row compared with a subquery (`(a, b) = (SELECT x, y ...)`) is refused
   when the subquery refers to the outer row and also uses `DISTINCT`,
   `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT` or a set operation.
-- `EXPORT_SET` takes its bit count as a written whole number only; a count
-  that is a column, a string or a fraction is refused. `INTERVAL(N, N1, ...)`
-  finds the first listed value above `N` in list order; over a list of more
-  than eight constants that is not in ascending order MySQL, which searches
-  such a list by halving, can answer another position.
+- `INTERVAL(N, N1, ...)` finds the first listed value above `N` in list
+  order; over a list of more than eight constants that is not in ascending
+  order MySQL, which searches such a list by halving, can answer another
+  position.
 - `STRCMP` compares a DATE, DATETIME, TIMESTAMP or YEAR column by its text
   with a text column, another such column, or a string constant that reads
   as a date, and a TIME column with a text or TIME column. It rejects every

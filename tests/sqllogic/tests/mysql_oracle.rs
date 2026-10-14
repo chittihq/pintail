@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2974;
+const EXPECTED_CASES: usize = 2975;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5167,6 +5167,11 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "respect nulls",
             "SELECT id, LEAD(score, 1) RESPECT NULLS OVER (ORDER BY id), LAG(note) RESPECT NULLS OVER (ORDER BY id), FIRST_VALUE(note) RESPECT NULLS OVER (ORDER BY id), LAST_VALUE(note) RESPECT NULLS OVER (), NTH_VALUE(score, 2) RESPECT NULLS OVER (ORDER BY id) FROM events ORDER BY id",
+        ),
+        // EXPORT_SET reads a count that is not a written whole number as an integer, row by row.
+        ordered(
+            "export_set with a computed count",
+            "SELECT id, EXPORT_SET(score, 'Y', 'N', ',', id), EXPORT_SET(5, '1', '0', '', CAST(id AS SIGNED) - 3), EXPORT_SET(id, 'on', 'off', '-', score / 40), EXPORT_SET(5, 'Y', 'N', ',', '3'), EXPORT_SET(5, '1', '0', '', 2.5), EXPORT_SET(5, '1', '0', '', 2.5e0), EXPORT_SET(6, '1', '0', '', NULLIF(id, 2)) FROM events ORDER BY id",
         ),
         ordered(
             "bit literal arithmetic",

@@ -1427,9 +1427,11 @@ fn made_set(function: &Function, bits: &Expr, members: &[&Expr]) -> Expr {
 
 /// `EXPORT_SET(bits, on, off[, separator[, count]])`: `on` or `off` for
 /// each of the low `count` bits, lowest first, joined by the separator - a
-/// comma and sixty-four bits unless given. Any NULL argument is NULL. The
-/// count has to be written as a whole number; a count that is not between
-/// zero and sixty-four is sixty-four.
+/// comma and sixty-four bits unless given. Any NULL argument is NULL. A
+/// count that is not between zero and sixty-four is sixty-four. A count
+/// written as a whole number decides how many bits are spelled; any other
+/// count is read as an integer row by row, and each bit past the first is
+/// spelled only where the count reaches it.
 fn exported_set(
     function: &Function,
     bits: &Expr,
@@ -1439,15 +1441,17 @@ fn exported_set(
 ) -> Result<Expr, BindError> {
     use sqlparser::ast::BinaryOperator;
     let unsupported = || BindError::UnsupportedExpression(function.to_string());
-    let count = match rest.get(1) {
-        None => 64,
-        Some(Expr::Value(value)) => match &value.value {
-            SqlValue::Null => return Ok(null()),
-            SqlValue::Number(digits, _) => {
-                digits.parse::<usize>().map_err(|_| unsupported())?.min(64)
-            }
-            _ => return Err(unsupported()),
+    let whole = |count: &Expr| match count {
+        Expr::Value(value) => match &value.value {
+            SqlValue::Number(digits, _) => digits.parse::<usize>().ok(),
+            _ => None,
         },
+        _ => None,
+    };
+    let count = match rest.get(1).copied() {
+        None => 64,
+        Some(Expr::Value(value)) if matches!(value.value, SqlValue::Null) => return Ok(null()),
+        Some(count) if whole(count).is_some() => whole(count).unwrap_or(64).min(64),
         Some(Expr::UnaryOp {
             op: sqlparser::ast::UnaryOperator::Minus,
             expr,
@@ -1456,7 +1460,12 @@ fn exported_set(
         {
             64
         }
-        Some(_) => return Err(unsupported()),
+        Some(count) => {
+            let Some(separator) = rest.first().copied() else {
+                return Err(unsupported());
+            };
+            return Ok(counted_export(function, bits, on, off, separator, count));
+        }
     };
     let nested = |operand: &Expr| Expr::Nested(Box::new(operand.clone()));
     let (bits, on, off) = (nested(bits), nested(on), nested(off));
@@ -1481,6 +1490,58 @@ fn exported_set(
         call_of(function, "CONCAT_WS", arguments)
     };
     Ok(searched_case(vec![(missing, null())], Some(joined)))
+}
+
+/// `EXPORT_SET` whose count is an expression. The count is read as an
+/// integer the way a cast to SIGNED reads it; NULL is NULL, zero is the
+/// empty string, and a count below zero or past sixty-four is sixty-four.
+fn counted_export(
+    function: &Function,
+    bits: &Expr,
+    on: &Expr,
+    off: &Expr,
+    separator: &Expr,
+    count: &Expr,
+) -> Expr {
+    use sqlparser::ast::BinaryOperator;
+    let nested = |operand: &Expr| Expr::Nested(Box::new(operand.clone()));
+    let (bits, on, off, separator) = (nested(bits), nested(on), nested(off), nested(separator));
+    let count = Expr::Nested(Box::new(Expr::Cast {
+        kind: sqlparser::ast::CastKind::Cast,
+        expr: Box::new(nested(count)),
+        data_type: SqlDataType::Signed,
+        array: false,
+        format: None,
+    }));
+    let missing = [&bits, &on, &off, &separator, &count]
+        .into_iter()
+        .map(|operand| Expr::IsNull(Box::new(operand.clone())))
+        .reduce(|left, right| operation(left, BinaryOperator::Or, right))
+        .unwrap_or_else(null);
+    let spelled =
+        |bit: usize| searched_case(vec![(bit_set(&bits, bit), on.clone())], Some(off.clone()));
+    let mut pieces = vec![spelled(0)];
+    for bit in 1..64 {
+        let reached = operation(
+            operation(count.clone(), BinaryOperator::Gt, number(bit.to_string())),
+            BinaryOperator::Or,
+            operation(count.clone(), BinaryOperator::Lt, number("0")),
+        );
+        pieces.push(searched_case(
+            vec![(
+                reached,
+                call_of(function, "CONCAT", vec![separator.clone(), spelled(bit)]),
+            )],
+            Some(text("")),
+        ));
+    }
+    searched_case(
+        vec![
+            (missing, null()),
+            (operation(count, BinaryOperator::Eq, number("0")), text("")),
+        ],
+        Some(call_of(function, "CONCAT", pieces)),
+    )
 }
 
 fn bind_timestamp_add(
