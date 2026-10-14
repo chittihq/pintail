@@ -10175,6 +10175,11 @@ fn evaluate_arithmetic(
                         .map(Value::UInt64)
                         .ok_or(ExecError::NumericOverflow);
                 }
+                // A remainder takes its sign from the dividend, so a
+                // negative divisor divides by its magnitude.
+                (BinaryOp::Modulo, Value::UInt64(base), Value::Int64(signed)) if *signed < 0 => {
+                    return Ok(Value::UInt64(base % signed.unsigned_abs()));
+                }
                 _ => {}
             }
             let left = mysql_u64(left)?;

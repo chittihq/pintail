@@ -4406,12 +4406,13 @@ fn bind_expr_inner(
             } else {
                 ScalarFunction::Floor { decimal: false }
             };
-            bind_scalar(
-                function,
-                vec![bind_expr_inner(
-                    inner, tables, aggregates, windows, subqueries,
-                )?],
-            )
+            let operand = bind_expr_inner(inner, tables, aggregates, windows, subqueries)?;
+            let operand = if unintroduced_bit_literal(inner) {
+                bit_literal_double(operand)
+            } else {
+                operand
+            };
+            bind_scalar(function, vec![operand])
         }
         Expr::UnaryOp { op, expr } => {
             bind_unary(*op, expr, tables, aggregates, windows, subqueries)
@@ -5703,13 +5704,40 @@ fn bind_binary(
             | BinaryOperator::Modulo
             | BinaryOperator::MyIntegerDivide
     ) {
+        // Beside a whole number a bit literal is a signed BIGINT: `b'1' - 2`
+        // is -1 and sixty-four ones are -1, where a hex literal of the same
+        // bytes is unsigned. Division by `/` and arithmetic with a DECIMAL,
+        // a DOUBLE or text read it unsigned.
+        let whole = |expr: &BoundExpr, written: &Expr| {
+            unintroduced_bit_literal(written)
+                || matches!(
+                    expr.data_type.map(DataType::storage_type),
+                    Some(DataType::Int64 | DataType::UInt64 | DataType::Boolean)
+                )
+        };
+        let signed = !matches!(operator, BinaryOperator::Divide);
+        let (left_signed, right_signed) = (
+            signed && bit_literal(written_left) && whole(&right, written_right),
+            signed && bit_literal(written_right) && whole(&left, written_left),
+        );
+        let truncating = matches!(operator, BinaryOperator::MyIntegerDivide);
         let left = if unintroduced_bit_literal(written_left) {
-            numeric_bit_input(left, written_left)?
+            let number = numeric_bit_input(left, written_left)?;
+            if left_signed {
+                signed_bit_literal(number, truncating)
+            } else {
+                number
+            }
         } else {
             left
         };
         let right = if unintroduced_bit_literal(written_right) {
-            numeric_bit_input(right, written_right)?
+            let number = numeric_bit_input(right, written_right)?;
+            if right_signed {
+                signed_bit_literal(number, truncating)
+            } else {
+                number
+            }
         } else {
             right
         };
@@ -6990,6 +7018,48 @@ fn unintroduced_bit_literal(mut written: &Expr) -> bool {
     matches!(written, Expr::Value(value) if matches!(value.value, SqlValue::HexStringLiteral(_) | SqlValue::SingleQuotedByteStringLiteral(_)))
 }
 
+/// Whether `written` is a bit literal (`b'101'`, `0b101`), as opposed to a
+/// hex literal.
+fn bit_literal(mut written: &Expr) -> bool {
+    while let Expr::Nested(inner) = written {
+        written = inner;
+    }
+    matches!(written, Expr::Value(value) if matches!(value.value, SqlValue::SingleQuotedByteStringLiteral(_)))
+}
+
+/// A bit literal's number as the signed BIGINT its sixty-four bits spell.
+/// `DIV` reads the bits unsigned and answers a signed BIGINT, so there a
+/// literal with its first bit set stays the unsigned number it was.
+fn signed_bit_literal(number: BoundExpr, truncating: bool) -> BoundExpr {
+    match number.kind {
+        BoundExprKind::Literal(Value::UInt64(bits))
+            if !truncating || i64::try_from(bits).is_ok() =>
+        {
+            BoundExpr {
+                kind: BoundExprKind::Literal(Value::Int64(bits.cast_signed())),
+                data_type: Some(DataType::Int64),
+                nullable: false,
+            }
+        }
+        _ => number,
+    }
+}
+
+/// A hex or bit literal as the DOUBLE its bytes spell; anything else as it
+/// came.
+pub(super) fn bit_literal_double(expr: BoundExpr) -> BoundExpr {
+    let BoundExprKind::Literal(Value::Binary(bytes)) = &expr.kind else {
+        return expr;
+    };
+    #[allow(clippy::cast_precision_loss)] // a DOUBLE is what `MySQL` reads here
+    let number = bit_literal_number(bytes) as f64;
+    BoundExpr {
+        kind: BoundExprKind::Literal(Value::float64(number)),
+        data_type: Some(DataType::Float64),
+        nullable: false,
+    }
+}
+
 fn bit_literal_number(bytes: &[u8]) -> u64 {
     bytes
         .iter()
@@ -7070,9 +7140,17 @@ fn bit_aggregate_input(
     expr: Option<BoundExpr>,
     written: Option<&FunctionArg>,
 ) -> Option<BoundExpr> {
+    // The bit aggregates and the sums read an unintroduced literal as the
+    // number its bytes spell.
     if !matches!(
         function,
-        AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor
+        AggregateFunction::BitAnd
+            | AggregateFunction::BitOr
+            | AggregateFunction::BitXor
+            | AggregateFunction::Sum
+            | AggregateFunction::Average
+            | AggregateFunction::StdDev { .. }
+            | AggregateFunction::Variance { .. }
     ) {
         return expr;
     }

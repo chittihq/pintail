@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2962;
+const EXPECTED_CASES: usize = 2966;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5122,6 +5122,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "datetime text rounds to microseconds",
             "SELECT id, TIMESTAMPDIFF(MICROSECOND, placed_at, '2025-06-01 00:00:00.0000005'), DATEDIFF('2025-01-01', CONCAT(DATE(placed_at), ' 23:59:59.9999995')) FROM orders ORDER BY id",
+        ),
+        // Beside a whole number a bit literal is a signed BIGINT; a remainder takes its sign from the dividend.
+        ordered(
+            "bit literal arithmetic",
+            "SELECT b'1' - 2, 2 - b'101', b'101' * -1, b'101' DIV -2, b'101' % -3, 0 - b'1', b'1111111111111111111111111111111111111111111111111111111111111111' + 0, b'1111111111111111111111111111111111111111111111111111111111111111' * 2, b'1000000000000000000000000000000000000000000000000000000000000000' + 1",
+        ),
+        ordered(
+            "bit literal arithmetic",
+            "SELECT id, id + b'1111111111111111111111111111111111111111111111111111111111111111', id - b'10', b'1111111111111111111111111111111111111111111111111111111111111111' % 7, b'1111111111111111111111111111111111111111111111111111111111111111' + 1.0, b'1111111111111111111111111111111111111111111111111111111111111111' DIV 2, 0xFFFFFFFFFFFFFFFF + 0, b'1111111111111111111111111111111111111111111111111111111111111111' + 0 = -1 FROM users ORDER BY id",
+        ),
+        ordered(
+            "bit literal arithmetic",
+            "SELECT CAST(255 AS UNSIGNED) % -7, 0xFF % -7, CAST(5 AS UNSIGNED) % -3, CAST(18446744073709551615 AS UNSIGNED) % -10",
+        ),
+        ordered(
+            "bit literal arithmetic",
+            "SELECT id, id + b'1111111111111111111111111111111111111111111111111111111111111111', id % -3 FROM events ORDER BY id",
         ),
         // IPv4 and IPv6 text to bytes and back, as MySQL reads and prints them.
         ordered(

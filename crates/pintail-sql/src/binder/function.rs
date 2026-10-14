@@ -674,14 +674,41 @@ pub(super) fn bind_scalar_function(
     {
         return bind_expr_inner(&respelled, tables, aggregates, windows, subqueries);
     }
+    // A hex or bit literal handed to a function of numbers is the number
+    // its bytes spell, read as a DOUBLE; as bytes it read as text, and
+    // `ABS(0xFF)` was 0.
+    let of_numbers = matches!(
+        function_name.as_str(),
+        "ABS"
+            | "ROUND"
+            | "CEIL"
+            | "CEILING"
+            | "FLOOR"
+            | "SIGN"
+            | "POW"
+            | "POWER"
+            | "SQRT"
+            | "EXP"
+            | "LN"
+            | "LOG"
+            | "LOG2"
+            | "LOG10"
+            | "TRUNCATE"
+            | "MOD"
+    );
     let mut args = Vec::with_capacity(arguments.args.len());
     for argument in &arguments.args {
         let FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) = argument else {
             return Err(BindError::UnsupportedExpression(function.to_string()));
         };
-        args.push(bind_expr_inner(
-            expression, tables, aggregates, windows, subqueries,
-        )?);
+        let bound = bind_expr_inner(expression, tables, aggregates, windows, subqueries)?;
+        args.push(
+            if of_numbers && super::unintroduced_bit_literal(expression) {
+                super::bit_literal_double(bound)
+            } else {
+                bound
+            },
+        );
     }
     let scalar = match function_name.as_str() {
         "CONCAT" if !args.is_empty() => ScalarFunction::Concat,
