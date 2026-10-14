@@ -2171,6 +2171,17 @@ pub(super) fn bind_between(
     let low = super::canonical_literal_operand(&subject, low)?;
     let high = super::canonical_literal_operand(&subject, high)?;
     let args = super::choice_among_numbers(vec![subject, low, high]);
+    // Between numbers a JSON value is the DOUBLE it converts to, where a
+    // comparison with one number follows the JSON ladder.
+    let args = if args[0].data_type == Some(DataType::Json)
+        && args[1..].iter().all(super::compares_as_number)
+    {
+        let mut args = args;
+        args[0] = super::json_as_number(args[0].clone());
+        args
+    } else {
+        args
+    };
     let args = super::numeric_list_as_double(args);
     let args = super::rewrite_json_comparison_list(args);
     if !comparable(args[0].data_type, args[1].data_type)
@@ -2652,12 +2663,13 @@ pub(super) fn bind_scalar(
         args.into_iter()
             .map(super::temporal_extremum_as_number)
             .map(super::choice_as_number)
+            .map(super::json_as_number)
             .collect()
     } else if function == ScalarFunction::If {
         // The condition is a truth value, which is a number.
         let mut args = args;
         if let Some(condition) = args.first_mut() {
-            *condition = super::choice_as_number(condition.clone());
+            *condition = super::json_as_number(super::choice_as_number(condition.clone()));
         }
         args
     } else {

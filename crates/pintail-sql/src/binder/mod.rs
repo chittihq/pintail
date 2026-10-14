@@ -752,7 +752,7 @@ impl<'catalog> Binder<'catalog> {
                 });
             }
         }
-        let filter = residual_filter.map(choice_as_number);
+        let filter = residual_filter.map(choice_as_number).map(json_truth);
         if let Some(filter) = &filter
             && !is_truth_value(filter.data_type)
         {
@@ -929,7 +929,7 @@ impl<'catalog> Binder<'catalog> {
             .having
             .as_ref()
             .map(|expr| substitute_projection_aliases(expr, &select.projection, &group_by));
-        let mut having = having_expr
+        let having = having_expr
             .as_ref()
             .map(|expr| {
                 bind_aggregate_expr(
@@ -940,6 +940,7 @@ impl<'catalog> Binder<'catalog> {
                 )
             })
             .transpose()?;
+        let mut having = having.map(|predicate| json_truth(choice_as_number(predicate)));
         if let Some(predicate) = &having
             && !is_truth_value(predicate.data_type)
         {
@@ -5417,6 +5418,11 @@ fn bind_unary(
     } else {
         expr
     };
+    let expr = match operator {
+        UnaryOperator::Minus => json_as_number(expr),
+        UnaryOperator::Not => json_truth(expr),
+        _ => expr,
+    };
     let (expr, negated_type) = match expr.data_type {
         _ if operator != UnaryOperator::Minus => (expr, None),
         Some(DataType::Binary) if unintroduced_bit_literal(written) => {
@@ -5563,9 +5569,10 @@ fn bind_binary(
     let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
     // A truth value is a number, and so is either side of `<=>` beside one.
     let (left, right) = match operator {
-        BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Xor => {
-            (choice_as_number(left), choice_as_number(right))
-        }
+        BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Xor => (
+            json_truth(choice_as_number(left)),
+            json_truth(choice_as_number(right)),
+        ),
         BinaryOperator::Spaceship if compares_as_number(&right) => (choice_as_number(left), right),
         BinaryOperator::Spaceship if compares_as_number(&left) => (left, choice_as_number(right)),
         _ => (left, right),
@@ -5742,8 +5749,8 @@ fn bind_binary(
             right
         };
         (
-            choice_as_number(temporal_as_number(left)),
-            choice_as_number(temporal_as_number(right)),
+            json_as_number(choice_as_number(temporal_as_number(left))),
+            json_as_number(choice_as_number(temporal_as_number(right))),
         )
     } else {
         (left, right)
@@ -6667,9 +6674,9 @@ fn bind_truth_test(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let operand = choice_as_number(bind_expr_inner(
+    let operand = json_truth(choice_as_number(bind_expr_inner(
         expr, tables, aggregates, windows, subqueries,
-    )?);
+    )?));
     if !is_truth_value(operand.data_type) {
         return Err(BindError::InvalidUnaryType {
             operation: if tests_false { "IS FALSE" } else { "IS TRUE" }.to_owned(),
@@ -8529,6 +8536,86 @@ fn temporal_extremum_as_number(expr: BoundExpr) -> BoundExpr {
     expr
 }
 
+/// A JSON value in arithmetic is the DOUBLE its scalar converts to: a
+/// number is its value, a string the number it starts with, `true` 1, and
+/// `false`, `null`, an array or an object 0.
+pub(super) fn json_as_number(expr: BoundExpr) -> BoundExpr {
+    if expr.data_type == Some(DataType::Json) {
+        cast_to(expr, DataType::Float64)
+    } else {
+        expr
+    }
+}
+
+/// A JSON value as the truth value `NOT`, `AND`, `OR`, `XOR`, `IS TRUE` and
+/// a WHERE clause read from it: false for a JSON number that is zero, NULL
+/// for NULL, and true for every other document - `false`, `null`, an empty
+/// string and an empty array among them. The condition of `IF` and `CASE`
+/// reads the value as a number instead (see [`json_as_number`]).
+pub(super) fn json_truth(expr: BoundExpr) -> BoundExpr {
+    if expr.data_type != Some(DataType::Json) {
+        return expr;
+    }
+    let text = |value: &str| BoundExpr {
+        kind: BoundExprKind::Literal(Value::Utf8(value.to_owned())),
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+    };
+    let truth = |kind: BoundExprKind, nullable: bool| BoundExpr {
+        kind,
+        data_type: Some(DataType::Boolean),
+        nullable,
+    };
+    let nonzero = truth(
+        BoundExprKind::Binary {
+            op: BinaryOp::NotEqual,
+            left: Box::new(cast_to(expr.clone(), DataType::Float64)),
+            right: Box::new(BoundExpr {
+                kind: BoundExprKind::Literal(Value::float64(0.0)),
+                data_type: Some(DataType::Float64),
+                nullable: false,
+            }),
+        },
+        true,
+    );
+    let missing = truth(
+        BoundExprKind::IsNull {
+            expr: Box::new(expr.clone()),
+            negated: false,
+        },
+        false,
+    );
+    let otherwise = function::bind_scalar(
+        ScalarFunction::If,
+        vec![
+            missing,
+            BoundExpr {
+                kind: BoundExprKind::Literal(Value::Null),
+                data_type: None,
+                nullable: true,
+            },
+            truth(BoundExprKind::Literal(Value::Boolean(true)), false),
+        ],
+    );
+    function::bind_scalar(ScalarFunction::JsonType, vec![expr.clone()])
+        .and_then(|kind| {
+            function::bind_scalar(
+                ScalarFunction::InList { negated: false },
+                vec![
+                    kind,
+                    text("INTEGER"),
+                    text("DOUBLE"),
+                    text("DECIMAL"),
+                    text("UNSIGNED INTEGER"),
+                ],
+            )
+        })
+        .and_then(|number| {
+            function::bind_scalar(ScalarFunction::If, vec![number, nonzero, otherwise?])
+        })
+        .unwrap_or(expr)
+}
+
 fn temporal_as_number(expr: BoundExpr) -> BoundExpr {
     let expr = temporal_extremum_as_number(expr);
     if let Some(number) = implicit_day_number(&expr) {
@@ -9916,7 +10003,6 @@ impl SourceClause {
                 | "FETCH"
                 | "UNION"
                 | "EXCEPT"
-        // The text as written, without the space before what follows it.
                 | "INTERSECT"
                 | "INTO"
                 | "FOR"

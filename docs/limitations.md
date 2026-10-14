@@ -124,7 +124,7 @@ stays readable as a list of things to fix.
   equal regardless of member order), and so do text compared with JSON (as a
   JSON string), `MIN`/`MAX` and window `PARTITION BY`. Residuals that still
   reject explicitly: comparing JSON against a date, time or binary scalar
-  (MySQL gives those their own JSON types), JSON arithmetic,
+  (MySQL gives those their own JSON types),
   `GROUP_CONCAT ... ORDER BY` over JSON (MySQL sorts there by a key that
   puts every integer before any other number, which the ladder does not
   reproduce), and the recursive-CTE `UNION DISTINCT` fixpoint over JSON
@@ -800,10 +800,9 @@ but may be wrong.
   projections; wrapped in another expression they fall back to
   MYSQL_TYPE_VAR_STRING, because the wrapper's shape owns the result.
 
-- Comparing two JSON values (json_col = json_col) and JSON arithmetic
-  are unsupported; MySQL compares JSON semantically (1.0 equals 1),
-  which the text carrier does not implement. JSON extracted to text via
-  ->> or JSON_UNQUOTE compares fully.
+- `BETWEEN` whose bounds are JSON values compares by the JSON ladder, as
+  `=` and `<` do. MySQL answers it another way: `j BETWEEN k AND k` is 0
+  there for a `1` between two `1.0`, where `j = k` is 1.
 
 ## Local writable databases
 

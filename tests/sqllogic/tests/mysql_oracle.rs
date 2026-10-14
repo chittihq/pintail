@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2977;
+const EXPECTED_CASES: usize = 2981;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5182,6 +5182,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "row in a table value constructor",
             "SELECT id, (user_id, id) IN (VALUES ROW(1, 1), ROW(3, 5), ROW(NULL, 7)) AS m, (user_id, id) NOT IN (VALUES ROW(1, 2), ROW(2, NULL)) AS n FROM orders ORDER BY id",
         ),
+        // A JSON value is a DOUBLE in arithmetic; as a truth value only a zero number is false.
+        ordered(
+            "json arithmetic and truth",
+            "SELECT id, JSON_EXTRACT(meta, '$.score') + 1, JSON_EXTRACT(meta, '$.score') * 2, -JSON_EXTRACT(meta, '$.score'), JSON_EXTRACT(meta, '$.items[0]') - 1, JSON_EXTRACT(meta, '$.tags[0]') + 0, JSON_EXTRACT(meta, '$.tags') + 1, JSON_EXTRACT(meta, '$.score') DIV 2, JSON_EXTRACT(meta, '$.score') % 2 FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json arithmetic and truth",
+            "SELECT id, ABS(JSON_EXTRACT(meta, '$.score')), ROUND(JSON_EXTRACT(meta, '$.score')), JSON_EXTRACT(meta, '$.score') BETWEEN 1 AND 4, JSON_EXTRACT(meta, '$.tags[0]') BETWEEN 0 AND 1 FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json arithmetic and truth",
+            "SELECT id FROM orders WHERE JSON_EXTRACT(meta, '$.score') ORDER BY id",
+        ),
+        ordered(
+            "json arithmetic and truth",
+            "SELECT id, JSON_EXTRACT(meta, '$.score') IS TRUE, NOT JSON_EXTRACT(meta, '$.tags'), JSON_EXTRACT(meta, '$.tags[0]') AND 1, IF(JSON_EXTRACT(meta, '$.score'), 'y', 'n'), JSON_EXTRACT(meta, '$.items') OR 0 FROM orders ORDER BY id",
+        ),
         ordered(
             "bit literal arithmetic",
             "SELECT CAST(255 AS UNSIGNED) % -7, 0xFF % -7, CAST(5 AS UNSIGNED) % -3, CAST(18446744073709551615 AS UNSIGNED) % -10",
@@ -6547,11 +6564,6 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "reject recursive with aggregate",
             "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT SUM(n) FROM t) SELECT * FROM t",
             "recursive|unsupported|unknown|aggregate",
-        ),
-        (
-            "reject json arithmetic",
-            "SELECT meta + 1 FROM orders WHERE meta IS NOT NULL",
-            "json|\\+|binary|invalid",
         ),
         // MySQL 8.4 refuses an impossible date compared against a DATETIME
         // column (ERROR 1525) rather than guessing what it meant.
