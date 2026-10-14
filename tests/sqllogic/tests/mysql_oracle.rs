@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2945;
+const EXPECTED_CASES: usize = 2949;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5050,6 +5050,23 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "condition inside set branches",
             "SELECT u.id, d.s FROM users u LEFT JOIN (SELECT user_id, status AS s FROM orders UNION ALL SELECT user_id, status FROM orders) d ON d.user_id = u.id AND d.s = 3 ORDER BY u.id, d.s",
+        ),
+        // Without GROUP BY an expression around MIN or MAX of an ENUM reads the label's text.
+        ordered(
+            "ungrouped enum extreme as text",
+            "SELECT MIN(status) + 0, MAX(status) + 0, MIN(status), MAX(status) FROM orders",
+        ),
+        ordered(
+            "ungrouped enum extreme as text",
+            "SELECT MIN(status) + 0, MAX(status) = 3, MAX(status) = 'shipped' FROM orders WHERE user_id < 4",
+        ),
+        ordered(
+            "ungrouped enum extreme as text",
+            "SELECT MIN(o.status) + 0, -MAX(o.status) FROM orders o JOIN users u ON u.id = o.user_id",
+        ),
+        ordered(
+            "ungrouped enum extreme as text",
+            "SELECT MAX(status) FROM orders WHERE id > 2 HAVING MAX(status) = 3",
         ),
         // IPv4 and IPv6 text to bytes and back, as MySQL reads and prints them.
         ordered(

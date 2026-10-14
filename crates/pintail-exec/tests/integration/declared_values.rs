@@ -6,7 +6,8 @@
 //! chose. A scalar subquery, `ANY_VALUE` and a window function hand the label
 //! on as a string, a SET's as much as an ENUM's. A condition on a derived
 //! set operation is tested inside its branches, against the branch's own
-//! column.
+//! column. Without GROUP BY, an expression around MIN or MAX reads the
+//! label's text.
 //!
 //! The declarations make label order, position order and mask order
 //! disagree everywhere. Every expectation is `MySQL` 8.4's answer for this
@@ -503,4 +504,46 @@ const BRANCH_CONDITIONS: &[(&str, &str)] = &[
 #[test]
 fn a_condition_on_a_derived_set_operation_is_tested_in_its_branches() {
     check(BRANCH_CONDITIONS);
+}
+
+/// MIN and MAX of an ENUM or SET inside an expression, with and without
+/// GROUP BY.
+const EXTREMES: &[(&str, &str)] = &[
+    (
+        "SELECT MIN(grade) + 0, MAX(grade) + 0, MIN(marks) + 0, MAX(marks) + 0 FROM shelf",
+        "0|0|0|0",
+    ),
+    (
+        "SELECT MIN(grade) + 0, MAX(grade) + 0 FROM shelf WHERE id > 1",
+        "0|0",
+    ),
+    (
+        "SELECT MIN(b.grade) + 0, MAX(b.grade) + 0 FROM shelf a JOIN shelf b ON a.id = b.id",
+        "0|0",
+    ),
+    (
+        "SELECT SUM(grade), MIN(grade) + 0, MIN(grade) = 2, MAX(grade) = 'zeta', MIN(grade), MAX(grade) FROM shelf WHERE lot < 3",
+        "8|0|0|1|alpha|zeta",
+    ),
+    (
+        "SELECT -MAX(grade), MAX(grade) * 1, ROUND(MAX(grade)), CONCAT(MIN(grade), '!') FROM shelf WHERE id > 1",
+        "-0|0|0|alpha!",
+    ),
+    (
+        "SELECT MAX(grade) FROM shelf WHERE id > 1 HAVING MAX(grade) = 3",
+        "",
+    ),
+    (
+        "SELECT MAX(grade) FROM shelf WHERE id > 1 HAVING MAX(grade) = 'zeta'",
+        "",
+    ),
+    (
+        "SELECT lot, MIN(grade) + 0, MAX(grade) + 0 FROM shelf GROUP BY lot ORDER BY lot",
+        "1|2|1;2|2|3;3|3|3",
+    ),
+];
+
+#[test]
+fn an_ungrouped_extreme_inside_an_expression_reads_the_label() {
+    check(EXTREMES);
 }

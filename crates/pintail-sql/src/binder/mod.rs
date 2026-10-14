@@ -987,6 +987,26 @@ impl<'catalog> Binder<'catalog> {
             }
             aggregates.clear();
         }
+        // Without GROUP BY `MySQL` computes MIN and MAX as it reads the rows
+        // and an expression around one takes the label's text, so
+        // `MAX(e) + 0` reads that text as a number. Alone in the select
+        // list the value keeps its declaration, which is what a derived
+        // table hands on.
+        if group_by.is_empty()
+            && aggregates.iter().any(|aggregate| {
+                matches!(
+                    aggregate.function,
+                    AggregateFunction::Minimum | AggregateFunction::Maximum
+                ) && aggregate.expr.as_ref().is_some_and(is_declared_column)
+            })
+        {
+            for item in &mut projection {
+                extremes_as_text(&mut item.expr, &aggregates, true);
+            }
+            if let Some(predicate) = &mut having {
+                extremes_as_text(predicate, &aggregates, true);
+            }
+        }
         if !group_by.is_empty() || !aggregates.is_empty() {
             // A correlated scalar whose keys are ALL grouping keys has exactly
             // one value per group, so referencing it is legal and MySQL
@@ -7189,6 +7209,39 @@ fn aggregate_result_type(
             function,
             actual: input_type,
         }),
+    }
+}
+
+/// Reads a MIN or MAX over an ENUM or SET column as plain text wherever it
+/// stands inside a larger expression; `root` is the expression's own top,
+/// which is left as it is.
+fn extremes_as_text(expr: &mut BoundExpr, aggregates: &[BoundAggregate], root: bool) {
+    match &mut expr.kind {
+        BoundExprKind::Aggregate(index) if !root => {
+            let extreme = aggregates.get(*index).is_some_and(|aggregate| {
+                matches!(
+                    aggregate.function,
+                    AggregateFunction::Minimum | AggregateFunction::Maximum
+                ) && aggregate.expr.as_ref().is_some_and(is_declared_column)
+            });
+            if extreme {
+                *expr = plain_text(expr.clone());
+            }
+        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. }
+        | BoundExprKind::InSubquery { expr, .. } => extremes_as_text(expr, aggregates, false),
+        BoundExprKind::Binary { left, right, .. } => {
+            extremes_as_text(left, aggregates, false);
+            extremes_as_text(right, aggregates, false);
+        }
+        BoundExprKind::Scalar { function, args } if *function != ScalarFunction::PlainText => {
+            for argument in args {
+                extremes_as_text(argument, aggregates, false);
+            }
+        }
+        _ => {}
     }
 }
 
