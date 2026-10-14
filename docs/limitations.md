@@ -233,8 +233,13 @@ stays readable as a list of things to fix.
   BIGINT is refused as out of range, where MySQL answers it (`-255 %
   CAST(7 AS UNSIGNED)` is -3).
 
-- Unix timestamp conversions round excess fractional digits to microseconds;
-  `TIME_TRUNCATE_FRACTIONAL` does not switch them to truncation.
+- `TIME_TRUNCATE_FRACTIONAL` switches a cast to DATETIME or TIME from
+  rounding to truncation and nothing else. Date and time text read by a
+  function - `EXTRACT`, `SECOND`, `MICROSECOND`, `DATE`, `TIMESTAMPDIFF`,
+  date arithmetic, the Unix timestamp conversions - rounds a seventh
+  fractional digit in every SQL mode, where MySQL under that mode cuts it:
+  `EXTRACT(MICROSECOND FROM '2001-01-01 00:00:00.9999995')` is 0 here and
+  999999 there.
 
 - A stored date a calendar rejects, such as February 30th from a source
   running `ALLOW_INVALID_DATES`, takes part in `MIN`/`MAX` as the date it is
