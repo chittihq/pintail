@@ -71,6 +71,13 @@ stays readable as a list of things to fix.
   them. A `MICROSECOND`, `WEEK` or `QUARTER` interval and a fractional
   amount are refused, and so is a `YEAR`, `MONTH` or `DAY` interval over a
   TIME key, where MySQL answers an empty frame for every row.
+- A window function that reads its rows in the order they reach it - a
+  `ROWS` frame or `ROW_NUMBER()` in a window without `ORDER BY` - reads a
+  derived table's rows in the order the derived query read them. MySQL hands
+  on the rows of a derived table that computes window functions in the order
+  of that table's last window, so a running total over one (`SUM(x) OVER
+  (ROWS UNBOUNDED PRECEDING)`) accumulates in another order there. SQL
+  specifies neither order.
 - A window frame with a bounded start recomputes its aggregate over the frame
   width rather than sliding incrementally, because `MIN`/`MAX` cannot be
   un-accumulated when a row leaves the window. Cost is proportional to the
