@@ -377,6 +377,16 @@ fn naming_select(body: &mut SetExpr) -> Option<&mut Select> {
 /// FROM t GROUP BY a, b)` then grouped by the outer row's `a` and `b`, one
 /// group for the whole subquery, and under any other alias it did not bind.
 fn members(subquery: &Query, width: usize) -> Result<Query, BindError> {
+    // A table value constructor is its rows: nothing in it needs a name.
+    if let SetExpr::Values(values) = subquery.body.as_ref() {
+        if !values.explicit_row {
+            return Err(BindError::UnsupportedSubquery(subquery.to_string()));
+        }
+        if values.rows.iter().any(|row| row.content.len() != width) {
+            return Err(arity_error(width));
+        }
+        return Ok(subquery.clone());
+    }
     let mut members = subquery.clone();
     let select = naming_select(members.body.as_mut())
         .ok_or_else(|| BindError::UnsupportedSubquery(subquery.to_string()))?;

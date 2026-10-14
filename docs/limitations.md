@@ -264,9 +264,9 @@ stays readable as a list of things to fix.
   values and over literals they follow MySQL.
 - A table value constructor (`VALUES ROW(...), ...`) takes its column types
   from the `UNION ALL` of its rows, so a column mixing a date or time with
-  text or a number across rows is refused where MySQL makes it a string. It
-  is not read as the subquery of `IN` (`x IN (VALUES ROW(1), ROW(2))`);
-  inside a derived table it is.
+  text or a number across rows is refused where MySQL makes it a string. A
+  quantified comparison with one (`x = ANY (VALUES ROW(1), ROW(2))`) does
+  not parse.
 - A row compared with a subquery (`(a, b) = (SELECT x, y ...)`) is refused
   when the subquery refers to the outer row and also uses `DISTINCT`,
   `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT` or a set operation.

@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2975;
+const EXPECTED_CASES: usize = 2977;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5172,6 +5172,15 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "export_set with a computed count",
             "SELECT id, EXPORT_SET(score, 'Y', 'N', ',', id), EXPORT_SET(5, '1', '0', '', CAST(id AS SIGNED) - 3), EXPORT_SET(id, 'on', 'off', '-', score / 40), EXPORT_SET(5, 'Y', 'N', ',', '3'), EXPORT_SET(5, '1', '0', '', 2.5), EXPORT_SET(5, '1', '0', '', 2.5e0), EXPORT_SET(6, '1', '0', '', NULLIF(id, 2)) FROM events ORDER BY id",
+        ),
+        // A row is looked up in a table value constructor as in any other subquery.
+        ordered(
+            "row in a table value constructor",
+            "SELECT id FROM orders WHERE (user_id, status) IN (VALUES ROW(1, 'shipped'), ROW(2, 'pending'), ROW(9, 'nothing')) ORDER BY id",
+        ),
+        ordered(
+            "row in a table value constructor",
+            "SELECT id, (user_id, id) IN (VALUES ROW(1, 1), ROW(3, 5), ROW(NULL, 7)) AS m, (user_id, id) NOT IN (VALUES ROW(1, 2), ROW(2, NULL)) AS n FROM orders ORDER BY id",
         ),
         ordered(
             "bit literal arithmetic",
