@@ -121,6 +121,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A schema probe no longer fails when a table is dropped while it runs.
+  Under change capture this could fail a replication cycle and mark every
+  table of the database as errored after a routine `CREATE`/`DROP`
+  sequence.
+- After a failed replication cycle, tables read as replicating again as
+  soon as the next cycle has caught up with the source, instead of when
+  its follow window ends.
 - A `UNION`, `INTERSECT`, `EXCEPT` or recursive CTE over an `ENUM` or
   `SET` column orders and compares by the label, as MySQL does; so does an
   `ENUM` read through a scalar subquery, a window function or `ANY_VALUE`.
