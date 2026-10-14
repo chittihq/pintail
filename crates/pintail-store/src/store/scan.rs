@@ -2936,8 +2936,15 @@ impl ProjectedScanStream {
     ///
     /// The round runs on the caller's pool, not the scan's own: a worker
     /// here does the decode and whatever `fold` does with the rows, so one
-    /// pool carries the statement. `proceed` is asked before each slice is
-    /// decoded; slices it turns away stay queued for the next call. Parts of
+    /// pool carries the statement. Slices are handed out in the scan's
+    /// order, one to each worker as it finishes its last. `proceed` is
+    /// asked before each is handed out; once it says no, nothing more is
+    /// started, so the slices a round decoded are always its first so many
+    /// and the rest stay queued, in order, for the next call. A round may
+    /// therefore be asked for many more slices than the caller could keep
+    /// the results of at once, and ended by `proceed` when it has enough:
+    /// a short round ends with every worker but one waiting for the last
+    /// slice, and the scan paid that wait once for every round. Parts of
     /// the scan that are read one chunk at a time - memtable rows, a merge
     /// of overlapping segments, a bounded direct range - are decoded as
     /// they always are and folded on the calling thread.
@@ -2949,6 +2956,7 @@ impl ProjectedScanStream {
     /// # Errors
     ///
     /// Returns a precise storage, corruption, schema, or memory-limit error.
+    #[allow(clippy::too_many_lines)] // one round: handed out, gathered, the refused read again
     pub fn fold_column_chunks<T: Send>(
         &mut self,
         max_chunks: usize,
@@ -2996,26 +3004,72 @@ impl ProjectedScanStream {
         let taken: Vec<DirectSlice> = self.slices.drain(..chunk_count).collect();
         let alive = chunk_count.min(rayon::current_num_threads().max(1));
         let per_chunk_limit = memory_limit / alive;
-        let outcomes = taken
-            .par_iter()
-            .enumerate()
-            .map(|(position, slice)| {
-                if !proceed() {
-                    return Ok(Outcome::Skipped);
-                }
-                match self.decode_slice(slice, per_chunk_limit, prewhere) {
-                    Ok(chunks) => Ok(Outcome::Folded(
-                        chunks
-                            .into_iter()
-                            .enumerate()
-                            .map(|(piece, chunk)| fold(chunk, position, piece))
-                            .collect(),
+        // The next slice to hand out, and whether the round has stopped
+        // handing them out.
+        let hand = std::sync::Mutex::new((0_usize, false));
+        let claim = || {
+            let mut hand = hand
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if hand.1 || hand.0 >= taken.len() {
+                return None;
+            }
+            if !proceed() {
+                hand.1 = true;
+                return None;
+            }
+            hand.0 += 1;
+            Some(hand.0 - 1)
+        };
+        let stop = || {
+            hand.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .1 = true;
+        };
+        // Each worker takes the next slice when it has finished its last,
+        // so no worker waits on another's share while slices remain, and
+        // the slices decoded are always the first so many of the round.
+        let work = |_: usize| -> Result<Vec<(usize, Outcome<T>)>, StoreError> {
+            let mut done = Vec::new();
+            while let Some(position) = claim() {
+                match self.decode_slice(&taken[position], per_chunk_limit, prewhere) {
+                    Ok(chunks) => done.push((
+                        position,
+                        Outcome::Folded(
+                            chunks
+                                .into_iter()
+                                .enumerate()
+                                .map(|(piece, chunk)| fold(chunk, position, piece))
+                                .collect(),
+                        ),
                     )),
-                    Err(StoreError::MemoryLimitExceeded { .. }) => Ok(Outcome::Refused),
-                    Err(error) => Err(error),
+                    Err(StoreError::MemoryLimitExceeded { .. }) => {
+                        // Read again below, alone: nothing more is started
+                        // beside a round that is out of room.
+                        stop();
+                        done.push((position, Outcome::Refused));
+                    }
+                    Err(error) => {
+                        stop();
+                        return Err(error);
+                    }
                 }
-            })
-            .collect::<Result<Vec<_>, StoreError>>()?;
+            }
+            Ok(done)
+        };
+        let done = if alive == 1 {
+            // One slice, or one thread: nothing to hand to another.
+            vec![work(0)?]
+        } else {
+            (0..alive)
+                .into_par_iter()
+                .map(work)
+                .collect::<Result<Vec<_>, StoreError>>()?
+        };
+        let mut outcomes: Vec<Outcome<T>> = taken.iter().map(|_| Outcome::Skipped).collect();
+        for (position, outcome) in done.into_iter().flatten() {
+            outcomes[position] = outcome;
+        }
         let mut folded = Vec::with_capacity(chunk_count);
         let mut skipped = Vec::new();
         let mut refused = Vec::new();

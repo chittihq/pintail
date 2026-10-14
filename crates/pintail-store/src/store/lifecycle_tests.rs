@@ -2789,3 +2789,100 @@ fn a_refused_slices_pieces_keep_its_place_in_the_round() {
     }
     assert!(cut > 0, "no budget cut the long slice");
 }
+
+/// A fused round hands its slices out in the scan's order and stops where
+/// `proceed` says: the slices it decoded are the round's first so many,
+/// whatever the pool's threads were doing, and the rest are the next
+/// round's, still in order. A consumer that is handed the rounds one after
+/// another therefore never receives a later slice before an earlier one.
+#[test]
+fn a_fused_round_cut_short_decodes_the_first_slices_and_keeps_the_rest_in_order() {
+    const SEGMENTS: u64 = 12;
+    const ROWS: u64 = 64;
+    let directory = tempfile::tempdir().unwrap();
+    let schema = TableSchema::new(1, vec![Column::new(1, "id", DataType::UInt64, false)]).unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema, options).unwrap();
+    let key = |id: u64| PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap();
+    for segment in 0..SEGMENTS {
+        table
+            .ingest(
+                (segment * ROWS..(segment + 1) * ROWS)
+                    .map(|id| {
+                        StoredRow::new(key(id), vec![pintail_types::Value::UInt64(id)], 1, false)
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        table.flush().unwrap();
+    }
+    let snapshot = table.snapshot();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    for allowed in [0_usize, 1, 5, 11, 12] {
+        let mut stream = snapshot
+            .scan_projected_range_stream(&key(0), &key(SEGMENTS * ROWS), &[1])
+            .unwrap()
+            .expect("stream");
+        let first_id = |chunk: ProjectedColumnChunk| match chunk
+            .into_decoded_columns()
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_values()
+            .into_iter()
+            .next()
+        {
+            Some(pintail_types::Value::UInt64(id)) => id,
+            other => panic!("unexpected {other:?}"),
+        };
+        let asked = std::sync::atomic::AtomicUsize::new(0);
+        let short = pool
+            .install(|| {
+                stream.fold_column_chunks(
+                    usize::try_from(SEGMENTS).unwrap(),
+                    64 << 20,
+                    None,
+                    &|| asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < allowed,
+                    &|chunk, slice, _| (slice, first_id(chunk)),
+                )
+            })
+            .unwrap()
+            .expect("a round");
+        let mut short = short;
+        short.sort_unstable();
+        assert_eq!(
+            short,
+            (0..allowed.min(12))
+                .map(|slice| (slice, slice as u64 * ROWS))
+                .collect::<Vec<_>>(),
+            "allowed {allowed}: the round's first slices, and no other"
+        );
+        // The rest come next, the earliest of them first.
+        let rest = pool
+            .install(|| {
+                stream.fold_column_chunks(
+                    usize::try_from(SEGMENTS).unwrap(),
+                    64 << 20,
+                    None,
+                    &|| true,
+                    &|chunk, slice, _| (slice, first_id(chunk)),
+                )
+            })
+            .unwrap();
+        let mut rest = rest.unwrap_or_default();
+        rest.sort_unstable();
+        assert_eq!(
+            rest,
+            (allowed.min(12)..12)
+                .map(|slice| (slice - allowed.min(12), slice as u64 * ROWS))
+                .collect::<Vec<_>>(),
+            "allowed {allowed}: what the short round left, in the scan's order"
+        );
+    }
+}

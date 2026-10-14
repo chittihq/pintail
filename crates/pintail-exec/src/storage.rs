@@ -457,6 +457,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 grouped: None,
                 delta: None,
                 fold_order: 0,
+                fold_in_place: false,
             }));
         };
         let unique_keys = self.unique_visibility.get(&key);
@@ -691,6 +692,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 sma,
                 grouped,
                 fold_order: 0,
+                fold_in_place: false,
             }));
         }
         let Some(projected) = projected else {
@@ -764,6 +766,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             sma,
             grouped,
             fold_order: 0,
+            fold_in_place: false,
         }))
     }
 }
@@ -1226,6 +1229,9 @@ struct SnapshotStream {
     /// Slices the fused rounds have been through, which is where the next
     /// round's batches stand in the scan's order.
     fold_order: u64,
+    /// Whether the last fused round's batches were all folded where they
+    /// were decoded: the next round may then run long.
+    fold_in_place: bool,
 }
 
 /// A limit over a scan that filters its rows, or reads them end first:
@@ -1262,6 +1268,28 @@ const ORDER_PART_MAX: usize = (1 << ORDER_PIECE_SHIFT) - 1;
 
 /// Direct-segment slices a prefetch round asks for per scan thread.
 const SLICES_PER_SCAN_THREAD: usize = 4;
+/// How many times as many slices as a first fused round reads a later
+/// one may, while every batch is folded where it is decoded.
+const LONG_ROUND_WIDTHS: usize = 16;
+
+/// Scans folding a round in place right now, process-wide.
+static FOLDING_SCANS: AtomicUsize = AtomicUsize::new(0);
+
+/// One scan's fused round, counted in [`FOLDING_SCANS`] while it runs.
+struct FoldingScan;
+
+impl FoldingScan {
+    fn enter() -> Self {
+        FOLDING_SCANS.fetch_add(1, Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for FoldingScan {
+    fn drop(&mut self) {
+        FOLDING_SCANS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 /// Below this much remaining budget a prefetch round takes one slice.
 const TIGHT_CEILING_BYTES: usize = 64 * 1024 * 1024;
 /// The fewest rows a bounded fetch asks of a scan that filters them.
@@ -2063,6 +2091,36 @@ impl BatchStream for SnapshotStream {
         };
         // A slice is one batch, or close to it.
         let width = width.min(max_batches.max(1));
+        // `width` is how many batches a round may hand back: what the
+        // operator above declines, or the ceiling refuses, is held until
+        // the round is over. How many slices a round reads is another
+        // matter while every batch is folded where it is decoded and none
+        // is held: the round is then only a stretch of the scan, and a
+        // short stretch costs the pool a start and a finish - at the
+        // finish every worker but one waits for the last slice. So the
+        // round after one that handed nothing back runs several times as
+        // long, and ends early once it has handed back as many batches as
+        // a short round could have. The first round stays short: what a
+        // round settles for those after it - whether the filter is worth
+        // judging slice by slice, whether the operator above folds these
+        // batches at all - is settled as early as it was.
+        //
+        // A short round is also how statements take turns: each round
+        // queues behind the rounds other statements have asked the pool
+        // for. So a round runs past a short one's length only while no
+        // other scan is folding, and stops there when one starts: with
+        // several statements on the pool each waits no longer for its
+        // turn than it did, and the workers one round leaves idle at its
+        // end are another statement's to use.
+        let reach = if self.fold_in_place && width > 1 {
+            width
+                .saturating_mul(LONG_ROUND_WIDTHS)
+                .min(max_batches.max(1))
+        } else {
+            width
+        };
+        let handed_back = AtomicUsize::new(0);
+        let begun = AtomicUsize::new(0);
         let chunk_budget = (available_memory / 2).saturating_sub(batch_overhead);
         let failed: Mutex<Option<ExecError>> = Mutex::new(None);
         let stopped = std::sync::atomic::AtomicBool::new(false);
@@ -2081,7 +2139,7 @@ impl BatchStream for SnapshotStream {
         // batch, tested against the scan's predicates and folded while its
         // columns are still in this core's cache.
         let base = self.fold_order;
-        self.fold_order = base.saturating_add(width as u64);
+        self.fold_order = base.saturating_add(reach as u64);
         let fold_chunk = |chunk: ProjectedColumnChunk, slice: usize, piece: usize| {
             let stats = chunk.stats();
             let decode = chunk.column_decode().to_vec();
@@ -2106,7 +2164,10 @@ impl BatchStream for SnapshotStream {
                         };
                         match fold(batch, place) {
                             Ok(None) => {}
-                            Ok(Some(batch)) => returned.push((order, batch)),
+                            Ok(Some(batch)) => {
+                                handed_back.fetch_add(1, Ordering::Relaxed);
+                                returned.push((order, batch));
+                            }
                             Err(error) => fail(error),
                         }
                     }
@@ -2115,7 +2176,13 @@ impl BatchStream for SnapshotStream {
             }
             (stats, decode, returned)
         };
-        let proceed = || !stopped.load(Ordering::Relaxed);
+        let proceed = || {
+            !stopped.load(Ordering::Relaxed)
+                && handed_back.load(Ordering::Relaxed) < width
+                && (begun.fetch_add(1, Ordering::Relaxed) < width
+                    || FOLDING_SCANS.load(Ordering::Relaxed) <= 1)
+        };
+        let folding = FoldingScan::enter();
         let (folded, abandon_prewhere) = if let Some(spec) = &self.prewhere {
             let judged = AtomicUsize::new(0);
             let dense = AtomicUsize::new(0);
@@ -2140,7 +2207,7 @@ impl BatchStream for SnapshotStream {
             };
             let folded = stream
                 .fold_column_chunks(
-                    width,
+                    reach,
                     chunk_budget,
                     Some((&spec.predicate_ids, &select)),
                     &proceed,
@@ -2169,11 +2236,12 @@ impl BatchStream for SnapshotStream {
         } else {
             (
                 stream
-                    .fold_column_chunks(width, chunk_budget, None, &proceed, &fold_chunk)
+                    .fold_column_chunks(reach, chunk_budget, None, &proceed, &fold_chunk)
                     .map_err(|error| ExecError::Source(error.to_string()))?,
                 false,
             )
         };
+        drop(folding);
         if abandon_prewhere {
             self.prewhere = None;
         }
@@ -2186,6 +2254,10 @@ impl BatchStream for SnapshotStream {
             self.accumulate_stats(stats, &decode);
             returned.extend(batches);
         }
+        self.fold_in_place = returned.is_empty();
+        crate::counters::count(|counters| {
+            counters.fused_long_rounds += u64::from(reach > width);
+        });
         if let Some(error) = failed
             .into_inner()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

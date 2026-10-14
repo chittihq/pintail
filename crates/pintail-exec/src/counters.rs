@@ -71,6 +71,9 @@ pub struct ExecCounters {
     pub fused_rounds: u64,
     /// Batches those rounds folded whole.
     pub fused_batches: u64,
+    /// Rounds a scan ran long: several times the slices of a first round,
+    /// after a round that handed no batch back.
+    pub fused_long_rounds: u64,
     /// Stored `TIMESTAMP` texts a session-zone kernel read as canonical
     /// text, without the general time zone conversion.
     pub session_texts_read: u64,
@@ -107,6 +110,7 @@ thread_local! {
             range_windows_bounded: 0,
             fused_rounds: 0,
             fused_batches: 0,
+            fused_long_rounds: 0,
             session_texts_read: 0,
             calendar_copies_packed: 0,
             instants_read: 0,
