@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2949;
+const EXPECTED_CASES: usize = 2955;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5067,6 +5067,31 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "ungrouped enum extreme as text",
             "SELECT MAX(status) FROM orders WHERE id > 2 HAVING MAX(status) = 3",
+        ),
+        // A window function in a correlated scalar subquery is computed over the rows of each outer row; one in a SELECT without FROM is computed over its single row.
+        ordered(
+            "window function in a scalar subquery",
+            "SELECT u.id, (SELECT SUM(o.total) OVER () FROM orders o WHERE o.id = u.id) AS s FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "window function in a scalar subquery",
+            "SELECT (SELECT ROW_NUMBER() OVER (ORDER BY o.total) FROM orders o WHERE o.id = u.id + 3) AS r, COUNT(*) FROM users u GROUP BY r ORDER BY r",
+        ),
+        ordered(
+            "window function in a scalar subquery",
+            "SELECT u.id, (SELECT COUNT(*) OVER () FROM orders o WHERE o.id = u.id AND o.total > 20) AS c FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "window function in a scalar subquery",
+            "SELECT id, (SELECT ROW_NUMBER() OVER ()), (SELECT SUM(score) OVER ()), (SELECT AVG(score) OVER ()), (SELECT RANK() OVER (ORDER BY NULL)) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window function in a scalar subquery",
+            "SELECT SUM(DISTINCT score) FROM events GROUP BY score HAVING score / 10 IN ((SELECT ROW_NUMBER() OVER ())) ORDER BY 1",
+        ),
+        ordered(
+            "window function in a scalar subquery",
+            "SELECT id FROM events WHERE id IN ((SELECT DENSE_RANK() OVER (ORDER BY NULL))) ORDER BY id",
         ),
         // IPv4 and IPv6 text to bytes and back, as MySQL reads and prints them.
         ordered(

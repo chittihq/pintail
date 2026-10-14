@@ -2151,10 +2151,17 @@ impl<'catalog> Binder<'catalog> {
             Expr::Function(function) => Some(function.name.to_string().to_ascii_uppercase()),
             _ => None,
         };
-        let aggregate = function_name
-            .as_deref()
-            .is_some_and(|name| matches!(name, "COUNT" | "SUM" | "MIN" | "MAX" | "AVG"));
-        let counts = function_name.as_deref() == Some("COUNT");
+        // A window function is computed over the rows the correlation
+        // admits, one outer row at a time. Read once for every outer row
+        // instead, it has to keep those rows apart, which a partition by
+        // the correlation keys does; `SUM(x) OVER ()` is then no aggregate
+        // of the subquery either.
+        let windowed = has_window_function(projected);
+        let aggregate = !windowed
+            && function_name
+                .as_deref()
+                .is_some_and(|name| matches!(name, "COUNT" | "SUM" | "MIN" | "MAX" | "AVG"));
+        let counts = aggregate && function_name.as_deref() == Some("COUNT");
         let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
         if tables.iter().any(|existing| {
             existing
@@ -2167,7 +2174,7 @@ impl<'catalog> Binder<'catalog> {
             return Err(unsupported());
         };
         let probe_scope = vec![probe_table.clone()];
-        if !aggregate && bind_expr(projected, &probe_scope, None).is_err() {
+        if !aggregate && !windowed && bind_expr(projected, &probe_scope, None).is_err() {
             return Err(unsupported());
         }
         let mut inner_only: Vec<&Expr> = Vec::new();
@@ -2215,11 +2222,36 @@ impl<'catalog> Binder<'catalog> {
         let SetExpr::Select(derived_select) = derived_query.body.as_mut() else {
             return Err(unsupported());
         };
+        let mut projected = projected.clone();
+        if windowed {
+            let partitioned: std::ops::ControlFlow<()> =
+                sqlparser::ast::visit_expressions_mut(&mut projected, |node| {
+                    let Expr::Function(function) = node else {
+                        return std::ops::ControlFlow::Continue(());
+                    };
+                    match &mut function.over {
+                        Some(sqlparser::ast::WindowType::WindowSpec(spec))
+                            if spec.window_name.is_none() =>
+                        {
+                            spec.partition_by.extend(
+                                keys.iter()
+                                    .map(|(name, _)| Expr::Identifier(Ident::new(name.clone()))),
+                            );
+                            std::ops::ControlFlow::Continue(())
+                        }
+                        Some(_) => std::ops::ControlFlow::Break(()),
+                        None => std::ops::ControlFlow::Continue(()),
+                    }
+                });
+            if partitioned.is_break() {
+                return Err(unsupported());
+            }
+        }
         derived_select.projection = keys
             .iter()
             .map(|(name, _)| SelectItem::UnnamedExpr(Expr::Identifier(Ident::new(name.clone()))))
             .chain(std::iter::once(SelectItem::ExprWithAlias {
-                expr: projected.clone(),
+                expr: projected,
                 alias: Ident::new(SCALAR_VALUE_COLUMN),
             }))
             .collect();
@@ -2242,6 +2274,11 @@ impl<'catalog> Binder<'catalog> {
         let outer_scope = tables.clone();
         let alias = format!("{SCALAR_TABLE_PREFIX}{}", tables.len());
         let input = self.bind_query(&derived_query, ctes)?;
+        // An aggregate under the window would have made one row of the
+        // correlated rows first; the partitions cannot stand in for that.
+        if windowed && !input.aggregates.is_empty() {
+            return Err(unsupported());
+        }
         let mut derived = self.bind_derived_table(alias.clone(), alias.clone(), &[], input);
         // The derived table is the rewrite's, not the query's: its key
         // columns carry the inner table's names, and an unqualified name in
@@ -5090,13 +5127,15 @@ fn bind_constant_set_expr(expression: &SetExpr) -> Result<Vec<BoundExpr>, BindEr
                 return Err(BindError::UnsupportedSubquery(select.to_string()));
             };
             let mut aggregates = None;
-            Ok(vec![bind_expr_inner(
-                expression,
-                &[],
-                &mut aggregates,
-                &mut None,
-                None,
-            )?])
+            match bind_expr_inner(expression, &[], &mut aggregates, &mut None, None) {
+                Ok(value) => Ok(vec![value]),
+                // A window function is no constant: it is computed over the
+                // one row this SELECT produces, by the query it is.
+                Err(BindError::UnsupportedExpression(_)) if has_window_function(expression) => {
+                    Err(BindError::UnsupportedSubquery(select.to_string()))
+                }
+                Err(error) => Err(error),
+            }
         }
         SetExpr::SetOperation {
             left,
@@ -5111,6 +5150,18 @@ fn bind_constant_set_expr(expression: &SetExpr) -> Result<Vec<BoundExpr>, BindEr
         SetExpr::Query(query) => bind_constant_subquery(query),
         _ => Err(BindError::UnsupportedSubquery(expression.to_string())),
     }
+}
+
+/// Whether `expression` calls a window function anywhere.
+fn has_window_function(expression: &Expr) -> bool {
+    let found: std::ops::ControlFlow<()> = sqlparser::ast::visit_expressions(expression, |node| {
+        if matches!(node, Expr::Function(function) if function.over.is_some()) {
+            std::ops::ControlFlow::Break(())
+        } else {
+            std::ops::ControlFlow::Continue(())
+        }
+    });
+    found.is_break()
 }
 
 fn bind_column(identifiers: &[Ident], tables: &[BoundTable]) -> Result<BoundExpr, BindError> {
