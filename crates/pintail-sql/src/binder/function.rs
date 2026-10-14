@@ -301,10 +301,20 @@ pub(super) fn bind_window_function(
     if function.uses_odbc_syntax
         || !matches!(function.parameters, FunctionArguments::None)
         || function.filter.is_some()
-        || function.null_treatment.is_some()
         || !function.within_group.is_empty()
     {
         return Err(BindError::UnsupportedExpression(function.to_string()));
+    }
+    // RESPECT NULLS is what the value functions do unasked, and `MySQL`
+    // accepts it written on them alone; IGNORE NULLS it refuses.
+    match &function.null_treatment {
+        None => {}
+        Some(sqlparser::ast::NullTreatment::RespectNulls)
+            if matches!(
+                function.name.to_string().to_ascii_uppercase().as_str(),
+                "LEAD" | "LAG" | "FIRST_VALUE" | "LAST_VALUE" | "NTH_VALUE"
+            ) => {}
+        Some(_) => return Err(BindError::UnsupportedExpression(function.to_string())),
     }
     let Some(WindowType::WindowSpec(spec)) = &function.over else {
         return Err(BindError::UnsupportedExpression(function.to_string()));

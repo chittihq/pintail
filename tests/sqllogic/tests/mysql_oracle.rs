@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2973;
+const EXPECTED_CASES: usize = 2974;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5162,6 +5162,11 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "window ordered by json",
             "SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY JSON_EXTRACT(meta, '$.tags[0]') DESC, id) AS rn FROM orders ORDER BY id",
+        ),
+        // RESPECT NULLS is what the value window functions do unasked.
+        ordered(
+            "respect nulls",
+            "SELECT id, LEAD(score, 1) RESPECT NULLS OVER (ORDER BY id), LAG(note) RESPECT NULLS OVER (ORDER BY id), FIRST_VALUE(note) RESPECT NULLS OVER (ORDER BY id), LAST_VALUE(note) RESPECT NULLS OVER (), NTH_VALUE(score, 2) RESPECT NULLS OVER (ORDER BY id) FROM events ORDER BY id",
         ),
         ordered(
             "bit literal arithmetic",
