@@ -285,8 +285,9 @@ fn a_fused_join_and_a_built_join_keep_the_accounting_consistent() {
     );
 
     // A nested-loop join runs while it is built: its time lands on the
-    // join's own line, not only on the scans beneath it.
-    let sql = "SELECT COUNT(*) FROM (SELECT grp FROM events LIMIT 40) a \
+    // join's own line, not only on the scans beneath it. (A count over it
+    // would be taken without running the join at all.)
+    let sql = "SELECT MAX(a.grp) FROM (SELECT grp FROM events LIMIT 40) a \
                JOIN (SELECT grp FROM events LIMIT 40) b ON a.grp > b.grp";
     let (rows, profile) = profiled(&fixture, &provider, sql);
     assert_eq!(rows, plain(&fixture, &provider, sql));
