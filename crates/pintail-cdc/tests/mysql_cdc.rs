@@ -3533,3 +3533,440 @@ async fn a_followed_catch_up_lifts_an_earlier_failure_once_it_has_caught_up() {
     );
     pool.disconnect().await.expect("disconnect lift pool");
 }
+
+/// A source for the followed-stream tests: a file-position source, whose
+/// transactions open with an anonymous GTID event, holding one table with a
+/// text column wide enough for a row of tens of megabytes, copied and ready
+/// for change capture.
+struct FollowedSource {
+    mysql: MysqlContainer,
+    report: ProbeReport,
+    workspace: tempfile::TempDir,
+    metadata_path: std::path::PathBuf,
+    targets: Vec<CdcTarget>,
+}
+
+async fn followed_source() -> FollowedSource {
+    let mysql = MysqlContainer::start_file_position().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE scrolls (id BIGINT UNSIGNED PRIMARY KEY, body LONGTEXT NOT NULL);\
+             INSERT INTO scrolls VALUES (1,'seed');",
+        )
+        .expect("followed source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("followed DSN"));
+    let report = probe(&pool, "app").await.expect("probe followed source");
+    let workspace = tempfile::tempdir().expect("followed workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("followed metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register followed source");
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.path().join(&source.name),
+                source.table_schema().expect("followed schema"),
+                StoreOptions::default(),
+            )
+            .expect("followed store");
+            SnapshotTarget::new(source.clone(), store).expect("followed snapshot target")
+        })
+        .collect::<Vec<_>>();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("followed baseline snapshot");
+    pool.disconnect()
+        .await
+        .expect("disconnect followed setup pool");
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("followed CDC target")
+        })
+        .collect::<Vec<_>>();
+    FollowedSource {
+        mysql,
+        report,
+        workspace,
+        metadata_path,
+        targets,
+    }
+}
+
+/// The rows of `scrolls`, as id and body length.
+fn scroll_lengths(targets: &[CdcTarget]) -> Vec<(u64, usize)> {
+    let mut rows = cdc_target(targets, "scrolls")
+        .store()
+        .snapshot()
+        .scan()
+        .expect("scan scrolls")
+        .into_iter()
+        .map(|row| {
+            let values = row.values();
+            let id = match &values[0] {
+                Value::UInt64(id) => *id,
+                other => panic!("unexpected id {other:?}"),
+            };
+            let length = match &values[1] {
+                Value::Utf8(body) => body.len(),
+                other => panic!("unexpected body {other:?}"),
+            };
+            (id, length)
+        })
+        .collect::<Vec<_>>();
+    rows.sort_unstable();
+    rows
+}
+
+/// A relay between change capture and its source that can stop handing the
+/// source's bytes on, as a source that has stopped sending looks from the
+/// replica's side: the connection stays open and nothing arrives.
+struct Relay {
+    port: u16,
+    accepted: Arc<std::sync::atomic::AtomicUsize>,
+    /// Connections accepted before this count hand nothing more on.
+    hold_below: Arc<std::sync::atomic::AtomicUsize>,
+    /// Every connection hands on at most this many of the source's bytes.
+    hold_after_bytes: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Relay {
+    fn start(mysql: &MysqlContainer) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind relay");
+        let port = listener.local_addr().expect("relay address").port();
+        let upstream = (
+            mysql
+                .host
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_owned(),
+            mysql.port,
+        );
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hold_below = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hold_after_bytes = Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX));
+        {
+            let accepted = Arc::clone(&accepted);
+            let hold_below = Arc::clone(&hold_below);
+            let hold_after_bytes = Arc::clone(&hold_after_bytes);
+            thread::spawn(move || {
+                for client in listener.incoming() {
+                    let Ok(client) = client else { return };
+                    let Ok(server) = TcpStream::connect((upstream.0.as_str(), upstream.1)) else {
+                        return;
+                    };
+                    let index = accepted.fetch_add(1, Ordering::SeqCst);
+                    let (Ok(client_reader), Ok(server_writer)) =
+                        (client.try_clone(), server.try_clone())
+                    else {
+                        return;
+                    };
+                    thread::spawn(move || {
+                        let (mut from, mut to) = (client_reader, server_writer);
+                        let _copied = std::io::copy(&mut from, &mut to);
+                        let _closed = to.shutdown(std::net::Shutdown::Write);
+                    });
+                    let hold_below = Arc::clone(&hold_below);
+                    let hold_after_bytes = Arc::clone(&hold_after_bytes);
+                    thread::spawn(move || {
+                        let (mut from, mut to) = (server, client);
+                        let mut buffer = vec![0_u8; 64 * 1024];
+                        let mut forwarded = 0_usize;
+                        loop {
+                            let allowed = hold_after_bytes
+                                .load(Ordering::SeqCst)
+                                .saturating_sub(forwarded);
+                            if index < hold_below.load(Ordering::SeqCst) || allowed == 0 {
+                                thread::sleep(Duration::from_millis(10));
+                                continue;
+                            }
+                            let limit = buffer.len().min(allowed);
+                            match from.read(&mut buffer[..limit]) {
+                                Ok(0) | Err(_) => break,
+                                Ok(read) => {
+                                    // A hold raised while this read was
+                                    // waiting keeps what it brought too.
+                                    while index < hold_below.load(Ordering::SeqCst) {
+                                        thread::sleep(Duration::from_millis(10));
+                                    }
+                                    if to.write_all(&buffer[..read]).is_err() {
+                                        break;
+                                    }
+                                    forwarded += read;
+                                }
+                            }
+                        }
+                        let _closed = to.shutdown(std::net::Shutdown::Write);
+                    });
+                }
+            });
+        }
+        Self {
+            port,
+            accepted,
+            hold_below,
+            hold_after_bytes,
+        }
+    }
+
+    fn dsn(&self) -> String {
+        format!("mysql://pintail:pintail@127.0.0.1:{}/app", self.port)
+    }
+
+    /// Holds every connection accepted so far; later ones pass.
+    fn hold_existing(&self) {
+        self.hold_below
+            .store(self.accepted.load(Ordering::SeqCst), Ordering::SeqCst);
+    }
+
+    /// Holds every connection, existing and new.
+    fn hold_all(&self) {
+        self.hold_below.store(usize::MAX, Ordering::SeqCst);
+    }
+}
+
+/// A followed cycle whose window closes while a large event is still on its
+/// way must stay for it. Ending on the clock left the event unread, and the
+/// next cycle - starting from the same checkpoint with the same window - did
+/// the same, so every cycle succeeded and the mirror never moved again.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_followed_catch_up_waits_for_an_event_still_arriving_when_its_window_closes() {
+    let source = followed_source().await;
+    let wide = 48 * 1024 * 1024;
+    source
+        .mysql
+        .query_batch(&format!(
+            "INSERT INTO scrolls VALUES (2, REPEAT('a', {wide}));\
+             INSERT INTO scrolls VALUES (3, 'after');"
+        ))
+        .expect("wide row");
+    let pool = Pool::new(Opts::from_url(&source.mysql.dsn()).expect("followed DSN"));
+    let result = run_cdc(
+        &pool,
+        &source.metadata_path,
+        DATABASE_ID,
+        &source.report,
+        source.targets,
+        CdcOptions {
+            blocking: false,
+            // Closed before the stream has handed anything over.
+            follow: Some(Duration::from_millis(1)),
+            ..CdcOptions::default()
+        },
+    )
+    .await
+    .expect("followed catch-up");
+    assert_eq!(result.mutations, 2, "both writes are applied by one cycle");
+    assert_eq!(
+        scroll_lengths(&result.targets),
+        vec![(1, 4), (2, wide), (3, 5)]
+    );
+    pool.disconnect().await.expect("disconnect followed pool");
+    drop(source.workspace);
+}
+
+/// A source that stops sending in the middle of a transaction ends the
+/// cycle with the reason after the stall bound, and the next cycle applies
+/// the transaction from the checkpoint.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_stream_that_stops_inside_a_transaction_ends_the_cycle_with_the_reason() {
+    let source = followed_source().await;
+    let wide = 24 * 1024 * 1024;
+    source
+        .mysql
+        .query_batch(&format!(
+            "INSERT INTO scrolls VALUES (2, REPEAT('b', {wide}));"
+        ))
+        .expect("wide row");
+    let relay = Relay::start(&source.mysql);
+    // The wide row's event is the only thing in the stream larger than a
+    // few kilobytes: the stream stops partway through it.
+    relay
+        .hold_after_bytes
+        .store(4 * 1024 * 1024, Ordering::SeqCst);
+    let pool = Pool::new(Opts::from_url(&relay.dsn()).expect("relay DSN"));
+    let stalled_before = pintail_cdc::streams_stalled();
+    let options = || CdcOptions {
+        blocking: false,
+        follow: Some(Duration::from_millis(200)),
+        stream_stall: Duration::from_secs(2),
+        ..CdcOptions::default()
+    };
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(120),
+        run_cdc(
+            &pool,
+            &source.metadata_path,
+            DATABASE_ID,
+            &source.report,
+            source.targets,
+            options(),
+        ),
+    )
+    .await
+    .expect("the stalled cycle ended");
+    let Err(error) = outcome else {
+        panic!("a stalled stream fails the cycle");
+    };
+    assert!(
+        error.to_string().contains("inside a transaction"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(pintail_cdc::streams_stalled(), stalled_before + 1);
+    drop(pool);
+
+    // The next cycle reopens the tables and starts from the checkpoint.
+    relay.hold_after_bytes.store(usize::MAX, Ordering::SeqCst);
+    let targets = source
+        .report
+        .tables
+        .iter()
+        .map(|table| {
+            CdcTarget::open_tracked(
+                &source.metadata_path,
+                DATABASE_ID,
+                table.clone(),
+                source.workspace.path().join(&table.name),
+                StoreOptions::default(),
+            )
+            .expect("reopen target")
+        })
+        .collect::<Vec<_>>();
+    let pool = Pool::new(Opts::from_url(&relay.dsn()).expect("relay DSN"));
+    let result = run_cdc(
+        &pool,
+        &source.metadata_path,
+        DATABASE_ID,
+        &source.report,
+        targets,
+        options(),
+    )
+    .await
+    .expect("the next cycle");
+    assert_eq!(result.mutations, 1);
+    assert_eq!(scroll_lengths(&result.targets), vec![(1, 4), (2, wide)]);
+    pool.disconnect().await.expect("disconnect relay pool");
+}
+
+/// A followed cycle reads the end of the source's log when its window
+/// closes. A source that does not answer must not hold the cycle: past the
+/// stall bound it ends as it would have without the answer.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_source_that_does_not_report_its_log_end_does_not_hold_a_followed_cycle() {
+    let source = followed_source().await;
+    let relay = Relay::start(&source.mysql);
+    let pool = Pool::new(Opts::from_url(&relay.dsn()).expect("relay DSN"));
+    let unanswered_before = pintail_cdc::log_end_unanswered();
+    let cycle = run_cdc(
+        &pool,
+        &source.metadata_path,
+        DATABASE_ID,
+        &source.report,
+        source.targets,
+        CdcOptions {
+            blocking: false,
+            follow: Some(Duration::from_secs(2)),
+            stream_stall: Duration::from_secs(2),
+            ..CdcOptions::default()
+        },
+    );
+    let hold = async {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        relay.hold_all();
+    };
+    let (result, ()) =
+        tokio::time::timeout(Duration::from_secs(60), async { tokio::join!(cycle, hold) })
+            .await
+            .expect("the followed cycle ended");
+    let result = result.expect("followed catch-up");
+    assert_eq!(result.mutations, 0);
+    assert_eq!(pintail_cdc::log_end_unanswered(), unanswered_before + 1);
+}
+
+/// A followed cycle whose window closed behind the source's log reads on,
+/// but not forever: a stream that then hands nothing over for the stall
+/// bound ends the cycle between transactions, and the next one applies
+/// what it missed from the checkpoint.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_followed_cycle_reading_on_past_its_window_gives_up_on_a_silent_stream() {
+    let source = followed_source().await;
+    let relay = Relay::start(&source.mysql);
+    let pool = Pool::new(Opts::from_url(&relay.dsn()).expect("relay DSN"));
+    let extended_before = pintail_cdc::follows_extended();
+    let stalled_before = pintail_cdc::streams_stalled();
+    let options = || CdcOptions {
+        blocking: false,
+        follow: Some(Duration::from_secs(2)),
+        stream_stall: Duration::from_secs(2),
+        ..CdcOptions::default()
+    };
+    let cycle = run_cdc(
+        &pool,
+        &source.metadata_path,
+        DATABASE_ID,
+        &source.report,
+        source.targets,
+        options(),
+    );
+    // Once the stream is open and quiet, it stops handing anything over,
+    // and the source is written: the end of its log moves past the stream.
+    let hold = async {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        relay.hold_existing();
+        source
+            .mysql
+            .query_batch("INSERT INTO scrolls VALUES (2,'missed');")
+            .expect("write behind the held stream");
+    };
+    let (result, ()) =
+        tokio::time::timeout(Duration::from_secs(60), async { tokio::join!(cycle, hold) })
+            .await
+            .expect("the followed cycle ended");
+    let result = result.expect("followed catch-up");
+    assert_eq!(result.mutations, 0);
+    assert_eq!(pintail_cdc::follows_extended(), extended_before + 1);
+    assert_eq!(pintail_cdc::streams_stalled(), stalled_before + 1);
+    drop(pool);
+
+    let pool = Pool::new(Opts::from_url(&source.mysql.dsn()).expect("followed DSN"));
+    let result = run_cdc(
+        &pool,
+        &source.metadata_path,
+        DATABASE_ID,
+        &source.report,
+        result.targets,
+        CdcOptions {
+            follow: Some(Duration::from_millis(200)),
+            ..options()
+        },
+    )
+    .await
+    .expect("the next cycle");
+    assert_eq!(result.mutations, 1);
+    assert_eq!(scroll_lengths(&result.targets), vec![(1, 4), (2, 6)]);
+    pool.disconnect().await.expect("disconnect followed pool");
+}

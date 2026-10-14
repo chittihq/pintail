@@ -205,6 +205,15 @@ pub struct CdcOptions {
     /// moment. `None` returns at the end of the source's log. Ignored when
     /// `blocking` is set.
     pub follow: Option<Duration>,
+    /// The longest the catch-up waits on its source for one thing it cannot
+    /// go on without: the next event of a transaction it has begun to read,
+    /// the next event of a finite stream, the events a followed stream is
+    /// still owed when its window closes, or the answer to a query it puts
+    /// to the source while it reads. A wait that runs out ends the catch-up
+    /// with the reason logged, and the next one starts again from the
+    /// checkpoint. A blocking stream waiting between transactions is not
+    /// bounded: a quiet source sends nothing for as long as it is quiet.
+    pub stream_stall: Duration,
     /// Maximum in-memory bytes retained before an uncommitted transaction
     /// spills to an anonymous temporary file.
     pub max_transaction_bytes: usize,
@@ -239,6 +248,7 @@ impl Default for CdcOptions {
             max_duration: None,
             stop: None,
             follow: None,
+            stream_stall: Duration::from_secs(30),
             max_transaction_bytes: 256 * 1024 * 1024,
             max_reconnect_attempts: 8,
             reconnect_initial_delay: Duration::from_millis(100),
@@ -599,6 +609,9 @@ async fn run_cdc_inner(
     // and the source position at which that failure is lifted.
     let mut failure_checked = false;
     let mut lift_failure_at: Option<(String, u64)> = None;
+    // Where the source's log ended when a followed window closed with the
+    // stream still behind it: the catch-up reads on to there.
+    let mut follow_drain: Option<(String, u64)> = None;
     let mut mutations = 0_usize;
     let mut events_read = 0_usize;
     let mut reconnect_attempts = 0_usize;
@@ -696,16 +709,35 @@ async fn run_cdc_inner(
                 )?;
             };
         }
-        let mut stream = match open_stream(
-            pool,
-            &metadata,
-            database_id,
-            &position,
-            server_id,
-            options.blocking || follow_until.is_some(),
+        // A source that accepts the connection and then answers nothing would
+        // hold the open for good; past the stall bound it is a connection
+        // failure like any other.
+        let opened = tokio::time::timeout(
+            options.stream_stall,
+            open_stream(
+                pool,
+                &metadata,
+                database_id,
+                &position,
+                server_id,
+                options.blocking || follow_until.is_some(),
+            ),
         )
         .await
-        {
+        .unwrap_or_else(|_| {
+            STREAMS_STALLED.fetch_add(1, Ordering::Relaxed);
+            Err(CdcError::Mysql(
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "the source did not open the stream within {}ms",
+                        options.stream_stall.as_millis()
+                    ),
+                )
+                .into(),
+            ))
+        });
+        let mut stream = match opened {
             Ok(stream) => stream,
             Err(error @ CdcError::NeedsResync { .. }) => {
                 position = resnapshot_context
@@ -769,7 +801,7 @@ async fn run_cdc_inner(
         // transactions and everything closed has been stored.
         macro_rules! end_catch_up {
             () => {
-                stream.close().await?;
+                close_stream(stream, database_id, options.stream_stall).await?;
                 pintail_log::log_debug!(
                     "cdc cycle done db={database_id} events={events_read} commits={commits} \
                      mutations={mutations} pos={}:{} {phases}",
@@ -855,6 +887,9 @@ async fn run_cdc_inner(
                             let logged = u64::from(event.header().log_pos());
                             let event_position = if logged > 0 { logged } else { logged_position };
                             if let Some(data) = self::event::decode_event(event)? {
+                                if opens_transaction(&data) {
+                                    position.open = true;
+                                }
                                 match data {
                                     EventData::GtidEvent(gtid) => {
                                         position.pending_gtid = Some(GtidIdentity {
@@ -1042,7 +1077,11 @@ async fn run_cdc_inner(
                 // here, where nothing is waiting to be stored and no
                 // transaction is open, so the position is a whole
                 // transaction's end exactly as it is at the end of a log.
-                let quiet = !pending.has_mutations() && position.pending_gtid.is_none();
+                let quiet =
+                    !pending.has_mutations() && position.pending_gtid.is_none() && !position.open;
+                // How far the stream has read: the end of the last event it
+                // handed over.
+                let read_to = logged_position.max(position.pos);
                 // A catch-up that returned at the end of the log told its
                 // caller there that the mirror was whole again, and a
                 // failure an earlier cycle had written onto every table was
@@ -1060,7 +1099,8 @@ async fn run_cdc_inner(
                             .cycle_failure_recorded(database_id)
                             .unwrap_or(false)
                         {
-                            lift_failure_at = source_log_end(pool).await;
+                            lift_failure_at =
+                                source_log_end(pool, database_id, options.stream_stall).await;
                         }
                     }
                     if lift_failure_at.as_ref().is_some_and(|(file, pos)| {
@@ -1087,19 +1127,100 @@ async fn run_cdc_inner(
                         }
                     }
                 }
+                let owed = |end: &(String, u64)| {
+                    (position.file.as_str(), read_to) < (end.0.as_str(), end.1)
+                };
                 let arrived = match follow_until {
-                    Some(until) if quiet => {
+                    // The window closed while the source held more than the
+                    // stream had handed over. The catch-up stays until it has
+                    // read that far, as one that returns at the end of the log
+                    // would have: ending on the clock alone left a cycle whose
+                    // window closed before a large event finished arriving
+                    // with nothing applied, and the next cycle, starting from
+                    // the same checkpoint with the same window, did the same,
+                    // so the mirror stopped while every cycle succeeded.
+                    Some(_) if quiet && follow_drain.as_ref().is_some_and(owed) => {
                         tokio::select! {
                             biased;
                             next = stream.next() => Some(next),
-                            () = follow_ended(until, options.stop.as_ref()) => None,
+                            () = stop_raised(options.stop.as_ref()) => None,
+                            () = tokio::time::sleep(options.stream_stall) => {
+                                STREAMS_STALLED.fetch_add(1, Ordering::Relaxed);
+                                pintail_log::log_warn!(
+                                    "cdc db={database_id} followed stream stopped short at \
+                                     {}:{read_to} of the source's {}:{} after {}ms with \
+                                     nothing arriving; the next cycle resumes from the \
+                                     checkpoint",
+                                    position.file,
+                                    follow_drain.as_ref().map_or("", |end| end.0.as_str()),
+                                    follow_drain.as_ref().map_or(0, |end| end.1),
+                                    options.stream_stall.as_millis()
+                                );
+                                None
+                            }
                         }
                     }
-                    _ => Some(stream.next().await),
+                    Some(_) if quiet && follow_drain.is_some() => None,
+                    Some(until) if quiet => {
+                        let ended = tokio::select! {
+                            biased;
+                            next = stream.next() => Some(next),
+                            () = follow_ended(until, options.stop.as_ref()) => None,
+                        };
+                        if ended.is_none()
+                            && !options.stop.as_ref().is_some_and(CycleStop::requested)
+                            && let Some(end) =
+                                source_log_end(pool, database_id, options.stream_stall).await
+                            && owed(&end)
+                        {
+                            FOLLOWS_EXTENDED.fetch_add(1, Ordering::Relaxed);
+                            pintail_log::log_debug!(
+                                "cdc db={database_id} window closed at {}:{read_to} with the \
+                                 source at {}:{}; reading on to it",
+                                position.file,
+                                end.0,
+                                end.1
+                            );
+                            follow_drain = Some(end);
+                            phases.read += waiting.elapsed();
+                            continue;
+                        }
+                        ended
+                    }
+                    // A blocking stream between transactions waits for as
+                    // long as the source is quiet. Every other wait is owed
+                    // an event - the rest of an open transaction, or the
+                    // next event or the end of a finite stream - and a source
+                    // that sends nothing for a whole stall bound has stopped:
+                    // the wait ends as a stream error, which reconnects a
+                    // blocking stream and ends a finite catch-up with the
+                    // reason, to start again from the checkpoint.
+                    _ if options.blocking && quiet => Some(stream.next().await),
+                    _ => {
+                        if let Ok(next) =
+                            tokio::time::timeout(options.stream_stall, stream.next()).await
+                        {
+                            Some(next)
+                        } else {
+                            STREAMS_STALLED.fetch_add(1, Ordering::Relaxed);
+                            let reason = format!(
+                                "the source sent nothing for {}ms at {}:{read_to}{}",
+                                options.stream_stall.as_millis(),
+                                position.file,
+                                if quiet { "" } else { " inside a transaction" }
+                            );
+                            pintail_log::log_warn!("cdc db={database_id} {reason}");
+                            Some(Some(Err(std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                reason,
+                            )
+                            .into())))
+                        }
+                    }
                 };
                 let Some(next) = arrived else {
                     phases.read += waiting.elapsed();
-                    stream.close().await?;
+                    close_stream(stream, database_id, options.stream_stall).await?;
                     pintail_log::log_debug!(
                         "cdc cycle done db={database_id} events={events_read} commits={commits} \
                          mutations={mutations} pos={}:{} {phases} followed=true",
@@ -1146,6 +1267,9 @@ async fn run_cdc_inner(
             let Some(data) = self::event::decode_event(&event)? else {
                 continue;
             };
+            if opens_transaction(&data) {
+                position.open = true;
+            }
             match data {
                 EventData::GtidEvent(gtid) => {
                     position.pending_gtid = Some(GtidIdentity {
@@ -3236,6 +3360,44 @@ fn stored_version_floor(targets: &[CdcTarget]) -> u64 {
         .unwrap_or(0)
 }
 
+/// Closes a stream the catch-up is done with. Closing writes to the source,
+/// and a source that has stopped reading would hold that write: past
+/// `within` the connection is dropped instead, which closes its socket.
+async fn close_stream(
+    stream: BinlogStream,
+    database_id: &str,
+    within: Duration,
+) -> Result<(), CdcError> {
+    if let Ok(closed) = tokio::time::timeout(within, stream.close()).await {
+        closed.map_err(CdcError::Mysql)
+    } else {
+        pintail_log::log_warn!(
+            "cdc db={database_id} the stream did not close within {}ms; its connection \
+             was dropped",
+            within.as_millis()
+        );
+        Ok(())
+    }
+}
+
+/// Whether the event is the first of a source transaction: its GTID, named
+/// or anonymous, or the BEGIN a source without GTID events opens it with.
+fn opens_transaction(data: &EventData<'_>) -> bool {
+    match data {
+        EventData::GtidEvent(_) | EventData::AnonymousGtidEvent(_) => true,
+        EventData::QueryEvent(query) => query.query().trim().eq_ignore_ascii_case("BEGIN"),
+        _ => false,
+    }
+}
+
+/// Resolves once `stop` is raised; never without one.
+async fn stop_raised(stop: Option<&CycleStop>) {
+    match stop {
+        Some(stop) => stop.raised().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// Resolves when a followed catch-up should end: at `until`, or as soon as
 /// `stop` is raised.
 async fn follow_ended(until: Instant, stop: Option<&CycleStop>) {
@@ -3253,8 +3415,23 @@ async fn follow_ended(until: Instant, stop: Option<&CycleStop>) {
 
 /// The end of the source's log right now, as the file and position a stream
 /// reaches once it has read everything written so far. `None` when the
-/// source does not say.
-async fn source_log_end(pool: &Pool) -> Option<(String, u64)> {
+/// source does not say, or does not answer within `within`: a cycle on its
+/// stream waits on this, and a source that has stopped answering must not
+/// hold it there.
+async fn source_log_end(pool: &Pool, database_id: &str, within: Duration) -> Option<(String, u64)> {
+    if let Ok(end) = tokio::time::timeout(within, read_source_log_end(pool)).await {
+        end
+    } else {
+        LOG_END_UNANSWERED.fetch_add(1, Ordering::Relaxed);
+        pintail_log::log_warn!(
+            "cdc db={database_id} the source did not report the end of its log within {}ms",
+            within.as_millis()
+        );
+        None
+    }
+}
+
+async fn read_source_log_end(pool: &Pool) -> Option<(String, u64)> {
     let mut connection = pool.get_conn().await.ok()?;
     for query in ["SHOW BINARY LOG STATUS", "SHOW MASTER STATUS"] {
         if let Ok(Some(row)) = connection.query_first::<mysql_async::Row, _>(query).await {
@@ -4247,6 +4424,37 @@ pub fn batches_read_ahead() -> u64 {
     BATCHES_READ_AHEAD.load(Ordering::Relaxed)
 }
 
+/// Followed catch-ups whose window closed while the source still held
+/// events the stream had not handed over, since the process started.
+static FOLLOWS_EXTENDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Catch-ups that gave up on a source that sent nothing for a whole
+/// `stream_stall`, since the process started.
+static STREAMS_STALLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Reads of the end of the source's log that did not answer within
+/// `stream_stall`, since the process started.
+static LOG_END_UNANSWERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many followed catch-ups stayed on their stream past their window
+/// because the source had written more than the stream had handed over.
+#[must_use]
+pub fn follows_extended() -> u64 {
+    FOLLOWS_EXTENDED.load(Ordering::Relaxed)
+}
+
+/// How many catch-ups ended because their source sent nothing for a whole
+/// `stream_stall` while they were owed an event.
+#[must_use]
+pub fn streams_stalled() -> u64 {
+    STREAMS_STALLED.load(Ordering::Relaxed)
+}
+
+/// How many reads of the end of the source's log went unanswered within
+/// `stream_stall`.
+#[must_use]
+pub fn log_end_unanswered() -> u64 {
+    LOG_END_UNANSWERED.load(Ordering::Relaxed)
+}
+
 /// Threads one flush spreads its tables over.
 const FLUSH_WORKERS: usize = 8;
 /// Rows below which a flush writes its tables one after another: starting
@@ -5076,6 +5284,10 @@ struct StreamPosition {
     kind: PositionKind,
     gtid_set: Option<MysqlGtidSet>,
     pending_gtid: Option<GtidIdentity>,
+    /// A transaction's first event has been read and its end has not. A
+    /// source without GTIDs opens each one with an anonymous GTID event, or
+    /// with BEGIN, and neither leaves a `pending_gtid`.
+    open: bool,
     file: String,
     pos: u64,
     /// The highest row version the targets hold. The newest version wins,
@@ -5127,6 +5339,7 @@ impl StreamPosition {
                     })?,
                 )?),
                 pending_gtid: None,
+                open: false,
                 file: checkpoint.binlog_file.unwrap_or_default(),
                 pos: checkpoint.binlog_pos.unwrap_or(4),
                 floor: 0,
@@ -5137,6 +5350,7 @@ impl StreamPosition {
                 kind: PositionKind::FilePosition,
                 gtid_set: None,
                 pending_gtid: None,
+                open: false,
                 file: checkpoint.binlog_file.ok_or_else(|| {
                     CdcError::InvalidCheckpoint(
                         "file/position checkpoint is missing its file".to_owned(),
@@ -5274,6 +5488,7 @@ impl StreamPosition {
     /// its GTID joins the executed set, and the slots it ran on into join
     /// the carry.
     fn close_transaction(&mut self, mutations: u64) -> Result<(), CdcError> {
+        self.open = false;
         if let Some(gtid) = self.pending_gtid.take() {
             self.carry = self
                 .carry
