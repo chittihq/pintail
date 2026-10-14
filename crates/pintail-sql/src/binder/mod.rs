@@ -11472,24 +11472,19 @@ mod tests {
         // A JSON comparison binds as a byte comparison of ladder keys.
         let bound = bind(&format!("SELECT {json} = {json} FROM Events")).expect("json equality");
         assert_eq!(bound.projection[0].expr.data_type, Some(DataType::Boolean));
-        // Text against JSON, MIN/MAX and window partitions ride the ladder
-        // too.
+        // Text against JSON, MIN/MAX and a window's partitions and order
+        // ride the ladder too.
         for sql in [
             format!("SELECT {json} = 'a' FROM Events"),
             format!("SELECT {json} IN ('a', 'b') FROM Events"),
             format!("SELECT MIN({json}), MAX({json}) FROM Events"),
             format!("SELECT ROW_NUMBER() OVER (PARTITION BY {json}) FROM Events"),
+            format!("SELECT ROW_NUMBER() OVER (ORDER BY {json}) FROM Events"),
         ] {
             bind(&sql).unwrap_or_else(|error| panic!("{sql}: {error}"));
         }
-        // Sorting by JSON inside a window or GROUP_CONCAT follows a MySQL
-        // key that is not the ladder, so those still refuse.
-        assert!(
-            bind(&format!(
-                "SELECT ROW_NUMBER() OVER (ORDER BY {json}) FROM Events"
-            ))
-            .is_err()
-        );
+        // Sorting by JSON inside GROUP_CONCAT follows a MySQL key that is
+        // not the ladder, so that still refuses.
         assert!(
             bind(&format!(
                 "SELECT GROUP_CONCAT(Name ORDER BY {json}) FROM Events"

@@ -511,16 +511,18 @@ pub(super) fn bind_window_function(
             }
         })
         .collect::<Vec<_>>();
-    // MySQL sorts a JSON window key by a key of its own that is not the
-    // comparison ladder, so ordering by one refuses.
-    if order_by
-        .iter()
-        .any(|key| key.expr.data_type == Some(DataType::Json))
-    {
-        return Err(BindError::InvalidOrderBy(
-            "window ORDER BY over JSON is not supported".to_owned(),
-        ));
-    }
+    // A JSON key orders by the JSON ladder too, as a query's own ORDER BY
+    // over it does: numbers by value whatever their spelling, then strings,
+    // objects, arrays and booleans. Equal documents are peers.
+    let order_by = order_by
+        .into_iter()
+        .map(|mut key| {
+            if key.expr.data_type == Some(DataType::Json) {
+                key.expr = super::json_sort_key_expr(key.expr);
+            }
+            key
+        })
+        .collect::<Vec<_>>();
     let frame = bind_window_frame(spec, function, &order_by)?;
     // FIRST_VALUE, LAST_VALUE and NTH_VALUE read the frame by definition —
     // LAST_VALUE's whole reputation for surprise comes from the default

@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2971;
+const EXPECTED_CASES: usize = 2973;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5153,6 +5153,15 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "empty window frame",
             "SELECT id, COUNT(*) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) AS c, SUM(score) OVER (ORDER BY id ROWS BETWEEN 2 FOLLOWING AND 1 FOLLOWING) AS s, MAX(score) OVER (ORDER BY score RANGE BETWEEN 10 PRECEDING AND 20 PRECEDING) AS m, FIRST_VALUE(name) OVER (ORDER BY id ROWS BETWEEN 3 PRECEDING AND 4 PRECEDING) AS f, LAG(score, 1, 0) OVER (ORDER BY id ROWS BETWEEN 5 FOLLOWING AND 1 FOLLOWING) AS l FROM events ORDER BY id",
+        ),
+        // A window orders a JSON key by the JSON ladder.
+        ordered(
+            "window ordered by json",
+            "SELECT id, ROW_NUMBER() OVER (ORDER BY JSON_EXTRACT(meta, '$.score'), id) AS rn, RANK() OVER (ORDER BY JSON_EXTRACT(meta, '$.score') DESC) AS rd FROM orders ORDER BY id",
+        ),
+        ordered(
+            "window ordered by json",
+            "SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY JSON_EXTRACT(meta, '$.tags[0]') DESC, id) AS rn FROM orders ORDER BY id",
         ),
         ordered(
             "bit literal arithmetic",
