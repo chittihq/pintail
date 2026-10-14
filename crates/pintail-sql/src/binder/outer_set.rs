@@ -286,6 +286,7 @@ impl Binder<'_> {
                 float_decimals: None,
                 outer: false,
                 using_shadowed: false,
+                declared_set: false,
             }];
             for (offset, column) in columns.iter().enumerate() {
                 served.push(BoundColumn {
@@ -295,6 +296,7 @@ impl Binder<'_> {
                         .map_err(|_| "it reads too many outer columns")?,
                     outer: false,
                     using_shadowed: false,
+                    declared_set: false,
                     ..column.clone()
                 });
             }

@@ -569,11 +569,12 @@ pub(super) fn bind_window_function(
     // A window function's value read from an ENUM is a string in `MySQL`.
     let label = match &window.function {
         WindowFunction::Offset { expr, .. } | WindowFunction::Extreme { expr, .. } => {
-            super::is_enum_column(expr)
+            super::is_declared_column(expr)
         }
-        WindowFunction::Aggregate(aggregate) => {
-            aggregate.expr.as_ref().is_some_and(super::is_enum_column)
-        }
+        WindowFunction::Aggregate(aggregate) => aggregate
+            .expr
+            .as_ref()
+            .is_some_and(super::is_declared_column),
         _ => false,
     };
     Ok(if label {
@@ -2021,6 +2022,7 @@ pub(super) fn bind_in_list(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let args = super::choice_among_numbers(args);
     let args = super::numeric_list_as_double(args);
     let args = super::rewrite_json_comparison_list(args);
     if args[1..]
@@ -2068,7 +2070,8 @@ pub(super) fn bind_between(
         .map_err(|_| BindError::InvalidScalarFunction("BETWEEN".to_owned()))?;
     let low = super::canonical_literal_operand(&subject, low)?;
     let high = super::canonical_literal_operand(&subject, high)?;
-    let args = super::numeric_list_as_double(vec![subject, low, high]);
+    let args = super::choice_among_numbers(vec![subject, low, high]);
+    let args = super::numeric_list_as_double(args);
     let args = super::rewrite_json_comparison_list(args);
     if !comparable(args[0].data_type, args[1].data_type)
         || !comparable(args[0].data_type, args[2].data_type)
@@ -2309,6 +2312,14 @@ pub(super) fn bind_cast(
     {
         operand = super::numeric_bit_input(operand, expr)?;
     }
+    // A DECIMAL or DOUBLE cast asks for the number; an integer cast reads
+    // the text.
+    if matches!(
+        target,
+        DataType::Float32 | DataType::Float64 | DataType::Decimal { .. }
+    ) {
+        operand = super::choice_as_number(operand);
+    }
     bind_scalar(
         ScalarFunction::DeclaredCast {
             target,
@@ -2540,7 +2551,15 @@ pub(super) fn bind_scalar(
     ) {
         args.into_iter()
             .map(super::temporal_extremum_as_number)
+            .map(super::choice_as_number)
             .collect()
+    } else if function == ScalarFunction::If {
+        // The condition is a truth value, which is a number.
+        let mut args = args;
+        if let Some(condition) = args.first_mut() {
+            *condition = super::choice_as_number(condition.clone());
+        }
+        args
     } else {
         args
     };

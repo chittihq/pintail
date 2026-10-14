@@ -430,6 +430,7 @@ impl<'catalog> Binder<'catalog> {
                 float_decimals: projection.expr.numeric_decimals(&anchor.aggregates),
                 outer: false,
                 using_shadowed: false,
+                declared_set: false,
             })
             .collect();
         let working = BoundTable {
@@ -741,7 +742,7 @@ impl<'catalog> Binder<'catalog> {
                 });
             }
         }
-        let filter = residual_filter;
+        let filter = residual_filter.map(choice_as_number);
         if let Some(filter) = &filter
             && !is_truth_value(filter.data_type)
         {
@@ -855,10 +856,10 @@ impl<'catalog> Binder<'catalog> {
             Some(&resolve_subquery),
         )?;
         // A subquery answered through a join is still a subquery to the
-        // statement: an ENUM it selects is a string. A grouped query is
-        // left alone, where the value is matched against the grouping as
-        // the column it is.
-        if group_by.is_empty() && aggregates.is_empty() {
+        // statement: an ENUM or SET it selects is a string, in a grouped
+        // query too, where the value below the wrapper is matched against
+        // the grouping as the column it is.
+        {
             for correlation in &scalar_correlations {
                 let label = tables
                     .iter()
@@ -2848,6 +2849,7 @@ impl<'catalog> Binder<'catalog> {
                 float_decimals: column.float_decimals(),
                 outer: false,
                 using_shadowed: false,
+                declared_set: column.set_members().is_some(),
             })
             .collect();
 
@@ -2934,6 +2936,7 @@ impl<'catalog> Binder<'catalog> {
                 float_decimals: projection.expr.numeric_decimals(&input.aggregates),
                 outer: false,
                 using_shadowed: false,
+                declared_set: false,
             })
             .collect();
         BoundTable {
@@ -3224,22 +3227,119 @@ pub(super) fn plain_text(expression: BoundExpr) -> BoundExpr {
     }
 }
 
-/// Whether `expression`, selected by `query`, is an ENUM column or an
-/// aggregate over one.
+/// Whether `expression`, selected by `query`, is an ENUM or SET column or
+/// an aggregate over one.
 fn selects_enum(query: &BoundQuery, expression: &BoundExpr) -> bool {
     match &expression.kind {
-        BoundExprKind::Aggregate(index) => query
-            .aggregates
-            .get(*index)
+        // A bound query numbers its aggregates after its grouping keys.
+        BoundExprKind::Aggregate(index) => index
+            .checked_sub(query.group_by.len())
+            .and_then(|index| query.aggregates.get(index))
             .and_then(|aggregate| aggregate.expr.as_ref())
-            .is_some_and(is_enum_column),
-        _ => is_enum_column(expression),
+            .is_some_and(is_declared_column),
+        _ => is_declared_column(expression),
     }
 }
 
-/// Whether `expression` is an ENUM column itself.
-pub(super) fn is_enum_column(expression: &BoundExpr) -> bool {
-    matches!(&expression.kind, BoundExprKind::Column(column) if column.enum_labels.is_some())
+/// Whether `expression` is an ENUM or SET column itself: a value that
+/// carries its declaration position or member mask.
+pub(super) fn is_declared_column(expression: &BoundExpr) -> bool {
+    matches!(&expression.kind, BoundExprKind::Column(column)
+        if column.enum_labels.is_some() || column.declared_set)
+}
+
+/// Whether `expression` is an IF, CASE or NULLIF that can hand an ENUM or
+/// SET column's value on.
+fn chooses_declared(expression: &BoundExpr) -> bool {
+    let BoundExprKind::Scalar { function, args } = &expression.kind else {
+        return false;
+    };
+    let hands_on = |branch: &BoundExpr| is_declared_column(branch) || chooses_declared(branch);
+    match function {
+        ScalarFunction::If => args[1..].iter().any(hands_on),
+        ScalarFunction::NullIf => hands_on(&args[0]),
+        _ => false,
+    }
+}
+
+/// The subject of an `IN` or `BETWEEN` whose other operands are all numbers,
+/// read as a number where it is a choice among ENUM or SET columns.
+pub(super) fn choice_among_numbers(mut args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    if chooses_declared(&args[0]) && args[1..].iter().all(compares_as_number) {
+        let subject = std::mem::replace(
+            &mut args[0],
+            BoundExpr {
+                kind: BoundExprKind::Literal(Value::Null),
+                data_type: None,
+                nullable: true,
+            },
+        );
+        args[0] = choice_as_number(subject);
+    }
+    args
+}
+
+/// An IF, CASE or NULLIF read as a number. `MySQL` asks the branch the
+/// expression chose for its number, so an ENUM column there answers its
+/// position and a SET column its member mask, while the same expression
+/// sorts, groups and prints as the label. The value such a function hands
+/// on here is plain text, which would read as the label's leading digits;
+/// each ENUM or SET branch is therefore read as a number where it stands.
+/// Anything else is returned as it came.
+pub(super) fn choice_as_number(expression: BoundExpr) -> BoundExpr {
+    if !chooses_declared(&expression) {
+        return expression;
+    }
+    let BoundExprKind::Scalar { function, args } = &expression.kind else {
+        return expression;
+    };
+    let number = |branch: &BoundExpr| {
+        if is_declared_column(branch) {
+            BoundExpr {
+                data_type: Some(DataType::Float64),
+                nullable: branch.nullable,
+                kind: BoundExprKind::Binary {
+                    op: BinaryOp::Add,
+                    left: Box::new(branch.clone()),
+                    right: Box::new(BoundExpr {
+                        data_type: Some(DataType::Int64),
+                        nullable: false,
+                        kind: BoundExprKind::Literal(Value::Int64(0)),
+                    }),
+                },
+            }
+        } else {
+            choice_as_number(branch.clone())
+        }
+    };
+    let rewritten = match function {
+        ScalarFunction::If => function::bind_scalar(
+            ScalarFunction::If,
+            vec![args[0].clone(), number(&args[1]), number(&args[2])],
+        ),
+        // NULL where NULLIF answers NULL, and its first argument's number
+        // otherwise.
+        _ => function::bind_scalar(
+            ScalarFunction::If,
+            vec![
+                BoundExpr {
+                    data_type: Some(DataType::Boolean),
+                    nullable: false,
+                    kind: BoundExprKind::IsNull {
+                        expr: Box::new(expression.clone()),
+                        negated: false,
+                    },
+                },
+                BoundExpr {
+                    data_type: None,
+                    nullable: true,
+                    kind: BoundExprKind::Literal(Value::Null),
+                },
+                number(&args[0]),
+            ],
+        ),
+    };
+    rewritten.unwrap_or(expression)
 }
 
 fn integral(data_type: DataType) -> bool {
@@ -5230,6 +5330,11 @@ fn bind_unary(
     // Negation is arithmetic, so its operand is read as a number: a truth
     // value and an unsigned integer negate as BIGINT; text, and an unintroduced hex
     // literal read as the integer its bytes spell, negate as a double.
+    let expr = if matches!(operator, UnaryOperator::Minus | UnaryOperator::Not) {
+        choice_as_number(expr)
+    } else {
+        expr
+    };
     let (expr, negated_type) = match expr.data_type {
         _ if operator != UnaryOperator::Minus => (expr, None),
         Some(DataType::Binary) if unintroduced_bit_literal(written) => {
@@ -5239,6 +5344,12 @@ fn bind_unary(
         Some(DataType::Boolean | DataType::UInt64) => (expr, Some(DataType::Int64)),
         data_type => (expr, data_type),
     };
+    // `+x` is `x` in `MySQL`, whatever its type: text stays the text it was.
+    if operator == UnaryOperator::Plus
+        && matches!(expr.data_type, Some(DataType::Utf8 | DataType::Binary))
+    {
+        return Ok(expr);
+    }
     let (op, data_type) = match operator {
         UnaryOperator::Plus if is_numeric(expr.data_type) => (UnaryOp::Plus, expr.data_type),
         UnaryOperator::Minus if is_numeric(expr.data_type) => (UnaryOp::Minus, negated_type),
@@ -5368,6 +5479,15 @@ fn bind_binary(
     let (written_left, written_right) = (left, right);
     let left = bind_expr_inner(left, tables, aggregates, windows, subqueries)?;
     let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
+    // A truth value is a number, and so is either side of `<=>` beside one.
+    let (left, right) = match operator {
+        BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Xor => {
+            (choice_as_number(left), choice_as_number(right))
+        }
+        BinaryOperator::Spaceship if compares_as_number(&right) => (choice_as_number(left), right),
+        BinaryOperator::Spaceship if compares_as_number(&left) => (left, choice_as_number(right)),
+        _ => (left, right),
+    };
     if matches!(
         operator,
         BinaryOperator::BitwiseAnd
@@ -5474,12 +5594,12 @@ fn bind_binary(
             right
         };
         let left = if numeric(right.data_type) {
-            temporal_extremum_as_number(left)
+            choice_as_number(temporal_extremum_as_number(left))
         } else {
             left
         };
         let right = if numeric(left.data_type) {
-            temporal_extremum_as_number(right)
+            choice_as_number(temporal_extremum_as_number(right))
         } else {
             right
         };
@@ -5512,7 +5632,10 @@ fn bind_binary(
         } else {
             right
         };
-        (temporal_as_number(left), temporal_as_number(right))
+        (
+            choice_as_number(temporal_as_number(left)),
+            choice_as_number(temporal_as_number(right)),
+        )
     } else {
         (left, right)
     };
@@ -6435,7 +6558,9 @@ fn bind_truth_test(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let operand = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
+    let operand = choice_as_number(bind_expr_inner(
+        expr, tables, aggregates, windows, subqueries,
+    )?);
     if !is_truth_value(operand.data_type) {
         return Err(BindError::InvalidUnaryType {
             operation: if tests_false { "IS FALSE" } else { "IS TRUE" }.to_owned(),
@@ -6742,7 +6867,7 @@ fn bind_aggregate(
         && aggregate_list[index]
             .expr
             .as_ref()
-            .is_some_and(is_enum_column);
+            .is_some_and(is_declared_column);
     Ok(crate::text_charset::annotate(
         if label { plain_text(result) } else { result },
         charset,
@@ -6804,7 +6929,10 @@ fn numeric_bit_input(expr: BoundExpr, written: &Expr) -> Result<BoundExpr, BindE
             nullable: false,
         });
     }
-    bind_scalar(ScalarFunction::Cast(DataType::UInt64), vec![expr])
+    bind_scalar(
+        ScalarFunction::Cast(DataType::UInt64),
+        vec![choice_as_number(expr)],
+    )
 }
 
 fn bind_bit_operator(
@@ -6885,7 +7013,7 @@ fn bit_aggregate_input(
             nullable: false,
         });
     }
-    expr
+    expr.map(choice_as_number)
 }
 
 fn numeric_aggregate_input(
@@ -6900,6 +7028,7 @@ fn numeric_aggregate_input(
             | AggregateFunction::Variance { .. }
     ) {
         expr.map(|value| {
+            let value = choice_as_number(value);
             let value = implicit_day_number(&value).unwrap_or(value);
             // A TIME, DATE or DATETIME sums as the number it reads as -
             // HHMMSS, YYYYMMDD, YYYYMMDDHHMMSS and any fraction - and a JSON
@@ -9508,6 +9637,11 @@ fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> S
         } if matches!(value.as_ref(), Expr::Value(literal) if matches!(literal.value, SqlValue::Number(..))) => {
             value.to_string()
         }
+        // `+'text'` is named as the string is.
+        Expr::UnaryOp {
+            op: UnaryOperator::Plus,
+            expr: value,
+        } if matches!(value.as_ref(), Expr::Value(_)) => projection_name(value, source, clause),
         Expr::Value(_) => source
             .and_then(|sql| source_text(sql, expr, clause))
             .map_or_else(|| expr.to_string(), |text| text.trim_end().to_owned()),

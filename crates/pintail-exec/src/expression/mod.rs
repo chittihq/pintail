@@ -10236,7 +10236,8 @@ pub(crate) fn mysql_truth(value: &Value) -> Result<Option<bool>, ExecError> {
         Value::Int64(value) => Ok(Some(*value != 0)),
         Value::UInt64(value) => Ok(Some(*value != 0)),
         Value::Float64(value) => Ok(Some(value.get() != 0.0)),
-        Value::Enum { label: value, .. } => Ok(Some(parse_mysql_number(value) != 0.0)),
+        // An ENUM's truth is its position's and a SET's its member mask's.
+        Value::Enum { index, .. } => Ok(Some(*index != 0)),
         Value::Utf8(value) => {
             note_numeric_truncation("DOUBLE", value);
             Ok(Some(parse_mysql_number(value) != 0.0))

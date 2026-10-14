@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2920;
+const EXPECTED_CASES: usize = 2933;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4948,6 +4948,59 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "enum read as text",
             "SELECT id, ANY_VALUE(status) AS c, ANY_VALUE(status) + 0 FROM orders GROUP BY id ORDER BY c, id",
+        ),
+        // IF, CASE and NULLIF over an ENUM answer the chosen branch's position as a number; an ENUM's truth is its position's.
+        ordered(
+            "enum choice as number",
+            "SELECT id, IF(user_id < 3, status, 'shipped') + 0, CASE WHEN total > 50 THEN status END + 0, NULLIF(status, 'shipped') + 0 FROM orders ORDER BY id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT id FROM orders WHERE IF(user_id < 4, status, status) = 3 ORDER BY id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT id FROM orders WHERE CASE WHEN total > 20 THEN status ELSE 'pending' END >= 4 ORDER BY id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT id, IF(id > 5, status, status) IN (1, 5), NULLIF(status, 'pending') BETWEEN 2 AND 4, IF(id > 5, status, status) <=> 3 FROM orders ORDER BY id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT id, -IF(id > 5, status, status), ROUND(IF(id > 5, status, status) / 2, 1), IF(id > 5, status, status) | 8, CAST(IF(id > 5, status, status) AS DECIMAL(4,1)), CAST(IF(id > 5, status, status) AS SIGNED) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT user_id, SUM(IF(total > 20, status, status)), AVG(CASE WHEN total > 20 THEN status END), MAX(IF(total > 20, status, status)) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT id, NOT status, status AND 1, IF(status, 'y', 'n'), NOT IF(id > 5, status, status) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT IF(id > 5, status, status) AS s, COUNT(*) FROM orders GROUP BY s ORDER BY s",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT id, IF(id > 5, status, status) AS s FROM orders ORDER BY s, id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT id, +status AS a, +IF(id > 5, status, status) AS b, +status + 1 FROM orders ORDER BY id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT u.id, (SELECT o.status FROM orders o WHERE o.id = u.id) AS s, COUNT(*) FROM users u GROUP BY u.id ORDER BY s, u.id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT u.id, (SELECT MAX(o.status) FROM orders o WHERE o.user_id = u.id) AS s FROM users u ORDER BY s, u.id",
+        ),
+        ordered(
+            "enum choice as number",
+            "SELECT u.id, (SELECT MIN(o.status) FROM orders o WHERE o.user_id = u.id) AS s, COUNT(*) FROM users u GROUP BY u.id ORDER BY s DESC, u.id",
         ),
         // IPv4 and IPv6 text to bytes and back, as MySQL reads and prints them.
         ordered(

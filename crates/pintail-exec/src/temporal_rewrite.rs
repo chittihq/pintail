@@ -845,6 +845,7 @@ mod tests {
             float_decimals: None,
             outer: false,
             using_shadowed: false,
+            declared_set: false,
         }
     }
 

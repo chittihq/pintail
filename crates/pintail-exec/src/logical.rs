@@ -411,6 +411,7 @@ impl LogicalPlanner {
                     },
                     outer: false,
                     using_shadowed: false,
+                    declared_set: false,
                 })
                 .collect::<Vec<_>>();
             for item in &mut projection {

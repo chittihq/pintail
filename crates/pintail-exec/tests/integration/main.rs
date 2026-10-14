@@ -25,6 +25,7 @@ mod decimal_average_exactness;
 mod decimal_internal_digits;
 mod decimal_negative_range;
 mod decimal_scale_widening;
+mod declared_values;
 mod deferred_dependent_projection;
 mod dense_group_kernels;
 mod dependent_aggregate_argument;

@@ -121,6 +121,7 @@ pub(super) fn output_column(aggregate: &BoundAggregate, id: u64) -> BoundColumn 
         float_decimals,
         outer: false,
         using_shadowed: false,
+        declared_set: source.is_some_and(|column| column.declared_set),
     }
 }
 

@@ -2695,6 +2695,7 @@ fn text_value_filters(
             float_decimals: column.float_decimals(),
             outer: false,
             using_shadowed: false,
+            declared_set: false,
         }];
         let Ok(compiled) = crate::expression::CompiledExpr::compile(predicate, &layout, collation)
         else {
@@ -2809,6 +2810,7 @@ fn build_prewhere_spec(
             float_decimals: column.float_decimals(),
             outer: false,
             using_shadowed: false,
+            declared_set: false,
         });
         data_types.push(column.data_type());
         enum_labels.push(column.enum_labels().map(|labels| Arc::new(labels.to_vec())));

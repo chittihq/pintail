@@ -6427,6 +6427,7 @@ fn precompute_dependent_aggregate_arguments(
             float_decimals: expression.numeric_decimals(&[]),
             outer: false,
             using_shadowed: false,
+            declared_set: false,
         };
         *expression = BoundExpr {
             kind: BoundExprKind::Column(column.clone()),
@@ -6546,6 +6547,7 @@ fn projection_output_columns(expressions: &[BoundProjection]) -> Vec<BoundColumn
                 float_decimals: projection.expr.numeric_decimals(&[]),
                 outer: false,
                 using_shadowed: false,
+                declared_set: false,
             },
         })
         .collect()
@@ -6950,6 +6952,7 @@ fn build_operator_inner(
                 float_decimals: None,
                 outer: false,
                 using_shadowed: false,
+                declared_set: false,
             };
             let mut output_columns = group_by
                 .iter()

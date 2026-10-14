@@ -225,6 +225,10 @@ pub struct BoundColumn {
     /// unqualified name resolution and unqualified `*`, still reachable
     /// through a qualified reference.
     pub using_shadowed: bool,
+    /// Whether the source column is a SET. Its values carry the member mask
+    /// the way an ENUM's carry their position, and the binder has to know
+    /// where `MySQL` hands one on as plain text.
+    pub declared_set: bool,
 }
 
 /// A fully name-resolved and type-checked scalar expression.
