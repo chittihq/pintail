@@ -1,8 +1,8 @@
 # Pintail schema-migration differential gate
 
-Measured 2026-10-05T16:07:05.407Z against `mysql:8.4`.
+Measured 2026-10-27T13:57:45.748Z against `mysql:8.4`.
 
-**230 passed, 0 failed.**
+**269 passed, 0 failed.**
 
 | Family | Check | Status | Detail |
 |---|---|---|---|
@@ -168,6 +168,26 @@ Measured 2026-10-05T16:07:05.407Z against `mysql:8.4`.
 | a stored generated column | rows the migration never wrote to are not stale | PASS |  |
 | a virtual generated column | the whole table matches the source after the migration | PASS |  |
 | a virtual generated column | rows the migration never wrote to are not stale | PASS |  |
+| not null over a column holding no null | the whole table matches the source after the migration | PASS |  |
+| not null over a column holding no null | rows the migration never wrote to are not stale | PASS |  |
+| integer narrows around values that fit | the whole table matches the source after the migration | PASS |  |
+| integer narrows around values that fit | rows the migration never wrote to are not stale | PASS |  |
+| integer narrows around a row the stream carried just before | the whole table matches the source after the migration | PASS |  |
+| integer narrows around a row the stream carried just before | rows the migration never wrote to are not stale | PASS |  |
+| varchar shrinks around values that fit | the whole table matches the source after the migration | PASS |  |
+| varchar shrinks around values that fit | rows the migration never wrote to are not stale | PASS |  |
+| varchar shrinks around a value one character too long | the whole table matches the source after the migration | PASS |  |
+| varchar shrinks around a value one character too long | rows the migration never wrote to are not stale | PASS |  |
+| text family shrinks around values that fit | the whole table matches the source after the migration | PASS |  |
+| text family shrinks around values that fit | rows the migration never wrote to are not stale | PASS |  |
+| varbinary shrinks around values that fit | the whole table matches the source after the migration | PASS |  |
+| varbinary shrinks around values that fit | rows the migration never wrote to are not stale | PASS |  |
+| enum drops a member no row holds | the whole table matches the source after the migration | PASS |  |
+| enum drops a member no row holds | rows the migration never wrote to are not stale | PASS |  |
+| two narrowings in one statement, one of them over a null | the whole table matches the source after the migration | PASS |  |
+| two narrowings in one statement, one of them over a null | rows the migration never wrote to are not stale | PASS |  |
+| varchar shrinks and widens again with a long row after | the whole table matches the source after the migration | PASS |  |
+| varchar shrinks and widens again with a long row after | rows the migration never wrote to are not stale | PASS |  |
 | text defaults placed first and after a column | evolved in place, never quarantined | PASS |  |
 | a latin1 text default | evolved in place, never quarantined | PASS |  |
 | enum and set defaults | evolved in place, never quarantined | PASS |  |
@@ -186,6 +206,15 @@ Measured 2026-10-05T16:07:05.407Z against `mysql:8.4`.
 | a json expression default | recopied, with the reason given | PASS |  |
 | a stored generated column | recopied, with the reason given | PASS |  |
 | a virtual generated column | recopied, with the reason given | PASS |  |
+| not null over a column holding no null | adopted in place on the evidence of its rows, never quarantined | PASS |  |
+| integer narrows around values that fit | adopted in place on the evidence of its rows, never quarantined | PASS |  |
+| integer narrows around a row the stream carried just before | recopied, with the reason given | PASS |  |
+| varchar shrinks around values that fit | adopted in place on the evidence of its rows, never quarantined | PASS |  |
+| varchar shrinks around a value one character too long | recopied, with the reason given | PASS |  |
+| text family shrinks around values that fit | adopted in place on the evidence of its rows, never quarantined | PASS |  |
+| varbinary shrinks around values that fit | adopted in place on the evidence of its rows, never quarantined | PASS |  |
+| enum drops a member no row holds | adopted in place on the evidence of its rows, never quarantined | PASS |  |
+| two narrowings in one statement, one of them over a null | recopied, with the reason given | PASS |  |
 | integer width narrows | the table still matches the source after a restart | PASS |  |
 | integer width widens | the table still matches the source after a restart | PASS |  |
 | signedness changes | the table still matches the source after a restart | PASS |  |
@@ -236,3 +265,13 @@ Measured 2026-10-05T16:07:05.407Z against `mysql:8.4`.
 | a json expression default | the table still matches the source after a restart | PASS |  |
 | a stored generated column | the table still matches the source after a restart | PASS |  |
 | a virtual generated column | the table still matches the source after a restart | PASS |  |
+| not null over a column holding no null | the table still matches the source after a restart | PASS |  |
+| integer narrows around values that fit | the table still matches the source after a restart | PASS |  |
+| integer narrows around a row the stream carried just before | the table still matches the source after a restart | PASS |  |
+| varchar shrinks around values that fit | the table still matches the source after a restart | PASS |  |
+| varchar shrinks around a value one character too long | the table still matches the source after a restart | PASS |  |
+| text family shrinks around values that fit | the table still matches the source after a restart | PASS |  |
+| varbinary shrinks around values that fit | the table still matches the source after a restart | PASS |  |
+| enum drops a member no row holds | the table still matches the source after a restart | PASS |  |
+| two narrowings in one statement, one of them over a null | the table still matches the source after a restart | PASS |  |
+| varchar shrinks and widens again with a long row after | the table still matches the source after a restart | PASS |  |

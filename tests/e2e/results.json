@@ -13835,6 +13835,1376 @@
     "status": "PASS"
   },
   {
+    "phase": "connection-collation",
+    "check": "collation:default #1",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:default #2",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:default #3",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:default #4",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:default #5",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:general_ci #1",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:general_ci #2",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:general_ci #3",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:general_ci #4",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:general_ci #5",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:unicode_ci #1",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:unicode_ci #2",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:unicode_ci #3",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:unicode_ci #4",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:unicode_ci #5",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:bin #1",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:bin #2",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:bin #3",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:bin #4",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:bin #5",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:default again #1",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:default again #2",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:default again #3",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:default again #4",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "collation:default again #5",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:Dim",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:Event",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:Fact",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:sellers",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:storefronts",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:composite: join on two columns across both composite tables",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: triple-alias person join with a dangling FK",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: mixed-collation double grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: enum ordinal ordering disagrees with labels",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: trailing-space grouping under PAD semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: case-variant code grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: anti-join finds the event-less dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: nullable join key NULL-extends",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: timestamp ties page deterministically with a tiebreaker",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: date bucketing over the fact table",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conformance: decimal aggregate spanning negatives and zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:self-join manager chain preserves the roots",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:set: order by walks the member bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:geometry: spatial functions read replicated geometry",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:geometry: spatial predicates filter replicated rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi superset: compound interval grains",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi looker: a grouped foreign key reads the joined dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi looker: the grouped primary key determines the row",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi looker: a grouped self-join key reads the managers row",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:staff: three-level management chain with an inactive tail",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:staff: active split with id extremes",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:counters: full unsigned ladder readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:counters: greatest and least across widths",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:dim: enum status split",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:dim: pattern filter across collated columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:person: anti-join finds owners without facts",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:person: created-fact counts through a scalar subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:event: lag over per-dimension timelines",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:event: daily grain per dimension code",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:order_items: product rollup without the orders table",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
     "phase": "spill",
     "check": "forced-spill:sort",
     "status": "PASS"
@@ -18958,7 +20328,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150029 sync_runs rows for db_63ffcbb237715c1c4c60e6ff4c187610"
+    "detail": "150022 sync_runs rows for db_594a1875587b4b1817ab5fd57053bdd0"
   },
   {
     "phase": "activity-history",
@@ -18970,25 +20340,25 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 2ms over 150000 rows"
+    "detail": "p50 1ms p95 11ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 4ms"
+    "detail": "p50 1ms p95 2ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 8ms p99 20ms"
+    "detail": "p50 8ms p99 14ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 18ms"
+    "detail": "health p95 9ms"
   },
   {
     "phase": "activity-history",
@@ -20239,13 +21609,13 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4950"
+    "detail": "0 failed of 4900"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4950 requests: p50 1ms p99 4ms"
+    "detail": "4900 requests: p50 2ms p99 7ms"
   },
   {
     "phase": "poll-storm",
@@ -20257,7 +21627,7 @@
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 10013 vs source 10013"
+    "detail": "orders replica 8205 vs source 8205"
   },
   {
     "phase": "poll-storm",
@@ -30493,7 +31863,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 70 ok, dashboards 48 ok; no errors"
+    "detail": "wire 240 ok, http 102 ok, dashboards 66 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -30505,31 +31875,31 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 70"
+    "detail": "wire 240 of 240, http 102"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 106ms p99 405ms over 240 queries"
+    "detail": "wire p50 123ms p99 469ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 9ms over 4 samples"
+    "detail": "health p99 11ms over 5 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 117MB with a 256MB budget"
+    "detail": "peak RSS 168MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 200400 vs source 200400"
+    "detail": "big 200500 vs source 200500"
   },
   {
     "phase": "memory-pressure",
@@ -31809,13 +33179,13 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation converges the replica on the source",
     "status": "PASS",
-    "detail": "child 1800000 vs source 1800000 after 2.3s"
+    "detail": "child 1800000 vs source 1800000 after 4.4s"
   },
   {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 62MB before, peak 246MB during (margin 768MB)"
+    "detail": "RSS 68MB before, peak 313MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
@@ -34488,8 +35858,7 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "converge:information_schema.columns",
-    "status": "WARN",
-    "detail": "row 24:\n  mysql   audit_history | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | \n  pintail audit_log | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | "
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",

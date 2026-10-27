@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-10-05T16:10:06.010Z.
+Measured 2026-10-27T13:55:06.026Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**7061 passed, 0 failed, 6 documented-gap warnings, 49 skipped.**
+**7336 passed, 0 failed, 5 documented-gap warnings, 49 skipped.**
 
-224 unique corpus queries produced 6272 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+224 unique corpus queries produced 6496 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -2777,6 +2777,280 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:where: an unsigned column against a negative literal | PASS |  |
 | execution-budget | query:where: a string number against an integer column | PASS |  |
 | execution-budget | query:where: a general_ci column under PAD SPACE | PASS |  |
+| connection-collation | collation:default #1 | PASS |  |
+| connection-collation | collation:default #2 | PASS |  |
+| connection-collation | collation:default #3 | PASS |  |
+| connection-collation | collation:default #4 | PASS |  |
+| connection-collation | collation:default #5 | PASS |  |
+| connection-collation | collation:general_ci #1 | PASS |  |
+| connection-collation | collation:general_ci #2 | PASS |  |
+| connection-collation | collation:general_ci #3 | PASS |  |
+| connection-collation | collation:general_ci #4 | PASS |  |
+| connection-collation | collation:general_ci #5 | PASS |  |
+| connection-collation | collation:unicode_ci #1 | PASS |  |
+| connection-collation | collation:unicode_ci #2 | PASS |  |
+| connection-collation | collation:unicode_ci #3 | PASS |  |
+| connection-collation | collation:unicode_ci #4 | PASS |  |
+| connection-collation | collation:unicode_ci #5 | PASS |  |
+| connection-collation | collation:bin #1 | PASS |  |
+| connection-collation | collation:bin #2 | PASS |  |
+| connection-collation | collation:bin #3 | PASS |  |
+| connection-collation | collation:bin #4 | PASS |  |
+| connection-collation | collation:bin #5 | PASS |  |
+| connection-collation | collation:default again #1 | PASS |  |
+| connection-collation | collation:default again #2 | PASS |  |
+| connection-collation | collation:default again #3 | PASS |  |
+| connection-collation | collation:default again #4 | PASS |  |
+| connection-collation | collation:default again #5 | PASS |  |
+| connection-collation | converge:Dim | PASS |  |
+| connection-collation | converge:Event | PASS |  |
+| connection-collation | converge:Fact | PASS |  |
+| connection-collation | converge:Person | PASS |  |
+| connection-collation | converge:attendance | PASS |  |
+| connection-collation | converge:audit_log | PASS |  |
+| connection-collation | converge:badges | PASS |  |
+| connection-collation | converge:bundle_products | PASS |  |
+| connection-collation | converge:counters | PASS |  |
+| connection-collation | converge:customers | PASS |  |
+| connection-collation | converge:enrollments | PASS |  |
+| connection-collation | converge:flash_sales | PASS |  |
+| connection-collation | converge:listing_entries | PASS |  |
+| connection-collation | converge:listing_groups | PASS |  |
+| connection-collation | converge:marketplaces | PASS |  |
+| connection-collation | converge:order_items | PASS |  |
+| connection-collation | converge:orders | PASS |  |
+| connection-collation | converge:product_reviews | PASS |  |
+| connection-collation | converge:renamed_target | PASS |  |
+| connection-collation | converge:sellers | PASS |  |
+| connection-collation | converge:shipments | PASS |  |
+| connection-collation | converge:staff | PASS |  |
+| connection-collation | converge:storefront_followers | PASS |  |
+| connection-collation | converge:storefronts | PASS |  |
+| connection-collation | converge:information_schema.columns | PASS |  |
+| connection-collation | query:composite: one first part, ordered by the second | PASS |  |
+| connection-collation | query:composite: grouped by the first part | PASS |  |
+| connection-collation | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| connection-collation | query:composite: a range on the first part with a filter on the second | PASS |  |
+| connection-collation | query:composite: descending key order with a limit | PASS |  |
+| connection-collation | query:composite: nulls in a non-key column under the key order | PASS |  |
+| connection-collation | query:composite: text-led key, one tenant and a user range | PASS |  |
+| connection-collation | query:composite: text-led key grouped by its first part | PASS |  |
+| connection-collation | query:composite: join on two columns across both composite tables | PASS |  |
+| connection-collation | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| connection-collation | query:conformance: mixed-collation double grouping | PASS |  |
+| connection-collation | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| connection-collation | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| connection-collation | query:conformance: case-variant code grouping | PASS |  |
+| connection-collation | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| connection-collation | query:conformance: nullable join key NULL-extends | PASS |  |
+| connection-collation | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| connection-collation | query:conformance: date bucketing over the fact table | PASS |  |
+| connection-collation | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
+| connection-collation | query:point lookup by key | PASS |  |
+| connection-collation | query:range scan with compound predicate | PASS |  |
+| connection-collation | query:inner join with aggregation | PASS |  |
+| connection-collation | query:join with a residual comparison between both inputs | PASS |  |
+| connection-collation | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| connection-collation | query:residual comparison through coalesce on a nullable column | PASS |  |
+| connection-collation | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| connection-collation | query:alias pair with the join order reversed | PASS |  |
+| connection-collation | query:four aliases of one table joined in a chain | PASS |  |
+| connection-collation | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| connection-collation | query:self-join manager chain preserves the roots | PASS |  |
+| connection-collation | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| connection-collation | query:aliases stay distinct when the empty side joins first | PASS |  |
+| connection-collation | query:left join preserves unmatched rows | PASS |  |
+| connection-collation | query:right join preserves unmatched rows | PASS |  |
+| connection-collation | query:three-way join through items | PASS |  |
+| connection-collation | query:union all across sources | PASS |  |
+| connection-collation | query:intersect customer identifiers | PASS |  |
+| connection-collation | query:except customer identifiers | PASS |  |
+| connection-collation | query:order by an expression over an aggregate | PASS |  |
+| connection-collation | query:order by a tree over several aggregates | PASS |  |
+| connection-collation | query:order by an aggregate absent from the select list | PASS |  |
+| connection-collation | query:group by with having | PASS |  |
+| connection-collation | query:conditional decimal sum keeps the fraction | PASS |  |
+| connection-collation | query:distinct count and min max | PASS |  |
+| connection-collation | query:uncorrelated in-subquery | PASS |  |
+| connection-collation | query:correlated exists with inner predicate | PASS |  |
+| connection-collation | query:correlated scalar aggregate | PASS |  |
+| connection-collation | query:correlated scalar unique lookup | PASS |  |
+| connection-collation | query:scalar subquery threshold | PASS |  |
+| connection-collation | query:non-recursive cte | PASS |  |
+| connection-collation | query:bounded recursive cte | PASS |  |
+| connection-collation | query:date bucketing | PASS |  |
+| connection-collation | query:string functions and like | PASS |  |
+| connection-collation | query:looker symmetric key helpers | PASS |  |
+| connection-collation | query:json constructor preserves json versus text | PASS |  |
+| connection-collation | query:json aggregate embeds documents | PASS |  |
+| connection-collation | query:regular expression read transforms | PASS |  |
+| connection-collation | query:case expression buckets | PASS |  |
+| connection-collation | query:null handling | PASS |  |
+| connection-collation | query:coalesce and ifnull | PASS |  |
+| connection-collation | query:enum and set filters | PASS |  |
+| connection-collation | query:unsigned boundary readback | PASS |  |
+| connection-collation | query:derived table | PASS |  |
+| connection-collation | query:group_concat single expression | PASS |  |
+| connection-collation | query:window ranking per group | PASS |  |
+| connection-collation | query:window share of total over grouped output | PASS |  |
+| connection-collation | query:window running total | PASS |  |
+| connection-collation | query:decimal column average beyond simple sum | PASS |  |
+| connection-collation | query:computed decimal rounds negative digits half away from zero | PASS |  |
+| connection-collation | query:json extract filter on customer meta | PASS |  |
+| connection-collation | query:fan-out join group concat line products | PASS |  |
+| connection-collation | query:outer join customers without recent orders | PASS |  |
+| connection-collation | query:set op union distinct tiers and statuses | PASS |  |
+| connection-collation | query:temporal convert and date_format grain | PASS |  |
+| connection-collation | query:correlated not exists open orders | PASS |  |
+| connection-collation | query:window lag payment-shaped totals | PASS |  |
+| connection-collation | query:multi-key join items to orders | PASS |  |
+| connection-collation | query:between and null-safe coalesce on balance | PASS |  |
+| connection-collation | query:intersect all-style customer buyers | PASS |  |
+| connection-collation | query:derived table status revenue share | PASS |  |
+| connection-collation | query:general_ci: equality folds ASCII case | PASS |  |
+| connection-collation | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| connection-collation | query:unicode_ci: equality folds case and accents | PASS |  |
+| connection-collation | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| connection-collation | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| connection-collation | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| connection-collation | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| connection-collation | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| connection-collation | query:unicode_ci: joining on a collated column | PASS |  |
+| connection-collation | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| connection-collation | query:unicode_ci: extremes follow the collation | PASS |  |
+| connection-collation | query:unicode_ci: IN membership uses the collation | PASS |  |
+| connection-collation | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| connection-collation | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| connection-collation | query:general_ci: every supplementary character compares equal | PASS |  |
+| connection-collation | query:general_ci: grouping partitions by collated equality | PASS |  |
+| connection-collation | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| connection-collation | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| connection-collation | query:general_ci: joining on a collated column | PASS |  |
+| connection-collation | query:general_ci: representative spelling of a collated group | PASS |  |
+| connection-collation | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| connection-collation | query:enum: order by ascends by declared ordinal | PASS |  |
+| connection-collation | query:enum: order by descends by declared ordinal | PASS |  |
+| connection-collation | query:enum: min and max compare as strings | PASS |  |
+| connection-collation | query:enum: a greater-than range compares as strings | PASS |  |
+| connection-collation | query:enum: a less-than range compares as strings | PASS |  |
+| connection-collation | query:enum: between compares as strings | PASS |  |
+| connection-collation | query:enum: distinct orders by ordinal | PASS |  |
+| connection-collation | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| connection-collation | query:enum: a window order walks the ordinal | PASS |  |
+| connection-collation | query:collation: mixed grouping answers with per-key folds | PASS |  |
+| connection-collation | query:collation: distinct counts fold per column collation | PASS |  |
+| connection-collation | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| connection-collation | query:set: order by walks the member bitmask | PASS |  |
+| connection-collation | query:set: grouping orders groups by bitmask | PASS |  |
+| connection-collation | query:enum: the empty member groups by its ordinal | PASS |  |
+| connection-collation | query:enum: the empty member sorts by its ordinal | PASS |  |
+| connection-collation | query:enum: the empty member is selectable by text | PASS |  |
+| connection-collation | query:geometry: hex round-trips the internal format | PASS |  |
+| connection-collation | query:geometry: byte length includes the srid prefix | PASS |  |
+| connection-collation | query:geometry: null routes filter and count | PASS |  |
+| connection-collation | query:geometry: spatial functions read replicated geometry | PASS |  |
+| connection-collation | query:geometry: spatial predicates filter replicated rows | PASS |  |
+| connection-collation | query:set: find_in_set filters by membership | PASS |  |
+| connection-collation | query:set: equality is literal, not member-normalized | PASS |  |
+| connection-collation | query:set: distinct values walk the bitmask including empty | PASS |  |
+| connection-collation | query:set: grouped counts order by bitmask not text | PASS |  |
+| connection-collation | query:set: a range predicate compares the bitmask | PASS |  |
+| connection-collation | query:star: fact with dimension and two audit persons | PASS |  |
+| connection-collation | query:star: five-alias chain fans out through events | PASS |  |
+| connection-collation | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| connection-collation | query:star: five tables bridge the shop and the star | PASS |  |
+| connection-collation | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| connection-collation | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| connection-collation | query:json: length and keys survive null documents | PASS |  |
+| connection-collation | query:json: contains_path filters the documented rows | PASS |  |
+| connection-collation | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| connection-collation | query:json: object construction embeds an extracted scalar | PASS |  |
+| connection-collation | query:json: search locates a literal value | PASS |  |
+| connection-collation | query:json: grouping by an extracted scalar | PASS |  |
+| connection-collation | query:json: merge_patch overlays and reads back | PASS |  |
+| connection-collation | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| connection-collation | query:temporal: month-end bucketing via last_day | PASS |  |
+| connection-collation | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| connection-collation | query:temporal: datetime range keeps the year window | PASS |  |
+| connection-collation | query:temporal: date_sub bound in the predicate | PASS |  |
+| connection-collation | query:temporal: year-month split grouping | PASS |  |
+| connection-collation | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| connection-collation | query:regex: substr extracts the mail domain | PASS |  |
+| connection-collation | query:regex: the REGEXP operator anchors a class | PASS |  |
+| connection-collation | query:regex: replace folds suffix classes before grouping | PASS |  |
+| connection-collation | query:bi metabase: month grain through convert_tz | PASS |  |
+| connection-collation | query:bi metabase: iso week bucketing | PASS |  |
+| connection-collation | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| connection-collation | query:bi metabase: previous-period revenue window | PASS |  |
+| connection-collation | query:bi superset: week-start grain with a rolling average | PASS |  |
+| connection-collation | query:bi superset: running total over grouped revenue | PASS |  |
+| connection-collation | query:bi superset: lag and lead against a named window | PASS |  |
+| connection-collation | query:bi superset: quartile counts from ntile | PASS |  |
+| connection-collation | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| connection-collation | query:bi superset: compound interval grains | PASS |  |
+| connection-collation | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| connection-collation | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| connection-collation | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
+| connection-collation | query:bi looker: the grouped primary key determines the row | PASS |  |
+| connection-collation | query:bi looker: a grouped self-join key reads the managers row | PASS |  |
+| connection-collation | query:bi tableau: explicit cast ladder | PASS |  |
+| connection-collation | query:bi tableau: the stddev and variance family | PASS |  |
+| connection-collation | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| connection-collation | query:bi shared: substring_index dimension cleanup | PASS |  |
+| connection-collation | query:bi shared: json validity and typed path filter | PASS |  |
+| connection-collation | query:bi shared: contains_path over several paths at once | PASS |  |
+| connection-collation | query:bi shared: maketime from extracted parts | PASS |  |
+| connection-collation | query:bi shared: extract year_month grouping | PASS |  |
+| connection-collation | query:bi shared: keyset-free pagination with limit offset | PASS |  |
+| connection-collation | query:staff: three-level management chain with an inactive tail | PASS |  |
+| connection-collation | query:staff: active split with id extremes | PASS |  |
+| connection-collation | query:counters: full unsigned ladder readback | PASS |  |
+| connection-collation | query:counters: greatest and least across widths | PASS |  |
+| connection-collation | query:dim: enum status split | PASS |  |
+| connection-collation | query:dim: pattern filter across collated columns | PASS |  |
+| connection-collation | query:person: anti-join finds owners without facts | PASS |  |
+| connection-collation | query:person: created-fact counts through a scalar subquery | PASS |  |
+| connection-collation | query:event: lag over per-dimension timelines | PASS |  |
+| connection-collation | query:event: daily grain per dimension code | PASS |  |
+| connection-collation | query:order_items: product rollup without the orders table | PASS |  |
+| connection-collation | query:shipments: carrier value through the items bridge | PASS |  |
+| connection-collation | query:json: distinct case variants survive a derived table | PASS |  |
+| connection-collation | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| connection-collation | query:storefront: the per-sale rows under the report | PASS |  |
+| connection-collation | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| connection-collation | query:storefront: the same membership written as EXISTS | PASS |  |
+| connection-collation | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| connection-collation | query:storefront: membership keyed on shopper and locale | PASS |  |
+| connection-collation | query:storefront: locale membership across case variants | PASS |  |
+| connection-collation | query:storefront: shopper and staff reviews side by side | PASS |  |
+| connection-collation | query:storefront: membership correlated through the storefront alias | PASS |  |
+| connection-collation | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| connection-collation | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| connection-collation | query:storefront: membership across a storefront range | PASS |  |
+| connection-collation | query:storefront: membership from a grouped, joined list | PASS |  |
+| connection-collation | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| connection-collation | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| connection-collation | query:where: a DATE range ending on a leap day | PASS |  |
+| connection-collation | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| connection-collation | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| connection-collation | query:where: DATE() of a TIMESTAMP | PASS |  |
+| connection-collation | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| connection-collation | query:where: DECIMAL against a string literal | PASS |  |
+| connection-collation | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| connection-collation | query:where: NOT IN with a NULL in the list | PASS |  |
+| connection-collation | query:where: null-safe equality on a nullable column | PASS |  |
+| connection-collation | query:where: a filter on a virtual generated column | PASS |  |
+| connection-collation | query:where: SET membership by FIND_IN_SET | PASS |  |
+| connection-collation | query:where: SET equality to a member list | PASS |  |
+| connection-collation | query:where: VARBINARY equality to a hex literal | PASS |  |
+| connection-collation | query:where: JSON path comparisons | PASS |  |
+| connection-collation | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| connection-collation | query:where: OR with a NULL-testing branch | PASS |  |
+| connection-collation | query:where: row constructor IN | PASS |  |
+| connection-collation | query:where: ALL over a subquery | PASS |  |
+| connection-collation | query:where: an unsigned column against a negative literal | PASS |  |
+| connection-collation | query:where: a string number against an integer column | PASS |  |
+| connection-collation | query:where: a general_ci column under PAD SPACE | PASS |  |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -3801,12 +4075,12 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:where: an unsigned column against a negative literal | PASS |  |
 | restart | query:where: a string number against an integer column | PASS |  |
 | restart | query:where: a general_ci column under PAD SPACE | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150027 sync_runs rows for db_144d9118e14bac774d4f3968ed43a267 |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150021 sync_runs rows for db_0ee9006c9b2967285ecf9a44573b391f |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
-| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 2ms over 150000 rows |
-| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 1ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 9ms p99 16ms |
-| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 14ms |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 3ms p95 4ms over 150000 rows |
+| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 3ms p95 5ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 16ms p99 44ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 34ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
 | activity-history | converge:Fact | PASS |  |
@@ -4056,10 +4330,10 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:where: an unsigned column against a negative literal | PASS |  |
 | activity-history | query:where: a string number against an integer column | PASS |  |
 | activity-history | query:where: a general_ci column under PAD SPACE | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4950 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4950 requests: p50 1ms p99 5ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 2ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 9826 vs source 9826 |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4856 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4856 requests: p50 2ms p99 12ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 3ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 7473 vs source 7473 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
@@ -5342,7 +5616,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_144d9118e14bac774d4f3968ed43a267","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-10-05T16:05:18.051419881+00:00","updated_at":"2026-10-05T16:09:14.689327232+00:00"},"tables":30,"rows":13739} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_0ee9006c9b2967285ecf9a44573b391f","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-10-27T13:50:34.735541743+00:00","updated_at":"2026-10-27T13:54:02.603750102+00:00"},"tables":30,"rows":11386} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -6105,13 +6379,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:where: a string number against an integer column | PASS |  |
 | restart-during-resync | query:where: a general_ci column under PAD SPACE | PASS |  |
 | memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 105 ok, dashboards 60 ok; no errors |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 94 ok, dashboards 78 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 105 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 106ms p99 429ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 12ms over 4 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 122MB with a 256MB budget |
-| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200400 vs source 200400 |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 94 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 144ms p99 747ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 15ms over 6 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 138MB with a 256MB budget |
+| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200600 vs source 200600 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
 | memory-pressure | converge:Event | PASS |  |
@@ -6366,8 +6640,8 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | reconcile-memory:the source holds the large child table | PASS | 2000000 rows |
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
-| reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 2.3s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 70MB before, peak 362MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 4.4s |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 67MB before, peak 305MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
@@ -6901,7 +7175,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | converge:staff | PASS |  |
 | ddl-documented-gaps | converge:storefront_followers | PASS |  |
 | ddl-documented-gaps | converge:storefronts | PASS |  |
-| ddl-documented-gaps | converge:information_schema.columns | WARN | row 24: |
+| ddl-documented-gaps | converge:information_schema.columns | PASS |  |
 | ddl-documented-gaps | query:composite: one first part, ordered by the second | PASS |  |
 | ddl-documented-gaps | query:composite: grouped by the first part | PASS |  |
 | ddl-documented-gaps | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
@@ -7131,32 +7405,33 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 0.1 | 0.5 |
-| orm-compat | 2.0 | 0.0 | 0.5 |
-| crud | 0.0 | 0.3 | 0.5 |
-| composite-keys | 0.0 | 2.1 | 0.5 |
-| type-edges | 0.0 | 2.1 | 0.4 |
-| ddl | 7.1 | 2.6 | 0.4 |
-| schema-drift-minimal | 0.0 | 2.1 | 0.3 |
-| schema-drift-unseen | 0.0 | 2.1 | 0.4 |
-| churn | 0.1 | 2.1 | 0.3 |
-| contention | 14.0 | 0.1 | 0.6 |
-| execution-budget | 0.0 | 0.1 | 0.7 |
-| spill | 6.5 | 0.7 | 0.6 |
-| pooling | 0.0 | 1.3 | 0.7 |
-| local-database | 0.0 | 0.1 | 0.7 |
-| restart | 0.5 | 1.3 | 0.6 |
-| activity-history | 1.1 | 0.7 | 0.7 |
-| poll-storm | 21.9 | 0.1 | 0.6 |
-| control-plane | 28.5 | 0.1 | 0.6 |
-| snapshot-ddl-window | 5.0 | 0.1 | 0.5 |
-| drop-table-cdc | 8.3 | 0.1 | 0.5 |
-| drop-table-recreate | 11.8 | 0.1 | 0.5 |
-| drop-table-polling | 104.5 | 0.1 | 0.6 |
-| restart-during-snapshot | 1.5 | 0.1 | 0.5 |
-| restart-during-resync | 3.5 | 0.1 | 0.5 |
-| memory-pressure | 5.8 | 0.1 | 0.5 |
-| reconcile-memory | 18.6 | 0.1 | 0.6 |
-| drop-database | 12.1 | 0.1 | 0.5 |
-| ddl-documented-gaps | 0.0 | 0.1 | 0.5 |
-| total | 253.2 | 18.6 | 15.2 |
+| snapshot | 0.0 | 0.1 | 0.7 |
+| orm-compat | 1.8 | 0.0 | 0.5 |
+| crud | 0.0 | 0.0 | 0.6 |
+| composite-keys | 0.0 | 0.0 | 0.6 |
+| type-edges | 0.0 | 0.0 | 0.6 |
+| ddl | 6.1 | 0.7 | 0.7 |
+| schema-drift-minimal | 0.0 | 0.1 | 0.5 |
+| schema-drift-unseen | 0.0 | 0.3 | 0.6 |
+| churn | 0.2 | 1.6 | 0.5 |
+| contention | 15.3 | 0.2 | 0.8 |
+| execution-budget | 0.0 | 0.1 | 0.9 |
+| connection-collation | 0.2 | 0.1 | 0.8 |
+| spill | 5.5 | 0.6 | 0.9 |
+| pooling | 0.0 | 0.1 | 0.8 |
+| local-database | 0.0 | 0.1 | 0.9 |
+| restart | 0.5 | 0.6 | 0.8 |
+| activity-history | 1.5 | 0.7 | 0.9 |
+| poll-storm | 21.1 | 0.1 | 1.1 |
+| control-plane | 21.1 | 0.1 | 0.7 |
+| snapshot-ddl-window | 5.1 | 0.1 | 0.6 |
+| drop-table-cdc | 6.1 | 0.1 | 0.6 |
+| drop-table-recreate | 5.8 | 0.1 | 0.5 |
+| drop-table-polling | 102.5 | 0.2 | 0.8 |
+| restart-during-snapshot | 4.5 | 0.2 | 0.9 |
+| restart-during-resync | 4.5 | 0.2 | 0.8 |
+| memory-pressure | 7.7 | 0.2 | 0.8 |
+| reconcile-memory | 25.0 | 0.1 | 0.5 |
+| drop-database | 8.1 | 0.1 | 0.5 |
+| ddl-documented-gaps | 0.0 | 0.3 | 0.5 |
+| total | 242.7 | 7.1 | 20.4 |

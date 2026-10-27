@@ -1,10 +1,10 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-10-05T15:59:36.881Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-10-27T13:41:04.877Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: 018db757197ba7075a0bbfb03fa8faf2cbc7a39e; source dirty: false. Binary SHA-256: 76aa1c32eb63b952ad98ae40b2de9abd667e07d01ba949cd5a72f27df315d6d0.
+Replay mode: local. Source commit: ece0e0103038407db77081f32e02c5103fb50cc5; source dirty: false. Binary SHA-256: a404f6680309508aa7ee7fb764db027f9ef72d8995ae8c686ec04e452bad00eb.
 
-**9,299 of 9,405 compared SELECTs match MySQL byte-for-byte** (98.9%), **out of 23,119 SELECTs replayed** - 13,714 never reached a comparison, so this is a share of what could be compared and not of the suite. 106 differ in rows, 0 in column names only. 5,119 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
+**10,101 of 10,227 compared SELECTs match MySQL byte-for-byte** (98.8%), **out of 23,119 SELECTs replayed** - 12,892 never reached a comparison, so this is a share of what could be compared and not of the suite. 123 differ in rows, 3 in column names only. 4,297 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -36,7 +36,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | bool | 30 | 20 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 3 | 0 |
 | bulk_replace | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 1 |
 | case | 140 | 36 | 0 | 0 | 1 | 11 | 0 | 49 | 3 | 11 | 7 | 22 |
-| cast | 564 | 181 | 1 | 0 | 14 | 15 | 0 | 85 | 4 | 40 | 33 | 190 |
+| cast | 564 | 183 | 1 | 0 | 12 | 15 | 0 | 85 | 4 | 40 | 33 | 190 |
 | change_user | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 4 | 7 |
 | character_set_deprecation | 100 | 10 | 0 | 0 | 24 | 0 | 0 | 13 | 21 | 13 | 3 | 13 |
 | charset | 77 | 1 | 0 | 0 | 2 | 4 | 0 | 15 | 1 | 6 | 15 | 32 |
@@ -53,7 +53,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | commit | 307 | 4 | 0 | 0 | 3 | 25 | 0 | 14 | 0 | 39 | 52 | 158 |
 | commit_1innodb | 243 | 1 | 0 | 0 | 0 | 56 | 0 | 16 | 0 | 47 | 10 | 113 |
 | comp_err | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| compare | 78 | 19 | 0 | 0 | 1 | 11 | 0 | 24 | 6 | 3 | 7 | 7 |
+| compare | 78 | 20 | 0 | 0 | 0 | 11 | 0 | 24 | 6 | 3 | 7 | 7 |
 | component | 98 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 89 |
 | component_set | 110 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 1 | 84 |
 | component_string_service | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
@@ -74,56 +74,56 @@ Column names are compared with rows. Row order is compared when the outer query 
 | create_select_foreign_key | 46 | 0 | 0 | 0 | 0 | 3 | 0 | 11 | 2 | 9 | 8 | 13 |
 | create_select_tmp | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 5 |
 | create_w_max_indexes_64 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 1 | 0 | 10 |
-| ctype_ascii | 18 | 3 | 0 | 0 | 6 | 0 | 0 | 6 | 0 | 0 | 2 | 1 |
-| ctype_big5 | 292 | 12 | 0 | 0 | 115 | 27 | 0 | 34 | 3 | 61 | 28 | 6 |
-| ctype_binary | 862 | 154 | 0 | 0 | 13 | 35 | 0 | 231 | 12 | 209 | 7 | 192 |
+| ctype_ascii | 18 | 8 | 0 | 0 | 1 | 0 | 0 | 6 | 0 | 0 | 2 | 1 |
+| ctype_big5 | 292 | 17 | 0 | 0 | 110 | 27 | 0 | 34 | 3 | 61 | 28 | 6 |
+| ctype_binary | 862 | 161 | 0 | 0 | 6 | 35 | 0 | 231 | 12 | 209 | 7 | 192 |
 | ctype_collate | 187 | 8 | 0 | 0 | 18 | 22 | 0 | 47 | 2 | 41 | 9 | 40 |
-| ctype_cp1250_ch | 236 | 24 | 0 | 0 | 107 | 6 | 0 | 29 | 4 | 16 | 35 | 12 |
-| ctype_cp1251 | 922 | 154 | 0 | 0 | 13 | 47 | 0 | 236 | 15 | 245 | 7 | 193 |
+| ctype_cp1250_ch | 236 | 30 | 4 | 0 | 97 | 6 | 0 | 29 | 4 | 16 | 35 | 12 |
+| ctype_cp1251 | 922 | 161 | 0 | 0 | 6 | 47 | 0 | 236 | 15 | 245 | 7 | 193 |
 | ctype_cp932 | 19 | 0 | 0 | 0 | 0 | 6 | 0 | 1 | 1 | 2 | 9 | 0 |
 | ctype_create | 40 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 5 | 4 | 24 |
 | ctype_errors | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 6 | 12 |
-| ctype_eucjpms | 336 | 0 | 0 | 0 | 227 | 20 | 4 | 25 | 1 | 44 | 11 | 2 |
+| ctype_eucjpms | 336 | 3 | 0 | 0 | 224 | 20 | 4 | 25 | 1 | 44 | 11 | 2 |
 | ctype_euckr | 148 | 12 | 0 | 0 | 3 | 19 | 0 | 24 | 3 | 55 | 23 | 5 |
 | ctype_filename | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 0 |
 | ctype_filesystem | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 |
-| ctype_gb18030 | 395 | 12 | 0 | 0 | 247 | 17 | 0 | 22 | 2 | 53 | 26 | 10 |
+| ctype_gb18030 | 395 | 17 | 0 | 0 | 242 | 17 | 0 | 22 | 2 | 53 | 26 | 10 |
 | ctype_gb18030_conversion | 41 | 0 | 0 | 0 | 0 | 13 | 0 | 11 | 3 | 9 | 5 | 0 |
 | ctype_gb18030_encoding_cn | 335 | 0 | 0 | 0 | 33 | 31 | 50 | 16 | 9 | 99 | 76 | 20 |
 | ctype_gb18030_encoding_utf8 | 335 | 0 | 0 | 0 | 33 | 31 | 50 | 25 | 0 | 99 | 76 | 20 |
 | ctype_gb18030_ligatures | 185 | 0 | 0 | 0 | 0 | 12 | 0 | 3 | 3 | 47 | 2 | 118 |
-| ctype_gb2312 | 270 | 12 | 0 | 0 | 114 | 22 | 0 | 29 | 1 | 54 | 26 | 6 |
-| ctype_gbk | 396 | 12 | 0 | 0 | 231 | 22 | 0 | 30 | 3 | 57 | 28 | 7 |
+| ctype_gb2312 | 270 | 17 | 0 | 0 | 109 | 22 | 0 | 29 | 1 | 54 | 26 | 6 |
+| ctype_gbk | 396 | 17 | 0 | 0 | 226 | 22 | 0 | 30 | 3 | 57 | 28 | 7 |
 | ctype_hebrew | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 2 | 1 | 0 |
-| ctype_latin1 | 304 | 7 | 0 | 0 | 112 | 97 | 0 | 25 | 1 | 40 | 11 | 1 |
-| ctype_latin1_de | 157 | 1 | 0 | 0 | 77 | 29 | 0 | 17 | 3 | 21 | 3 | 3 |
-| ctype_latin2 | 92 | 0 | 0 | 0 | 53 | 2 | 0 | 15 | 1 | 15 | 4 | 0 |
-| ctype_latin2_ch | 181 | 2 | 0 | 0 | 83 | 23 | 0 | 21 | 2 | 39 | 9 | 0 |
+| ctype_latin1 | 304 | 12 | 0 | 0 | 107 | 97 | 0 | 25 | 1 | 40 | 11 | 1 |
+| ctype_latin1_de | 157 | 10 | 0 | 0 | 68 | 29 | 0 | 17 | 3 | 21 | 3 | 3 |
+| ctype_latin2 | 92 | 5 | 0 | 0 | 48 | 2 | 0 | 15 | 1 | 15 | 4 | 0 |
+| ctype_latin2_ch | 181 | 4 | 8 | 0 | 73 | 23 | 0 | 21 | 2 | 39 | 9 | 0 |
 | ctype_ldml † | 204 | 0 | 0 | 0 | 0 | 26 | 22 | 19 | 0 | 109 | 11 | 16 |
 | ctype_like_range | 67 | 0 | 0 | 0 | 0 | 25 | 0 | 3 | 1 | 36 | 0 | 2 |
 | ctype_many | 223 | 0 | 0 | 0 | 0 | 29 | 0 | 9 | 5 | 159 | 8 | 13 |
 | ctype_mb | 22 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 0 | 6 | 0 | 11 |
 | ctype_recoding | 130 | 7 | 0 | 0 | 0 | 25 | 0 | 23 | 5 | 12 | 30 | 28 |
-| ctype_sjis | 267 | 3 | 4 | 0 | 117 | 29 | 2 | 24 | 4 | 56 | 20 | 2 |
-| ctype_tis620 | 177 | 37 | 0 | 0 | 58 | 8 | 0 | 11 | 1 | 33 | 25 | 0 |
+| ctype_sjis | 267 | 8 | 4 | 0 | 112 | 29 | 2 | 24 | 4 | 56 | 20 | 2 |
+| ctype_tis620 | 177 | 43 | 0 | 0 | 52 | 8 | 0 | 11 | 1 | 33 | 25 | 0 |
 | ctype_uca | 845 | 19 | 0 | 0 | 206 | 90 | 0 | 79 | 7 | 394 | 30 | 9 |
-| ctype_ucs | 1347 | 251 | 0 | 0 | 32 | 96 | 0 | 300 | 37 | 330 | 67 | 220 |
+| ctype_ucs | 1347 | 258 | 0 | 0 | 25 | 96 | 0 | 300 | 37 | 330 | 67 | 220 |
 | ctype_ucs2_def | 13 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 1 | 0 | 3 |
-| ctype_ujis | 1443 | 14 | 4 | 0 | 241 | 36 | 0 | 31 | 7 | 1077 | 21 | 6 |
+| ctype_ujis | 1443 | 19 | 4 | 0 | 236 | 36 | 0 | 31 | 7 | 1077 | 21 | 6 |
 | ctype_ujis_ucs2 | 1174 | 0 | 0 | 0 | 0 | 4 | 0 | 18 | 3 | 1147 | 2 | 0 |
-| ctype_unicode900 | 168 | 32 | 0 | 0 | 55 | 8 | 0 | 17 | 0 | 24 | 18 | 10 |
+| ctype_unicode900 | 168 | 36 | 0 | 0 | 51 | 8 | 0 | 17 | 0 | 24 | 18 | 10 |
 | ctype_unicode900_as_ci | 139 | 12 | 0 | 0 | 51 | 8 | 0 | 17 | 0 | 24 | 17 | 6 |
-| ctype_unicode900_as_cs | 168 | 32 | 0 | 0 | 55 | 8 | 0 | 17 | 0 | 24 | 18 | 10 |
+| ctype_unicode900_as_cs | 168 | 36 | 0 | 0 | 51 | 8 | 0 | 17 | 0 | 24 | 18 | 10 |
 | ctype_unicode900_casetable | 19 | 0 | 0 | 0 | 0 | 1 | 0 | 11 | 1 | 4 | 2 | 0 |
-| ctype_utf16 | 522 | 79 | 0 | 0 | 103 | 65 | 0 | 47 | 31 | 110 | 56 | 23 |
+| ctype_utf16 | 522 | 83 | 0 | 0 | 99 | 65 | 0 | 47 | 31 | 110 | 56 | 23 |
 | ctype_utf16_def | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | ctype_utf16_uca | 447 | 21 | 0 | 0 | 98 | 44 | 0 | 25 | 5 | 212 | 28 | 8 |
-| ctype_utf16le | 566 | 53 | 0 | 0 | 102 | 80 | 0 | 67 | 32 | 152 | 45 | 24 |
-| ctype_utf32 | 551 | 72 | 0 | 0 | 104 | 68 | 0 | 52 | 34 | 122 | 59 | 32 |
+| ctype_utf16le | 566 | 57 | 0 | 0 | 98 | 80 | 0 | 67 | 32 | 152 | 45 | 24 |
+| ctype_utf32 | 551 | 74 | 0 | 0 | 102 | 68 | 0 | 52 | 34 | 122 | 59 | 32 |
 | ctype_utf32_uca | 455 | 21 | 0 | 0 | 98 | 46 | 0 | 28 | 6 | 213 | 29 | 8 |
-| ctype_utf8 | 1816 | 316 | 2 | 0 | 40 | 119 | 0 | 567 | 27 | 345 | 74 | 314 |
-| ctype_utf8mb4 | 1034 | 152 | 2 | 0 | 79 | 97 | 0 | 314 | 13 | 176 | 90 | 100 |
-| ctype_utf8mb4_uca | 217 | 0 | 0 | 0 | 2 | 32 | 0 | 33 | 2 | 140 | 6 | 0 |
+| ctype_utf8 | 1816 | 325 | 2 | 0 | 31 | 119 | 0 | 567 | 27 | 345 | 74 | 314 |
+| ctype_utf8mb4 | 1034 | 160 | 2 | 0 | 71 | 97 | 0 | 314 | 13 | 176 | 90 | 100 |
+| ctype_utf8mb4_uca | 217 | 1 | 1 | 0 | 0 | 32 | 0 | 33 | 2 | 140 | 6 | 0 |
 | datadir_permission | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | date_formats | 120 | 54 | 1 | 0 | 7 | 6 | 0 | 19 | 0 | 7 | 19 | 7 |
 | ddl_i18n_koi8r | 365 | 0 | 0 | 0 | 18 | 15 | 6 | 4 | 0 | 58 | 76 | 143 |
@@ -200,34 +200,34 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_digest | 566 | 473 | 0 | 0 | 9 | 0 | 0 | 16 | 1 | 12 | 24 | 8 |
 | func_digest_small_buffer | 12 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 7 | 2 | 1 |
 | func_equal | 29 | 13 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 3 |
-| func_gconcat | 261 | 67 | 0 | 0 | 15 | 27 | 0 | 108 | 8 | 10 | 10 | 14 |
+| func_gconcat | 261 | 71 | 0 | 0 | 11 | 27 | 0 | 108 | 8 | 10 | 10 | 14 |
 | func_group | 725 | 183 | 0 | 0 | 8 | 56 | 0 | 267 | 10 | 45 | 47 | 100 |
 | func_if | 99 | 32 | 0 | 0 | 6 | 0 | 0 | 45 | 0 | 1 | 4 | 10 |
-| func_in_all | 297 | 79 | 1 | 0 | 9 | 11 | 0 | 103 | 2 | 19 | 13 | 59 |
+| func_in_all | 297 | 81 | 1 | 0 | 7 | 11 | 0 | 103 | 2 | 19 | 13 | 59 |
 | func_in_icp | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | func_in_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | func_in_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | func_in_mrr_cost | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | func_in_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| func_isnull | 35 | 1 | 0 | 0 | 2 | 2 | 0 | 19 | 2 | 3 | 0 | 3 |
+| func_isnull | 35 | 3 | 0 | 0 | 0 | 2 | 0 | 19 | 2 | 3 | 0 | 3 |
 | func_like | 175 | 64 | 0 | 0 | 10 | 11 | 0 | 39 | 4 | 11 | 19 | 17 |
-| func_math | 568 | 186 | 2 | 0 | 9 | 38 | 0 | 106 | 5 | 49 | 32 | 133 |
+| func_math | 568 | 189 | 2 | 0 | 6 | 38 | 0 | 106 | 5 | 49 | 32 | 133 |
 | func_md5 | 14 | 3 | 0 | 0 | 0 | 4 | 0 | 3 | 1 | 1 | 0 | 2 |
 | func_md5_fail | 2 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| func_misc | 35 | 17 | 0 | 0 | 3 | 0 | 0 | 5 | 0 | 1 | 6 | 2 |
+| func_misc | 35 | 20 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 6 | 2 |
 | func_op | 18 | 10 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 2 |
 | func_prefix_key | 193 | 2 | 0 | 0 | 0 | 10 | 0 | 20 | 4 | 10 | 0 | 147 |
 | func_rand | 22 | 2 | 0 | 0 | 0 | 4 | 0 | 6 | 0 | 2 | 0 | 6 |
-| func_regexp | 110 | 18 | 0 | 0 | 17 | 1 | 0 | 18 | 0 | 19 | 22 | 15 |
+| func_regexp | 110 | 22 | 0 | 0 | 13 | 1 | 0 | 18 | 0 | 19 | 22 | 15 |
 | func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 |
-| func_sapdb | 88 | 74 | 0 | 0 | 3 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
-| func_set | 77 | 23 | 0 | 0 | 15 | 0 | 2 | 25 | 0 | 1 | 2 | 5 |
-| func_str | 834 | 385 | 0 | 0 | 146 | 12 | 0 | 147 | 2 | 16 | 18 | 94 |
-| func_test | 221 | 109 | 0 | 0 | 19 | 3 | 0 | 43 | 3 | 8 | 11 | 25 |
-| func_time | 599 | 335 | 0 | 0 | 27 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
+| func_sapdb | 88 | 76 | 0 | 0 | 1 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
+| func_set | 77 | 38 | 0 | 0 | 0 | 0 | 2 | 25 | 0 | 1 | 2 | 5 |
+| func_str | 834 | 432 | 0 | 0 | 99 | 12 | 0 | 147 | 2 | 16 | 18 | 94 |
+| func_test | 221 | 115 | 0 | 0 | 13 | 3 | 0 | 43 | 3 | 8 | 11 | 25 |
+| func_time | 599 | 339 | 0 | 0 | 23 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
 | func_timestamp | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 |
 | func_unixtime | 96 | 50 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 10 | 23 | 4 |
-| func_uuid | 99 | 0 | 0 | 0 | 29 | 9 | 0 | 12 | 3 | 8 | 9 | 29 |
+| func_uuid | 99 | 29 | 0 | 0 | 0 | 9 | 0 | 12 | 3 | 8 | 9 | 29 |
 | func_weight_string | 84 | 1 | 0 | 0 | 18 | 6 | 0 | 17 | 0 | 11 | 5 | 26 |
 | function_defaults | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | functional_index | 227 | 4 | 0 | 0 | 0 | 6 | 0 | 97 | 6 | 34 | 2 | 72 |
@@ -242,7 +242,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | grant4 | 83 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 | 19 | 4 | 51 |
 | greedy_optimizer | 147 | 0 | 0 | 0 | 0 | 5 | 0 | 96 | 1 | 16 | 10 | 9 |
 | greedy_search | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
-| group_by | 1235 | 168 | 0 | 0 | 46 | 86 | 7 | 467 | 16 | 89 | 81 | 253 |
+| group_by | 1235 | 180 | 0 | 0 | 34 | 86 | 7 | 467 | 16 | 89 | 81 | 253 |
 | group_by_fd_no_prot | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 4 | 0 |
 | group_by_hypergraph | 76 | 9 | 0 | 0 | 0 | 0 | 0 | 13 | 0 | 3 | 0 | 51 |
 | group_skip_scan | 767 | 30 | 3 | 0 | 8 | 208 | 0 | 141 | 2 | 70 | 10 | 275 |
@@ -252,7 +252,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | gtids_anonymous_trxs_violations | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 5 | 5 |
 | hash_join | 150 | 21 | 0 | 0 | 0 | 1 | 0 | 64 | 1 | 21 | 6 | 36 |
 | hash_join_hypergraph | 150 | 21 | 0 | 0 | 0 | 1 | 0 | 64 | 1 | 21 | 6 | 36 |
-| having | 324 | 72 | 1 | 0 | 9 | 15 | 3 | 162 | 0 | 16 | 14 | 30 |
+| having | 324 | 73 | 1 | 0 | 8 | 15 | 3 | 162 | 0 | 16 | 14 | 30 |
 | help | 64 | 11 | 0 | 0 | 0 | 0 | 0 | 3 | 1 | 29 | 2 | 18 |
 | help_verbose | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | histogram_auto_update | 73 | 4 | 0 | 0 | 0 | 0 | 0 | 28 | 0 | 0 | 2 | 26 |
@@ -294,7 +294,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | insert | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | insert_select | 170 | 3 | 1 | 0 | 0 | 26 | 0 | 71 | 5 | 40 | 8 | 16 |
 | insert_update | 452 | 8 | 2 | 0 | 0 | 70 | 0 | 148 | 8 | 161 | 12 | 41 |
-| internal_tmp_disk_storage_engine | 82 | 1 | 0 | 0 | 2 | 15 | 0 | 14 | 0 | 13 | 11 | 26 |
+| internal_tmp_disk_storage_engine | 82 | 2 | 0 | 0 | 1 | 15 | 0 | 14 | 0 | 13 | 11 | 26 |
 | invalid_collation | 26 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 8 | 1 | 12 |
 | invalid_comment | 34 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 4 | 2 | 26 |
 | invalid_text_sort | 6 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 1 | 0 | 0 | 0 |
@@ -310,7 +310,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | join_nested | 334 | 43 | 0 | 0 | 23 | 35 | 0 | 136 | 0 | 38 | 9 | 50 |
 | join_nested_bka | 30 | 0 | 0 | 0 | 4 | 0 | 0 | 18 | 0 | 0 | 2 | 6 |
 | join_nested_bka_nobnl | 30 | 0 | 0 | 0 | 4 | 0 | 0 | 18 | 0 | 0 | 2 | 6 |
-| join_outer | 868 | 132 | 0 | 0 | 17 | 17 | 1 | 550 | 2 | 15 | 39 | 92 |
+| join_outer | 868 | 137 | 0 | 0 | 12 | 17 | 1 | 550 | 2 | 15 | 39 | 92 |
 | join_outer_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | join_outer_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | join_outer_bugs | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 4 | 3 | 1 |
@@ -319,13 +319,13 @@ Column names are compared with rows. Row order is compared when the outer query 
 | key_diff | 9 | 3 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 2 |
 | key_primary | 11 | 3 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 2 |
 | keywords | 76 | 17 | 0 | 0 | 0 | 2 | 0 | 40 | 1 | 5 | 0 | 11 |
-| lead_lag | 269 | 39 | 0 | 0 | 18 | 111 | 0 | 32 | 4 | 3 | 16 | 45 |
+| lead_lag | 269 | 57 | 0 | 0 | 0 | 111 | 0 | 32 | 4 | 3 | 16 | 45 |
 | lead_lag_explain | 140 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 3 | 2 | 1 | 119 |
 | limit | 177 | 16 | 0 | 0 | 0 | 9 | 0 | 41 | 2 | 27 | 26 | 14 |
 | loaddata | 315 | 11 | 0 | 0 | 1 | 49 | 0 | 95 | 5 | 80 | 40 | 30 |
 | loaddata_special | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 6 |
 | loadxml | 67 | 8 | 0 | 0 | 0 | 3 | 0 | 23 | 0 | 28 | 0 | 5 |
-| locale | 62 | 34 | 0 | 0 | 3 | 0 | 0 | 7 | 0 | 0 | 14 | 3 |
+| locale | 62 | 37 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 14 | 3 |
 | long_table_name | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | long_tmpdir | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
 | loose_scan | 47 | 1 | 0 | 0 | 2 | 0 | 0 | 29 | 0 | 6 | 0 | 9 |
@@ -382,9 +382,9 @@ Column names are compared with rows. Row order is compared when the outer query 
 | no-threads | 5 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | no_engine_substitution | 90 | 1 | 0 | 0 | 0 | 0 | 0 | 24 | 0 | 9 | 22 | 30 |
 | non_table_atomic_ddl | 161 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 22 | 40 | 94 |
-| nth | 97 | 0 | 0 | 0 | 62 | 3 | 0 | 8 | 1 | 0 | 12 | 10 |
+| nth | 97 | 60 | 0 | 0 | 2 | 3 | 0 | 8 | 1 | 0 | 12 | 10 |
 | nth_explain | 47 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 1 | 43 |
-| null | 133 | 20 | 0 | 0 | 3 | 5 | 0 | 30 | 2 | 33 | 6 | 34 |
+| null | 133 | 22 | 0 | 1 | 0 | 5 | 0 | 30 | 2 | 33 | 6 | 34 |
 | odbc | 33 | 0 | 0 | 0 | 1 | 9 | 0 | 9 | 2 | 5 | 2 | 2 |
 | offline_mode_privileges | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 27 |
 | olap | 223 | 66 | 0 | 0 | 16 | 9 | 0 | 92 | 0 | 6 | 6 | 23 |
@@ -414,7 +414,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | overflow | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
 | packet | 49 | 4 | 0 | 0 | 0 | 4 | 0 | 5 | 0 | 12 | 6 | 16 |
 | packet_big_test | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| parser | 1143 | 82 | 0 | 0 | 36 | 66 | 28 | 267 | 2 | 99 | 77 | 465 |
+| parser | 1143 | 90 | 0 | 0 | 28 | 66 | 28 | 267 | 2 | 99 | 77 | 465 |
 | parser-big-64bit | 11 | 1 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 4 | 0 | 2 |
 | parser_57 | 14 | 0 | 4 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 1 |
 | parser_precedence | 137 | 125 | 0 | 0 | 2 | 0 | 0 | 4 | 0 | 0 | 0 | 6 |
@@ -428,7 +428,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | qualify | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 5 |
 | qualify_hypergraph | 101 | 0 | 0 | 0 | 0 | 2 | 42 | 22 | 0 | 2 | 12 | 21 |
 | query_attributes | 17 | 0 | 0 | 0 | 9 | 0 | 0 | 0 | 0 | 6 | 0 | 2 |
-| query_expression | 632 | 124 | 0 | 0 | 2 | 17 | 8 | 110 | 4 | 110 | 44 | 205 |
+| query_expression | 632 | 126 | 0 | 0 | 0 | 17 | 8 | 110 | 4 | 110 | 44 | 205 |
 | query_expression-bugs | 62 | 2 | 0 | 0 | 0 | 1 | 0 | 24 | 0 | 1 | 25 | 1 |
 | range_all | 906 | 125 | 2 | 0 | 15 | 54 | 1 | 337 | 13 | 135 | 31 | 191 |
 | range_icp | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
@@ -460,13 +460,13 @@ Column names are compared with rows. Row order is compared when the outer query 
 | roles_bugs_wildcard | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 3 | 18 |
 | rollback | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 2 |
 | round | 133 | 1 | 0 | 0 | 0 | 9 | 0 | 30 | 8 | 83 | 2 | 0 |
-| row | 189 | 82 | 0 | 0 | 8 | 7 | 0 | 44 | 3 | 2 | 1 | 41 |
+| row | 189 | 88 | 0 | 0 | 2 | 7 | 0 | 44 | 3 | 2 | 1 | 41 |
 | rpad | 25 | 23 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | schema | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | schema_read_only_ci | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 |
 | schema_read_only_cs | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 |
 | sdi_utf8 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
-| select_all | 2201 | 103 | 0 | 0 | 14 | 196 | 0 | 382 | 14 | 1281 | 18 | 169 |
+| select_all | 2201 | 104 | 0 | 0 | 13 | 196 | 0 | 382 | 14 | 1281 | 18 | 169 |
 | select_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | select_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | select_count | 74 | 8 | 0 | 0 | 1 | 0 | 0 | 15 | 0 | 6 | 3 | 40 |
@@ -478,7 +478,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | select_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | select_none_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | select_none_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| select_safe | 150 | 1 | 0 | 0 | 1 | 18 | 0 | 17 | 1 | 19 | 39 | 42 |
+| select_safe | 150 | 2 | 0 | 0 | 0 | 18 | 0 | 17 | 1 | 19 | 39 | 42 |
 | session_tracker | 217 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 13 | 127 | 24 |
 | session_tracker_trx_state | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | shm | 1450 | 0 | 0 | 0 | 0 | 118 | 0 | 15 | 4 | 1240 | 9 | 49 |
@@ -503,7 +503,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | strict_autoinc_2innodb | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 |
 | strict_autoinc_3heap | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 |
 | subplan_tokens | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 4 | 6 |
-| subquery_all | 2246 | 370 | 4 | 0 | 111 | 217 | 4 | 939 | 22 | 146 | 52 | 357 |
+| subquery_all | 2246 | 406 | 4 | 0 | 75 | 217 | 4 | 939 | 22 | 146 | 52 | 357 |
 | subquery_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | subquery_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | subquery_antijoin | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 1 |
@@ -520,7 +520,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | subquery_none | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
 | subquery_none_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | subquery_none_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_scalar_to_derived | 108 | 4 | 0 | 0 | 2 | 0 | 0 | 61 | 0 | 4 | 10 | 27 |
+| subquery_scalar_to_derived | 108 | 5 | 0 | 0 | 1 | 0 | 0 | 61 | 0 | 4 | 10 | 27 |
 | subquery_scalar_to_derived_correlated | 201 | 5 | 0 | 0 | 3 | 5 | 0 | 128 | 0 | 17 | 15 | 28 |
 | subquery_sj_all | 82 | 4 | 0 | 0 | 0 | 11 | 0 | 28 | 0 | 9 | 8 | 22 |
 | subquery_sj_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
@@ -541,7 +541,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | subquery_sj_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | subquery_sj_none_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | subquery_sj_none_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_table_to_derived | 99 | 7 | 2 | 0 | 6 | 0 | 0 | 24 | 0 | 2 | 20 | 33 |
+| subquery_table_to_derived | 99 | 12 | 2 | 0 | 1 | 0 | 0 | 24 | 0 | 2 | 20 | 33 |
 | subselect | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 |
 | sum_distinct | 30 | 1 | 0 | 0 | 0 | 12 | 0 | 8 | 2 | 6 | 1 | 0 |
 | sum_distinct-big | 31 | 0 | 0 | 0 | 0 | 8 | 0 | 6 | 0 | 15 | 1 | 1 |
@@ -550,16 +550,16 @@ Column names are compared with rows. Row order is compared when the outer query 
 | sysdate_is_now | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | table_definition_cache_functionality | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 3 | 5 |
 | table_open_cache_functionality | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 3 | 10 |
-| table_value_constructor | 238 | 1 | 0 | 0 | 56 | 47 | 0 | 38 | 0 | 66 | 2 | 23 |
-| table_value_constructor_hypergraph | 242 | 1 | 0 | 0 | 59 | 47 | 0 | 38 | 0 | 67 | 2 | 23 |
+| table_value_constructor | 238 | 51 | 1 | 0 | 5 | 47 | 0 | 38 | 0 | 66 | 2 | 23 |
+| table_value_constructor_hypergraph | 242 | 54 | 1 | 0 | 5 | 47 | 0 | 38 | 0 | 67 | 2 | 23 |
 | tablelock | 64 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 1 | 15 | 0 | 36 |
 | tablesample | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 3 |
 | temp_table | 196 | 1 | 0 | 0 | 1 | 24 | 1 | 47 | 1 | 85 | 1 | 35 |
 | temporal_literal | 178 | 81 | 0 | 0 | 0 | 3 | 0 | 36 | 3 | 15 | 7 | 33 |
 | test_mysql_thd_store_service | 4 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 3 |
 | test_security_context | 16 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 2 |
-| time_truncate_fractional | 288 | 36 | 0 | 0 | 0 | 21 | 0 | 190 | 4 | 30 | 5 | 2 |
-| time_truncate_fractional_strict | 288 | 36 | 0 | 0 | 0 | 21 | 0 | 186 | 4 | 30 | 5 | 6 |
+| time_truncate_fractional | 288 | 35 | 1 | 0 | 0 | 21 | 0 | 190 | 4 | 30 | 5 | 2 |
+| time_truncate_fractional_strict | 288 | 35 | 1 | 0 | 0 | 21 | 0 | 186 | 4 | 30 | 5 | 6 |
 | time_zone | 264 | 60 | 0 | 0 | 0 | 39 | 0 | 44 | 19 | 29 | 34 | 39 |
 | time_zone2 | 137 | 33 | 1 | 0 | 2 | 9 | 0 | 28 | 4 | 20 | 19 | 13 |
 | time_zone3 | 15 | 1 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 5 | 0 | 0 |
@@ -577,7 +577,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | type_binary | 109 | 34 | 1 | 0 | 0 | 12 | 1 | 41 | 1 | 9 | 2 | 8 |
 | type_blob | 410 | 25 | 0 | 0 | 1 | 94 | 0 | 111 | 8 | 26 | 16 | 128 |
 | type_date | 88 | 19 | 0 | 0 | 0 | 5 | 0 | 54 | 1 | 7 | 2 | 0 |
-| type_datetime | 76 | 7 | 0 | 0 | 1 | 11 | 0 | 17 | 5 | 19 | 10 | 6 |
+| type_datetime | 76 | 8 | 0 | 0 | 0 | 11 | 0 | 17 | 5 | 19 | 10 | 6 |
 | type_decimal | 370 | 34 | 0 | 0 | 4 | 21 | 0 | 238 | 15 | 38 | 11 | 9 |
 | type_enum | 151 | 6 | 0 | 0 | 6 | 12 | 0 | 74 | 7 | 12 | 10 | 23 |
 | type_float | 262 | 37 | 0 | 0 | 2 | 12 | 0 | 114 | 6 | 57 | 3 | 31 |
@@ -597,7 +597,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | udf | 209 | 3 | 0 | 0 | 2 | 10 | 38 | 36 | 0 | 16 | 15 | 85 |
 | udf_services | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | udf_skip_grants | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| unary_query_term | 40 | 0 | 0 | 0 | 1 | 0 | 0 | 9 | 0 | 2 | 22 | 6 |
+| unary_query_term | 40 | 1 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 2 | 22 | 6 |
 | union | 931 | 74 | 0 | 0 | 13 | 52 | 0 | 306 | 15 | 163 | 32 | 201 |
 | unique_option_prefixes | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
 | unix_wait_timeout | 6 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 |
@@ -611,7 +611,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | using_hypergraph_optimizer | 91 | 7 | 0 | 0 | 0 | 5 | 0 | 16 | 1 | 13 | 26 | 0 |
 | utf8_hugeid_ci | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | utility_warnings | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 1 | 2 |
-| varbinary | 159 | 51 | 0 | 0 | 9 | 25 | 0 | 16 | 3 | 10 | 19 | 18 |
+| varbinary | 159 | 57 | 0 | 2 | 1 | 25 | 0 | 16 | 3 | 10 | 19 | 18 |
 | version_token | 77 | 3 | 0 | 0 | 0 | 0 | 23 | 2 | 0 | 0 | 13 | 34 |
 | version_token_errors | 17 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 0 | 0 | 0 | 9 |
 | view | 2611 | 54 | 27 | 0 | 3 | 233 | 0 | 668 | 17 | 632 | 114 | 845 |
@@ -621,23 +621,23 @@ Column names are compared with rows. Row order is compared when the outer query 
 | warnings | 53 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 15 | 8 | 13 |
 | warnings_engine_disabled | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | window_bitwise_ops | 75 | 0 | 0 | 0 | 0 | 22 | 0 | 10 | 9 | 20 | 2 | 12 |
-| window_functions | 1821 | 246 | 0 | 0 | 269 | 199 | 1 | 598 | 14 | 87 | 124 | 256 |
+| window_functions | 1821 | 457 | 0 | 0 | 58 | 199 | 1 | 598 | 14 | 87 | 124 | 256 |
 | window_functions_big | 35 | 0 | 0 | 0 | 0 | 2 | 0 | 5 | 3 | 11 | 13 | 0 |
-| window_functions_bugs | 217 | 34 | 0 | 0 | 16 | 6 | 0 | 110 | 2 | 5 | 16 | 28 |
+| window_functions_bugs | 217 | 43 | 0 | 0 | 7 | 6 | 0 | 110 | 2 | 5 | 16 | 28 |
 | window_functions_explain | 502 | 1 | 0 | 0 | 1 | 1 | 0 | 124 | 1 | 34 | 11 | 328 |
 | window_functions_in2exists | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 8 |
 | window_functions_in2exists_hypergraph | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 8 |
 | window_functions_interesting_orders | 31 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 6 | 0 | 19 |
-| window_jsonaggs | 93 | 4 | 0 | 0 | 42 | 2 | 0 | 38 | 0 | 2 | 0 | 5 |
-| window_min_max | 295 | 55 | 0 | 0 | 22 | 43 | 3 | 125 | 0 | 31 | 5 | 8 |
-| window_std_var | 277 | 54 | 0 | 0 | 18 | 26 | 2 | 125 | 0 | 27 | 6 | 16 |
-| window_std_var_optimized | 277 | 54 | 0 | 0 | 18 | 26 | 2 | 125 | 0 | 27 | 6 | 16 |
+| window_jsonaggs | 93 | 15 | 0 | 0 | 31 | 2 | 0 | 38 | 0 | 2 | 0 | 5 |
+| window_min_max | 295 | 73 | 0 | 0 | 4 | 43 | 3 | 125 | 0 | 31 | 5 | 8 |
+| window_std_var | 277 | 68 | 0 | 0 | 4 | 26 | 2 | 125 | 0 | 27 | 6 | 16 |
+| window_std_var_optimized | 277 | 68 | 0 | 0 | 4 | 26 | 2 | 125 | 0 | 27 | 6 | 16 |
 | windows | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 5 | 3 | 15 |
 | with_explain | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
 | with_non_recursive | 23 | 11 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 8 |
 | with_non_recursive_bugs | 113 | 6 | 0 | 0 | 2 | 6 | 0 | 53 | 3 | 17 | 2 | 21 |
 | with_recursive | 38 | 10 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 2 | 19 |
-| with_recursive_bugs | 32 | 6 | 0 | 0 | 4 | 0 | 0 | 18 | 0 | 0 | 2 | 2 |
+| with_recursive_bugs | 32 | 8 | 0 | 0 | 2 | 0 | 0 | 18 | 0 | 0 | 2 | 2 |
 | with_recursive_closure | 19 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 | 3 | 7 | 3 |
 | with_recursive_solver | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 4 |
 | wl14965 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 17 |
@@ -655,7 +655,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 504 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR), _, _, X_) |
 | 457 | Error: sql parser error: Expected: ), found: as at Line: _, Column: _ |
 | 152 | Error: unsupported expression: weight_string(_) |
-| 143 | INSERT: Error: only literal values are supported in INSERT, got _ |
+| 144 | INSERT: Error: only literal values are supported in INSERT, got _ |
 | 125 | Error: unsupported expression: extractValue(@xml, _) |
 | 90 | Error: query engine failed: bound expression has an invalid physical type |
 | 89 | INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied |
@@ -673,7 +673,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 53 | DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line |
 | 48 | PREPARED: Error: Unknown prepared statement handler (p_n_eq) |
 | 48 | Error: sql parser error: Expected: joined table, found: , at Line: _, Column: _ |
+| 47 | Error: numeric expression overflow |
 | 45 | INSERT: Error: Incorrect value _ for column _: expected a datetime |
-| 44 | Error: unsupported expression: ExtractValue(_, _) |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/muvfl7n6-76709/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mvqq916e-156807/diffs/` (not committed).
