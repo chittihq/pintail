@@ -21,11 +21,6 @@
   },
   {
     "phase": "snapshot",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "snapshot",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -36,7 +31,17 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -47,11 +52,6 @@
   {
     "phase": "snapshot",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "snapshot",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -1376,11 +1376,6 @@
   },
   {
     "phase": "orm-compat",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "orm-compat",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -1391,7 +1386,17 @@
   },
   {
     "phase": "orm-compat",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -1402,11 +1407,6 @@
   {
     "phase": "orm-compat",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "orm-compat",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -2611,11 +2611,6 @@
   },
   {
     "phase": "crud",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "crud",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -2626,7 +2621,17 @@
   },
   {
     "phase": "crud",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -2637,11 +2642,6 @@
   {
     "phase": "crud",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "crud",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -3846,11 +3846,6 @@
   },
   {
     "phase": "composite-keys",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "composite-keys",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -3861,7 +3856,17 @@
   },
   {
     "phase": "composite-keys",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -3872,11 +3877,6 @@
   {
     "phase": "composite-keys",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "composite-keys",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -5081,11 +5081,6 @@
   },
   {
     "phase": "type-edges",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "type-edges",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -5096,7 +5091,17 @@
   },
   {
     "phase": "type-edges",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -5107,11 +5112,6 @@
   {
     "phase": "type-edges",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "type-edges",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -6331,11 +6331,6 @@
   },
   {
     "phase": "ddl",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "ddl",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -6346,7 +6341,17 @@
   },
   {
     "phase": "ddl",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -6357,11 +6362,6 @@
   {
     "phase": "ddl",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "ddl",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -7576,11 +7576,6 @@
   },
   {
     "phase": "schema-drift-minimal",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "schema-drift-minimal",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -7591,7 +7586,17 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -7602,11 +7607,6 @@
   {
     "phase": "schema-drift-minimal",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "schema-drift-minimal",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -8821,11 +8821,6 @@
   },
   {
     "phase": "schema-drift-unseen",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "schema-drift-unseen",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -8836,7 +8831,17 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -8847,11 +8852,6 @@
   {
     "phase": "schema-drift-unseen",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "schema-drift-unseen",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -10096,11 +10096,6 @@
   },
   {
     "phase": "churn",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "churn",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -10111,7 +10106,17 @@
   },
   {
     "phase": "churn",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -10122,11 +10127,6 @@
   {
     "phase": "churn",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "churn",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -11341,11 +11341,6 @@
   },
   {
     "phase": "contention",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "contention",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -11356,7 +11351,17 @@
   },
   {
     "phase": "contention",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -11367,11 +11372,6 @@
   {
     "phase": "contention",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "contention",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -12611,11 +12611,6 @@
   },
   {
     "phase": "execution-budget",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "execution-budget",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -12626,7 +12621,17 @@
   },
   {
     "phase": "execution-budget",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -12637,11 +12642,6 @@
   {
     "phase": "execution-budget",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "execution-budget",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -13981,11 +13981,6 @@
   },
   {
     "phase": "connection-collation",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "connection-collation",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -13996,7 +13991,17 @@
   },
   {
     "phase": "connection-collation",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -14007,11 +14012,6 @@
   {
     "phase": "connection-collation",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "connection-collation",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -15246,11 +15246,6 @@
   },
   {
     "phase": "spill",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "spill",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -15261,7 +15256,17 @@
   },
   {
     "phase": "spill",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -15272,11 +15277,6 @@
   {
     "phase": "spill",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "spill",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -16511,11 +16511,6 @@
   },
   {
     "phase": "pooling",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "pooling",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -16526,7 +16521,17 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -16537,11 +16542,6 @@
   {
     "phase": "pooling",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "pooling",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -17851,11 +17851,6 @@
   },
   {
     "phase": "local-database",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "local-database",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -17866,7 +17861,17 @@
   },
   {
     "phase": "local-database",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -17877,11 +17882,6 @@
   {
     "phase": "local-database",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "local-database",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -19101,11 +19101,6 @@
   },
   {
     "phase": "restart",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "restart",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -19116,7 +19111,17 @@
   },
   {
     "phase": "restart",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -19127,11 +19132,6 @@
   {
     "phase": "restart",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "restart",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -20328,7 +20328,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150021 sync_runs rows for db_0ee9006c9b2967285ecf9a44573b391f"
+    "detail": "150023 sync_runs rows for db_f21194cf90eb84a72940668ad087072c"
   },
   {
     "phase": "activity-history",
@@ -20340,25 +20340,25 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 3ms p95 4ms over 150000 rows"
+    "detail": "p50 2ms p95 2ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 3ms p95 5ms"
+    "detail": "p50 2ms p95 3ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 16ms p99 44ms"
+    "detail": "p50 18ms p99 30ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 34ms"
+    "detail": "health p95 24ms"
   },
   {
     "phase": "activity-history",
@@ -20382,11 +20382,6 @@
   },
   {
     "phase": "activity-history",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "activity-history",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -20397,7 +20392,17 @@
   },
   {
     "phase": "activity-history",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -20408,11 +20413,6 @@
   {
     "phase": "activity-history",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "activity-history",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -21609,25 +21609,25 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4856"
+    "detail": "0 failed of 4900"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4856 requests: p50 2ms p99 12ms"
+    "detail": "4900 requests: p50 2ms p99 7ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 3ms"
+    "detail": "health p99 2ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 7473 vs source 7473"
+    "detail": "orders replica 8661 vs source 8661"
   },
   {
     "phase": "poll-storm",
@@ -21651,11 +21651,6 @@
   },
   {
     "phase": "poll-storm",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "poll-storm",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -21666,7 +21661,17 @@
   },
   {
     "phase": "poll-storm",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -21677,11 +21682,6 @@
   {
     "phase": "poll-storm",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "poll-storm",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -23001,11 +23001,6 @@
   },
   {
     "phase": "control-plane",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "control-plane",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -23016,7 +23011,17 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -23027,11 +23032,6 @@
   {
     "phase": "control-plane",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "control-plane",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -24256,11 +24256,6 @@
   },
   {
     "phase": "snapshot-ddl-window",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "snapshot-ddl-window",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -24271,7 +24266,17 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -24282,11 +24287,6 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "snapshot-ddl-window",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -25532,11 +25532,6 @@
   },
   {
     "phase": "drop-table-cdc",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "drop-table-cdc",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -25547,7 +25542,17 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -25558,11 +25563,6 @@
   {
     "phase": "drop-table-cdc",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "drop-table-cdc",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -26797,11 +26797,6 @@
   },
   {
     "phase": "drop-table-recreate",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "drop-table-recreate",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -26812,7 +26807,17 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -26823,11 +26828,6 @@
   {
     "phase": "drop-table-recreate",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "drop-table-recreate",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -28044,7 +28044,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_0ee9006c9b2967285ecf9a44573b391f\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-10-27T13:50:34.735541743+00:00\",\"updated_at\":\"2026-10-27T13:54:02.603750102+00:00\"},\"tables\":30,\"rows\":11386}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_f21194cf90eb84a72940668ad087072c\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-10-27T15:41:23.665173352+00:00\",\"updated_at\":\"2026-10-27T15:45:05.176999562+00:00\"},\"tables\":30,\"rows\":12574}"
   },
   {
     "phase": "drop-table-polling",
@@ -28073,11 +28073,6 @@
   },
   {
     "phase": "drop-table-polling",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "drop-table-polling",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -28088,7 +28083,17 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -28099,11 +28104,6 @@
   {
     "phase": "drop-table-polling",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "drop-table-polling",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -29344,11 +29344,6 @@
   },
   {
     "phase": "restart-during-snapshot",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "restart-during-snapshot",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -29359,7 +29354,17 @@
   },
   {
     "phase": "restart-during-snapshot",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -29370,11 +29375,6 @@
   {
     "phase": "restart-during-snapshot",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "restart-during-snapshot",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -30626,11 +30626,6 @@
   },
   {
     "phase": "restart-during-resync",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "restart-during-resync",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -30641,7 +30636,17 @@
   },
   {
     "phase": "restart-during-resync",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -30652,11 +30657,6 @@
   {
     "phase": "restart-during-resync",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "restart-during-resync",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -31864,7 +31864,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 94 ok, dashboards 78 ok; no errors"
+    "detail": "wire 240 ok, http 99 ok, dashboards 106 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -31876,31 +31876,31 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 94"
+    "detail": "wire 240 of 240, http 99"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 144ms p99 747ms over 240 queries"
+    "detail": "wire p50 184ms p99 1161ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 15ms over 6 samples"
+    "detail": "health p99 12ms over 8 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 138MB with a 256MB budget"
+    "detail": "peak RSS 145MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 200600 vs source 200600"
+    "detail": "big 200800 vs source 200800"
   },
   {
     "phase": "memory-pressure",
@@ -31930,11 +31930,6 @@
   },
   {
     "phase": "memory-pressure",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "memory-pressure",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -31945,7 +31940,17 @@
   },
   {
     "phase": "memory-pressure",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -31956,11 +31961,6 @@
   {
     "phase": "memory-pressure",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "memory-pressure",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -33186,7 +33186,7 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 67MB before, peak 305MB during (margin 768MB)"
+    "detail": "RSS 122MB before, peak 421MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
@@ -33210,11 +33210,6 @@
   },
   {
     "phase": "reconcile-memory",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "reconcile-memory",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -33225,7 +33220,17 @@
   },
   {
     "phase": "reconcile-memory",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -33236,11 +33241,6 @@
   {
     "phase": "reconcile-memory",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "reconcile-memory",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -34501,11 +34501,6 @@
   },
   {
     "phase": "drop-database",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "drop-database",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -34516,7 +34511,17 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -34527,11 +34532,6 @@
   {
     "phase": "drop-database",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "drop-database",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -35751,11 +35751,6 @@
   },
   {
     "phase": "ddl-documented-gaps",
-    "check": "converge:attendance",
-    "status": "PASS"
-  },
-  {
-    "phase": "ddl-documented-gaps",
     "check": "converge:audit_history",
     "status": "WARN",
     "detail": "pintail query failed: Error: unknown table e2e_db.audit_history"
@@ -35767,7 +35762,17 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:bookings",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:checkins",
     "status": "PASS"
   },
   {
@@ -35778,11 +35783,6 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "converge:customers",
-    "status": "PASS"
-  },
-  {
-    "phase": "ddl-documented-gaps",
-    "check": "converge:enrollments",
     "status": "PASS"
   },
   {
@@ -35859,7 +35859,8 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "converge:information_schema.columns",
-    "status": "PASS"
+    "status": "WARN",
+    "detail": "row 20:\n  mysql   audit_history | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | \n  pintail audit_log | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | "
   },
   {
     "phase": "ddl-documented-gaps",

@@ -1,10 +1,10 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-10-27T13:55:06.026Z.
+Measured 2026-10-27T15:46:09.938Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**7336 passed, 0 failed, 5 documented-gap warnings, 49 skipped.**
+**7335 passed, 0 failed, 6 documented-gap warnings, 49 skipped.**
 
 224 unique corpus queries produced 6496 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
@@ -14,13 +14,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | converge:Event | PASS |  |
 | snapshot | converge:Fact | PASS |  |
 | snapshot | converge:Person | PASS |  |
-| snapshot | converge:attendance | PASS |  |
 | snapshot | converge:audit_log | PASS |  |
 | snapshot | converge:badges | PASS |  |
+| snapshot | converge:bookings | PASS |  |
 | snapshot | converge:bundle_products | PASS |  |
+| snapshot | converge:checkins | PASS |  |
 | snapshot | converge:counters | PASS |  |
 | snapshot | converge:customers | PASS |  |
-| snapshot | converge:enrollments | PASS |  |
 | snapshot | converge:flash_sales | PASS |  |
 | snapshot | converge:listing_entries | PASS |  |
 | snapshot | converge:listing_groups | PASS |  |
@@ -285,13 +285,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | converge:Event | PASS |  |
 | orm-compat | converge:Fact | PASS |  |
 | orm-compat | converge:Person | PASS |  |
-| orm-compat | converge:attendance | PASS |  |
 | orm-compat | converge:audit_log | PASS |  |
 | orm-compat | converge:badges | PASS |  |
+| orm-compat | converge:bookings | PASS |  |
 | orm-compat | converge:bundle_products | PASS |  |
+| orm-compat | converge:checkins | PASS |  |
 | orm-compat | converge:counters | PASS |  |
 | orm-compat | converge:customers | PASS |  |
-| orm-compat | converge:enrollments | PASS |  |
 | orm-compat | converge:flash_sales | PASS |  |
 | orm-compat | converge:listing_entries | PASS |  |
 | orm-compat | converge:listing_groups | PASS |  |
@@ -532,13 +532,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | converge:Event | PASS |  |
 | crud | converge:Fact | PASS |  |
 | crud | converge:Person | PASS |  |
-| crud | converge:attendance | PASS |  |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:badges | PASS |  |
+| crud | converge:bookings | PASS |  |
 | crud | converge:bundle_products | PASS |  |
+| crud | converge:checkins | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
-| crud | converge:enrollments | PASS |  |
 | crud | converge:flash_sales | PASS |  |
 | crud | converge:listing_entries | PASS |  |
 | crud | converge:listing_groups | PASS |  |
@@ -779,13 +779,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | converge:Event | PASS |  |
 | composite-keys | converge:Fact | PASS |  |
 | composite-keys | converge:Person | PASS |  |
-| composite-keys | converge:attendance | PASS |  |
 | composite-keys | converge:audit_log | PASS |  |
 | composite-keys | converge:badges | PASS |  |
+| composite-keys | converge:bookings | PASS |  |
 | composite-keys | converge:bundle_products | PASS |  |
+| composite-keys | converge:checkins | PASS |  |
 | composite-keys | converge:counters | PASS |  |
 | composite-keys | converge:customers | PASS |  |
-| composite-keys | converge:enrollments | PASS |  |
 | composite-keys | converge:flash_sales | PASS |  |
 | composite-keys | converge:listing_entries | PASS |  |
 | composite-keys | converge:listing_groups | PASS |  |
@@ -1026,13 +1026,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | converge:Event | PASS |  |
 | type-edges | converge:Fact | PASS |  |
 | type-edges | converge:Person | PASS |  |
-| type-edges | converge:attendance | PASS |  |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:badges | PASS |  |
+| type-edges | converge:bookings | PASS |  |
 | type-edges | converge:bundle_products | PASS |  |
+| type-edges | converge:checkins | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
-| type-edges | converge:enrollments | PASS |  |
 | type-edges | converge:flash_sales | PASS |  |
 | type-edges | converge:listing_entries | PASS |  |
 | type-edges | converge:listing_groups | PASS |  |
@@ -1276,13 +1276,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | converge:Event | PASS |  |
 | ddl | converge:Fact | PASS |  |
 | ddl | converge:Person | PASS |  |
-| ddl | converge:attendance | PASS |  |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:badges | PASS |  |
+| ddl | converge:bookings | PASS |  |
 | ddl | converge:bundle_products | PASS |  |
+| ddl | converge:checkins | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
-| ddl | converge:enrollments | PASS |  |
 | ddl | converge:flash_sales | PASS |  |
 | ddl | converge:listing_entries | PASS |  |
 | ddl | converge:listing_groups | PASS |  |
@@ -1525,13 +1525,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | converge:Event | PASS |  |
 | schema-drift-minimal | converge:Fact | PASS |  |
 | schema-drift-minimal | converge:Person | PASS |  |
-| schema-drift-minimal | converge:attendance | PASS |  |
 | schema-drift-minimal | converge:audit_log | PASS |  |
 | schema-drift-minimal | converge:badges | PASS |  |
+| schema-drift-minimal | converge:bookings | PASS |  |
 | schema-drift-minimal | converge:bundle_products | PASS |  |
+| schema-drift-minimal | converge:checkins | PASS |  |
 | schema-drift-minimal | converge:counters | PASS |  |
 | schema-drift-minimal | converge:customers | PASS |  |
-| schema-drift-minimal | converge:enrollments | PASS |  |
 | schema-drift-minimal | converge:flash_sales | PASS |  |
 | schema-drift-minimal | converge:listing_entries | PASS |  |
 | schema-drift-minimal | converge:listing_groups | PASS |  |
@@ -1774,13 +1774,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | converge:Event | PASS |  |
 | schema-drift-unseen | converge:Fact | PASS |  |
 | schema-drift-unseen | converge:Person | PASS |  |
-| schema-drift-unseen | converge:attendance | PASS |  |
 | schema-drift-unseen | converge:audit_log | PASS |  |
 | schema-drift-unseen | converge:badges | PASS |  |
+| schema-drift-unseen | converge:bookings | PASS |  |
 | schema-drift-unseen | converge:bundle_products | PASS |  |
+| schema-drift-unseen | converge:checkins | PASS |  |
 | schema-drift-unseen | converge:counters | PASS |  |
 | schema-drift-unseen | converge:customers | PASS |  |
-| schema-drift-unseen | converge:enrollments | PASS |  |
 | schema-drift-unseen | converge:flash_sales | PASS |  |
 | schema-drift-unseen | converge:listing_entries | PASS |  |
 | schema-drift-unseen | converge:listing_groups | PASS |  |
@@ -2029,13 +2029,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | converge:Event | PASS |  |
 | churn | converge:Fact | PASS |  |
 | churn | converge:Person | PASS |  |
-| churn | converge:attendance | PASS |  |
 | churn | converge:audit_log | PASS |  |
 | churn | converge:badges | PASS |  |
+| churn | converge:bookings | PASS |  |
 | churn | converge:bundle_products | PASS |  |
+| churn | converge:checkins | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
-| churn | converge:enrollments | PASS |  |
 | churn | converge:flash_sales | PASS |  |
 | churn | converge:listing_entries | PASS |  |
 | churn | converge:listing_groups | PASS |  |
@@ -2278,13 +2278,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | converge:Event | PASS |  |
 | contention | converge:Fact | PASS |  |
 | contention | converge:Person | PASS |  |
-| contention | converge:attendance | PASS |  |
 | contention | converge:audit_log | PASS |  |
 | contention | converge:badges | PASS |  |
+| contention | converge:bookings | PASS |  |
 | contention | converge:bundle_products | PASS |  |
+| contention | converge:checkins | PASS |  |
 | contention | converge:counters | PASS |  |
 | contention | converge:customers | PASS |  |
-| contention | converge:enrollments | PASS |  |
 | contention | converge:flash_sales | PASS |  |
 | contention | converge:listing_entries | PASS |  |
 | contention | converge:listing_groups | PASS |  |
@@ -2532,13 +2532,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | converge:Event | PASS |  |
 | execution-budget | converge:Fact | PASS |  |
 | execution-budget | converge:Person | PASS |  |
-| execution-budget | converge:attendance | PASS |  |
 | execution-budget | converge:audit_log | PASS |  |
 | execution-budget | converge:badges | PASS |  |
+| execution-budget | converge:bookings | PASS |  |
 | execution-budget | converge:bundle_products | PASS |  |
+| execution-budget | converge:checkins | PASS |  |
 | execution-budget | converge:counters | PASS |  |
 | execution-budget | converge:customers | PASS |  |
-| execution-budget | converge:enrollments | PASS |  |
 | execution-budget | converge:flash_sales | PASS |  |
 | execution-budget | converge:listing_entries | PASS |  |
 | execution-budget | converge:listing_groups | PASS |  |
@@ -2806,13 +2806,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | connection-collation | converge:Event | PASS |  |
 | connection-collation | converge:Fact | PASS |  |
 | connection-collation | converge:Person | PASS |  |
-| connection-collation | converge:attendance | PASS |  |
 | connection-collation | converge:audit_log | PASS |  |
 | connection-collation | converge:badges | PASS |  |
+| connection-collation | converge:bookings | PASS |  |
 | connection-collation | converge:bundle_products | PASS |  |
+| connection-collation | converge:checkins | PASS |  |
 | connection-collation | converge:counters | PASS |  |
 | connection-collation | converge:customers | PASS |  |
-| connection-collation | converge:enrollments | PASS |  |
 | connection-collation | converge:flash_sales | PASS |  |
 | connection-collation | converge:listing_entries | PASS |  |
 | connection-collation | converge:listing_groups | PASS |  |
@@ -3059,13 +3059,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | converge:Event | PASS |  |
 | spill | converge:Fact | PASS |  |
 | spill | converge:Person | PASS |  |
-| spill | converge:attendance | PASS |  |
 | spill | converge:audit_log | PASS |  |
 | spill | converge:badges | PASS |  |
+| spill | converge:bookings | PASS |  |
 | spill | converge:bundle_products | PASS |  |
+| spill | converge:checkins | PASS |  |
 | spill | converge:counters | PASS |  |
 | spill | converge:customers | PASS |  |
-| spill | converge:enrollments | PASS |  |
 | spill | converge:flash_sales | PASS |  |
 | spill | converge:listing_entries | PASS |  |
 | spill | converge:listing_groups | PASS |  |
@@ -3312,13 +3312,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | converge:Event | PASS |  |
 | pooling | converge:Fact | PASS |  |
 | pooling | converge:Person | PASS |  |
-| pooling | converge:attendance | PASS |  |
 | pooling | converge:audit_log | PASS |  |
 | pooling | converge:badges | PASS |  |
+| pooling | converge:bookings | PASS |  |
 | pooling | converge:bundle_products | PASS |  |
+| pooling | converge:checkins | PASS |  |
 | pooling | converge:counters | PASS |  |
 | pooling | converge:customers | PASS |  |
-| pooling | converge:enrollments | PASS |  |
 | pooling | converge:flash_sales | PASS |  |
 | pooling | converge:listing_entries | PASS |  |
 | pooling | converge:listing_groups | PASS |  |
@@ -3580,13 +3580,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | converge:Event | PASS |  |
 | local-database | converge:Fact | PASS |  |
 | local-database | converge:Person | PASS |  |
-| local-database | converge:attendance | PASS |  |
 | local-database | converge:audit_log | PASS |  |
 | local-database | converge:badges | PASS |  |
+| local-database | converge:bookings | PASS |  |
 | local-database | converge:bundle_products | PASS |  |
+| local-database | converge:checkins | PASS |  |
 | local-database | converge:counters | PASS |  |
 | local-database | converge:customers | PASS |  |
-| local-database | converge:enrollments | PASS |  |
 | local-database | converge:flash_sales | PASS |  |
 | local-database | converge:listing_entries | PASS |  |
 | local-database | converge:listing_groups | PASS |  |
@@ -3830,13 +3830,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | converge:Event | PASS |  |
 | restart | converge:Fact | PASS |  |
 | restart | converge:Person | PASS |  |
-| restart | converge:attendance | PASS |  |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:badges | PASS |  |
+| restart | converge:bookings | PASS |  |
 | restart | converge:bundle_products | PASS |  |
+| restart | converge:checkins | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
-| restart | converge:enrollments | PASS |  |
 | restart | converge:flash_sales | PASS |  |
 | restart | converge:listing_entries | PASS |  |
 | restart | converge:listing_groups | PASS |  |
@@ -4075,23 +4075,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:where: an unsigned column against a negative literal | PASS |  |
 | restart | query:where: a string number against an integer column | PASS |  |
 | restart | query:where: a general_ci column under PAD SPACE | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150021 sync_runs rows for db_0ee9006c9b2967285ecf9a44573b391f |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150023 sync_runs rows for db_f21194cf90eb84a72940668ad087072c |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
-| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 3ms p95 4ms over 150000 rows |
-| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 3ms p95 5ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 16ms p99 44ms |
-| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 34ms |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 2ms p95 2ms over 150000 rows |
+| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 2ms p95 3ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 18ms p99 30ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 24ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
 | activity-history | converge:Fact | PASS |  |
 | activity-history | converge:Person | PASS |  |
-| activity-history | converge:attendance | PASS |  |
 | activity-history | converge:audit_log | PASS |  |
 | activity-history | converge:badges | PASS |  |
+| activity-history | converge:bookings | PASS |  |
 | activity-history | converge:bundle_products | PASS |  |
+| activity-history | converge:checkins | PASS |  |
 | activity-history | converge:counters | PASS |  |
 | activity-history | converge:customers | PASS |  |
-| activity-history | converge:enrollments | PASS |  |
 | activity-history | converge:flash_sales | PASS |  |
 | activity-history | converge:listing_entries | PASS |  |
 | activity-history | converge:listing_groups | PASS |  |
@@ -4330,21 +4330,21 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:where: an unsigned column against a negative literal | PASS |  |
 | activity-history | query:where: a string number against an integer column | PASS |  |
 | activity-history | query:where: a general_ci column under PAD SPACE | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4856 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4856 requests: p50 2ms p99 12ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 3ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 7473 vs source 7473 |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4900 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4900 requests: p50 2ms p99 7ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 2ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 8661 vs source 8661 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
 | poll-storm | converge:Person | PASS |  |
-| poll-storm | converge:attendance | PASS |  |
 | poll-storm | converge:audit_log | PASS |  |
 | poll-storm | converge:badges | PASS |  |
+| poll-storm | converge:bookings | PASS |  |
 | poll-storm | converge:bundle_products | PASS |  |
+| poll-storm | converge:checkins | PASS |  |
 | poll-storm | converge:counters | PASS |  |
 | poll-storm | converge:customers | PASS |  |
-| poll-storm | converge:enrollments | PASS |  |
 | poll-storm | converge:flash_sales | PASS |  |
 | poll-storm | converge:listing_entries | PASS |  |
 | poll-storm | converge:listing_groups | PASS |  |
@@ -4608,13 +4608,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | converge:Event | PASS |  |
 | control-plane | converge:Fact | PASS |  |
 | control-plane | converge:Person | PASS |  |
-| control-plane | converge:attendance | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:badges | PASS |  |
+| control-plane | converge:bookings | PASS |  |
 | control-plane | converge:bundle_products | PASS |  |
+| control-plane | converge:checkins | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
-| control-plane | converge:enrollments | PASS |  |
 | control-plane | converge:flash_sales | PASS |  |
 | control-plane | converge:keyless_log | PASS |  |
 | control-plane | converge:listing_entries | PASS |  |
@@ -4859,13 +4859,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | converge:Event | PASS |  |
 | snapshot-ddl-window | converge:Fact | PASS |  |
 | snapshot-ddl-window | converge:Person | PASS |  |
-| snapshot-ddl-window | converge:attendance | PASS |  |
 | snapshot-ddl-window | converge:audit_log | PASS |  |
 | snapshot-ddl-window | converge:badges | PASS |  |
+| snapshot-ddl-window | converge:bookings | PASS |  |
 | snapshot-ddl-window | converge:bundle_products | PASS |  |
+| snapshot-ddl-window | converge:checkins | PASS |  |
 | snapshot-ddl-window | converge:counters | PASS |  |
 | snapshot-ddl-window | converge:customers | PASS |  |
-| snapshot-ddl-window | converge:enrollments | PASS |  |
 | snapshot-ddl-window | converge:flash_sales | PASS |  |
 | snapshot-ddl-window | converge:keyless_log | PASS |  |
 | snapshot-ddl-window | converge:listing_entries | PASS |  |
@@ -5114,13 +5114,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | converge:Event | PASS |  |
 | drop-table-cdc | converge:Fact | PASS |  |
 | drop-table-cdc | converge:Person | PASS |  |
-| drop-table-cdc | converge:attendance | PASS |  |
 | drop-table-cdc | converge:audit_log | PASS |  |
 | drop-table-cdc | converge:badges | PASS |  |
+| drop-table-cdc | converge:bookings | PASS |  |
 | drop-table-cdc | converge:bundle_products | PASS |  |
+| drop-table-cdc | converge:checkins | PASS |  |
 | drop-table-cdc | converge:counters | PASS |  |
 | drop-table-cdc | converge:customers | PASS |  |
-| drop-table-cdc | converge:enrollments | PASS |  |
 | drop-table-cdc | converge:flash_sales | PASS |  |
 | drop-table-cdc | converge:keyless_log | PASS |  |
 | drop-table-cdc | converge:listing_entries | PASS |  |
@@ -5367,13 +5367,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | converge:Event | PASS |  |
 | drop-table-recreate | converge:Fact | PASS |  |
 | drop-table-recreate | converge:Person | PASS |  |
-| drop-table-recreate | converge:attendance | PASS |  |
 | drop-table-recreate | converge:audit_log | PASS |  |
 | drop-table-recreate | converge:badges | PASS |  |
+| drop-table-recreate | converge:bookings | PASS |  |
 | drop-table-recreate | converge:bundle_products | PASS |  |
+| drop-table-recreate | converge:checkins | PASS |  |
 | drop-table-recreate | converge:counters | PASS |  |
 | drop-table-recreate | converge:customers | PASS |  |
-| drop-table-recreate | converge:enrollments | PASS |  |
 | drop-table-recreate | converge:flash_sales | PASS |  |
 | drop-table-recreate | converge:keyless_log | PASS |  |
 | drop-table-recreate | converge:listing_entries | PASS |  |
@@ -5616,19 +5616,19 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_0ee9006c9b2967285ecf9a44573b391f","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-10-27T13:50:34.735541743+00:00","updated_at":"2026-10-27T13:54:02.603750102+00:00"},"tables":30,"rows":11386} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_f21194cf90eb84a72940668ad087072c","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-10-27T15:41:23.665173352+00:00","updated_at":"2026-10-27T15:45:05.176999562+00:00"},"tables":30,"rows":12574} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
 | drop-table-polling | converge:Fact | PASS |  |
 | drop-table-polling | converge:Person | PASS |  |
-| drop-table-polling | converge:attendance | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:badges | PASS |  |
+| drop-table-polling | converge:bookings | PASS |  |
 | drop-table-polling | converge:bundle_products | PASS |  |
+| drop-table-polling | converge:checkins | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
 | drop-table-polling | converge:customers | PASS |  |
-| drop-table-polling | converge:enrollments | PASS |  |
 | drop-table-polling | converge:flash_sales | PASS |  |
 | drop-table-polling | converge:keyless_log | PASS |  |
 | drop-table-polling | converge:listing_entries | PASS |  |
@@ -5876,13 +5876,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | converge:Event | PASS |  |
 | restart-during-snapshot | converge:Fact | PASS |  |
 | restart-during-snapshot | converge:Person | PASS |  |
-| restart-during-snapshot | converge:attendance | PASS |  |
 | restart-during-snapshot | converge:audit_log | PASS |  |
 | restart-during-snapshot | converge:badges | PASS |  |
+| restart-during-snapshot | converge:bookings | PASS |  |
 | restart-during-snapshot | converge:bundle_products | PASS |  |
+| restart-during-snapshot | converge:checkins | PASS |  |
 | restart-during-snapshot | converge:counters | PASS |  |
 | restart-during-snapshot | converge:customers | PASS |  |
-| restart-during-snapshot | converge:enrollments | PASS |  |
 | restart-during-snapshot | converge:flash_sales | PASS |  |
 | restart-during-snapshot | converge:keyless_log | PASS |  |
 | restart-during-snapshot | converge:listing_entries | PASS |  |
@@ -6132,13 +6132,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | converge:Event | PASS |  |
 | restart-during-resync | converge:Fact | PASS |  |
 | restart-during-resync | converge:Person | PASS |  |
-| restart-during-resync | converge:attendance | PASS |  |
 | restart-during-resync | converge:audit_log | PASS |  |
 | restart-during-resync | converge:badges | PASS |  |
+| restart-during-resync | converge:bookings | PASS |  |
 | restart-during-resync | converge:bundle_products | PASS |  |
+| restart-during-resync | converge:checkins | PASS |  |
 | restart-during-resync | converge:counters | PASS |  |
 | restart-during-resync | converge:customers | PASS |  |
-| restart-during-resync | converge:enrollments | PASS |  |
 | restart-during-resync | converge:flash_sales | PASS |  |
 | restart-during-resync | converge:keyless_log | PASS |  |
 | restart-during-resync | converge:listing_entries | PASS |  |
@@ -6379,25 +6379,25 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:where: a string number against an integer column | PASS |  |
 | restart-during-resync | query:where: a general_ci column under PAD SPACE | PASS |  |
 | memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 94 ok, dashboards 78 ok; no errors |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 99 ok, dashboards 106 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 94 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 144ms p99 747ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 15ms over 6 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 138MB with a 256MB budget |
-| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200600 vs source 200600 |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 99 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 184ms p99 1161ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 12ms over 8 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 145MB with a 256MB budget |
+| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200800 vs source 200800 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
 | memory-pressure | converge:Event | PASS |  |
 | memory-pressure | converge:Fact | PASS |  |
 | memory-pressure | converge:Person | PASS |  |
-| memory-pressure | converge:attendance | PASS |  |
 | memory-pressure | converge:audit_log | PASS |  |
 | memory-pressure | converge:badges | PASS |  |
+| memory-pressure | converge:bookings | PASS |  |
 | memory-pressure | converge:bundle_products | PASS |  |
+| memory-pressure | converge:checkins | PASS |  |
 | memory-pressure | converge:counters | PASS |  |
 | memory-pressure | converge:customers | PASS |  |
-| memory-pressure | converge:enrollments | PASS |  |
 | memory-pressure | converge:flash_sales | PASS |  |
 | memory-pressure | converge:keyless_log | PASS |  |
 | memory-pressure | converge:listing_entries | PASS |  |
@@ -6641,18 +6641,18 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
 | reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 4.4s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 67MB before, peak 305MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 122MB before, peak 421MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
 | reconcile-memory | converge:Person | PASS |  |
-| reconcile-memory | converge:attendance | PASS |  |
 | reconcile-memory | converge:audit_log | PASS |  |
 | reconcile-memory | converge:badges | PASS |  |
+| reconcile-memory | converge:bookings | PASS |  |
 | reconcile-memory | converge:bundle_products | PASS |  |
+| reconcile-memory | converge:checkins | PASS |  |
 | reconcile-memory | converge:counters | PASS |  |
 | reconcile-memory | converge:customers | PASS |  |
-| reconcile-memory | converge:enrollments | PASS |  |
 | reconcile-memory | converge:flash_sales | PASS |  |
 | reconcile-memory | converge:keyless_log | PASS |  |
 | reconcile-memory | converge:listing_entries | PASS |  |
@@ -6904,13 +6904,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | converge:Event | PASS |  |
 | drop-database | converge:Fact | PASS |  |
 | drop-database | converge:Person | PASS |  |
-| drop-database | converge:attendance | PASS |  |
 | drop-database | converge:audit_log | PASS |  |
 | drop-database | converge:badges | PASS |  |
+| drop-database | converge:bookings | PASS |  |
 | drop-database | converge:bundle_products | PASS |  |
+| drop-database | converge:checkins | PASS |  |
 | drop-database | converge:counters | PASS |  |
 | drop-database | converge:customers | PASS |  |
-| drop-database | converge:enrollments | PASS |  |
 | drop-database | converge:flash_sales | PASS |  |
 | drop-database | converge:keyless_log | PASS |  |
 | drop-database | converge:listing_entries | PASS |  |
@@ -7154,13 +7154,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | converge:Event | PASS |  |
 | ddl-documented-gaps | converge:Fact | PASS |  |
 | ddl-documented-gaps | converge:Person | PASS |  |
-| ddl-documented-gaps | converge:attendance | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:badges | PASS |  |
+| ddl-documented-gaps | converge:bookings | PASS |  |
 | ddl-documented-gaps | converge:bundle_products | PASS |  |
+| ddl-documented-gaps | converge:checkins | PASS |  |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
-| ddl-documented-gaps | converge:enrollments | PASS |  |
 | ddl-documented-gaps | converge:flash_sales | PASS |  |
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
 | ddl-documented-gaps | converge:listing_entries | PASS |  |
@@ -7175,7 +7175,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | converge:staff | PASS |  |
 | ddl-documented-gaps | converge:storefront_followers | PASS |  |
 | ddl-documented-gaps | converge:storefronts | PASS |  |
-| ddl-documented-gaps | converge:information_schema.columns | PASS |  |
+| ddl-documented-gaps | converge:information_schema.columns | WARN | row 20: |
 | ddl-documented-gaps | query:composite: one first part, ordered by the second | PASS |  |
 | ddl-documented-gaps | query:composite: grouped by the first part | PASS |  |
 | ddl-documented-gaps | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
@@ -7405,33 +7405,33 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 0.1 | 0.7 |
-| orm-compat | 1.8 | 0.0 | 0.5 |
-| crud | 0.0 | 0.0 | 0.6 |
-| composite-keys | 0.0 | 0.0 | 0.6 |
-| type-edges | 0.0 | 0.0 | 0.6 |
-| ddl | 6.1 | 0.7 | 0.7 |
-| schema-drift-minimal | 0.0 | 0.1 | 0.5 |
-| schema-drift-unseen | 0.0 | 0.3 | 0.6 |
-| churn | 0.2 | 1.6 | 0.5 |
-| contention | 15.3 | 0.2 | 0.8 |
+| snapshot | 0.0 | 0.1 | 0.8 |
+| orm-compat | 2.0 | 0.0 | 0.8 |
+| crud | 0.0 | 0.0 | 0.7 |
+| composite-keys | 0.0 | 0.0 | 0.7 |
+| type-edges | 0.0 | 0.0 | 0.7 |
+| ddl | 7.9 | 0.6 | 0.4 |
+| schema-drift-minimal | 0.0 | 0.1 | 0.4 |
+| schema-drift-unseen | 0.0 | 0.8 | 0.4 |
+| churn | 0.1 | 1.8 | 0.5 |
+| contention | 15.4 | 0.1 | 0.8 |
 | execution-budget | 0.0 | 0.1 | 0.9 |
 | connection-collation | 0.2 | 0.1 | 0.8 |
-| spill | 5.5 | 0.6 | 0.9 |
-| pooling | 0.0 | 0.1 | 0.8 |
-| local-database | 0.0 | 0.1 | 0.9 |
-| restart | 0.5 | 0.6 | 0.8 |
-| activity-history | 1.5 | 0.7 | 0.9 |
-| poll-storm | 21.1 | 0.1 | 1.1 |
-| control-plane | 21.1 | 0.1 | 0.7 |
-| snapshot-ddl-window | 5.1 | 0.1 | 0.6 |
-| drop-table-cdc | 6.1 | 0.1 | 0.6 |
-| drop-table-recreate | 5.8 | 0.1 | 0.5 |
-| drop-table-polling | 102.5 | 0.2 | 0.8 |
-| restart-during-snapshot | 4.5 | 0.2 | 0.9 |
-| restart-during-resync | 4.5 | 0.2 | 0.8 |
-| memory-pressure | 7.7 | 0.2 | 0.8 |
-| reconcile-memory | 25.0 | 0.1 | 0.5 |
-| drop-database | 8.1 | 0.1 | 0.5 |
-| ddl-documented-gaps | 0.0 | 0.3 | 0.5 |
-| total | 242.7 | 7.1 | 20.4 |
+| spill | 6.6 | 0.7 | 0.9 |
+| pooling | 0.0 | 0.1 | 0.9 |
+| local-database | 0.5 | 0.1 | 1.2 |
+| restart | 0.5 | 2.0 | 1.1 |
+| activity-history | 1.5 | 0.8 | 1.0 |
+| poll-storm | 22.1 | 0.1 | 0.9 |
+| control-plane | 22.6 | 0.1 | 0.7 |
+| snapshot-ddl-window | 5.9 | 0.2 | 0.9 |
+| drop-table-cdc | 5.9 | 0.2 | 0.8 |
+| drop-table-recreate | 5.9 | 0.1 | 0.7 |
+| drop-table-polling | 104.0 | 0.2 | 0.9 |
+| restart-during-snapshot | 5.0 | 0.2 | 0.9 |
+| restart-during-resync | 4.2 | 0.2 | 0.7 |
+| memory-pressure | 8.2 | 0.1 | 0.7 |
+| reconcile-memory | 26.6 | 0.1 | 0.7 |
+| drop-database | 8.9 | 0.1 | 0.7 |
+| ddl-documented-gaps | 0.0 | 0.1 | 0.5 |
+| total | 254.2 | 9.1 | 21.9 |
