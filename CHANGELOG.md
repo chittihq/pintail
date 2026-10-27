@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.8-rc3] - 2026-10-27
+
+Upgrading moves the metadata schema to version 26. A directory this
+release opened refuses to start under 0.1.8-rc2 (which names the newer
+schema), and 0.1.7 and older cannot read it.
+
 ### Changed
 
 - `TIME_TRUNCATE_FRACTIONAL` now reaches casts only: date and time text
