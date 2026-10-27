@@ -971,7 +971,7 @@ mod tests {
     #[test]
     fn wire_idle_timeout_defaults_and_must_be_positive() {
         let default = AppConfig::load_from(&cli(), []).expect("default config");
-        assert_eq!(default.wire_idle_timeout(), Duration::from_secs(900));
+        assert_eq!(default.wire_idle_timeout(), Duration::from_mins(15));
 
         let error = AppConfig::load_from(
             &cli(),
