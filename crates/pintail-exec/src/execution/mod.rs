@@ -2742,7 +2742,7 @@ impl MemoryTracker {
     /// limit.
     pub fn reserve(&self, bytes: usize) -> Result<(), ExecError> {
         self.check_interruption()?;
-        let outcome = self.used.fetch_update(
+        let outcome = self.used.try_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
             |used| {
@@ -2806,7 +2806,7 @@ impl MemoryTracker {
     }
 
     fn release_local(&self, bytes: usize) {
-        let _ = self.used.fetch_update(
+        let _ = self.used.try_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
             |used| Some(used.saturating_sub(bytes)),
@@ -2829,7 +2829,7 @@ impl MemoryTracker {
     fn repay_shared(&self, bytes: usize) {
         let repaid = self
             .shared_charged
-            .fetch_update(
+            .try_update(
                 std::sync::atomic::Ordering::Relaxed,
                 std::sync::atomic::Ordering::Relaxed,
                 |owed| Some(owed.saturating_sub(bytes)),

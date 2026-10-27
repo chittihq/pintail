@@ -119,7 +119,7 @@ fn a_list_of_constants_skips_segments_outside_its_span() {
     let (listed, stats) = fixture.run("SELECT id FROM items WHERE grp IN (75, 71, NULL)");
     let (either, _) = fixture.run("SELECT id FROM items WHERE grp = 71 OR grp = 75");
     assert_eq!(listed, either);
-    assert!(!listed.is_empty());
+    assert_ne!(listed, [] as [std::string::String; 0]);
     assert!(
         stats.segments_pruned >= 7,
         "only the segment holding groups 70 to 79 is read: {stats:?}"

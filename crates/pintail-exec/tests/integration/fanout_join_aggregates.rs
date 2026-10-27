@@ -291,7 +291,7 @@ fn folded_branch_matches_the_join_as_written() {
     let fixture = fixture(40, 40, 6, 4);
     let (folded, _, profile) = fixture.run(&fanout("m.person_id"));
     let (written, _, _) = fixture.run(&fanout("m.person_id + 0"));
-    assert!(!folded.is_empty());
+    assert_ne!(folded, [] as [std::string::String; 0]);
     assert_eq!(folded, written);
     assert!(
         profile.matches("HashAggregate").count() >= 2,

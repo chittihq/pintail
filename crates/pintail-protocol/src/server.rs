@@ -101,6 +101,8 @@ pub struct PreparedStatement {
 }
 
 /// Everything the driver asks of the server it front-ends.
+// `async_trait` marks the boxed futures it returns `#[must_use]` again.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait Handler: Send + Sync {
     /// Drains system-variable changes since the preceding successful command.
@@ -244,6 +246,8 @@ pub enum WatchOutcome {
 /// bytes is not something every stream type can do, so this crate does not
 /// assume `TcpStream` or attempt the probe itself. A caller that owns the
 /// real socket implements it however that transport allows.
+// `async_trait` marks the boxed futures it returns `#[must_use]` again.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait DisconnectWatch: Send {
     /// Resolves once the peer appears to have disconnected, or a read could

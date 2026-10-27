@@ -42,7 +42,7 @@ mod enabled {
             // Saturation avoids rearming after u32::MAX visits.
             let prior = self
                 .hits
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
                 .ok()?;
             (prior + 1 == self.nth).then_some(self.action)
         }

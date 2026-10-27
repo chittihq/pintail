@@ -22,7 +22,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{ApiState, error::ApiError, state::random_identifier};
 
-const TOKEN_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
+const TOKEN_LIFETIME: Duration = Duration::from_hours(12);
 const TOKEN_ISSUER: &str = "pintail";
 /// How long a validated API key stays in the in-process cache before a
 /// request re-checks it against metadata. Bounds how long a disabled or
@@ -599,7 +599,7 @@ fn hash_password(password: &str) -> Result<String, ApiError> {
 }
 
 fn verify_password(password: &str, encoded: &str) -> bool {
-    PasswordHash::new(encoded).ok().is_some_and(|hash| {
+    PasswordHash::new(encoded).is_ok_and(|hash| {
         argon2id()
             .verify_password(password.as_bytes(), &hash)
             .is_ok()

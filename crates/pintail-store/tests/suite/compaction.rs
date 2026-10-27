@@ -76,17 +76,26 @@ fn partial_compaction_retains_tombstones_that_suppress_unmerged_versions() {
         table.ingest(batch).expect("ingest");
         table.flush().expect("flush");
     }
-    assert!(table.snapshot().scan().expect("scan").is_empty());
+    assert_eq!(
+        table.snapshot().scan().expect("scan"),
+        [] as [pintail_types::StoredRow; 0]
+    );
 
     let outcome = table.compact().expect("partial compact");
     assert_eq!(outcome.input_segments(), 2);
     assert_eq!(outcome.output_rows(), 1, "partial merge retains tombstone");
-    assert!(table.snapshot().scan().expect("partial scan").is_empty());
+    assert_eq!(
+        table.snapshot().scan().expect("partial scan"),
+        [] as [pintail_types::StoredRow; 0]
+    );
 
     let outcome = table.compact().expect("full compact");
     assert_eq!(outcome.input_segments(), 2);
     assert_eq!(outcome.output_rows(), 0, "full merge drops tombstone");
-    assert!(table.snapshot().scan().expect("full scan").is_empty());
+    assert_eq!(
+        table.snapshot().scan().expect("full scan"),
+        [] as [pintail_types::StoredRow; 0]
+    );
 }
 
 #[test]

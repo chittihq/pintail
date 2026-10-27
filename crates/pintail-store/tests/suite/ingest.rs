@@ -43,7 +43,10 @@ fn stale_versions_do_not_replace_newer_rows_and_tombstones_hide_keys() {
     table
         .ingest(vec![row("deleted", 6, true)])
         .expect("tombstone");
-    assert!(table.snapshot().scan().expect("scan tombstone").is_empty());
+    assert_eq!(
+        table.snapshot().scan().expect("scan tombstone"),
+        [] as [pintail_types::StoredRow; 0]
+    );
 }
 
 #[test]
@@ -65,7 +68,10 @@ fn an_invalid_batch_is_rejected_before_it_reaches_the_wal() {
 
     let reopened = TableStore::open(directory.path(), schema(), StoreOptions::default())
         .expect("reopen table");
-    assert!(reopened.snapshot().scan().expect("scan").is_empty());
+    assert_eq!(
+        reopened.snapshot().scan().expect("scan"),
+        [] as [pintail_types::StoredRow; 0]
+    );
 }
 
 #[test]

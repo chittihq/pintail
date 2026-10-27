@@ -219,8 +219,6 @@ pub(super) fn ipv4_mapped(bytes: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Write as _;
-
     use super::*;
 
     fn hex(bytes: Option<Vec<u8>>) -> Option<String> {

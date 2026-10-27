@@ -56,7 +56,9 @@ pub fn parse_parameter_types(body: &[u8], count: usize) -> Option<(Vec<Parameter
     let needed = count.checked_mul(2)?;
     let raw = body.get(..needed)?;
     let types = raw
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|entry| ParameterType {
             column_type: entry[0],
             unsigned: entry[1] & 0x80 != 0,

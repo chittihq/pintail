@@ -111,7 +111,10 @@ fn users_databases_and_table_controls_round_trip() {
     assert_eq!(metadata.tables("db-1").unwrap()[0].state, "polling");
 
     assert!(metadata.delete_database("db-1").unwrap());
-    assert!(metadata.databases().unwrap().is_empty());
+    assert_eq!(
+        metadata.databases().unwrap(),
+        [] as [pintail_meta::DatabaseRecord; 0]
+    );
 }
 
 #[test]
@@ -184,7 +187,10 @@ fn api_keys_activity_and_dead_letters_round_trip() {
     let dlq = metadata.dlq_records(Some("db-1"), 10).unwrap();
     assert_eq!(dlq.len(), 1);
     assert!(metadata.delete_dlq_record(&dlq[0].id).unwrap());
-    assert!(metadata.dlq_records(Some("db-1"), 10).unwrap().is_empty());
+    assert_eq!(
+        metadata.dlq_records(Some("db-1"), 10).unwrap(),
+        [] as [pintail_meta::DlqRecord; 0]
+    );
     assert!(metadata.delete_api_key("key-1").unwrap());
 }
 
@@ -313,7 +319,7 @@ fn restored_database_is_registered_side_by_side_without_source_credentials() {
     let source = metadata.database("source").unwrap().expect("source");
     let restored = metadata.database("restored").unwrap().expect("restore");
     assert_eq!(source.encrypted_dsn, b"encrypted");
-    assert!(restored.encrypted_dsn.is_empty());
+    assert_eq!(restored.encrypted_dsn, [] as [u8; 0]);
     assert_eq!(restored.mode, "paused");
     assert_eq!(restored.state, "restored");
     assert_eq!(
@@ -946,14 +952,18 @@ fn a_reset_clears_replication_state_but_keeps_the_connection() {
 
     // Replication state is gone: tracked tables (with their cascading schema
     // history), the checkpoint slot, quarantined events.
-    assert!(metadata.tables("db-1").unwrap().is_empty());
-    assert!(
-        metadata
-            .schema_history("db-1", "events")
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        metadata.tables("db-1").unwrap(),
+        [] as [pintail_meta::TableRecord; 0]
     );
-    assert!(metadata.dlq_records(Some("db-1"), 10).unwrap().is_empty());
+    assert_eq!(
+        metadata.schema_history("db-1", "events").unwrap(),
+        [] as [pintail_meta::SchemaHistoryRecord; 0]
+    );
+    assert_eq!(
+        metadata.dlq_records(Some("db-1"), 10).unwrap(),
+        [] as [pintail_meta::DlqRecord; 0]
+    );
     assert!(metadata.snapshot_checkpoint("db-1").unwrap().is_none());
 
     // The fresh copy the reset owes is recorded with the wipe, and stays
@@ -1067,7 +1077,7 @@ fn a_local_database_is_created_outside_replication() {
     assert_eq!(database.kind, "local");
     // No source: an empty DSN, no probe, and the paused-mode backstop that
     // keeps it out of supervisor eligibility even without a kind check.
-    assert!(database.encrypted_dsn.is_empty());
+    assert_eq!(database.encrypted_dsn, [] as [u8; 0]);
     assert!(database.probe_json.is_none());
     assert_eq!(database.mode, "paused");
     assert!(metadata.is_local_database("db-local").unwrap());

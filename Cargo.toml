@@ -29,10 +29,11 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/pintail-db/pintail"
-# 1.88 because time 0.3.47, taken for CVE-2026-25727, requires it. The
-# resolver is MSRV-aware, so leaving this at 1.85 would silently hold the
-# workspace on the vulnerable 0.3.45 the next time the lockfile is regenerated.
-rust-version = "1.88"
+# 1.95 for the atomics' `try_update` (1.99 deprecates the old `fetch_update`).
+# The floor had been 1.88 for time 0.3.47 (CVE-2026-25727); the resolver is
+# MSRV-aware, so a floor below that would hold the workspace on the
+# vulnerable 0.3.45 the next time the lockfile is regenerated.
+rust-version = "1.95"
 
 [workspace.dependencies]
 tikv-jemallocator = "0.6"
@@ -127,8 +128,15 @@ zstd = "0.13.3"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
-all = "warn"
-pedantic = "warn"
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# `assert!(v.is_empty())` reads better than the `assert_eq!(v, [] as [T; 0])`
+# it asks for, and the failing line already names the value.
+assert_is_empty = "allow"
+# The loops it still flags read their remainder and sit on measured hot
+# paths (SIMD kernels, segment decoding); `as_chunks` there is a rewrite
+# that waits for a benchmark of its own.
+chunks_exact_to_as_chunks = "allow"
 
 # Dev builds skip full debug info: line tables keep backtraces and panic
 # locations usable at roughly half the artifact size and link time.

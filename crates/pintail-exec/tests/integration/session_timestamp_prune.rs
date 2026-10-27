@@ -144,7 +144,7 @@ fn a_filter_in_a_fixed_offset_session_answers_the_same_rows_and_prunes() {
         offset_rows, utc_rows,
         "the same instants select the same rows"
     );
-    assert!(!offset_rows.is_empty());
+    assert_ne!(offset_rows, [] as [std::string::String; 0]);
     assert_eq!(
         (offset_stats.blocks_pruned, offset_stats.blocks_read),
         (utc_stats.blocks_pruned, utc_stats.blocks_read),

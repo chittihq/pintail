@@ -105,9 +105,7 @@ fn embed_by_type(image: &[ColumnType], schema: &[ColumnType]) -> Option<Vec<usiz
         return None;
     }
     let mut ways = vec![vec![0_u8; schema.len() + 1]; image.len() + 1];
-    for slot in &mut ways[0] {
-        *slot = 1;
-    }
+    ways[0].fill(1);
     for taken in 1..=image.len() {
         for offered in 1..=schema.len() {
             let skipped = ways[taken][offered - 1];

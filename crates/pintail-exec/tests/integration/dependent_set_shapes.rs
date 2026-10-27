@@ -125,7 +125,7 @@ fn exists_over_an_ungrouped_aggregate_is_known_without_running_it() {
         "SELECT p.id FROM parcels p WHERE NOT EXISTS \
            (SELECT SUM(s.ok) FROM scans s WHERE s.parcel_id = p.id) ORDER BY p.id",
     );
-    assert!(never.rows.is_empty());
+    assert_eq!(never.rows, [] as [std::vec::Vec<std::string::String>; 0]);
     assert_eq!((never.per_row, never.sets, never.indexes), (0, 0, 0));
     // LIMIT 0 keeps no row, whatever the aggregate.
     let emptied = ran(
@@ -133,7 +133,7 @@ fn exists_over_an_ungrouped_aggregate_is_known_without_running_it() {
         "SELECT p.id FROM parcels p WHERE EXISTS \
            (SELECT COUNT(*) FROM scans s WHERE s.parcel_id = p.id LIMIT 0) ORDER BY p.id",
     );
-    assert!(emptied.rows.is_empty());
+    assert_eq!(emptied.rows, [] as [std::vec::Vec<std::string::String>; 0]);
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn a_correlated_row_membership_reads_its_table_once() {
         .filter(|parcel| scans_of(*parcel).iter().any(|(ok, _)| *ok == Some(1)))
         .map(|parcel| vec![parcel.to_string()])
         .collect::<Vec<_>>();
-    assert!(!expected.is_empty());
+    assert_ne!(expected, [] as [std::vec::Vec<std::string::String>; 0]);
     assert_eq!(found.rows, expected);
     assert!(found.per_row <= 40, "{}", found.profile);
 

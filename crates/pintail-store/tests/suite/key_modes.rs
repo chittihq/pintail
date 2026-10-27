@@ -92,12 +92,9 @@ fn resnapshot_reset_keeps_pinned_readers_and_accepts_a_fresh_snapshot() {
     let pinned = table.snapshot();
 
     table.reset_for_resnapshot().expect("reset table");
-    assert!(
-        table
-            .snapshot()
-            .scan()
-            .expect("scan empty generation")
-            .is_empty()
+    assert_eq!(
+        table.snapshot().scan().expect("scan empty generation"),
+        [] as [pintail_types::StoredRow; 0]
     );
     assert_eq!(
         pinned.scan().expect("scan pinned generation"),

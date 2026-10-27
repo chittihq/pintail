@@ -302,7 +302,7 @@ fn generated_candidates_are_read_only_and_reducible() {
     );
     let variants =
         oracle_candidates::reductions("SELECT id, n, frac FROM bounds WHERE id > 0 ORDER BY id");
-    assert!(!variants.is_empty());
+    assert_ne!(variants, [] as [std::string::String; 0]);
     assert!(
         variants
             .iter()

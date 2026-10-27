@@ -301,7 +301,7 @@ fn agree(fixture: &Fixture, select: &str, join: &str, rest: &str) -> Vec<String>
         "{twin_sql} fused:\n{twin_profile}"
     );
     assert_eq!(fused, twin, "{fused_sql}");
-    assert!(!fused.is_empty());
+    assert_ne!(fused, [] as [std::string::String; 0]);
     fused
 }
 
@@ -445,7 +445,7 @@ fn the_row_fold_says_how_it_kept_its_states() {
             );
             let (twin, _) = fixture.run(&format!("{select} {join} AND f.id + d.id > 0 {rest}"));
             assert_eq!(fused, twin, "{fused_sql}");
-            assert!(!fused.is_empty());
+            assert_ne!(fused, [] as [std::string::String; 0]);
         }
     }
 }

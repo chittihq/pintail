@@ -3986,7 +3986,7 @@ fn evaluate_eager_scalar_inner(
                 AtomicU64::new((1_u64 << 56) | ((seconds & 0xffff_ffff) << 24))
             });
             sequence
-                .fetch_update(
+                .try_update(
                     AtomicOrdering::Relaxed,
                     AtomicOrdering::Relaxed,
                     |current| current.checked_add(1),
@@ -5502,7 +5502,7 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::JsonObject => {
             let mut members: Vec<(String, JsonScalar)> = Vec::new();
-            for (index, pair) in values.chunks_exact(2).enumerate() {
+            for (index, pair) in values.as_chunks::<2>().0.iter().enumerate() {
                 // MySQL rejects NULL member names, coerces other key types
                 // to text, and keeps the LAST occurrence of a duplicate key
                 // (verified against 8.4).
@@ -10801,23 +10801,23 @@ mod tests {
             )),
             [0, 1, 2, 3]
         );
-        assert!(
+        assert_eq!(
             selected(kernel(
                 &unsigned,
                 BinaryOp::LessOrEqual,
                 &Value::Int64(-1),
                 DataType::UInt64
-            ))
-            .is_empty()
+            )),
+            [] as [usize; 0]
         );
-        assert!(
+        assert_eq!(
             selected(kernel(
                 &unsigned,
                 BinaryOp::Equal,
                 &Value::Int64(-1),
                 DataType::UInt64
-            ))
-            .is_empty()
+            )),
+            [] as [usize; 0]
         );
         assert_eq!(
             selected(kernel(
@@ -10850,14 +10850,14 @@ mod tests {
             )),
             [0, 1, 2]
         );
-        assert!(
+        assert_eq!(
             selected(kernel(
                 &signed,
                 BinaryOp::Greater,
                 &Value::UInt64(u64::MAX),
                 DataType::Int64
-            ))
-            .is_empty()
+            )),
+            [] as [usize; 0]
         );
         assert_eq!(
             selected(kernel(

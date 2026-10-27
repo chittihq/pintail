@@ -229,7 +229,7 @@ impl ExternalMembership {
     /// Claims `bytes` of the budget left for resident partitions.
     fn claim_resident(&self, bytes: usize) -> bool {
         self.resident_bytes
-            .fetch_update(
+            .try_update(
                 std::sync::atomic::Ordering::Relaxed,
                 std::sync::atomic::Ordering::Relaxed,
                 |used| {

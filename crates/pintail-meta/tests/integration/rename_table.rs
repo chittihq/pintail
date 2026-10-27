@@ -39,7 +39,10 @@ fn a_rename_moves_the_table_its_history_and_its_fence() {
         .map(|table| table.name)
         .collect::<Vec<_>>();
     assert_eq!(names, ["archived_events", "other"]);
-    assert!(meta.schema_history("db", "events").unwrap().is_empty());
+    assert_eq!(
+        meta.schema_history("db", "events").unwrap(),
+        [] as [pintail_meta::SchemaHistoryRecord; 0]
+    );
     let history = meta.schema_history("db", "archived_events").unwrap();
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].version, 2);

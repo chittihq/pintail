@@ -300,11 +300,11 @@ fn a_failed_job_hands_its_incomplete_table_to_the_automatic_resync() {
         ("error".to_owned(), true),
         "a complete table is the restore's, not the resync's"
     );
-    assert!(
+    assert_eq!(
         store
             .flag_incomplete_errors_for_resync("db-1")
-            .expect("flag again")
-            .is_empty()
+            .expect("flag again"),
+        [] as [std::string::String; 0]
     );
     let _ = &mut store;
 }

@@ -339,12 +339,9 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_iter("SET time_zone='+00:00'; SELECT ';'; SELECT 2; -- tail")
         .await
         .expect("multi-statement setup and results");
-    assert!(
-        batch
-            .collect::<mysql_async::Row>()
-            .await
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        batch.collect::<mysql_async::Row>().await.unwrap(),
+        [] as [mysql_async::Row; 0]
     );
     assert_eq!(batch.collect::<String>().await.unwrap(), vec![";"]);
     assert_eq!(batch.collect::<u64>().await.unwrap(), vec![2]);
@@ -910,7 +907,7 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("no rows");
     let none: Vec<u64> = connection.query("SELECT 1").await.expect("capped at zero");
-    assert!(none.is_empty());
+    assert_eq!(none, [] as [u64; 0]);
     // A user variable is assigned by this connection's own machinery, which
     // the client's row cap has no business limiting: at zero, every
     // assignment used to store NULL.

@@ -202,7 +202,7 @@ impl CharacterSet {
                 .take_while(|character| self != Self::Utf8Mb3 || u32::from(*character) <= 0xffff)
                 .collect(),
             Self::Ucs2 | Self::Utf16 | Self::Utf16Le => {
-                let units = bytes.chunks_exact(2).map(|pair| {
+                let units = bytes.as_chunks::<2>().0.iter().map(|pair| {
                     if self == Self::Utf16Le {
                         u16::from_le_bytes([pair[0], pair[1]])
                     } else {
@@ -218,7 +218,9 @@ impl CharacterSet {
                 }
             }
             Self::Utf32 => bytes
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map_while(|part| {
                     char::from_u32(u32::from_be_bytes([part[0], part[1], part[2], part[3]]))
                 })
@@ -245,7 +247,7 @@ impl CharacterSet {
                 if !bytes.len().is_multiple_of(2) {
                     return None;
                 }
-                let units = bytes.chunks_exact(2).map(|pair| {
+                let units = bytes.as_chunks::<2>().0.iter().map(|pair| {
                     if self == Self::Utf16Le {
                         u16::from_le_bytes([pair[0], pair[1]])
                     } else {
@@ -265,7 +267,9 @@ impl CharacterSet {
                     return None;
                 }
                 bytes
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|part| {
                         char::from_u32(u32::from_be_bytes([part[0], part[1], part[2], part[3]]))
                     })

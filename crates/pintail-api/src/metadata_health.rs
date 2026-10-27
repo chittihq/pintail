@@ -24,7 +24,7 @@ use serde::Serialize;
 use crate::{ApiState, events::ApiEvent};
 
 /// How often the file is checked and the history pruned.
-const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const CHECK_INTERVAL: Duration = Duration::from_hours(1);
 /// Default age at which a new copy is taken.
 const DEFAULT_BACKUP_HOURS: u64 = 6;
 /// Default number of copies kept: two days at the default cadence.

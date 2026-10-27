@@ -336,7 +336,7 @@ fn a_semi_join_rejects_the_null_extended_links_it_compares() {
          (SELECT m.id mid, s.id sid, k.id kid {CHAIN} LIMIT 1000000000) x \
          WHERE x.sid IN (SELECT q.step FROM marks q) GROUP BY x.mid ORDER BY x.mid"
     ));
-    assert!(!reference.is_empty());
+    assert_ne!(reference, [] as [std::vec::Vec<std::string::String>; 0]);
     assert_eq!(
         outermost_join(&fixture.optimized(&sql)),
         Some(BoundJoinKind::Left),
@@ -405,7 +405,7 @@ fn measure_a_filtered_fan_out() {
     let fixture = fixture(40_000, 2_000, 60);
     let sql = format!("{SELECT} {CHAIN} WHERE t.id = 16 AND o.tier = 1 {GROUP}");
     let expected = reference(&fixture, "x.team = 16 AND x.tier = 1");
-    assert!(!expected.is_empty());
+    assert_ne!(expected, [] as [std::vec::Vec<std::string::String>; 0]);
     for _ in 0..3 {
         let started = std::time::Instant::now();
         let rows = reference(&fixture, "x.team = 16 AND x.tier = 1");

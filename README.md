@@ -333,7 +333,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Rust 1.88 or newer and Bun. The full release gate, which needs Docker and
+Rust 1.95 or newer and Bun. The full release gate, which needs Docker and
 real MySQL containers, is documented in
 [docs/verification.md](docs/verification.md).
 

@@ -189,11 +189,11 @@ fn begin_resnapshot_clears_the_old_handoff_and_chunk_journal() {
             .expect("checkpoint query")
             .is_none()
     );
-    assert!(
+    assert_eq!(
         store
             .snapshot_chunks("source", "events")
-            .expect("chunk query")
-            .is_empty()
+            .expect("chunk query"),
+        [] as [pintail_meta::SnapshotChunkRecord; 0]
     );
     assert!(
         store

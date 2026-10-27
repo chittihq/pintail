@@ -22,7 +22,7 @@ fn prepare(root: &Path, count: usize, mib: usize) -> Result<()> {
             let mut file = fs::File::create(root.join(file_name(index, changed)))?;
             let mut state = u64::try_from(index)? + 1 + u64::from(changed) * 1_000_000;
             let mut block = vec![0_u8; 1024 * 1024];
-            for word in block.chunks_exact_mut(8) {
+            for word in block.as_chunks_mut::<8>().0 {
                 state ^= state << 13;
                 state ^= state >> 7;
                 state ^= state << 17;

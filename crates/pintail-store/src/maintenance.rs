@@ -88,7 +88,7 @@ pub fn statement_started() {
 /// Ends the count [`statement_started`] began.
 pub fn statement_finished() {
     LAST_STATEMENT.store(micros_since_epoch().max(1), Ordering::Release);
-    let _ = STATEMENTS.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+    let _ = STATEMENTS.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
         Some(count.saturating_sub(1))
     });
 }

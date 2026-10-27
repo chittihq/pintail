@@ -6913,7 +6913,7 @@ mod tests {
                 .sma_fold_state()
                 .expect("reopened manifest carries decodable SMAs");
             assert_eq!(segments.iter().map(|sma| sma.live_rows).sum::<u64>(), 1000);
-            assert!(residual.is_empty());
+            assert_eq!(residual, [] as [&pintail_types::StoredRow; 0]);
         }
         expect_settled(&aggregate(&table));
         // Pure inserts above the segment key space: the fold aggregates the

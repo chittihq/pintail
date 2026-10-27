@@ -152,7 +152,7 @@ impl MemoryBudget {
             return Ok(());
         }
         self.used
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 let requested = used.saturating_add(bytes);
                 (requested <= self.limit()).then_some(requested)
             })
@@ -172,7 +172,7 @@ impl MemoryBudget {
         }
         let _ = self
             .used
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 Some(used.saturating_sub(bytes))
             });
         if self.waiters.load(Ordering::Acquire) > 0 {

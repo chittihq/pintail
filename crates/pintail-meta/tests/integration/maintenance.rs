@@ -26,17 +26,13 @@ fn run(store: &MetaStore, id: &str, kind: &str, status: &str, started_at: &str) 
 fn a_healthy_file_reports_no_problems() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let store = store_with_database(dir.path());
-    assert!(
-        store
-            .integrity_problems(false)
-            .expect("quick check")
-            .is_empty()
+    assert_eq!(
+        store.integrity_problems(false).expect("quick check"),
+        [] as [std::string::String; 0]
     );
-    assert!(
-        store
-            .integrity_problems(true)
-            .expect("full check")
-            .is_empty()
+    assert_eq!(
+        store.integrity_problems(true).expect("full check"),
+        [] as [std::string::String; 0]
     );
 }
 
@@ -108,7 +104,10 @@ fn a_backup_is_a_complete_readable_copy_and_replaces_the_previous_one() {
     assert!(!dir.path().join("backup.db.partial").exists());
 
     let copy = MetaStore::open(&target).expect("copy opens");
-    assert!(copy.integrity_problems(true).expect("check").is_empty());
+    assert_eq!(
+        copy.integrity_problems(true).expect("check"),
+        [] as [std::string::String; 0]
+    );
     let runs = copy.sync_runs(Some("db_1"), 10).expect("runs");
     assert_eq!(runs.len(), 2, "the copy holds everything written before it");
     #[cfg(unix)]

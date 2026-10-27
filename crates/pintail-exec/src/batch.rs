@@ -1821,7 +1821,7 @@ mod tests {
 
         let one_row = RecordBatch::new(1, Vec::new()).expect("one row");
         assert_eq!(one_row.row_count(), 1);
-        assert!(one_row.columns().is_empty());
+        assert_eq!(one_row.columns(), []);
     }
 
     #[test]

@@ -4631,7 +4631,7 @@ mod tests {
         };
         assert_eq!(first.table.table_name, "users");
         assert_eq!(second.table.table_name, "events");
-        assert!(first.projected_column_ids.is_empty());
+        assert_eq!(first.projected_column_ids, [] as [u32; 0]);
         assert_eq!(second.projected_column_ids, [2]);
     }
 

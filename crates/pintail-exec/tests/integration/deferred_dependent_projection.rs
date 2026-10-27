@@ -357,7 +357,7 @@ fn a_limit_with_no_order_stops_reading_and_evaluating() {
     assert_eq!(page, every[4..7]);
     assert_eq!(executions, 3);
     let (page, executions) = run(&fixture, &format!("{select} LIMIT 0"));
-    assert!(page.is_empty());
+    assert_eq!(page, [] as [std::vec::Vec<std::string::String>; 0]);
     assert_eq!(executions, 0);
 }
 

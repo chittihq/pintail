@@ -648,7 +648,7 @@ impl Drop for SpillReservation {
 
 fn reserve_counter(counter: &AtomicU64, bytes: u64, limit: u64) -> Result<(), ()> {
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
             let requested = used.checked_add(bytes)?;
             (requested <= limit).then_some(requested)
         })

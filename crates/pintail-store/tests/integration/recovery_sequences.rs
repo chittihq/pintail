@@ -850,5 +850,8 @@ fn generated_sequences_cover_every_op_kind_and_round_trip() {
     model.apply(&Op::Replay { window: 2 });
     assert_eq!(model.expected(), expected, "replay changes nothing");
     model.apply(&Op::Delete { key: 1, version: 9 });
-    assert!(model.expected().is_empty());
+    assert_eq!(
+        model.expected(),
+        [] as [(u64, u64, std::vec::Vec<pintail_types::Value>); 0]
+    );
 }

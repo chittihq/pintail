@@ -533,13 +533,13 @@ async fn ddl_evolution_add_drop_rename_create_truncate_and_orphan() {
         .query_batch("TRUNCATE TABLE truncate_me;")
         .expect("TRUNCATE");
     targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
-    assert!(
+    assert_eq!(
         cdc_target(&targets, "truncate_me")
             .store()
             .snapshot()
             .scan()
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+        [] as [pintail_types::StoredRow; 0]
     );
     mysql
         .query_batch("INSERT INTO truncate_me VALUES (2,'truncate-new');")
@@ -1053,13 +1053,13 @@ async fn cdc_cascade_parent_key_reuse_replace_and_child_key_moves() {
             table.table
         );
     }
-    assert!(
+    assert_eq!(
         MetaStore::open(&metadata_path)
             .unwrap()
             .cascade_pending(DATABASE_ID, "book")
             .unwrap()
-            .keys
-            .is_empty()
+            .keys,
+        [] as [(std::string::String, std::string::String); 0]
     );
     pool.disconnect().await.expect("disconnect cascade pool");
 }

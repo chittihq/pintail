@@ -128,7 +128,7 @@ fn a_range_from_a_literal_date_prunes_like_the_day_it_names() {
     let (literal, literal_stats, _) =
         fixture.run("SELECT id FROM readings WHERE logged >= '2026-01-10'");
     assert_eq!(folded, literal, "the same day selects the same rows");
-    assert!(!folded.is_empty());
+    assert_ne!(folded, [] as [std::string::String; 0]);
     assert_eq!(warnings, 0);
     assert_eq!(
         (folded_stats.segments_pruned, folded_stats.blocks_decoded),

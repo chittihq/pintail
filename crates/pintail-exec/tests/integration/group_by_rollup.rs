@@ -228,9 +228,9 @@ fn a_written_order_by_and_limit_apply_to_the_whole_result() {
 
 #[test]
 fn an_empty_input_has_no_grand_total() {
-    assert!(
-        run("SELECT region, COUNT(*) FROM sales WHERE amount > 100 GROUP BY region WITH ROLLUP")
-            .is_empty()
+    assert_eq!(
+        run("SELECT region, COUNT(*) FROM sales WHERE amount > 100 GROUP BY region WITH ROLLUP"),
+        [] as [std::vec::Vec<std::string::String>; 0]
     );
 }
 

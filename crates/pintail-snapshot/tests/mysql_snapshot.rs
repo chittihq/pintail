@@ -501,7 +501,10 @@ async fn a_composite_key_table_pages_and_resumes_exactly() {
     )
     .await
     .expect("resumed composite snapshot");
-    assert!(resumed.failed.is_empty());
+    assert_eq!(
+        resumed.failed,
+        [] as [pintail_snapshot::TableSnapshotFailure; 0]
+    );
     let outcome = &resumed.tables[0];
     assert_eq!(outcome.rows, 10_000);
     assert!(outcome.chunks >= 79, "{} chunks", outcome.chunks);
@@ -609,7 +612,10 @@ async fn a_paused_run_flags_no_table() {
     .expect("the next run continues from the journal");
     assert_eq!(finished.tables[0].chunks, 100);
     assert_eq!(finished.tables[0].rows, RESUME_ROWS);
-    assert!(finished.failed.is_empty());
+    assert_eq!(
+        finished.failed,
+        [] as [pintail_snapshot::TableSnapshotFailure; 0]
+    );
     pool.disconnect().await.expect("disconnect source pool");
 }
 

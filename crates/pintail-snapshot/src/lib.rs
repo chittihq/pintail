@@ -1240,7 +1240,7 @@ fn reserve_snapshot_chunk(
         return Ok(false);
     };
     newly_completed
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |completed| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |completed| {
             (completed < maximum).then(|| completed + 1)
         })
         .map(|_| true)

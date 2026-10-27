@@ -42,7 +42,10 @@ fn removing_a_table_forgets_its_row_history_chunks_and_fence() {
         .map(|table| table.name)
         .collect::<Vec<_>>();
     assert_eq!(names, ["other"]);
-    assert!(meta.schema_history("db", "events").unwrap().is_empty());
+    assert_eq!(
+        meta.schema_history("db", "events").unwrap(),
+        [] as [pintail_meta::SchemaHistoryRecord; 0]
+    );
     assert_eq!(meta.setting("cdc_snapshot_fence:db:events").unwrap(), None);
     assert_eq!(
         meta.setting("cdc_snapshot_fence:db:other").unwrap(),

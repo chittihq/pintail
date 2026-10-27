@@ -105,7 +105,7 @@ fn kill_query(connection_id: u32) -> bool {
 }
 
 /// Default time an authenticated wire connection may remain idle.
-pub const DEFAULT_WIRE_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+pub const DEFAULT_WIRE_IDLE_TIMEOUT: Duration = Duration::from_mins(15);
 
 /// How long a client has to finish the pre-authentication exchange.
 ///
