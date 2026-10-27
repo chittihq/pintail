@@ -130,7 +130,7 @@ impl Fixture {
         .expect("seats key");
         let entry = TableEntry::new(
             TableId::new(1),
-            "attendance",
+            "checkins",
             schema(),
             TableStatistics::with_row_count(rows),
         )
@@ -184,9 +184,9 @@ impl Fixture {
         profile
             .operators
             .iter()
-            .find(|node| node.label.starts_with("Scan app.attendance"))
+            .find(|node| node.label.starts_with("Scan app.checkins"))
             .map(|node| node.rows)
-            .expect("the rollup scans attendance")
+            .expect("the rollup scans checkins")
     }
 
     fn try_rows(&self, sql: &str, memory: usize) -> Result<(Vec<String>, f64), String> {
@@ -229,7 +229,7 @@ impl Fixture {
 
 const ROLLUP: &str = "SELECT visit, visitor, MAX(id) AS id, MAX(COALESCE(present, 0)) AS present, \
      MAX(COALESCE(watched, 0)) AS watched, MIN(entered) AS entered, MAX(exited) AS exited \
-     FROM attendance GROUP BY visit, visitor";
+     FROM checkins GROUP BY visit, visitor";
 
 #[test]
 fn the_rollup_answers_one_row_per_pair() {
@@ -247,7 +247,7 @@ fn the_rollup_answers_one_row_per_pair() {
 /// with nothing to push to.
 const SEATED: &str = "SELECT s.id, r.present, r.entered, r.exited FROM seats s \
      LEFT JOIN (SELECT $KEY AS visit, $WHO AS visitor, MAX(COALESCE(present, 0)) AS present, \
-     MIN(entered) AS entered, MAX(exited) AS exited FROM attendance GROUP BY $KEY, $WHO) r \
+     MIN(entered) AS entered, MAX(exited) AS exited FROM checkins GROUP BY $KEY, $WHO) r \
      ON r.visit = s.visit AND r.visitor = s.visitor";
 
 #[test]
@@ -300,15 +300,15 @@ fn high_cardinality_rollup_cost() {
         ("rollup", ROLLUP),
         (
             "keys only",
-            "SELECT visit, visitor, COUNT(*) FROM attendance GROUP BY visit, visitor",
+            "SELECT visit, visitor, COUNT(*) FROM checkins GROUP BY visit, visitor",
         ),
         (
             "int maxes",
-            "SELECT visit, visitor, MAX(id), MAX(COALESCE(present, 0)) FROM attendance GROUP BY visit, visitor",
+            "SELECT visit, visitor, MAX(id), MAX(COALESCE(present, 0)) FROM checkins GROUP BY visit, visitor",
         ),
         (
             "datetime min/max",
-            "SELECT visit, visitor, MIN(entered), MAX(exited) FROM attendance GROUP BY visit, visitor",
+            "SELECT visit, visitor, MIN(entered), MAX(exited) FROM checkins GROUP BY visit, visitor",
         ),
     ] {
         for memory in [1_usize << 31, 64 << 20] {

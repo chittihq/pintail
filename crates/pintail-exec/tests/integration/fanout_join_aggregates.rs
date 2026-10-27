@@ -152,7 +152,7 @@ impl Fixture {
 
 /// Members of a few groups, each with several independent child branches:
 /// per-person entries, a plan of items with optional references, and
-/// sessions per item with per-person attendance.
+/// sessions per item with per-person checkins.
 #[allow(clippy::too_many_lines)] // fixture data reads best inline
 fn fixture(members_per_group: u64, entries: u64, items: u64, sessions: u64) -> Fixture {
     const GROUPS: u64 = 8;
@@ -210,7 +210,7 @@ fn fixture(members_per_group: u64, entries: u64, items: u64, sessions: u64) -> F
             ]
         })
         .collect();
-    let submissions = (1..=people * 3)
+    let receipts = (1..=people * 3)
         .map(|id| vec![number(id), number(id % 51 + 1), number(id % people + 1)])
         .collect();
     let session_rows = (1..=PLANS * items * sessions)
@@ -222,7 +222,7 @@ fn fixture(members_per_group: u64, entries: u64, items: u64, sessions: u64) -> F
             ]
         })
         .collect();
-    let attendance = (1..=PLANS * items * sessions)
+    let checkins = (1..=PLANS * items * sessions)
         .flat_map(|session| {
             (0..3).map(move |k| {
                 vec![
@@ -247,15 +247,15 @@ fn fixture(members_per_group: u64, entries: u64, items: u64, sessions: u64) -> F
         ("clips", vec!["id", "item_id", "ref_id"], clips),
         ("refs", vec!["id", "target_id", "live"], refs),
         (
-            "submissions",
+            "receipts",
             vec!["id", "target_id", "person_id"],
-            submissions,
+            receipts,
         ),
         ("sessions", vec!["id", "item_id", "at"], session_rows),
         (
-            "attendance",
+            "checkins",
             vec!["id", "session_id", "person_id", "present"],
-            attendance,
+            checkins,
         ),
     ])
 }
@@ -277,9 +277,9 @@ fn fanout(on: &str) -> String {
          LEFT JOIN items i ON i.plan_id = g.plan_id \
          LEFT JOIN clips c ON c.item_id = i.id \
          LEFT JOIN refs r ON r.target_id = c.ref_id AND r.live = 1 \
-         LEFT JOIN submissions s ON s.target_id = r.target_id AND s.person_id = m.person_id \
+         LEFT JOIN receipts s ON s.target_id = r.target_id AND s.person_id = m.person_id \
          LEFT JOIN sessions se ON se.item_id = i.id AND se.at >= COALESCE(m.since, 0) \
-         LEFT JOIN attendance a ON a.session_id = se.id AND a.person_id = m.person_id \
+         LEFT JOIN checkins a ON a.session_id = se.id AND a.person_id = m.person_id \
          WHERE m.grp IN (1, 2, 3, 5, 8) AND m.active = 1 \
          GROUP BY m.grp, m.person_id, p.score \
          HAVING COUNT(*) > 1 AND COALESCE(SUM(a.present), 0) >= 0"

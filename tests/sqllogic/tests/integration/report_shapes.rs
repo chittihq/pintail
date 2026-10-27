@@ -64,7 +64,7 @@ const SESSIONS: u64 = 30_000;
 const MEMBERS: u64 = 40_000;
 const TASKS: u64 = 60_000;
 const MEMBER_TASKS: u64 = 220_000;
-const ATTENDANCE: u64 = 160_000;
+const CHECKINS: u64 = 160_000;
 const GRADES: u64 = 60_000;
 const NOTES: u64 = 15_000;
 const TAGS: u64 = 100;
@@ -86,7 +86,7 @@ fn specs() -> Vec<Spec> {
         },
         Spec {
             id: 2,
-            name: "cohort",
+            name: "fleet",
             columns: vec![
                 column(1, "id", DataType::UInt64),
                 column(2, "org_id", DataType::UInt64),
@@ -97,7 +97,7 @@ fn specs() -> Vec<Spec> {
                 vec![
                     Value::UInt64(i),
                     Value::UInt64(1 + i % ORGS),
-                    Value::Utf8(format!("cohort-{i}")),
+                    Value::Utf8(format!("fleet-{i}")),
                 ]
             },
         },
@@ -106,7 +106,7 @@ fn specs() -> Vec<Spec> {
             name: "session",
             columns: vec![
                 column(1, "id", DataType::UInt64),
-                column(2, "cohort_id", DataType::UInt64),
+                column(2, "fleet_id", DataType::UInt64),
                 column(3, "starts_at", dt),
                 column(4, "title", DataType::Utf8),
             ],
@@ -125,7 +125,7 @@ fn specs() -> Vec<Spec> {
             name: "member",
             columns: vec![
                 column(1, "id", DataType::UInt64),
-                column(2, "cohort_id", DataType::UInt64),
+                column(2, "fleet_id", DataType::UInt64),
                 column(3, "name", DataType::Utf8),
                 column(4, "joined_at", dt),
             ],
@@ -185,14 +185,14 @@ fn specs() -> Vec<Spec> {
         },
         Spec {
             id: 7,
-            name: "attendance",
+            name: "checkins",
             columns: vec![
                 column(1, "id", DataType::UInt64),
                 column(2, "session_id", DataType::UInt64),
                 column(3, "member_id", DataType::UInt64),
                 column(4, "present", DataType::Int64),
             ],
-            rows: ATTENDANCE,
+            rows: CHECKINS,
             row: |i| {
                 vec![
                     Value::UInt64(i),
@@ -204,7 +204,7 @@ fn specs() -> Vec<Spec> {
         },
         Spec {
             id: 8,
-            name: "grade",
+            name: "rating",
             columns: vec![
                 column(1, "id", DataType::UInt64),
                 column(2, "member_task_id", DataType::UInt64),
@@ -371,18 +371,18 @@ impl Fixture {
 /// now that the two-pass aggregate path spills as well.
 const REPORTS: &[(&str, &str, bool)] = &[
     (
-        "ten-way left join chain grouped by cohort",
+        "ten-way left join chain grouped by fleet",
         "SELECT c.id, c.name, COUNT(*) AS n, COUNT(DISTINCT m.id) AS members, \
                 COUNT(DISTINCT s.id) AS sessions, SUM(mt.score) AS score, \
-                AVG(g.value) AS grade, MIN(s.starts_at) AS first_session, \
+                AVG(g.value) AS rating, MIN(s.starts_at) AS first_session, \
                 MAX(mt.done_at) AS last_done, COUNT(DISTINCT tg.name) AS tags \
-         FROM cohort c \
-         LEFT JOIN member m ON m.cohort_id = c.id \
+         FROM fleet c \
+         LEFT JOIN member m ON m.fleet_id = c.id \
          LEFT JOIN member_task mt ON mt.member_id = m.id \
          LEFT JOIN task t ON t.id = mt.task_id \
          LEFT JOIN session s ON s.id = t.session_id \
-         LEFT JOIN attendance a ON a.member_id = m.id AND a.session_id = s.id \
-         LEFT JOIN grade g ON g.member_task_id = mt.id \
+         LEFT JOIN checkins a ON a.member_id = m.id AND a.session_id = s.id \
+         LEFT JOIN rating g ON g.member_task_id = mt.id \
          LEFT JOIN note n ON n.member_id = m.id \
          LEFT JOIN member_tag mg ON mg.member_id = m.id \
          LEFT JOIN tag tg ON tg.id = mg.tag_id \
@@ -397,8 +397,8 @@ const REPORTS: &[(&str, &str, bool)] = &[
                 SUM(score) OVER () AS org_total \
          FROM ( \
            SELECT c.id, COUNT(DISTINCT m.id) AS members, COALESCE(SUM(mt.score), 0) AS score \
-           FROM cohort c \
-           LEFT JOIN member m ON m.cohort_id = c.id \
+           FROM fleet c \
+           LEFT JOIN member m ON m.fleet_id = c.id \
            LEFT JOIN member_task mt ON mt.member_id = m.id AND mt.status <> 'open' \
            LEFT JOIN task t ON t.id = mt.task_id \
            LEFT JOIN session s ON s.id = t.session_id \
@@ -408,15 +408,15 @@ const REPORTS: &[(&str, &str, bool)] = &[
         true,
     ),
     (
-        "members without attendance in their sessions, with a two-level CTE",
+        "members without checkins in their sessions, with a two-level CTE",
         "WITH sessions_of AS ( \
-           SELECT s.id AS session_id, s.cohort_id, s.starts_at FROM session s \
-           JOIN cohort c ON c.id = s.cohort_id WHERE c.org_id = 3 \
+           SELECT s.id AS session_id, s.fleet_id, s.starts_at FROM session s \
+           JOIN fleet c ON c.id = s.fleet_id WHERE c.org_id = 3 \
          ), absent AS ( \
            SELECT m.id AS member_id, so.session_id \
-           FROM member m JOIN sessions_of so ON so.cohort_id = m.cohort_id \
+           FROM member m JOIN sessions_of so ON so.fleet_id = m.fleet_id \
            WHERE NOT EXISTS ( \
-             SELECT 1 FROM attendance a \
+             SELECT 1 FROM checkins a \
              WHERE a.member_id = m.id AND a.session_id = so.session_id AND a.present = 1 \
            ) \
          ) \
@@ -429,27 +429,27 @@ const REPORTS: &[(&str, &str, bool)] = &[
         "the chain for half the organisations, wide enough to spill",
         "SELECT o.id AS org, COUNT(*) AS n, COUNT(DISTINCT m.id) AS members, \
                 COUNT(DISTINCT mt.id) AS tasks_done, SUM(mt.score) AS score, \
-                COUNT(DISTINCT a.id) AS attendances, MAX(s.starts_at) AS last_session \
-         FROM cohort c \
+                COUNT(DISTINCT a.id) AS checkin_rows, MAX(s.starts_at) AS last_session \
+         FROM fleet c \
          JOIN org o ON o.id = c.org_id \
-         LEFT JOIN member m ON m.cohort_id = c.id \
+         LEFT JOIN member m ON m.fleet_id = c.id \
          LEFT JOIN member_task mt ON mt.member_id = m.id AND mt.status = 'done' \
          LEFT JOIN task t ON t.id = mt.task_id \
          LEFT JOIN session s ON s.id = t.session_id \
-         LEFT JOIN attendance a ON a.member_id = m.id \
+         LEFT JOIN checkins a ON a.member_id = m.id \
          WHERE c.org_id BETWEEN 1 AND 25 \
          GROUP BY o.id ORDER BY o.id",
         true,
     ),
     (
         "per-member activity summary: forty thousand groups with distinct sets",
-        "SELECT m.id, m.cohort_id, COUNT(DISTINCT mt.task_id) AS tasks, \
+        "SELECT m.id, m.fleet_id, COUNT(DISTINCT mt.task_id) AS tasks, \
                 COUNT(DISTINCT a.session_id) AS sessions_attended, \
                 SUM(mt.score) AS score, MAX(mt.done_at) AS last_done \
          FROM member m \
          LEFT JOIN member_task mt ON mt.member_id = m.id \
-         LEFT JOIN attendance a ON a.member_id = m.id AND a.present = 1 \
-         GROUP BY m.id, m.cohort_id ORDER BY score DESC, m.id LIMIT 500",
+         LEFT JOIN checkins a ON a.member_id = m.id AND a.present = 1 \
+         GROUP BY m.id, m.fleet_id ORDER BY score DESC, m.id LIMIT 500",
         true,
     ),
     (
@@ -458,8 +458,8 @@ const REPORTS: &[(&str, &str, bool)] = &[
                 COUNT(DISTINCT mt.member_id) AS members, AVG(mt.score) AS score \
          FROM member_task mt \
          JOIN member m ON m.id = mt.member_id \
-         JOIN cohort c ON c.id = m.cohort_id \
-         LEFT JOIN grade g ON g.member_task_id = mt.id \
+         JOIN fleet c ON c.id = m.fleet_id \
+         LEFT JOIN rating g ON g.member_task_id = mt.id \
          WHERE c.org_id IN (5, 6) AND mt.done_at IS NOT NULL AND g.id IS NULL \
          GROUP BY mt.status, MONTH(mt.done_at) HAVING COUNT(*) > 10 \
          ORDER BY mt.status, month",

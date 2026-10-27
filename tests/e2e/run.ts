@@ -734,19 +734,19 @@ async function phaseSeed() {
   // by both columns under live replication) and one with a text part (the
   // merge path answers these). Both are churned by the composite-keys
   // phase and diffed whole after every phase.
-  await sql(`CREATE TABLE attendance (
-    class_id BIGINT UNSIGNED NOT NULL,
+  await sql(`CREATE TABLE checkins (
+    slot_id BIGINT UNSIGNED NOT NULL,
     user_id BIGINT UNSIGNED NOT NULL,
     minutes SMALLINT UNSIGNED NOT NULL,
     joined_at DATETIME NULL,
-    PRIMARY KEY (class_id, user_id)
+    PRIMARY KEY (slot_id, user_id)
   ) DEFAULT CHARACTER SET utf8mb4`)
-  await sql(`CREATE TABLE enrollments (
+  await sql(`CREATE TABLE bookings (
     tenant VARCHAR(8) NOT NULL,
     user_id BIGINT UNSIGNED NOT NULL,
-    course_id INT NOT NULL,
+    harbor_id INT NOT NULL,
     progress TINYINT UNSIGNED NOT NULL,
-    PRIMARY KEY (tenant, user_id, course_id)
+    PRIMARY KEY (tenant, user_id, harbor_id)
   ) DEFAULT CHARACTER SET utf8mb4`)
   for (let classId = 1; classId <= 60; classId += 1) {
     const rows: string[] = []
@@ -754,16 +754,16 @@ async function phaseSeed() {
       const joined = (classId + userId) % 4 === 0 ? 'NULL' : `'2025-03-${String(1 + (userId % 28)).padStart(2, '0')} 09:${String(classId % 60).padStart(2, '0')}:00'`
       rows.push(`(${classId}, ${userId}, ${(classId * 7 + userId * 3) % 90}, ${joined})`)
     }
-    await sql(`INSERT INTO attendance VALUES ${rows.join(', ')}`)
+    await sql(`INSERT INTO checkins VALUES ${rows.join(', ')}`)
   }
   for (const tenant of ['t1', 't2', 't3']) {
     const rows: string[] = []
     for (let userId = 1; userId <= 40; userId += 1) {
-      for (let courseId = 1; courseId <= 6; courseId += 1) {
-        rows.push(`('${tenant}', ${userId}, ${courseId}, ${(userId * courseId) % 101})`)
+      for (let harborId = 1; harborId <= 6; harborId += 1) {
+        rows.push(`('${tenant}', ${userId}, ${harborId}, ${(userId * harborId) % 101})`)
       }
     }
-    await sql(`INSERT INTO enrollments VALUES ${rows.join(', ')}`)
+    await sql(`INSERT INTO bookings VALUES ${rows.join(', ')}`)
   }
   await sql(`INSERT INTO audit_log VALUES ('seed complete'), ('第二条 unicode note')`)
   await sql(
@@ -960,22 +960,22 @@ async function phaseCompositeKeys() {
   // the last first part, a delete followed by a reinsert of the same key
   // with a new value, a bulk update of one first part, and a transaction
   // mixing all three tables.
-  await sql(`UPDATE attendance SET minutes = minutes + 5 WHERE user_id IN (3, 9, 17) AND class_id % 4 = 1`)
-  await sql(`DELETE FROM attendance WHERE (class_id = 7 AND user_id = 3) OR (class_id = 12 AND user_id = 25) OR (class_id = 60 AND user_id = 1)`)
-  await sql(`INSERT INTO attendance VALUES (7, 26, 44, NULL), (7, 27, 45, '2025-04-01 10:00:00'), (61, 1, 10, NULL), (61, 2, 20, NULL)`)
-  await sql(`DELETE FROM attendance WHERE class_id = 30 AND user_id = 15`)
-  await sql(`INSERT INTO attendance VALUES (30, 15, 99, '2025-05-05 05:05:05')`)
-  await sql(`UPDATE attendance SET minutes = minutes + 1, joined_at = NULL WHERE class_id = 7`)
-  await sql(`UPDATE enrollments SET progress = 100 WHERE tenant = 't2' AND course_id = 3 AND user_id <= 10`)
-  await sql(`DELETE FROM enrollments WHERE tenant = 't1' AND user_id = 5`)
-  await sql(`INSERT INTO enrollments VALUES ('t1', 5, 1, 7), ('t4', 1, 1, 1), ('t2', 41, 6, 66)`)
+  await sql(`UPDATE checkins SET minutes = minutes + 5 WHERE user_id IN (3, 9, 17) AND slot_id % 4 = 1`)
+  await sql(`DELETE FROM checkins WHERE (slot_id = 7 AND user_id = 3) OR (slot_id = 12 AND user_id = 25) OR (slot_id = 60 AND user_id = 1)`)
+  await sql(`INSERT INTO checkins VALUES (7, 26, 44, NULL), (7, 27, 45, '2025-04-01 10:00:00'), (61, 1, 10, NULL), (61, 2, 20, NULL)`)
+  await sql(`DELETE FROM checkins WHERE slot_id = 30 AND user_id = 15`)
+  await sql(`INSERT INTO checkins VALUES (30, 15, 99, '2025-05-05 05:05:05')`)
+  await sql(`UPDATE checkins SET minutes = minutes + 1, joined_at = NULL WHERE slot_id = 7`)
+  await sql(`UPDATE bookings SET progress = 100 WHERE tenant = 't2' AND harbor_id = 3 AND user_id <= 10`)
+  await sql(`DELETE FROM bookings WHERE tenant = 't1' AND user_id = 5`)
+  await sql(`INSERT INTO bookings VALUES ('t1', 5, 1, 7), ('t4', 1, 1, 1), ('t2', 41, 6, 66)`)
   await mysqlConnection!.beginTransaction()
-  await sql(`UPDATE attendance SET minutes = 0 WHERE class_id = 45`)
-  await sql(`DELETE FROM enrollments WHERE tenant = 't3' AND user_id = 40`)
-  await sql(`INSERT INTO attendance VALUES (45, 30, 1, NULL)`)
+  await sql(`UPDATE checkins SET minutes = 0 WHERE slot_id = 45`)
+  await sql(`DELETE FROM bookings WHERE tenant = 't3' AND user_id = 40`)
+  await sql(`INSERT INTO checkins VALUES (45, 30, 1, NULL)`)
   await mysqlConnection!.commit()
   await mysqlConnection!.beginTransaction()
-  await sql(`DELETE FROM attendance WHERE class_id = 1`)
+  await sql(`DELETE FROM checkins WHERE slot_id = 1`)
   await mysqlConnection!.rollback()
 }
 

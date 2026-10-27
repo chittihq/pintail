@@ -30,32 +30,32 @@ use pintail_sql::{Binder, parse_statement};
 use pintail_store::{StoreOptions, TableStore};
 use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
 
-const CLASSES: u64 = 240;
-const SECTIONS: u64 = 40;
-const MEMBERS_PER_SECTION: u64 = 25;
+const SLOTS: u64 = 240;
+const CREWS: u64 = 40;
+const MEMBERS_PER_CREW: u64 = 25;
 
-fn class_schema() -> TableSchema {
+fn slot_schema() -> TableSchema {
     TableSchema::new(
         1,
         vec![
-            Column::new(1, "class_id", DataType::UInt64, false),
-            Column::new(2, "section_id", DataType::UInt64, false),
+            Column::new(1, "slot_id", DataType::UInt64, false),
+            Column::new(2, "crew_id", DataType::UInt64, false),
             Column::new(3, "item_id", DataType::UInt64, false),
         ],
     )
-    .expect("class schema")
+    .expect("slot schema")
 }
 
-fn submission_schema() -> TableSchema {
+fn receipt_schema() -> TableSchema {
     TableSchema::new(
         2,
         vec![
-            Column::new(1, "submission_id", DataType::UInt64, false),
+            Column::new(1, "receipt_id", DataType::UInt64, false),
             Column::new(2, "item_id", DataType::UInt64, false),
             Column::new(3, "member_id", DataType::UInt64, false),
         ],
     )
-    .expect("submission schema")
+    .expect("receipt schema")
 }
 
 fn membership_schema() -> TableSchema {
@@ -63,7 +63,7 @@ fn membership_schema() -> TableSchema {
         3,
         vec![
             Column::new(1, "membership_id", DataType::UInt64, false),
-            Column::new(2, "section_id", DataType::UInt64, false),
+            Column::new(2, "crew_id", DataType::UInt64, false),
             Column::new(3, "member_id", DataType::UInt64, false),
         ],
     )
@@ -81,8 +81,8 @@ fn stored(id: u64, values: Vec<Value>) -> StoredRow {
 
 struct Fixture {
     _dirs: Vec<tempfile::TempDir>,
-    classes: TableStore,
-    submissions: TableStore,
+    slots: TableStore,
+    receipts: TableStore,
     memberships: TableStore,
 }
 
@@ -94,53 +94,53 @@ fn fixture() -> Fixture {
         dirs.push(dir);
         store
     };
-    let mut classes = open(class_schema());
-    classes
+    let mut slots = open(slot_schema());
+    slots
         .bulk_ingest_snapshot(
-            (1..=CLASSES)
+            (1..=SLOTS)
                 .map(|id| {
                     stored(
                         id,
                         vec![
                             Value::UInt64(id),
-                            Value::UInt64(id % SECTIONS),
+                            Value::UInt64(id % CREWS),
                             Value::UInt64(id % 60),
                         ],
                     )
                 })
                 .collect(),
         )
-        .expect("classes");
+        .expect("slots");
 
-    let mut submissions = open(submission_schema());
-    submissions
+    let mut receipts = open(receipt_schema());
+    receipts
         .bulk_ingest_snapshot(
-            (1..=SECTIONS * MEMBERS_PER_SECTION)
+            (1..=CREWS * MEMBERS_PER_CREW)
                 .map(|id| {
                     stored(
                         id,
                         vec![
                             Value::UInt64(id),
                             Value::UInt64(id % 60),
-                            Value::UInt64(id % (SECTIONS * MEMBERS_PER_SECTION)),
+                            Value::UInt64(id % (CREWS * MEMBERS_PER_CREW)),
                         ],
                     )
                 })
                 .collect(),
         )
-        .expect("submissions");
+        .expect("receipts");
 
     let mut memberships = open(membership_schema());
     memberships
         .bulk_ingest_snapshot(
-            (1..=SECTIONS * MEMBERS_PER_SECTION)
+            (1..=CREWS * MEMBERS_PER_CREW)
                 .map(|id| {
                     stored(
                         id,
                         vec![
                             Value::UInt64(id),
-                            Value::UInt64(id % SECTIONS),
-                            Value::UInt64(id % (SECTIONS * MEMBERS_PER_SECTION)),
+                            Value::UInt64(id % CREWS),
+                            Value::UInt64(id % (CREWS * MEMBERS_PER_CREW)),
                         ],
                     )
                 })
@@ -150,8 +150,8 @@ fn fixture() -> Fixture {
 
     Fixture {
         _dirs: dirs,
-        classes,
-        submissions,
+        slots,
+        receipts,
         memberships,
     }
 }
@@ -168,23 +168,23 @@ fn catalog_of(_fixture: &Fixture) -> CatalogSnapshot {
         [
             TableEntry::new(
                 TableId::new(41),
-                "classes",
-                class_schema(),
-                TableStatistics::with_row_count(CLASSES),
+                "slots",
+                slot_schema(),
+                TableStatistics::with_row_count(SLOTS),
             )
-            .expect("classes entry"),
+            .expect("slots entry"),
             TableEntry::new(
                 TableId::new(42),
-                "submissions",
-                submission_schema(),
-                TableStatistics::with_row_count(SECTIONS * MEMBERS_PER_SECTION),
+                "receipts",
+                receipt_schema(),
+                TableStatistics::with_row_count(CREWS * MEMBERS_PER_CREW),
             )
-            .expect("submissions entry"),
+            .expect("receipts entry"),
             TableEntry::new(
                 TableId::new(43),
                 "memberships",
                 membership_schema(),
-                TableStatistics::with_row_count(SECTIONS * MEMBERS_PER_SECTION),
+                TableStatistics::with_row_count(CREWS * MEMBERS_PER_CREW),
             )
             .expect("memberships entry"),
         ],
@@ -198,16 +198,16 @@ fn measure(fixture: &Fixture, sql: &str) -> (usize, u64) {
     let _counter = COUNTER
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let class_snapshot = fixture.classes.snapshot();
-    let submission_snapshot = fixture.submissions.snapshot();
+    let slot_snapshot = fixture.slots.snapshot();
+    let receipt_snapshot = fixture.receipts.snapshot();
     let membership_snapshot = fixture.memberships.snapshot();
     let database_id = DatabaseId::new(4);
-    let (class_id, submission_id, membership_id) =
+    let (slot_id, receipt_id, membership_id) =
         (TableId::new(41), TableId::new(42), TableId::new(43));
     let catalog = catalog_of(fixture);
     let provider = SnapshotScanProvider::new([
-        (database_id, class_id, &class_snapshot),
-        (database_id, submission_id, &submission_snapshot),
+        (database_id, slot_id, &slot_snapshot),
+        (database_id, receipt_id, &receipt_snapshot),
         (database_id, membership_id, &membership_snapshot),
     ])
     .expect("provider");
@@ -241,19 +241,19 @@ fn a_correlated_in_decorrelates_from_where_and_from_an_inner_join_condition() {
 
     let (where_rows, where_executions) = measure(
         &fixture,
-        "SELECT COUNT(*) AS n FROM classes c \
-         JOIN submissions s ON s.item_id = c.item_id \
+        "SELECT COUNT(*) AS n FROM slots c \
+         JOIN receipts s ON s.item_id = c.item_id \
          WHERE s.member_id IN ( \
-           SELECT m.member_id FROM memberships m WHERE m.section_id = c.section_id \
+           SELECT m.member_id FROM memberships m WHERE m.crew_id = c.crew_id \
          )",
     );
 
     let (on_rows, on_executions) = measure(
         &fixture,
-        "SELECT COUNT(*) AS n FROM classes c \
-         JOIN submissions s ON s.item_id = c.item_id \
+        "SELECT COUNT(*) AS n FROM slots c \
+         JOIN receipts s ON s.item_id = c.item_id \
          AND s.member_id IN ( \
-           SELECT m.member_id FROM memberships m WHERE m.section_id = c.section_id \
+           SELECT m.member_id FROM memberships m WHERE m.crew_id = c.crew_id \
          )",
     );
 
@@ -273,21 +273,21 @@ fn a_correlated_in_decorrelates_from_where_and_from_an_inner_join_condition() {
 }
 
 /// Left rows, and matched right rows, that an outer join scoped by a
-/// membership list returns: each class's submissions for its item whose
-/// member holds one of the first `limit` memberships in the class's own
-/// section. Computed from the fixture's formulas, not by the engine.
+/// membership list returns: each slot's receipts for its item whose
+/// member holds one of the first `limit` memberships in the slot's own
+/// crew. Computed from the fixture's formulas, not by the engine.
 fn scoped_join_answer(limit: u64) -> (usize, usize) {
-    let people = SECTIONS * MEMBERS_PER_SECTION;
-    let member = |submission: u64| submission % people;
+    let people = CREWS * MEMBERS_PER_CREW;
+    let member = |receipt: u64| receipt % people;
     let mut rows = 0;
     let mut matched = 0;
-    for class in 1..=CLASSES {
+    for slot in 1..=SLOTS {
         let found = (1..=people)
-            .filter(|submission| submission % 60 == class % 60)
-            .filter(|submission| {
+            .filter(|receipt| receipt % 60 == slot % 60)
+            .filter(|receipt| {
                 (1..=limit).any(|membership| {
-                    membership % people == member(*submission)
-                        && membership % SECTIONS == class % SECTIONS
+                    membership % people == member(*receipt)
+                        && membership % CREWS == slot % CREWS
                 })
             })
             .count();
@@ -302,32 +302,32 @@ fn scoped_join_answer(limit: u64) -> (usize, usize) {
 /// join's LEFT side is answered by widening the right input with the
 /// DISTINCT membership pairs, so it runs no dependent executions, and it
 /// must return exactly the rows the fixture's formulas say - including the
-/// null-extended classes no membership reaches.
+/// null-extended slots no membership reaches.
 #[test]
 fn an_outer_join_condition_correlated_to_its_left_side_widens_the_right_input() {
     let fixture = fixture();
     let (rows, matched) = scoped_join_answer(100);
     assert!(
         rows > matched && matched > 0,
-        "the fixture leaves some classes unmatched and matches others",
+        "the fixture leaves some slots unmatched and matches others",
     );
     let membership_in = "s.member_id IN ( \
            SELECT m.member_id FROM memberships m \
-           WHERE m.section_id = c.section_id AND m.membership_id <= 100)";
+           WHERE m.crew_id = c.crew_id AND m.membership_id <= 100)";
     let membership_exists = "EXISTS ( \
            SELECT 1 FROM memberships m WHERE m.member_id = s.member_id \
-           AND c.section_id = m.section_id AND m.membership_id <= 100)";
+           AND c.crew_id = m.crew_id AND m.membership_id <= 100)";
     for predicate in [membership_in, membership_exists] {
         let (all_rows, executions) = measure(
             &fixture,
             &format!(
-                "SELECT c.class_id, s.submission_id FROM classes c \
-                 LEFT JOIN submissions s ON s.item_id = c.item_id AND {predicate}"
+                "SELECT c.slot_id, s.receipt_id FROM slots c \
+                 LEFT JOIN receipts s ON s.item_id = c.item_id AND {predicate}"
             ),
         );
         assert_eq!(
             all_rows, rows,
-            "every class, null-extended when unmatched: {predicate}"
+            "every slot, null-extended when unmatched: {predicate}"
         );
         assert_eq!(
             executions, 0,
@@ -336,14 +336,14 @@ fn an_outer_join_condition_correlated_to_its_left_side_widens_the_right_input() 
         let (matched_rows, _) = measure(
             &fixture,
             &format!(
-                "SELECT c.class_id, s.submission_id FROM classes c \
-                 LEFT JOIN submissions s ON s.item_id = c.item_id AND {predicate} \
-                 WHERE s.submission_id IS NOT NULL"
+                "SELECT c.slot_id, s.receipt_id FROM slots c \
+                 LEFT JOIN receipts s ON s.item_id = c.item_id AND {predicate} \
+                 WHERE s.receipt_id IS NOT NULL"
             ),
         );
         assert_eq!(
             matched_rows, matched,
-            "only the scoped submissions match: {predicate}"
+            "only the scoped receipts match: {predicate}"
         );
     }
 
@@ -351,7 +351,7 @@ fn an_outer_join_condition_correlated_to_its_left_side_widens_the_right_input() 
     // tables the statement names and nothing else.
     let catalog = catalog_of(&fixture);
     let statement = parse_statement(&format!(
-        "SELECT * FROM classes c LEFT JOIN submissions s \
+        "SELECT * FROM slots c LEFT JOIN receipts s \
          ON s.item_id = c.item_id AND {membership_in}"
     ))
     .expect("parse");
@@ -361,7 +361,7 @@ fn an_outer_join_condition_correlated_to_its_left_side_widens_the_right_input() 
     assert_eq!(
         bound.projection.len(),
         6,
-        "classes' three columns and submissions' three"
+        "slots' three columns and receipts' three"
     );
 }
 
@@ -373,10 +373,10 @@ fn an_outer_join_condition_correlated_to_its_right_side_stays_dependent() {
     let fixture = fixture();
     let (rows, executions) = measure(
         &fixture,
-        "SELECT COUNT(*) AS n FROM classes c \
-         LEFT JOIN submissions s ON s.item_id = c.item_id \
+        "SELECT COUNT(*) AS n FROM slots c \
+         LEFT JOIN receipts s ON s.item_id = c.item_id \
          AND s.member_id IN ( \
-           SELECT m.member_id FROM memberships m WHERE m.section_id = s.item_id \
+           SELECT m.member_id FROM memberships m WHERE m.crew_id = s.item_id \
          )",
     );
     assert!(rows > 0, "correlating to the right side still answers");
@@ -386,20 +386,20 @@ fn an_outer_join_condition_correlated_to_its_right_side_stays_dependent() {
     );
 }
 
-/// Left rows, and matched right rows, of `classes LEFT JOIN submissions` on
-/// the item plus `accepts`, over the classes in `classes`. Computed from the
+/// Left rows, and matched right rows, of `slots LEFT JOIN receipts` on
+/// the item plus `accepts`, over the slots in `slots`. Computed from the
 /// fixture's formulas, not by the engine.
 fn outer_join_answer(
-    classes: std::ops::RangeInclusive<u64>,
+    slots: std::ops::RangeInclusive<u64>,
     accepts: impl Fn(u64, u64) -> bool,
 ) -> (usize, usize) {
-    let people = SECTIONS * MEMBERS_PER_SECTION;
+    let people = CREWS * MEMBERS_PER_CREW;
     let mut rows = 0;
     let mut matched = 0;
-    for class in classes {
+    for slot in slots {
         let found = (1..=people)
-            .filter(|submission| submission % 60 == class % 60)
-            .filter(|submission| accepts(class, *submission))
+            .filter(|receipt| receipt % 60 == slot % 60)
+            .filter(|receipt| accepts(slot, *receipt))
             .count();
         rows += found.max(1);
         matched += found;
@@ -407,84 +407,84 @@ fn outer_join_answer(
     (rows, matched)
 }
 
-/// Whether a class accepts a submission, by the fixture's formulas.
+/// Whether a slot accepts a receipt, by the fixture's formulas.
 type Accepts<'a> = dyn Fn(u64, u64) -> bool + 'a;
 
-/// Whether the submission's member holds one of the first `limit`
-/// memberships in a section `section` accepts.
-fn holds_membership(submission: u64, limit: u64, section: impl Fn(u64) -> bool) -> bool {
-    let people = SECTIONS * MEMBERS_PER_SECTION;
+/// Whether the receipt's member holds one of the first `limit`
+/// memberships in a crew `crew` accepts.
+fn holds_membership(receipt: u64, limit: u64, crew: impl Fn(u64) -> bool) -> bool {
+    let people = CREWS * MEMBERS_PER_CREW;
     (1..=limit).any(|membership| {
-        membership % people == submission % people && section(membership % SECTIONS)
+        membership % people == receipt % people && crew(membership % CREWS)
     })
 }
 
 /// The shapes the widening does not take run on the dependent join path,
 /// which resolves the subquery against each candidate pair. Each must
-/// return the rows the fixture's formulas say, null-extended classes
-/// included: classes 100 to 123 mix sections no early membership reaches
-/// with sections it does.
+/// return the rows the fixture's formulas say, null-extended slots
+/// included: slots 100 to 123 mix crews no early membership reaches
+/// with crews it does.
 #[test]
 fn an_outer_join_condition_answers_what_it_cannot_widen() {
     let fixture = fixture();
-    let classes = 100..=123;
-    let in_section = |class: u64, submission: u64| {
-        holds_membership(submission, 100, |section| section == class % SECTIONS)
+    let slots = 100..=123;
+    let in_crew = |slot: u64, receipt: u64| {
+        holds_membership(receipt, 100, |crew| crew == slot % CREWS)
     };
-    let below_section = |class: u64, submission: u64| {
-        holds_membership(submission, 100, |section| section < class % SECTIONS)
+    let below_crew = |slot: u64, receipt: u64| {
+        holds_membership(receipt, 100, |crew| crew < slot % CREWS)
     };
     let shapes: [(&str, &Accepts<'_>); 6] = [
         (
             "s.member_id NOT IN (SELECT m.member_id FROM memberships m \
-             WHERE m.section_id = c.section_id AND m.membership_id <= 100)",
-            &|class, submission| !in_section(class, submission),
+             WHERE m.crew_id = c.crew_id AND m.membership_id <= 100)",
+            &|slot, receipt| !in_crew(slot, receipt),
         ),
         (
             "NOT EXISTS (SELECT 1 FROM memberships m WHERE m.member_id = s.member_id \
-             AND m.section_id = c.section_id AND m.membership_id <= 100)",
-            &|class, submission| !in_section(class, submission),
+             AND m.crew_id = c.crew_id AND m.membership_id <= 100)",
+            &|slot, receipt| !in_crew(slot, receipt),
         ),
         (
             "EXISTS (SELECT 1 FROM memberships m WHERE m.member_id = s.member_id \
-             AND m.section_id < c.section_id AND m.membership_id <= 100)",
-            &below_section,
+             AND m.crew_id < c.crew_id AND m.membership_id <= 100)",
+            &below_crew,
         ),
         (
             "s.member_id IN (SELECT m.member_id FROM memberships m \
-             JOIN classes c2 ON c2.section_id = m.section_id \
-             WHERE c2.class_id = c.class_id AND m.membership_id <= 100)",
-            &in_section,
+             JOIN slots c2 ON c2.crew_id = m.crew_id \
+             WHERE c2.slot_id = c.slot_id AND m.membership_id <= 100)",
+            &in_crew,
         ),
         (
             "s.member_id IN (SELECT m.member_id FROM memberships m \
-             WHERE m.section_id = c.section_id AND m.membership_id <= 100 \
+             WHERE m.crew_id = c.crew_id AND m.membership_id <= 100 \
              GROUP BY m.member_id HAVING COUNT(*) >= 1)",
-            &in_section,
+            &in_crew,
         ),
         (
             "s.member_id NOT IN (SELECT m.member_id FROM memberships m \
-             WHERE m.section_id < c.section_id AND m.membership_id <= 100)",
-            &|class, submission| !below_section(class, submission),
+             WHERE m.crew_id < c.crew_id AND m.membership_id <= 100)",
+            &|slot, receipt| !below_crew(slot, receipt),
         ),
     ];
     for (predicate, accepts) in shapes {
-        let (rows, matched) = outer_join_answer(classes.clone(), accepts);
+        let (rows, matched) = outer_join_answer(slots.clone(), accepts);
         let join = format!(
-            "SELECT c.class_id, s.submission_id FROM classes c \
-             LEFT JOIN submissions s ON s.item_id = c.item_id AND {predicate} \
-             WHERE c.class_id BETWEEN 100 AND 123"
+            "SELECT c.slot_id, s.receipt_id FROM slots c \
+             LEFT JOIN receipts s ON s.item_id = c.item_id AND {predicate} \
+             WHERE c.slot_id BETWEEN 100 AND 123"
         );
         let (all_rows, _) = measure(&fixture, &join);
         assert_eq!(
             all_rows, rows,
-            "every class, null-extended when unmatched: {predicate}"
+            "every slot, null-extended when unmatched: {predicate}"
         );
         let (matched_rows, _) =
-            measure(&fixture, &format!("{join} AND s.submission_id IS NOT NULL"));
+            measure(&fixture, &format!("{join} AND s.receipt_id IS NOT NULL"));
         assert_eq!(
             matched_rows, matched,
-            "exactly the accepted submissions: {predicate}"
+            "exactly the accepted receipts: {predicate}"
         );
     }
 }

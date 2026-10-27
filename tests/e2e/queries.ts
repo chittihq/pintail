@@ -85,54 +85,54 @@ export const differentialQueries: DifferentialQuery[] = [
   // (merge path), churned under replication by the composite-keys phase.
   {
     name: 'composite: one first part, ordered by the second',
-    sql: 'SELECT class_id, user_id, minutes, joined_at FROM attendance WHERE class_id = 7 ORDER BY user_id',
-    tables: ['attendance'],
+    sql: 'SELECT slot_id, user_id, minutes, joined_at FROM checkins WHERE slot_id = 7 ORDER BY user_id',
+    tables: ['checkins'],
   },
   {
     name: 'composite: grouped by the first part',
-    sql: 'SELECT class_id, COUNT(*) AS n, SUM(minutes) AS total, MAX(user_id) AS last_user FROM attendance GROUP BY class_id ORDER BY class_id',
-    tables: ['attendance'],
+    sql: 'SELECT slot_id, COUNT(*) AS n, SUM(minutes) AS total, MAX(user_id) AS last_user FROM checkins GROUP BY slot_id ORDER BY slot_id',
+    tables: ['checkins'],
   },
   {
     name: 'composite: exact key pairs, deleted and reinserted among them',
     sql:
-      'SELECT class_id, user_id, minutes FROM attendance ' +
-      'WHERE (class_id = 7 AND user_id = 3) OR (class_id = 12 AND user_id = 25) OR (class_id = 30 AND user_id = 15) ' +
-      'OR (class_id = 61 AND user_id = 2) OR (class_id = 45 AND user_id = 30) ORDER BY class_id, user_id',
-    tables: ['attendance'],
+      'SELECT slot_id, user_id, minutes FROM checkins ' +
+      'WHERE (slot_id = 7 AND user_id = 3) OR (slot_id = 12 AND user_id = 25) OR (slot_id = 30 AND user_id = 15) ' +
+      'OR (slot_id = 61 AND user_id = 2) OR (slot_id = 45 AND user_id = 30) ORDER BY slot_id, user_id',
+    tables: ['checkins'],
   },
   {
     name: 'composite: a range on the first part with a filter on the second',
-    sql: 'SELECT class_id, user_id, minutes FROM attendance WHERE class_id BETWEEN 10 AND 20 AND user_id > 20 ORDER BY class_id, user_id',
-    tables: ['attendance'],
+    sql: 'SELECT slot_id, user_id, minutes FROM checkins WHERE slot_id BETWEEN 10 AND 20 AND user_id > 20 ORDER BY slot_id, user_id',
+    tables: ['checkins'],
   },
   {
     name: 'composite: descending key order with a limit',
-    sql: 'SELECT class_id, user_id FROM attendance ORDER BY class_id DESC, user_id DESC LIMIT 15',
-    tables: ['attendance'],
+    sql: 'SELECT slot_id, user_id FROM checkins ORDER BY slot_id DESC, user_id DESC LIMIT 15',
+    tables: ['checkins'],
   },
   {
     name: 'composite: nulls in a non-key column under the key order',
-    sql: 'SELECT class_id, user_id FROM attendance WHERE joined_at IS NULL ORDER BY class_id, user_id',
-    tables: ['attendance'],
+    sql: 'SELECT slot_id, user_id FROM checkins WHERE joined_at IS NULL ORDER BY slot_id, user_id',
+    tables: ['checkins'],
   },
   {
     name: 'composite: text-led key, one tenant and a user range',
-    sql: 'SELECT tenant, user_id, course_id, progress FROM enrollments WHERE tenant = \'t1\' AND user_id BETWEEN 3 AND 8 ORDER BY user_id, course_id',
-    tables: ['enrollments'],
+    sql: 'SELECT tenant, user_id, harbor_id, progress FROM bookings WHERE tenant = \'t1\' AND user_id BETWEEN 3 AND 8 ORDER BY user_id, harbor_id',
+    tables: ['bookings'],
   },
   {
     name: 'composite: text-led key grouped by its first part',
-    sql: 'SELECT tenant, COUNT(*) AS n, SUM(progress) AS total FROM enrollments GROUP BY tenant ORDER BY tenant',
-    tables: ['enrollments'],
+    sql: 'SELECT tenant, COUNT(*) AS n, SUM(progress) AS total FROM bookings GROUP BY tenant ORDER BY tenant',
+    tables: ['bookings'],
   },
   {
     name: 'composite: join on two columns across both composite tables',
     sql:
-      'SELECT a.class_id, a.user_id, e.progress FROM attendance a ' +
-      'JOIN enrollments e ON e.user_id = a.user_id AND e.course_id = a.class_id ' +
-      "WHERE e.tenant = 't2' ORDER BY a.class_id, a.user_id",
-    tables: ['attendance', 'enrollments'],
+      'SELECT a.slot_id, a.user_id, e.progress FROM checkins a ' +
+      'JOIN bookings e ON e.user_id = a.user_id AND e.harbor_id = a.slot_id ' +
+      "WHERE e.tenant = 't2' ORDER BY a.slot_id, a.user_id",
+    tables: ['checkins', 'bookings'],
   },
   // conformance: a user's adversarial seed, exercised by design intent.
   {
@@ -420,7 +420,7 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['orders'],
   },
   {
-    // The real shape from health-section-students: a whole tree over several
+    // A reporting shape: a whole tree over several
     // different aggregates, not a single wrapped call.
     name: 'order by a tree over several aggregates',
     sql:
@@ -951,7 +951,7 @@ export const differentialQueries: DifferentialQuery[] = [
   },
   {
     // Grouping keys of two collations answers, each key folded by its own
-    // rules (the 0.0.3 refusal a customer hit on sectionName+schoolName).
+    // rules (the 0.0.3 refusal on two grouped text keys of different collations).
     // Wrapped in a count so the assertion is fold arithmetic, not the
     // representative spelling documented as gap #10.
     name: 'collation: mixed grouping answers with per-key folds',

@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn ascii_case_folds() {
-        assert_eq!(compare_general_ci("student", "STUDENT"), Ordering::Equal);
+        assert_eq!(compare_general_ci("parcel", "PARCEL"), Ordering::Equal);
         assert_eq!(general_ci_sort_key("a"), general_ci_sort_key("A"));
     }
 
@@ -626,7 +626,7 @@ mod tests {
         // which reports '' = ' ' as true; the first implementation here said
         // false.
         assert_eq!(compare_general_ci("", " "), Ordering::Equal);
-        assert_eq!(compare_general_ci("student", "student   "), Ordering::Equal);
+        assert_eq!(compare_general_ci("parcel", "parcel   "), Ordering::Equal);
         assert_eq!(general_ci_sort_key("a"), general_ci_sort_key("a  "));
         // Leading and interior spaces still count.
         assert_ne!(compare_general_ci(" a", "a"), Ordering::Equal);
@@ -690,7 +690,7 @@ mod tests {
 
     #[test]
     fn unicode_ci_folds_case_and_accents() {
-        assert_eq!(compare_unicode_ci("student", "STUDENT"), Ordering::Equal);
+        assert_eq!(compare_unicode_ci("parcel", "PARCEL"), Ordering::Equal);
         // The combining mark weighs nothing, so the composed and decomposed
         // forms agree and both equal the bare letter.
         assert_eq!(compare_unicode_ci("a\u{301}", "\u{e1}"), Ordering::Equal);
@@ -714,7 +714,7 @@ mod tests {
     #[test]
     fn unicode_ci_pads_and_ignores_what_weighs_a_space() {
         assert_eq!(compare_unicode_ci("", " "), Ordering::Equal);
-        assert_eq!(compare_unicode_ci("student", "student   "), Ordering::Equal);
+        assert_eq!(compare_unicode_ci("parcel", "parcel   "), Ordering::Equal);
         assert_eq!(unicode_ci_sort_key("a"), unicode_ci_sort_key("a  "));
         // A no-break space weighs a space, so a trailing one is as
         // insignificant as a space. MySQL's `=` and COUNT(DISTINCT) agree;

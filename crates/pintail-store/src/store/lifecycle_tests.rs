@@ -677,7 +677,7 @@ fn a_composite_integer_key_takes_the_overlay() {
         1,
         vec![
             Column::new(1, "user_id", DataType::Int64, false),
-            Column::new(2, "course_id", DataType::Int64, false),
+            Column::new(2, "harbor_id", DataType::Int64, false),
             Column::new(3, "progress", DataType::Int64, true),
         ],
     )
@@ -688,26 +688,26 @@ fn a_composite_integer_key_takes_the_overlay() {
         ..StoreOptions::default()
     };
     let mut table = TableStore::open(directory.path(), schema, options).unwrap();
-    let key = |user: i64, course: i64| {
-        PrimaryKey::new(vec![KeyPart::Int64(user), KeyPart::Int64(course)]).unwrap()
+    let key = |user: i64, harbor: i64| {
+        PrimaryKey::new(vec![KeyPart::Int64(user), KeyPart::Int64(harbor)]).unwrap()
     };
-    let row = |user: i64, course: i64, progress: i64, version: u64, deleted: bool| {
+    let row = |user: i64, harbor: i64, progress: i64, version: u64, deleted: bool| {
         StoredRow::new(
-            key(user, course),
+            key(user, harbor),
             vec![
                 pintail_types::Value::Int64(user),
-                pintail_types::Value::Int64(course),
+                pintail_types::Value::Int64(harbor),
                 pintail_types::Value::Int64(progress),
             ],
             version,
             deleted,
         )
     };
-    // 300 users x 240 courses (even course ids), 72,000 rows.
+    // 300 users x 240 harbors (even harbor ids), 72,000 rows.
     let mut rows = Vec::new();
     for user in 1..=300_i64 {
-        for course in (2..=480_i64).step_by(2) {
-            rows.push(row(user, course, user + course, 1, false));
+        for harbor in (2..=480_i64).step_by(2) {
+            rows.push(row(user, harbor, user + harbor, 1, false));
         }
     }
     table.ingest(rows).unwrap();
@@ -716,13 +716,13 @@ fn a_composite_integer_key_takes_the_overlay() {
         .flat_map(|user| {
             (2..=480_i64)
                 .step_by(2)
-                .map(move |course| ((user, course), user + course))
+                .map(move |harbor| ((user, harbor), user + harbor))
         })
         .collect();
     let ops = [
         (7_i64, 10_i64, -1_i64, false), // update
         (7, 11, -2, false),             // insert between (7,10) and (7,12)
-        (150, 2, 0, true),              // delete a user's first course
+        (150, 2, 0, true),              // delete a user's first harbor
         (300, 480, -3, false),          // update the last row
         (300, 481, -4, false),          // insert past the last row
         (301, 2, -5, false),            // insert past the last user
@@ -730,22 +730,22 @@ fn a_composite_integer_key_takes_the_overlay() {
     table
         .ingest(
             ops.iter()
-                .map(|(user, course, progress, deleted)| {
-                    row(*user, *course, *progress, 2, *deleted)
+                .map(|(user, harbor, progress, deleted)| {
+                    row(*user, *harbor, *progress, 2, *deleted)
                 })
                 .collect(),
         )
         .unwrap();
-    for (user, course, progress, deleted) in ops {
+    for (user, harbor, progress, deleted) in ops {
         if deleted {
-            model.remove(&(user, course));
+            model.remove(&(user, harbor));
         } else {
-            model.insert((user, course), progress);
+            model.insert((user, harbor), progress);
         }
     }
     let expected = model
         .iter()
-        .map(|((user, course), progress)| (*user, *course, *progress))
+        .map(|((user, harbor), progress)| (*user, *harbor, *progress))
         .collect::<Vec<_>>();
 
     let snapshot = table.snapshot();
@@ -770,15 +770,15 @@ fn a_composite_integer_key_takes_the_overlay() {
                 .into_iter()
                 .map(DecodedColumn::into_values);
             let users = columns.next().unwrap();
-            let courses = columns.next().unwrap();
+            let harbors = columns.next().unwrap();
             let progress = columns.next().unwrap();
-            for ((user, course), progress) in users.into_iter().zip(courses).zip(progress) {
-                match (user, course, progress) {
+            for ((user, harbor), progress) in users.into_iter().zip(harbors).zip(progress) {
+                match (user, harbor, progress) {
                     (
                         pintail_types::Value::Int64(user),
-                        pintail_types::Value::Int64(course),
+                        pintail_types::Value::Int64(harbor),
                         pintail_types::Value::Int64(progress),
-                    ) => actual.push((user, course, progress)),
+                    ) => actual.push((user, harbor, progress)),
                     other => panic!("unexpected {other:?}"),
                 }
             }

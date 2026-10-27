@@ -20,7 +20,7 @@ use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchem
 const GENERAL_CI: &str = "utf8mb4_general_ci";
 const AI_CI: &str = "utf8mb4_0900_ai_ci";
 
-/// (id, ci, ai, school, n). Folds: `ci` under `general_ci` gives red x3 and
+/// (id, ci, ai, depot, n). Folds: `ci` under `general_ci` gives red x3 and
 /// blue x2; `ai` under `0900_ai_ci` gives Ann x2, 'ann ' x1, Bob x2.
 const ROWS: [(u64, &str, &str, u64, i64); 5] = [
     (1, "red", "Ann", 1, 10),
@@ -37,7 +37,7 @@ fn items_schema() -> TableSchema {
             Column::new(1, "id", DataType::UInt64, false),
             Column::new(2, "ci", DataType::Utf8, true).with_collation(Some(GENERAL_CI.to_owned())),
             Column::new(3, "ai", DataType::Utf8, true).with_collation(Some(AI_CI.to_owned())),
-            Column::new(4, "school", DataType::UInt64, false),
+            Column::new(4, "depot", DataType::UInt64, false),
             Column::new(5, "n", DataType::Int64, false),
             Column::new(6, "placed", DataType::DateTime64 { fsp: 0 }, false),
             Column::new(
@@ -54,7 +54,7 @@ fn items_schema() -> TableSchema {
     .expect("schema")
 }
 
-fn schools_schema() -> TableSchema {
+fn depots_schema() -> TableSchema {
     TableSchema::new(
         1,
         vec![
@@ -66,14 +66,14 @@ fn schools_schema() -> TableSchema {
     .expect("schema")
 }
 
-fn item_row(id: u64, ci: &str, ai: &str, school: u64, n: i64) -> StoredRow {
+fn item_row(id: u64, ci: &str, ai: &str, depot: u64, n: i64) -> StoredRow {
     StoredRow::new(
         PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
         vec![
             Value::UInt64(id),
             Value::Utf8(ci.to_owned()),
             Value::Utf8(ai.to_owned()),
-            Value::UInt64(school),
+            Value::UInt64(depot),
             Value::Int64(n),
             Value::Utf8(format!("2026-01-{id:02} 10:00:00")),
             Value::Utf8(format!("{n}.25")),
@@ -83,7 +83,7 @@ fn item_row(id: u64, ci: &str, ai: &str, school: u64, n: i64) -> StoredRow {
     )
 }
 
-fn school_row(id: u64, label: &str) -> StoredRow {
+fn depot_row(id: u64, label: &str) -> StoredRow {
     StoredRow::new(
         PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
         vec![Value::UInt64(id), Value::Utf8(label.to_owned())],
@@ -109,26 +109,26 @@ fn run(sql: &str) -> Vec<Vec<String>> {
     items
         .bulk_ingest_snapshot(
             ROWS.iter()
-                .map(|(id, ci, ai, school, n)| item_row(*id, ci, ai, *school, *n))
+                .map(|(id, ci, ai, depot, n)| item_row(*id, ci, ai, *depot, *n))
                 .collect(),
         )
         .expect("bulk items");
-    let schools_dir = tempfile::tempdir().expect("temporary schools table");
-    let mut schools = TableStore::open(
-        schools_dir.path(),
-        schools_schema(),
+    let depots_dir = tempfile::tempdir().expect("temporary depots table");
+    let mut depots = TableStore::open(
+        depots_dir.path(),
+        depots_schema(),
         StoreOptions::default(),
     )
-    .expect("open schools");
-    schools
-        .bulk_ingest_snapshot(vec![school_row(1, "North"), school_row(2, "SOUTH")])
-        .expect("bulk schools");
+    .expect("open depots");
+    depots
+        .bulk_ingest_snapshot(vec![depot_row(1, "North"), depot_row(2, "SOUTH")])
+        .expect("bulk depots");
 
     let items_snapshot = items.snapshot();
-    let schools_snapshot = schools.snapshot();
+    let depots_snapshot = depots.snapshot();
     let database_id = DatabaseId::new(15);
     let items_id = TableId::new(17);
-    let schools_id = TableId::new(18);
+    let depots_id = TableId::new(18);
     let database = DatabaseEntry::new(
         database_id,
         "app",
@@ -141,19 +141,19 @@ fn run(sql: &str) -> Vec<Vec<String>> {
             )
             .expect("items entry"),
             TableEntry::new(
-                schools_id,
-                "schools",
-                schools_schema(),
+                depots_id,
+                "depots",
+                depots_schema(),
                 TableStatistics::with_row_count(2),
             )
-            .expect("schools entry"),
+            .expect("depots entry"),
         ],
     )
     .expect("database entry");
     let catalog = CatalogSnapshot::new([database]).expect("catalog");
     let provider = SnapshotScanProvider::new([
         (database_id, items_id, &items_snapshot),
-        (database_id, schools_id, &schools_snapshot),
+        (database_id, depots_id, &depots_snapshot),
     ])
     .expect("provider");
 
@@ -247,8 +247,8 @@ fn v5_grouping_the_ai_ci_key_alone_keeps_no_pad_semantics() {
 
 #[test]
 fn v6_a_numeric_key_rides_along_with_the_mixed_pair() {
-    let rows = run("SELECT school, ci, ai, COUNT(*) AS c FROM items \
-         GROUP BY school, ci, ai ORDER BY school, ci, ai");
+    let rows = run("SELECT depot, ci, ai, COUNT(*) AS c FROM items \
+         GROUP BY depot, ci, ai ORDER BY depot, ci, ai");
     assert_eq!(
         rows,
         [
@@ -261,10 +261,10 @@ fn v6_a_numeric_key_rides_along_with_the_mixed_pair() {
 
 #[test]
 fn v7_the_customer_shape_join_then_group_by_both_sides_names() {
-    // JOIN School then GROUP BY s.sectionName, sc.schoolName, verbatim in
+    // JOIN Depot then GROUP BY s.crewName, sc.depotName, verbatim in
     // miniature: one key from each table, different collations.
     let rows = run("SELECT s.label, i.ai, COUNT(*) AS c FROM items i \
-         JOIN schools s ON s.id = i.school \
+         JOIN depots s ON s.id = i.depot \
          GROUP BY s.label, i.ai ORDER BY s.label, i.ai");
     assert_eq!(
         rows,
@@ -307,8 +307,8 @@ fn v11_a_join_grouped_on_one_general_ci_key_pad_folds() {
     // inner join. 'red', 'RED' and 'red ' are one group under PAD SPACE +
     // case folding; the failing path split 'red ' out and lost the others.
     let rows = run(
-        "SELECT i.ci, COUNT(*) AS c, MIN(s.id) AS first_school FROM items i \
-         JOIN schools s ON s.id = i.school \
+        "SELECT i.ci, COUNT(*) AS c, MIN(s.id) AS first_depot FROM items i \
+         JOIN depots s ON s.id = i.depot \
          GROUP BY i.ci ORDER BY i.ci",
     );
     assert_eq!(rows, [["blue", "2", "2"], ["red", "3", "1"]]);
@@ -319,8 +319,8 @@ fn v12_a_join_grouped_on_the_build_sides_general_ci_key_pad_folds() {
     // Same fold with the key on the BUILD side, which routes through the
     // fused inner-join aggregate - the path oracle case #258 fails on.
     let rows = run(
-        "SELECT i.ci, COUNT(*) AS c, MIN(s.id) AS first_school FROM schools s \
-         JOIN items i ON i.school = s.id \
+        "SELECT i.ci, COUNT(*) AS c, MIN(s.id) AS first_depot FROM depots s \
+         JOIN items i ON i.depot = s.id \
          GROUP BY i.ci ORDER BY i.ci",
     );
     assert_eq!(rows, [["blue", "2", "2"], ["red", "3", "1"]]);
@@ -331,8 +331,8 @@ fn v13_two_pass_lanes_over_a_join_keep_the_general_ci_fold() {
     // The exact #258 oracle shape: MIN(datetime) + MAX(decimal) route the
     // single general_ci key through the streaming two-pass lanes over a
     // JOIN output. The fold must still PAD/case-merge red/RED/'red '.
-    let rows = run("SELECT i.ci, MIN(i.placed), MAX(i.amt) FROM schools s \
-         JOIN items i ON i.school = s.id \
+    let rows = run("SELECT i.ci, MIN(i.placed), MAX(i.amt) FROM depots s \
+         JOIN items i ON i.depot = s.id \
          GROUP BY i.ci ORDER BY MIN(i.placed), MAX(i.amt)");
     assert_eq!(
         rows,
