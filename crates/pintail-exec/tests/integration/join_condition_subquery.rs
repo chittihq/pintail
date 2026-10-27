@@ -286,8 +286,7 @@ fn scoped_join_answer(limit: u64) -> (usize, usize) {
             .filter(|receipt| receipt % 60 == slot % 60)
             .filter(|receipt| {
                 (1..=limit).any(|membership| {
-                    membership % people == member(*receipt)
-                        && membership % CREWS == slot % CREWS
+                    membership % people == member(*receipt) && membership % CREWS == slot % CREWS
                 })
             })
             .count();
@@ -414,9 +413,8 @@ type Accepts<'a> = dyn Fn(u64, u64) -> bool + 'a;
 /// memberships in a crew `crew` accepts.
 fn holds_membership(receipt: u64, limit: u64, crew: impl Fn(u64) -> bool) -> bool {
     let people = CREWS * MEMBERS_PER_CREW;
-    (1..=limit).any(|membership| {
-        membership % people == receipt % people && crew(membership % CREWS)
-    })
+    (1..=limit)
+        .any(|membership| membership % people == receipt % people && crew(membership % CREWS))
 }
 
 /// The shapes the widening does not take run on the dependent join path,
@@ -428,12 +426,10 @@ fn holds_membership(receipt: u64, limit: u64, crew: impl Fn(u64) -> bool) -> boo
 fn an_outer_join_condition_answers_what_it_cannot_widen() {
     let fixture = fixture();
     let slots = 100..=123;
-    let in_crew = |slot: u64, receipt: u64| {
-        holds_membership(receipt, 100, |crew| crew == slot % CREWS)
-    };
-    let below_crew = |slot: u64, receipt: u64| {
-        holds_membership(receipt, 100, |crew| crew < slot % CREWS)
-    };
+    let in_crew =
+        |slot: u64, receipt: u64| holds_membership(receipt, 100, |crew| crew == slot % CREWS);
+    let below_crew =
+        |slot: u64, receipt: u64| holds_membership(receipt, 100, |crew| crew < slot % CREWS);
     let shapes: [(&str, &Accepts<'_>); 6] = [
         (
             "s.member_id NOT IN (SELECT m.member_id FROM memberships m \
@@ -480,8 +476,7 @@ fn an_outer_join_condition_answers_what_it_cannot_widen() {
             all_rows, rows,
             "every slot, null-extended when unmatched: {predicate}"
         );
-        let (matched_rows, _) =
-            measure(&fixture, &format!("{join} AND s.receipt_id IS NOT NULL"));
+        let (matched_rows, _) = measure(&fixture, &format!("{join} AND s.receipt_id IS NOT NULL"));
         assert_eq!(
             matched_rows, matched,
             "exactly the accepted receipts: {predicate}"

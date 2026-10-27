@@ -114,12 +114,8 @@ fn run(sql: &str) -> Vec<Vec<String>> {
         )
         .expect("bulk items");
     let depots_dir = tempfile::tempdir().expect("temporary depots table");
-    let mut depots = TableStore::open(
-        depots_dir.path(),
-        depots_schema(),
-        StoreOptions::default(),
-    )
-    .expect("open depots");
+    let mut depots = TableStore::open(depots_dir.path(), depots_schema(), StoreOptions::default())
+        .expect("open depots");
     depots
         .bulk_ingest_snapshot(vec![depot_row(1, "North"), depot_row(2, "SOUTH")])
         .expect("bulk depots");

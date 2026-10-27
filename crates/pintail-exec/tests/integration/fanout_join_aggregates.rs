@@ -246,11 +246,7 @@ fn fixture(members_per_group: u64, entries: u64, items: u64, sessions: u64) -> F
         ("items", vec!["id", "plan_id"], item_rows),
         ("clips", vec!["id", "item_id", "ref_id"], clips),
         ("refs", vec!["id", "target_id", "live"], refs),
-        (
-            "receipts",
-            vec!["id", "target_id", "person_id"],
-            receipts,
-        ),
+        ("receipts", vec!["id", "target_id", "person_id"], receipts),
         ("sessions", vec!["id", "item_id", "at"], session_rows),
         (
             "checkins",
