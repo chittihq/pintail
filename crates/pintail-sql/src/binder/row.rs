@@ -24,9 +24,11 @@
 //! Rows nest: a column that is itself a row compares by the same rules when
 //! the rewritten pair is bound.
 
+use std::ops::ControlFlow;
+
 use sqlparser::ast::{
     BinaryOperator, CaseWhen, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Ident, Query,
-    Select, SelectItem, SetExpr, TableAliasColumnDef, TableFactor,
+    Select, SelectItem, SetExpr, TableAliasColumnDef, TableFactor, Visit, Visitor,
     helpers::attached_token::AttachedToken,
 };
 
@@ -141,7 +143,10 @@ fn subquery(expr: &Expr) -> Option<&Query> {
 /// Anything whose rows depend on the select list as a whole - DISTINCT,
 /// grouping, a set operation - or that names its columns from elsewhere -
 /// ORDER BY - is read through a derived table that names the columns
-/// instead, which an uncorrelated subquery allows.
+/// instead, which an uncorrelated subquery allows. An aggregate in the
+/// select list makes the query one row whatever it reads; a column read on
+/// its own keeps that with a HAVING that holds for every group, so
+/// `(SELECT COUNT(*), 7 FROM t)` reads `7` from one row, not one per row.
 fn subquery_row(subquery: &Query, width: usize) -> Result<Vec<Expr>, BindError> {
     let whole = members(subquery, width)?;
     let independent = subquery.order_by.is_none()
@@ -153,6 +158,8 @@ fn subquery_row(subquery: &Query, width: usize) -> Result<Vec<Expr>, BindError> 
                 && matches!(&select.group_by,
                     sqlparser::ast::GroupByExpr::Expressions(keys, modifiers)
                         if keys.is_empty() && modifiers.is_empty()));
+    let aggregated =
+        independent && matches!(whole.body.as_ref(), SetExpr::Select(select) if aggregates(select));
     (0..width)
         .map(|index| {
             if independent {
@@ -161,6 +168,12 @@ fn subquery_row(subquery: &Query, width: usize) -> Result<Vec<Expr>, BindError> 
                     unreachable!("an independent subquery is a SELECT");
                 };
                 select.projection = vec![select.projection.swap_remove(index)];
+                if aggregated {
+                    select.having = Some(
+                        crate::parse_expression("COUNT(*) IS NOT NULL")
+                            .map_err(|error| BindError::UnsupportedSubquery(error.to_string()))?,
+                    );
+                }
                 return Ok(Expr::Subquery(Box::new(column)));
             }
             let template =
@@ -193,6 +206,38 @@ fn subquery_row(subquery: &Query, width: usize) -> Result<Vec<Expr>, BindError> 
             Ok(Expr::Subquery(value))
         })
         .collect()
+}
+
+/// Whether `select`'s list calls an aggregate of its own rows: one inside a
+/// nested subquery aggregates that subquery's rows instead.
+fn aggregates(select: &Select) -> bool {
+    struct Finder {
+        depth: usize,
+    }
+    impl Visitor for Finder {
+        type Break = ();
+
+        fn pre_visit_query(&mut self, _query: &Query) -> ControlFlow<Self::Break> {
+            self.depth += 1;
+            ControlFlow::Continue(())
+        }
+
+        fn post_visit_query(&mut self, _query: &Query) -> ControlFlow<Self::Break> {
+            self.depth -= 1;
+            ControlFlow::Continue(())
+        }
+
+        fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
+            if self.depth == 0 && super::rollup::is_aggregate(expr) {
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    select
+        .projection
+        .iter()
+        .any(|item| item.visit(&mut Finder { depth: 0 }).is_break())
 }
 
 /// The derived table a row-valued subquery is read through.

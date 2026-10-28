@@ -367,7 +367,8 @@ fn column_reference(expr: &Expr) -> Option<(Option<&str>, &str)> {
     }
 }
 
-fn is_aggregate(expr: &Expr) -> bool {
+/// Whether `expr` is a call of an aggregate function, not a window.
+pub(super) fn is_aggregate(expr: &Expr) -> bool {
     let Expr::Function(function) = expr else {
         return false;
     };
