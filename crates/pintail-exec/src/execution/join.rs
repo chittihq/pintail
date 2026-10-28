@@ -4163,7 +4163,7 @@ pub(super) enum JoinHashKey {
 }
 
 impl JoinHashKey {
-    fn heap_bytes(&self) -> usize {
+    pub(super) fn heap_bytes(&self) -> usize {
         match self {
             Self::Scalar(value) => value.heap_bytes(),
             Self::CollatedText(bytes) => bytes.len(),
@@ -5022,20 +5022,32 @@ impl RangeCounter {
         )
     }
 
-    /// Takes one right row. `false` when its value is not one the domain
-    /// reads, which no count here answers for.
-    pub(super) fn push(&mut self, batch: &RecordBatch, row: usize) -> Result<bool, ExecError> {
+    /// Takes one right row: the bytes it adds to what is held, or `None`
+    /// when its value is not one the domain reads, which no count here
+    /// answers for.
+    pub(super) fn push(
+        &mut self,
+        batch: &RecordBatch,
+        row: usize,
+    ) -> Result<Option<usize>, ExecError> {
         match self
             .index
             .domain
             .value(self.index.right.evaluate(batch, row)?)
         {
-            Ok(Some(value)) => self.index.sorted.push((value, 0)),
+            Ok(Some(value)) => {
+                let bytes = size_of::<(RangeValue, usize)>()
+                    + match &value {
+                        RangeValue::Text(text) => text.capacity(),
+                        RangeValue::Integer(_) | RangeValue::Float(_) => 0,
+                    };
+                self.index.sorted.push((value, 0));
+                Ok(Some(bytes))
+            }
             // NULL is on neither side of any inequality.
-            Ok(None) => {}
-            Err(()) => return Ok(false),
+            Ok(None) => Ok(Some(0)),
+            Err(()) => Ok(None),
         }
-        Ok(true)
     }
 
     /// Orders the rows taken; no row is taken after it.

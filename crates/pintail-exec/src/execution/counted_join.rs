@@ -29,7 +29,11 @@
 //!   not NULL: they are kept in a count of their own.
 //! - **The join's kind.** An inner join drops a left row with no pair; a
 //!   left join keeps it, as one row whose right side is NULL - one for
-//!   `COUNT(*)`, none for a count of a right expression.
+//!   `COUNT(*)`, and for a count of a right expression what that
+//!   expression gives over the NULL row: none for `b.id`, one for
+//!   `COALESCE(b.id, 0)`.
+//! - **Memory.** What the right side's indexes hold is taken from the
+//!   query's budget; one the budget cannot hold leaves the join as it was.
 //! - **No rows.** With no GROUP BY the answer is one row whatever the
 //!   input, zero included, so the counts are added here and handed on as
 //!   one row.
@@ -50,9 +54,9 @@ use super::{
     ExecError, JoinKeyMode, MemoryTracker, PhysicalPlan, PullOperator, ScanProvider, batch_row,
     build_operator, estimated_row_payload_bytes, hash_join_key_mode, pair_key_collation,
 };
-use crate::RecordBatch;
 use crate::collation::Collation;
 use crate::expression::{CompiledExpr, predicate_truth};
+use crate::{ColumnVector, RecordBatch};
 
 /// Rows either side may hold before the join is left as it was.
 const MAX_SIDE_ROWS: usize = 4 << 20;
@@ -159,8 +163,19 @@ fn equal_key(
     Ok(Some(JoinHashKey::Composite(keys)))
 }
 
+/// Counts one more right row under `key`: the bytes a key seen for the
+/// first time holds.
+fn count_key(by_key: &mut HashMap<JoinHashKey, u64>, key: JoinHashKey) -> usize {
+    let bytes = size_of::<(JoinHashKey, u64)>() + 1 + key.heap_bytes();
+    let count = by_key.entry(key).or_default();
+    *count += 1;
+    if *count == 1 { bytes } else { 0 }
+}
+
 impl Pairing {
-    fn push(&mut self, batch: &RecordBatch, row: usize) -> Result<bool, ExecError> {
+    /// Takes one right row: the bytes it adds to what is held, or `None`
+    /// when no count here answers for it.
+    fn push(&mut self, batch: &RecordBatch, row: usize) -> Result<Option<usize>, ExecError> {
         match self {
             Self::Range(counter) => counter.push(batch, row),
             Self::Equal {
@@ -169,11 +184,11 @@ impl Pairing {
                 by_key,
                 ..
             } => {
-                if let Some(key) = equal_key(right, batch, row)? {
-                    *rows += 1;
-                    *by_key.entry(key).or_default() += 1;
-                }
-                Ok(true)
+                let Some(key) = equal_key(right, batch, row)? else {
+                    return Ok(Some(0));
+                };
+                *rows += 1;
+                Ok(Some(count_key(by_key, key)))
             }
             Self::Unequal {
                 right,
@@ -182,11 +197,11 @@ impl Pairing {
                 by_key,
                 ..
             } => {
-                if let Some(key) = normalized_join_key(right.evaluate(batch, row)?, *mode)? {
-                    *rows += 1;
-                    *by_key.entry(key).or_default() += 1;
-                }
-                Ok(true)
+                let Some(key) = normalized_join_key(right.evaluate(batch, row)?, *mode)? else {
+                    return Ok(Some(0));
+                };
+                *rows += 1;
+                Ok(Some(count_key(by_key, key)))
             }
         }
     }
@@ -290,6 +305,19 @@ impl PairingPlan<'_> {
             self.collation,
         )?
         .map(Pairing::Range))
+    }
+}
+
+/// The bytes the right side's pairing indexes hold, given back to the
+/// budget when they go: on every way out, the counts handed on included.
+struct Held<'a> {
+    memory: &'a MemoryTracker,
+    bytes: usize,
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        self.memory.release(self.bytes);
     }
 }
 
@@ -502,6 +530,32 @@ pub(super) fn plan(
                 .transpose()?,
         );
     }
+    // A left join's unpaired row is one row whose right side is NULL: one
+    // for COUNT(*), and one for a count of a right expression that is not
+    // NULL there, as `COALESCE(b.id, 0)` or `b.id IS NULL` is not.
+    let unpaired = if kind == BoundJoinKind::Left {
+        let nulls = RecordBatch::new(
+            1,
+            right_columns
+                .iter()
+                .map(|column| ColumnVector::new(column.data_type, vec![Value::Null]))
+                .collect::<Result<_, _>>()?,
+        )?;
+        arguments
+            .iter()
+            .map(|argument| {
+                Ok(match argument {
+                    None => 1,
+                    Some(argument) => {
+                        u64::from(!matches!(argument.evaluate(&nulls, 0)?, Value::Null))
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, ExecError>>()?
+    } else {
+        Vec::new()
+    };
+    let mut held = Held { memory, bytes: 0 };
     while let Some(batch) = right.next_batch(memory)? {
         memory.check_interruption()?;
         'rows: for row in batch.selection().selected_rows() {
@@ -516,8 +570,16 @@ pub(super) fn plan(
                 {
                     continue;
                 }
-                if !pairing.push(&batch, row)? {
+                let Some(bytes) = pairing.push(&batch, row)? else {
                     return Ok(None);
+                };
+                // An index the budget cannot hold leaves the join to its
+                // own path, which can spill.
+                if bytes > 0 {
+                    if memory.reserve(bytes).is_err() {
+                        return Ok(None);
+                    }
+                    held.bytes = held.bytes.saturating_add(bytes);
                 }
             }
         }
@@ -567,9 +629,7 @@ pub(super) fn plan(
                 if kind == BoundJoinKind::Inner {
                     continue 'rows;
                 }
-                // A left join's unpaired row is one row with a NULL right
-                // side: one for COUNT(*), none for any other count.
-                counts[0] = 1;
+                counts.clone_from(&unpaired);
             }
             if grouped {
                 let mut values = batch_row(&batch, row)?;

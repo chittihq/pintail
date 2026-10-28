@@ -402,3 +402,59 @@ fn few_rows_per_key_keep_the_join() {
         assert_eq!(counters.join_pairs_counted, 0, "{sql}");
     }
 }
+
+/// A left join's unpaired row has a NULL right side, and a counted right
+/// expression is counted by what it gives there: `COALESCE(b.id, 0)` and
+/// `b.zone IS NULL` are not NULL over it, so the row counts once for each.
+#[test]
+fn an_unpaired_left_row_counts_what_its_null_side_gives() {
+    let earlier = paired(|left, right| right.id < left.id);
+    let sql = "SELECT a.id, COUNT(b.id), COUNT(COALESCE(b.id, 0)), COUNT(b.zone IS NULL), \
+               COUNT(b.zone) FROM readings a LEFT JOIN readings b ON b.id < a.id \
+               GROUP BY a.id ORDER BY a.id";
+    let (answer, counters) = run(sql);
+    let expected = earlier
+        .iter()
+        .map(|(left, right)| {
+            let pairs = right.len() as u64;
+            vec![
+                Value::UInt64(left.id),
+                Value::UInt64(pairs),
+                Value::UInt64(pairs.max(1)),
+                Value::UInt64(pairs.max(1)),
+                Value::UInt64(right.iter().filter(|row| row.zone.is_some()).count() as u64),
+            ]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(answer, expected, "{sql}");
+    assert_eq!(
+        counters.join_pairs_counted,
+        earlier
+            .iter()
+            .map(|(_, right)| right.len() as u64)
+            .sum::<u64>(),
+        "{sql}"
+    );
+
+    // Without GROUP BY the unpaired row is added to the one total.
+    let sql = "SELECT COUNT(*), COUNT(b.id), COUNT(COALESCE(b.id, 0)) FROM readings a \
+               LEFT JOIN readings b ON b.id < a.id";
+    let (answer, _) = run(sql);
+    let pairs = earlier
+        .iter()
+        .map(|(_, right)| right.len() as u64)
+        .sum::<u64>();
+    let rows = earlier
+        .iter()
+        .map(|(_, right)| right.len().max(1) as u64)
+        .sum::<u64>();
+    assert_eq!(
+        answer,
+        vec![vec![
+            Value::UInt64(rows),
+            Value::UInt64(pairs),
+            Value::UInt64(rows)
+        ]],
+        "{sql}"
+    );
+}
