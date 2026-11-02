@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.14 AS dashboard
+FROM oven/bun:1.4.4 AS dashboard
 
 WORKDIR /source/packages/dashboard
 COPY packages/dashboard/package.json packages/dashboard/bun.lock ./
