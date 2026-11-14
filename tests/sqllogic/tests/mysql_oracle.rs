@@ -48,7 +48,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3476;
+const EXPECTED_CASES: usize = 3477;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6305,6 +6305,10 @@ fn relational_edge_cases() -> Vec<OracleCase> {
         ordered(
             "duration text fraction rounding",
             "SELECT CAST('1:0:0.2324995' AS TIME(3)) a, CAST('1:0:0.23249950' AS TIME(3)) b, CAST('1:0:0.23249905' AS TIME(3)) c, CAST('1:0:0.2324995' AS TIME) d, CAST('1:0:0.49999995' AS TIME) e, CAST('1:0:0.4999995' AS TIME(1)) f, TIME '1:59:59.99999995' i, TIME '-1:59:59.99999995' j",
+        ),
+        ordered(
+            "duration text fraction rounding",
+            "SELECT CAST('-0:0:0.9999995' AS TIME(2)) g, CAST('1:0:0.2324994' AS TIME(3)) h, CAST('838:59:58.9999995' AS TIME(2)) i, CAST('2001-01-01 1:0:0.2324995' AS TIME(3)) j, CAST('1:0:0.2325' AS TIME(3)) k, CAST('1:0:0.99949995' AS TIME(3)) l",
         ),
         // A clock with a fraction and text after a space is a duration,
         // not a date whose year, month and day are its fields.
