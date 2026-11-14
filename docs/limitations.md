@@ -41,6 +41,21 @@ stays readable as a list of things to fix.
   (`benchmark/evidence/inequality-join-search.md`). `NOT IN`, `NOT EXISTS`, inequality
   correlations and subqueries with their own joins or grouping answer
   there, slower than a hash join.
+- A `LATERAL` derived table is never decorrelated into a join: its query is
+  planned and executed once per DISTINCT tuple of the outer columns it
+  reads (a statement-local memo of at most 65,536 tuples shares the answer
+  across rows that carry the same values), so the cost is that many inner
+  queries, each reading its tables from scratch - a top-N-per-group query
+  over a hundred thousand groups runs a hundred thousand inner queries.
+  The joined rows are held in memory under the query ceiling, and a query
+  using `RAND()` or `UUID()` runs once per outer row. Predicates on the
+  tables to its left are applied first; the join order is the written one.
+  Three positions reject with an error naming LATERAL: a `LATERAL` table
+  inside a parenthesized join, one followed in its join chain by a
+  `RIGHT JOIN` (which would have to wrap it in such a group), and a join
+  to one whose `ON` condition holds a subquery. An unqualified column that
+  both a table to its left and an enclosing query supply is reported
+  ambiguous, where MySQL takes the nearer one.
 - MySQL 8.4 with its default optimizer switches answers a correlated `IN`
   or `EXISTS` in an outer join's ON condition wrongly when the subquery
   carries filters of its own: its semi-join materialization drops them, so
