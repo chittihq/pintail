@@ -8,7 +8,7 @@ MySQL source: **8.4.11**, branch **8.4**, commit [99960bf74fa9](https://github.c
 
 Differential evidence: 237 passing corpus cases, measured 2026-11-14T16:16:50.907Z, bank [fbc2158a5ad3](https://github.com/chittihq/pintail/commit/fbc2158a5ad30ffcce917208b567caa8b0794ed6). Tested means at least one linked case, not all overloads or edge cases.
 
-Fixed oracle evidence: 4428 passing cases, measured 2026-11-14T16:11:38.968270131+00:00, bank [fbc2158a5ad3](https://github.com/chittihq/pintail/commit/fbc2158a5ad30ffcce917208b567caa8b0794ed6). Exact text comparison except the oracle's documented floating-point tolerance.
+Fixed oracle evidence: 4428 passing cases, measured 2026-11-14T18:02:39.741192694+00:00, bank [adead78d2fd3](https://github.com/chittihq/pintail/commit/adead78d2fd37fc54852d89c1ac91a70773ed140). Exact text comparison except the oracle's documented floating-point tolerance.
 
 | Coverage | Callable names |
 |---|---:|

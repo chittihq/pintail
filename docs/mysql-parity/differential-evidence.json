@@ -9042,12 +9042,12 @@
   ],
   "oracle": {
     "schemaVersion": 1,
-    "commit": "fbc2158a5ad30ffcce917208b567caa8b0794ed6",
-    "sourceCommit": "902e0fc50678757ee852a5d72176a5bff07c2d17",
-    "measuredAt": "2026-11-14T16:11:38.968270131+00:00",
-    "source": "MySQL 8.4.11 (mysql@sha256:0744ee5ef89ce6ccfa13de3e579fe6b9e27f93dd70da9c06d2c908b1b193fb8d)",
-    "ledgerSha256": "017d4ed7ecfe49932108ff9e14d92e1fa3b58c7d52ddb3734f779ffbdbfa7b07",
-    "corpusSha256": "b2005278379579fa6d4b5c64cf58a08e0bd72b1cb5e446135a74860f59896ad0",
+    "commit": "adead78d2fd37fc54852d89c1ac91a70773ed140",
+    "sourceCommit": "eceed8e8febf5116f6c78e32f96b02746bd863e2",
+    "measuredAt": "2026-11-14T18:02:39.741192694+00:00",
+    "source": "MySQL 8.4.13 (mysql@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902)",
+    "ledgerSha256": "90f8319bb48de5f55f2bd012a327b2c9a15a769635b8ae401eee4fd5a6ad7418",
+    "corpusSha256": "4fdb539e9d472c10c21504f4a1b780bed014dd6acff642debbd924e942f883ba",
     "cases": [
       {
         "name": "oracle:0000:arithmetic and predicates",
