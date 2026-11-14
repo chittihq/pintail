@@ -230,6 +230,9 @@ pub enum SqlRejection {
     CollationMixOfSeveral,
     /// A spatial function refused its arguments, by `MySQL`'s class.
     Spatial(pintail_exec::SpatialError),
+    /// A regular expression was refused or its match stopped, by `MySQL`'s
+    /// class.
+    Regex(pintail_exec::RegexError),
 }
 
 /// The metadata files a database's signature was last read against, and
@@ -2541,6 +2544,10 @@ fn query_execution_error(error: ExecError) -> QueryError {
         ExecError::Spatial { kind, message } => QueryError::Rejected {
             rejection: SqlRejection::Spatial(kind),
             message,
+        },
+        ExecError::Regex(kind) => QueryError::Rejected {
+            rejection: SqlRejection::Regex(kind),
+            message: kind.message().to_owned(),
         },
         // A statement the table function refuses is the statement's fault,
         // never an internal one.

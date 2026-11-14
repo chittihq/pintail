@@ -15,15 +15,19 @@
 
 use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, HirKind};
 
-use super::ExecError;
 use super::sql_regex::LineEndings;
-use crate::execution::InterruptCounter;
+use super::{ExecError, MAX_COMPILED_REGEX_BYTES};
+use crate::execution::{InterruptCounter, RegexError};
 
 /// How deeply groups may nest.
 const MAX_DEPTH: usize = 64;
 /// The most instructions a pattern may compile to; counted repetition
 /// copies its operand.
-const MAX_PROGRAM: usize = 40_000;
+const MAX_PROGRAM: usize = 16_000;
+/// The most character ranges the sets of one pattern may hold between them.
+const MAX_SET_RANGES: usize = 48_000;
+/// The most groups a pattern may capture.
+const MAX_GROUPS: usize = 1_000;
 /// The most saved alternatives the stack may hold at once. Every program
 /// is charged this much of its query's memory before it runs, so the
 /// ceiling is what a query of many patterns can afford; a run of single
@@ -34,16 +38,28 @@ const MAX_SAVES: usize = 4_000_000;
 /// The longest text a look-behind may need to read back over.
 const MAX_LOOK_BEHIND: usize = 1_000;
 
-/// Bytes the machine's stack and capture log can hold at their ceilings.
-pub(super) const WORKSPACE: usize =
-    MAX_STACK * (size_of::<Frame>() + 2 * size_of::<(u32, usize)>());
+/// Bytes one search can hold at its ceilings: the stack and the capture
+/// log, each at twice its ceiling for the room a growing vector takes, and
+/// the capture slots and loop registers. A statement is charged this for
+/// every program before it runs one.
+pub(in crate::expression) const WORKSPACE: usize =
+    2 * MAX_STACK * (size_of::<Frame>() + 2 * size_of::<(u32, usize)>())
+        + (3 * (MAX_GROUPS + 1) + MAX_PROGRAM) * size_of::<usize>();
 
-const TIMEOUT: ExecError = ExecError::Regex("Timeout exceeded in regular expression match.");
-const STACK: ExecError = ExecError::Regex("Overflow in the regular expression backtrack stack.");
-const SYNTAX: ExecError = ExecError::Regex("Illegal argument to a regular expression.");
-const LOOK_BEHIND: ExecError =
-    ExecError::Regex("The look-behind assertion exceeds the limit in regular expression.");
-const BACK_REFERENCE: ExecError = ExecError::Regex("Invalid back-reference in regular expression.");
+// A pattern that is not a literal is charged the automaton's ceilings, so
+// this machine has to fit inside them: its search in the workspace, its
+// program in the compiled size.
+const _: () = assert!(WORKSPACE <= super::sql_regex::WORKSPACE_LIMIT);
+const _: () = assert!(
+    MAX_PROGRAM * size_of::<Inst>() + MAX_SET_RANGES * size_of::<(char, char)>()
+        <= MAX_COMPILED_REGEX_BYTES
+);
+
+const TIMEOUT: ExecError = ExecError::Regex(RegexError::Timeout);
+const STACK: ExecError = ExecError::Regex(RegexError::StackOverflow);
+const SYNTAX: ExecError = ExecError::Regex(RegexError::IllegalArgument);
+const LOOK_BEHIND: ExecError = ExecError::Regex(RegexError::LookBehindLimit);
+const BACK_REFERENCE: ExecError = ExecError::Regex(RegexError::InvalidBackReference);
 
 /// The switches a pattern can set for itself, each on its own.
 #[allow(clippy::struct_excessive_bools)]
@@ -828,6 +844,7 @@ pub(super) struct Program {
 struct Compiler {
     insts: Vec<Inst>,
     sets: Vec<Box<[(char, char)]>>,
+    set_ranges: usize,
     registers: usize,
     groups: usize,
     names: Vec<(String, usize)>,
@@ -846,12 +863,16 @@ impl Compiler {
         u32::try_from(self.insts.len()).unwrap_or(u32::MAX)
     }
 
-    fn set(&mut self, ranges: &[(char, char)]) -> u32 {
+    fn set(&mut self, ranges: &[(char, char)]) -> Result<u32, ExecError> {
         if let Some(index) = self.sets.iter().position(|set| **set == *ranges) {
-            return u32::try_from(index).unwrap_or(0);
+            return u32::try_from(index).map_err(|_| SYNTAX);
+        }
+        self.set_ranges += ranges.len();
+        if self.set_ranges > MAX_SET_RANGES {
+            return Err(SYNTAX);
         }
         self.sets.push(ranges.into());
-        u32::try_from(self.sets.len() - 1).unwrap_or(0)
+        u32::try_from(self.sets.len() - 1).map_err(|_| SYNTAX)
     }
 
     fn group(&self, group: usize) -> Result<u32, ExecError> {
@@ -866,7 +887,7 @@ impl Compiler {
         match node {
             Node::Empty => {}
             Node::Set(ranges) => {
-                let set = self.set(ranges);
+                let set = self.set(ranges)?;
                 self.push(Inst::Set(set))?;
             }
             Node::Any { dot_all } => {
@@ -1004,7 +1025,7 @@ impl Compiler {
             // character: the run is taken whole and given back from its end.
             if greed == Greed::Greedy {
                 let single = match node {
-                    Node::Set(ranges) => Some(self.set(ranges)),
+                    Node::Set(ranges) => Some(self.set(ranges)?),
                     Node::Any { dot_all: true } => Some(ANY),
                     Node::Any { dot_all: false } => Some(ANY_BUT_LINE_END),
                     _ => None,
@@ -1071,12 +1092,13 @@ impl Program {
             extended: false,
         };
         let tree = parser.alternation(&mut flags)?;
-        if parser.at != parser.chars.len() {
+        if parser.at != parser.chars.len() || parser.groups > MAX_GROUPS {
             return Err(SYNTAX);
         }
         let mut compiler = Compiler {
             insts: Vec::new(),
             sets: Vec::new(),
+            set_ranges: 0,
             registers: 0,
             groups: parser.groups,
             names: parser.names,
@@ -1509,7 +1531,7 @@ impl Machine<'_, '_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LineEndings, Program};
+    use super::{ExecError, LineEndings, Program, RegexError};
     use crate::execution::InterruptCounter;
 
     fn find(pattern: &str, text: &str) -> Option<(usize, usize)> {
@@ -1563,15 +1585,70 @@ mod tests {
         assert_eq!(find(r"(a*)*b\1", "aab"), Some((0, 3)));
     }
 
+    /// A pattern whose backtracking does not end stops with a named error
+    /// at the machine's own ceiling, and sooner when its statement is
+    /// cancelled or past its deadline: the search asks as it counts steps.
     #[test]
-    fn runaway_backtracking_stops_with_an_error() {
+    fn runaway_backtracking_stops_with_a_named_error_or_its_statement() {
         let program =
             Program::new(r"(a+)+\1b", false, false, false, LineEndings::Unicode).expect("compiles");
         let text = "a".repeat(40);
-        assert!(
-            program
-                .captures_at(&text, 0, &mut InterruptCounter::unchecked())
-                .is_err()
+        assert_eq!(
+            program.captures_at(&text, 0, &mut InterruptCounter::unchecked()),
+            Err(ExecError::Regex(RegexError::Timeout))
         );
+        let cancelled = crate::ExecutionCancellation::new();
+        cancelled.cancel();
+        crate::with_execution_cancellation(cancelled, || {
+            assert_eq!(
+                program.captures_at(&text, 0, &mut InterruptCounter::checked()),
+                Err(ExecError::QueryCancelled)
+            );
+        });
+        let late = crate::ExecutionCancellation::new();
+        late.limit_to(std::time::Instant::now());
+        crate::with_execution_cancellation(late, || {
+            assert_eq!(
+                program.captures_at(&text, 0, &mut InterruptCounter::checked()),
+                Err(ExecError::QueryTimedOut)
+            );
+        });
+    }
+
+    /// A repetition that saves an alternative for every turn stops at the
+    /// stack ceiling the workspace charge is sized by.
+    #[test]
+    fn a_stack_past_its_ceiling_is_a_named_error() {
+        let program = Program::new(r"(?:(a)|b)*\1c", false, false, false, LineEndings::Unicode)
+            .expect("compiles");
+        let text = "b".repeat(3 * super::MAX_STACK);
+        assert_eq!(
+            program.captures_at(&text, 0, &mut InterruptCounter::unchecked()),
+            Err(ExecError::Regex(RegexError::StackOverflow))
+        );
+    }
+
+    #[test]
+    fn a_pattern_past_the_compiled_ceilings_is_refused() {
+        let refused = |pattern: &str| {
+            matches!(
+                Program::new(pattern, false, false, false, LineEndings::Unicode),
+                Err(ExecError::Regex(RegexError::IllegalArgument))
+            )
+        };
+        // Counted repetition copies its operand.
+        assert!(refused(r"(?=a)(?:abcdefgh){5000}"));
+        assert!(refused(&format!(
+            "(?=a){}",
+            "(a)".repeat(super::MAX_GROUPS + 1)
+        )));
+        // Distinct large sets, each kept once.
+        let mut sets = String::new();
+        for index in 0..200 {
+            use std::fmt::Write as _;
+            write!(sets, r"[\p{{L}}\x{{{:x}}}]", 0x2190 + index).expect("writes to a string");
+        }
+        assert!(refused(&format!("(?=a){sets}")));
+        assert!(!refused(r"(?=a)(?:abcdefgh){50}"));
     }
 }

@@ -115,6 +115,7 @@ mod range_join;
 mod range_prune_bench;
 mod recreated_table_lookup;
 mod reported_shapes;
+mod regex_backtracking_budget;
 mod row_constructors;
 mod row_member_expansion;
 mod row_path_text_cost;

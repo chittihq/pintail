@@ -9003,7 +9003,14 @@ pub(crate) fn bound_regex_memory_upper_bound(expr: &BoundExpr) -> usize {
                         pattern,
                         match_type.contains('m'),
                     ));
-                    copies * REGEX_COMPILED_MEMORY_UPPER_BOUND
+                    // A pattern for the backtracking machine also holds
+                    // that machine's stack and capture log while it runs.
+                    let search = if sql_regex::needs_backtracking(&unicode_posix_classes(pattern)) {
+                        sql_backtrack::WORKSPACE
+                    } else {
+                        0
+                    };
+                    (copies * REGEX_COMPILED_MEMORY_UPPER_BOUND).saturating_add(search)
                 },
             ))
         }

@@ -28,6 +28,38 @@ pub enum SpatialError {
     Unsupported,
 }
 
+/// Why a regular expression was refused or its match stopped, each its own
+/// `MySQL` error code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegexError {
+    /// 3685: a pattern neither matcher reads.
+    IllegalArgument,
+    /// 3694: a back-reference to a group the pattern does not have.
+    InvalidBackReference,
+    /// 3695: a look-behind with no bounded length.
+    LookBehindLimit,
+    /// 3698: the backtracking stack reached its ceiling.
+    StackOverflow,
+    /// 3699: the match took more steps than a match may.
+    Timeout,
+}
+
+impl RegexError {
+    /// The text `MySQL` reports for the class.
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::IllegalArgument => "Illegal argument to a regular expression.",
+            Self::InvalidBackReference => "Invalid back-reference in regular expression.",
+            Self::LookBehindLimit => {
+                "The look-behind assertion exceeds the limit in regular expression."
+            }
+            Self::StackOverflow => "Overflow in the regular expression backtrack stack.",
+            Self::Timeout => "Timeout exceeded in regular expression match.",
+        }
+    }
+}
+
 /// Physical planning or execution failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecError {
@@ -57,8 +89,8 @@ pub enum ExecError {
     /// function's name as `MySQL` reports it.
     WrongArguments(&'static str),
     /// A regular expression that cannot be compiled, or whose match was
-    /// stopped at a limit; the message as `MySQL` words it.
-    Regex(&'static str),
+    /// stopped at a limit.
+    Regex(RegexError),
     /// Binary bitwise arguments differ in byte length.
     BinaryBitwiseLength,
     /// Aggregate bitwise arguments exceed the supported 511-byte width.
@@ -183,7 +215,7 @@ impl fmt::Display for ExecError {
                 formatter.write_str("bound expression has an invalid physical type")
             }
             Self::WrongArguments(name) => write!(formatter, "Incorrect arguments to {name}"),
-            Self::Regex(message) => formatter.write_str(message),
+            Self::Regex(kind) => formatter.write_str(kind.message()),
             Self::BinaryBitwiseLength => formatter.write_str("Binary operands of bitwise operators must be of equal length"),
             Self::BinaryBitwiseAggregateWidth => formatter.write_str("Aggregate bitwise functions cannot accept arguments longer than 511 bytes; consider using the SUBSTRING() function"),
             Self::InvalidJsonPath { position } => write!(

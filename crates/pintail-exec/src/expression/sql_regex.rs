@@ -68,16 +68,7 @@ impl Program {
             super::sql_backtrack::Program::new(pattern, case, multiline, dotall, line_endings)
                 .map(Self::Backtrack)
         };
-        if possessive(pattern) {
-            return backtrack();
-        }
-        // Only a pattern the automaton's syntax cannot write goes to the
-        // other machine: one it can write and refuses for its size stays
-        // refused.
-        if regex_syntax::ast::parse::Parser::new()
-            .parse(pattern)
-            .is_err()
-        {
+        if needs_backtracking(pattern) {
             return backtrack();
         }
         Self::automaton(pattern, case, multiline, dotall, line_endings)
@@ -149,9 +140,11 @@ impl Program {
 
     pub(super) fn workspace_upper_bound(&self) -> usize {
         match self {
-            Self::Fast(_) => 0,
+            // The backtracking machine is charged to the statement before
+            // it runs (see `bound_regex_memory_upper_bound`), not again for
+            // every row.
+            Self::Fast(_) | Self::Backtrack(_) => 0,
             Self::Boundary(program) => program.workspace,
-            Self::Backtrack(_) => super::sql_backtrack::WORKSPACE,
         }
     }
 
@@ -396,6 +389,16 @@ impl Program {
             Self::Backtrack(program) => program.group_index(name),
         }
     }
+}
+
+/// Whether `pattern` runs on the backtracking machine. Only a pattern the
+/// automaton's syntax cannot write, or reads as something else, goes
+/// there: one it can write and refuses for its size stays refused.
+pub(super) fn needs_backtracking(pattern: &str) -> bool {
+    possessive(pattern)
+        || regex_syntax::ast::parse::Parser::new()
+            .parse(pattern)
+            .is_err()
 }
 
 /// Whether `pattern` holds a possessive quantifier: a `+` written straight

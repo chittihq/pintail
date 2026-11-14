@@ -33,7 +33,8 @@ pub use execution::take_fold_phase_timings;
 pub use execution::{
     BatchStream, ConversionWarning, DEFAULT_CTE_MAX_RECURSION_DEPTH, DEFAULT_MAX_ALLOWED_PACKET,
     ExecError, Execution, ExecutionCancellation, IntegerMembership, MemoryTracker, OutputField,
-    PhysicalPlan, PhysicalPlanner, ScanProvider, SpatialError, with_execution_cancellation,
+    PhysicalPlan, PhysicalPlanner, RegexError, ScanProvider, SpatialError,
+    with_execution_cancellation,
 };
 pub use execution::{FoldedRound, ScanBatchFold, ScanBatchPlace};
 pub use execution::{

@@ -327,6 +327,16 @@ pub enum ErrorKind {
     ErOnlyDefinedForGeographic = 3726,
     /// 1621: a `SET` named a session variable that is read-only.
     ErVariableIsReadonly = 1621,
+    /// 3685: a regular expression the matcher does not read.
+    ErRegexpIllegalArgument = 3685,
+    /// 3694: a back-reference to a group the pattern does not have.
+    ErRegexpInvalidBackRef = 3694,
+    /// 3695: a look-behind with no bounded length.
+    ErRegexpLookBehindLimit = 3695,
+    /// 3698: a regular expression's backtracking stack overflowed.
+    ErRegexpStackOverflow = 3698,
+    /// 3699: a regular expression match ran out of steps.
+    ErRegexpTimeOut = 3699,
 }
 
 impl ErrorKind {
@@ -377,6 +387,11 @@ impl ErrorKind {
             | Self::ErGisDifferentSrids
             | Self::ErCantAggregate2Collations
             | Self::ErCantAggregateNCollations
+            | Self::ErRegexpIllegalArgument
+            | Self::ErRegexpInvalidBackRef
+            | Self::ErRegexpLookBehindLimit
+            | Self::ErRegexpStackOverflow
+            | Self::ErRegexpTimeOut
             | Self::ErCannotConvertString => b"HY000",
         }
     }

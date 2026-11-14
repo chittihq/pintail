@@ -44,7 +44,7 @@ use crate::{
     DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats, ReplicaEngine,
     SqlRejection,
 };
-use pintail_exec::{Cell, SpatialError};
+use pintail_exec::{Cell, RegexError, SpatialError};
 
 static NEXT_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -4444,6 +4444,13 @@ fn error_kind(error: &QueryError) -> ErrorKind {
                 SpatialError::NotGeographic => ErrorKind::ErOnlyDefinedForGeographic,
                 SpatialError::Unsupported => ErrorKind::ErNotSupportedYet,
             },
+            SqlRejection::Regex(kind) => match kind {
+                RegexError::IllegalArgument => ErrorKind::ErRegexpIllegalArgument,
+                RegexError::InvalidBackReference => ErrorKind::ErRegexpInvalidBackRef,
+                RegexError::LookBehindLimit => ErrorKind::ErRegexpLookBehindLimit,
+                RegexError::StackOverflow => ErrorKind::ErRegexpStackOverflow,
+                RegexError::Timeout => ErrorKind::ErRegexpTimeOut,
+            },
         },
         QueryError::Interrupted => ErrorKind::ErQueryInterrupted,
         QueryError::Overloaded => ErrorKind::ErConCountError,
@@ -6021,6 +6028,31 @@ mod tests {
             (SqlRejection::OutOfRange, 1690, *b"22003"),
             (SqlRejection::CollationMixOfTwo, 1267, *b"HY000"),
             (SqlRejection::CollationMixOfSeveral, 1271, *b"HY000"),
+            (
+                SqlRejection::Regex(pintail_exec::RegexError::IllegalArgument),
+                3685,
+                *b"HY000",
+            ),
+            (
+                SqlRejection::Regex(pintail_exec::RegexError::InvalidBackReference),
+                3694,
+                *b"HY000",
+            ),
+            (
+                SqlRejection::Regex(pintail_exec::RegexError::LookBehindLimit),
+                3695,
+                *b"HY000",
+            ),
+            (
+                SqlRejection::Regex(pintail_exec::RegexError::StackOverflow),
+                3698,
+                *b"HY000",
+            ),
+            (
+                SqlRejection::Regex(pintail_exec::RegexError::Timeout),
+                3699,
+                *b"HY000",
+            ),
         ];
         for (rejection, errno, sqlstate) in expectations {
             let kind = error_kind(&QueryError::Rejected {

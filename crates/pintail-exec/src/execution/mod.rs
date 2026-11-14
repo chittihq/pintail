@@ -43,7 +43,7 @@ pub(crate) use aggregate::compare_decimal_text;
 #[cfg(test)]
 pub(crate) use aggregate::sma_fold_hits;
 pub use budget::{MemoryBudget, MemoryScope};
-pub use error::{ExecError, SpatialError};
+pub use error::{ExecError, RegexError, SpatialError};
 pub(crate) use join::append_collation_key;
 #[cfg(test)]
 pub(crate) use join::collator_ai_ci_key;
