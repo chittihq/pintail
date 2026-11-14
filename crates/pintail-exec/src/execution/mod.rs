@@ -2409,40 +2409,64 @@ pub struct ExecutionProfile {
 }
 
 impl ExecutionProfile {
-    /// Time inside one operator excluding its inputs: its inclusive time
-    /// less the inclusive time of the nearest inputs that ran. An input
-    /// that never ran on its own, because the operator above took its
-    /// inputs directly, contributes what those inputs took instead, so a
-    /// fused join does not leave its scans on the aggregate's account.
+    /// Time inside one operator excluding its inputs. Every operator's
+    /// time is counted once, so these sum to the root's inclusive time.
+    ///
+    /// An input that ran is its whole inclusive time. One that was only
+    /// built - the operator above took its inputs directly - is the time
+    /// it took to build plus what those inputs took to run, so a fused
+    /// join leaves neither its scans nor its own construction on the
+    /// aggregate's account; and its own share is its construction less
+    /// that of the inputs built inside it.
     #[must_use]
     pub fn exclusive(&self, index: usize) -> Duration {
         let Some(node) = self.operators.get(index) else {
             return Duration::ZERO;
         };
-        node.inclusive
-            .saturating_sub(self.active_descendants(index))
+        let inputs = self.inputs(index);
+        let taken: Duration = if Self::ran(node) {
+            inputs.map(|input| self.subtree(input)).sum()
+        } else {
+            inputs.map(|input| self.operators[input].construction).sum()
+        };
+        node.inclusive.saturating_sub(taken)
     }
 
-    fn active_descendants(&self, index: usize) -> Duration {
+    /// Whether an operator was pulled, as opposed to only built.
+    fn ran(node: &OperatorProfile) -> bool {
+        node.batches > 0 || node.inclusive > node.construction
+    }
+
+    /// The positions of an operator's direct inputs.
+    fn inputs(&self, index: usize) -> impl Iterator<Item = usize> + '_ {
+        let depth = self.operators[index].depth;
+        self.operators[index + 1..]
+            .iter()
+            .take_while(move |below| below.depth > depth)
+            .enumerate()
+            .filter(move |(_, below)| below.depth == depth + 1)
+            .map(move |(offset, _)| index + 1 + offset)
+    }
+
+    /// Everything an input accounts for inside the operator above it.
+    fn subtree(&self, index: usize) -> Duration {
         let node = &self.operators[index];
-        let mut total = Duration::ZERO;
-        for (offset, child) in self.operators[index + 1..].iter().enumerate() {
-            if child.depth <= node.depth {
-                break;
-            }
-            if child.depth != node.depth + 1 {
-                continue;
-            }
-            // A node that was only built - one a parent fused, reading its
-            // inputs directly - ran in its inputs' time, not its own.
-            let ran = child.batches > 0 || child.inclusive > child.construction;
-            total += if ran {
-                child.inclusive
-            } else {
-                self.active_descendants(index + 1 + offset)
-            };
+        if Self::ran(node) {
+            node.inclusive
+        } else {
+            node.construction + self.inputs(index).map(|input| self.pulled(input)).sum()
         }
-        total
+    }
+
+    /// The time an operator and the inputs below it spent being pulled,
+    /// their construction left out: that belongs to whichever built them.
+    fn pulled(&self, index: usize) -> Duration {
+        let node = &self.operators[index];
+        if Self::ran(node) {
+            node.inclusive.saturating_sub(node.construction)
+        } else {
+            self.inputs(index).map(|input| self.pulled(input)).sum()
+        }
     }
 
     /// The profile as indented text, one operator per line.

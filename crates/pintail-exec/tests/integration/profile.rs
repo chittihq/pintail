@@ -250,6 +250,79 @@ fn profiling_does_not_change_the_execution_path() {
     );
 }
 
+/// The accounting over this plan's own shape, with the clock taken out:
+/// every operator is given a distinct time of its own to build and, where
+/// it produced batches, to run, the recorded times are replaced by what
+/// those add up to, and each operator's self time must then be exactly its
+/// own - which also makes them sum to the root. Measured times cannot say
+/// this: a built-only operator's construction counted twice is a
+/// microsecond on an idle host and milliseconds on a busy one.
+fn assert_self_times_account_for_the_root_once(measured: &pintail_exec::ExecutionProfile) {
+    use std::time::Duration;
+    let mut profile = measured.clone();
+    let count = profile.operators.len();
+    let ran: Vec<bool> = profile
+        .operators
+        .iter()
+        .map(|node| node.batches > 0)
+        .collect();
+    let inputs = |index: usize| -> Vec<usize> {
+        let depth = measured.operators[index].depth;
+        (index + 1..count)
+            .take_while(|&below| measured.operators[below].depth > depth)
+            .filter(|&below| measured.operators[below].depth == depth + 1)
+            .collect()
+    };
+    let millis = |value: usize| Duration::from_millis(u64::try_from(value).expect("small"));
+    let built = |index: usize| millis(3 + 2 * index);
+    let run = |index: usize| {
+        if ran[index] {
+            millis(101 + 10 * index)
+        } else {
+            Duration::ZERO
+        }
+    };
+    // Operators are in preorder: walking back meets every input before
+    // the operator that reads it.
+    let mut pulled = vec![Duration::ZERO; count];
+    for index in (0..count).rev() {
+        let below = inputs(index);
+        let construction = built(index)
+            + below
+                .iter()
+                .map(|&input| profile.operators[input].construction)
+                .sum::<Duration>();
+        // What the inputs spent being pulled is inside this operator's
+        // pulls when it ran, and passes up to the one above when it did not.
+        let passed: Duration = below.iter().map(|&input| pulled[input]).sum();
+        pulled[index] = run(index) + passed;
+        let inclusive = construction
+            + if ran[index] {
+                pulled[index]
+            } else {
+                Duration::ZERO
+            };
+        profile.operators[index].construction = construction;
+        profile.operators[index].inclusive = inclusive;
+    }
+    assert!(ran[0], "the root produced the rows: {}", measured.render());
+    for index in 0..count {
+        assert_eq!(
+            profile.exclusive(index),
+            built(index) + run(index),
+            "operator {index} is charged its own time and nothing else:\n{}",
+            profile.render()
+        );
+    }
+    let total: Duration = (0..count).map(|index| profile.exclusive(index)).sum();
+    assert_eq!(
+        total,
+        profile.operators[0].inclusive,
+        "{}",
+        profile.render()
+    );
+}
+
 #[test]
 fn a_fused_join_and_a_built_join_keep_the_accounting_consistent() {
     let fixture = Fixture::new();
@@ -274,15 +347,7 @@ fn a_fused_join_and_a_built_join_keep_the_accounting_consistent() {
             profile.render()
         );
     }
-    let root = profile.operators[0].inclusive;
-    let self_sum: std::time::Duration = (0..profile.operators.len())
-        .map(|index| profile.exclusive(index))
-        .sum();
-    assert!(
-        self_sum <= root + std::time::Duration::from_millis(1),
-        "self times {self_sum:?} exceed the root {root:?}:\n{}",
-        profile.render()
-    );
+    assert_self_times_account_for_the_root_once(&profile);
 
     // A nested-loop join runs while it is built: its time lands on the
     // join's own line, not only on the scans beneath it. (A count over it
