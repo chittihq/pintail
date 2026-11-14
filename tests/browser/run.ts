@@ -891,6 +891,31 @@ async function main() {
       }, [databaseId, 'events'] as const)
     const rowsBefore = await journalledRows()
 
+    // The bar is watched from inside the page, from before the click. The
+    // copy lasts a couple of seconds and the accept toast can take longer
+    // than that to be seen, so a look that started only after the toast
+    // found a bar that had already come and gone on a fast host, and
+    // failed a copy that showed its progress the whole time.
+    await page!.evaluate(() => {
+      const seen = window as unknown as { __resnapshotLabels?: string[] }
+      seen.__resnapshotLabels = []
+      const record = () => {
+        const bar = document.querySelector('[data-testid="resnapshot-progress"]')
+        const label = bar?.textContent ?? ''
+        if (bar && seen.__resnapshotLabels!.at(-1) !== label) seen.__resnapshotLabels!.push(label)
+      }
+      record()
+      new MutationObserver(record).observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      })
+    })
+    const labelsSeen = async (): Promise<string[]> =>
+      page!.evaluate(
+        () => (window as unknown as { __resnapshotLabels?: string[] }).__resnapshotLabels ?? [],
+      )
+
     // One click, no manual retry loop: the busy window is the dashboard's
     // job now. The accept toast is the feedback contract.
     await page!.getByRole('button', { name: 'Resync', exact: true }).first().click()
@@ -902,19 +927,15 @@ async function main() {
     // The table is sized so the copy outlasts many polls, so a bar that is
     // never seen is a failure whether or not the copy finished: a copy with
     // no visible progress is exactly what the user reported.
-    const progress = page!.getByTestId('resnapshot-progress').first()
     const barDeadline = Date.now() + 30_000
     for (;;) {
-      // One read, no wait. A count() followed by textContent() raced the
-      // copy: the bar unmounted between the two calls and textContent()
-      // then waited out its 20s timeout for an element that was gone for
-      // good. allTextContents() returns what is rendered at this instant,
-      // so a bar is either seen with its label or not seen at all.
-      const labels = await progress.allTextContents()
+      // Every label the bar has shown since before the click, so a bar
+      // that rendered and left between two looks still counts, and one
+      // that never carried its row count still fails.
+      const labels = await labelsSeen()
       if (labels.length > 0) {
-        const label = labels[0] ?? ''
-        if (!/rows copied/.test(label)) {
-          throw new Error(`progress rendered without its row count: ${JSON.stringify(label)}`)
+        if (!labels.some((label) => /rows copied/.test(label))) {
+          throw new Error(`progress rendered without its row count: ${JSON.stringify(labels)}`)
         }
         break
       }
