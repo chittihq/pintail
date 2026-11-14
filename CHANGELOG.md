@@ -6,8 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `DATABASE()` and `SCHEMA()` are answered inside a query that reads a
+  table, as `SELECT COUNT(*), DATABASE() FROM t`; they were answered only
+  as a statement of their own.
+
 ### Fixed
 
+- A schema change that opened with a comment or broke the line between
+  its first words (`/* step 4 */ ALTER TABLE ...`, `alter /* tool */ table
+  ...`) was not read as a schema change at all: the source's table moved
+  and the mirror's did not follow.
+- An `ALTER TABLE` that changed a column and an index in one statement
+  (`ADD COLUMN c INT, ADD INDEX (c)`, a column with its foreign key, `DROP
+  COLUMN` with `DROP INDEX`) recopied the table. It is read by its column
+  change; `RENAME INDEX` and `ALTER INDEX` are index-only changes.
+- `ALTER TABLE t` with no clause quarantined the table as unreadable.
+- A text column added by a statement the source had already moved past -
+  a second `ALTER` landing before the first was read - recopied the table.
+  Its character set is taken from what the source still shows for it.
 - An `ALTER TABLE` that changed a column and also named how to carry it
   out (`MODIFY c VARCHAR(64), ALGORITHM = INPLACE, LOCK = NONE`, or an
   `ADD COLUMN ... , ALGORITHM = INSTANT`) quarantined the table for a
