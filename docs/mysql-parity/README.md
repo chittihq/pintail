@@ -186,6 +186,14 @@ phases. Cases with WARN/FAIL or a documented gap are excluded. Skipped phases
 provide no evidence. Function names inside comments, strings and quoted
 identifiers do not count; bare keyword forms are conservatively unclassified.
 
+Operator and construct rows (`=`, `BETWEEN`, `IS NULL`, `CASE`, `->` and the
+rest) are linked from the same passing cases, by reading the operator tokens
+of the SQL each case ran. The reading is as conservative as the one for
+function names: literals and comments establish nothing, the `AND` of a
+`BETWEEN` or of a window frame is not the logical operator, a signed numeric
+literal is not unary minus, `*` counts only between two operands, and `||`
+is never counted because one SQL mode makes it concatenation.
+
 After banking a matching E2E run, refresh with
 `bun run scripts/refresh-differential-evidence.ts`, then regenerate with
 `bun run scripts/mysql-source-ledger.ts`. Refresh verifies both the ledger and

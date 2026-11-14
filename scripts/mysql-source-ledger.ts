@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, relative, resolve } from 'node:path'
 import { surface } from './function-surface.ts'
 import { differentialQueries } from '../tests/e2e/queries.ts'
-import { validateEvidence, validateOracleEvidence, type DifferentialEvidence } from './differential-coverage.ts'
+import { operatorUses, sha256, validateEvidence, validateOracleEvidence, type DifferentialEvidence } from './differential-coverage.ts'
 
 const root = resolve(import.meta.dir, '..')
 const dir = join(root, 'docs/mysql-parity')
@@ -126,6 +126,16 @@ if (existsSync(oraclePath) || differential.oracle) {
   validateOracleEvidence(differential.oracle, read(oraclePath), read(join(root, 'tests/sqllogic/tests/mysql_oracle.rs')))
 }
 const testedCases = [...differential.cases, ...(differential.oracle?.cases ?? [])]
+// Operators are read from the SQL each linked case ran: the evidence file
+// pins that SQL by hash, so a case whose text no longer matches links nothing.
+const caseSql = new Map<string, string>(differentialQueries.map((q) => [q.name, q.sql]))
+if (existsSync(oraclePath)) for (const row of JSON.parse(read(oraclePath)).cases as { name: string; sql: string }[]) caseSql.set(`oracle:${row.name}`, row.sql)
+const testedOperators = new Map<string, string[]>()
+for (const tested of testedCases) {
+  const sql = caseSql.get(tested.name)
+  if (sql === undefined || sha256(sql) !== tested.sqlSha256) continue
+  for (const id of operatorUses(sql)) testedOperators.set(id, [...(testedOperators.get(id) ?? []), tested.name])
+}
 
 const binder = surface()
 const sourceLocation = (name: string) => {
@@ -166,7 +176,7 @@ const entries = upstream.entries.map((entry) => {
   const location = arities.length ? sourceLocation(entry.name) : ''
   const status = curated.status ?? (entry.internal ? 'out-of-scope' : arities.length ? 'implemented-unverified' : 'unassessed')
   const note = curated.note ?? (entry.internal ? 'MySQL implementation detail; public SQL parity does not require this helper.' : arities.length ? 'Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.' : 'No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.')
-  const differentialEvidence = entry.kind === 'function' ? testedCases.filter((c) => c.functions.includes(entry.name)).map((c) => c.name) : []
+  const differentialEvidence = entry.kind === 'function' ? testedCases.filter((c) => c.functions.includes(entry.name)).map((c) => c.name) : (testedOperators.get(entry.id) ?? [])
   const coverage = differentialEvidence.length ? 'differential-tested' : status === 'gap' ? 'missing' : arities.length || ['partial', 'implemented-unverified'].includes(status) ? 'implementation-only' : status === 'out-of-scope' ? 'out-of-scope' : 'unassessed'
   return { ...entry, coverage, differentialEvidence, status, scope: curated.scope ?? (entry.internal ? 'internal' : 'triage'), priority: curated.priority ?? (entry.internal ? 'excluded' : 'P2'),
     pintailEvidence: curated.evidence ?? (location ? [location] : []), binderGuards: arities,

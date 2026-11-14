@@ -25,6 +25,64 @@ export function functionCalls(sql: string): string[] {
   return [...calls].sort()
 }
 
+// Words that end no operand: after one of these `-` is a sign and `*` is a
+// select-list star, never an infix operator.
+const NOT_AN_OPERAND = new Set(['SELECT', 'DISTINCT', 'ALL', 'FROM', 'WHERE', 'HAVING', 'ON', 'BY', 'AND', 'OR', 'XOR', 'NOT', 'WHEN', 'THEN', 'ELSE', 'CASE', 'IN', 'IS', 'LIKE', 'REGEXP', 'RLIKE', 'BETWEEN', 'DIV', 'MOD', 'AS', 'LIMIT', 'OFFSET', 'INTERVAL', 'RETURN', 'VALUES', 'USING', 'UNION', 'EXCEPT', 'INTERSECT', 'ESCAPE', 'OF', 'BINARY'])
+
+// Operator and construct rows of the ledger a statement exercises, by ledger
+// id. As conservative as functionCalls: literals and comments establish
+// nothing, the AND of a BETWEEN or of a window frame is not the logical
+// operator, a signed numeric literal is not unary minus, `*` counts only
+// between two operands, and `||` is left out because one SQL mode makes it
+// concatenation.
+export function operatorUses(sql: string): string[] {
+  const code = sql.replace(/'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"/g, ' ? ').replace(/`(?:``|[^`])*`/g, ' quoted_identifier ').replace(/\/\*[\s\S]*?\*\/|--[^\n]*|#[^\n]*/g, ' ')
+  const tokens = (code.match(/<=>|->>|->|<<|>>|<=|>=|<>|!=|:=|&&|\|\||[A-Za-z_][A-Za-z_0-9]*|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\S/g) ?? []).map((t) => t.toUpperCase())
+  if (!['SELECT', 'WITH', '(', 'TABLE', 'VALUES'].includes(tokens[0] ?? '')) return []
+  const used = new Set<string>()
+  const use = (id: string) => used.add(`operator:operator_${id}`)
+  const number = (t: string | undefined) => !!t && /^\d/.test(t)
+  const word = (t: string | undefined) => !!t && /^[A-Z_]/.test(t)
+  const operandEnd = (t: string | undefined) => !!t && (t === ')' || t === '?' || number(t) || (word(t) && !NOT_AN_OPERAND.has(t)))
+  const operandStart = (t: string | undefined) => !!t && (t === '(' || t === '?' || t === '-' || t === '+' || t === '~' || t === '!' || number(t) || (word(t) && !['FROM', 'AS'].includes(t)))
+  const symbols: Record<string, string> = { '<=>': 'equal-to', '->>': 'json-inline-path', '->': 'json-column-path', '<<': 'left-shift', '>>': 'right-shift', '<=': 'less-than-or-equal', '>=': 'greater-than-or-equal', '<>': 'not-equal', '!=': 'not-equal', '<': 'less-than', '>': 'greater-than', '=': 'equal', '&&': 'and', '/': 'divide', '%': 'mod', '&': 'bitwise-and', '|': 'bitwise-or', '^': 'bitwise-xor', '~': 'bitwise-invert', '!': 'not', XOR: 'xor', DIV: 'div', CASE: 'case' }
+  // Open BETWEENs per parenthesis depth, each waiting for its own AND.
+  const between = [0]
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i], previous = tokens[i - 1], next = tokens[i + 1]
+    const negated = previous === 'NOT'
+    if (token === '(') between.push(0)
+    else if (token === ')') { if (between.length > 1) between.pop() }
+    else if (token === 'BETWEEN') {
+      between[between.length - 1] += 1
+      if (!['ROWS', 'RANGE', 'GROUPS'].includes(previous ?? '')) use(negated ? 'not-between' : 'between')
+    } else if (token === 'AND') {
+      if (between[between.length - 1] > 0) between[between.length - 1] -= 1
+      else use('and')
+    } else if (token === 'OR') use('or')
+    else if (token === 'NOT') {
+      if (previous !== 'IS' && !['BETWEEN', 'IN', 'LIKE', 'REGEXP', 'RLIKE', 'EXISTS', 'NULL'].includes(next ?? '')) use('not')
+    } else if (token === 'IN') { if (next === '(') use(negated ? 'not-in' : 'in') }
+    else if (token === 'EXISTS') { if (next === '(' && previous !== 'IF') use(negated ? 'not-exists' : 'exists') }
+    else if (token === 'LIKE') { if (previous !== 'SOUNDS') use(negated ? 'not-like' : 'like') }
+    else if (token === 'REGEXP' || token === 'RLIKE') use(negated ? 'not-regexp' : 'regexp')
+    else if (token === 'IS') {
+      const not = next === 'NOT', subject = tokens[i + (not ? 2 : 1)]
+      if (subject === 'NULL') use(not ? 'is-not-null' : 'is-null')
+      else if (['TRUE', 'FALSE', 'UNKNOWN'].includes(subject ?? '')) use(not ? 'is-not' : 'is')
+    } else if (token === 'MEMBER') { if (next === 'OF') use('member-of') }
+    else if (token === 'MOD') { if (next !== '(' && operandEnd(previous)) use('mod') }
+    else if (token === '+') { if (operandEnd(previous)) use('plus') }
+    else if (token === '-') {
+      if (operandEnd(previous)) use('minus')
+      else if (!number(next)) use('unary-minus')
+    } else if (token === '*') { if (operandEnd(previous) && operandStart(next)) use('times') }
+    else if (token === '=') { if (previous !== '@' && tokens[i - 2] !== '@') use('equal') }
+    else if (symbols[token]) use(symbols[token])
+  }
+  return [...used].sort()
+}
+
 export function differentialCases(ledger: string, queries: CoverageQuery[]) {
   const phases = new Map<string, Set<string>>()
   const failures = new Set<string>()
