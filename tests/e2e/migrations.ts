@@ -921,6 +921,127 @@ const narrowedCases: NarrowedCase[] = [
   },
 ]
 
+/// What real deployments do to a mirrored table that one statement on a
+/// quiet table does not show: several schema changes while the mirror is
+/// down, so each is read against a table that has since moved on; an online
+/// schema-change tool swapping a rebuilt table in under the old name; and a
+/// change landing in the middle of a stream of writes.
+type Scenario = {
+  name: string
+  /// Statements run before the mirror starts, `{t}` the table. The table
+  /// keeps an `id` column that orders its rows, and row 1 is never written.
+  setup: string[]
+  /// Run with the mirror stopped, and read by it only once it is back.
+  downtime?: boolean
+  run: (table: string) => Promise<void>
+  /// Compared columns.
+  columns: string
+  /// Whether the table is expected to be taken out of service and copied
+  /// again. Unset, the path is recorded and not judged.
+  recopies?: boolean
+}
+
+function scenarioTable(index: number) {
+  return `s_${String(index).padStart(2, '0')}`
+}
+
+const scenarios: Scenario[] = [
+  {
+    name: 'a text column added, widened and renamed while the mirror was down',
+    setup: ['CREATE TABLE {t} (id INT PRIMARY KEY, v INT NULL) DEFAULT CHARACTER SET utf8mb4', 'INSERT INTO {t} VALUES (1, 10), (2, 20)'],
+    downtime: true,
+    run: async (table) => {
+      await sql(`ALTER TABLE ${table} ADD COLUMN note VARCHAR(20) NULL`)
+      await sql(`INSERT INTO ${table} (id, v, note) VALUES (50, 5, 'first')`)
+      await sql(`ALTER TABLE ${table} MODIFY note VARCHAR(64) NULL`)
+      await sql(`ALTER TABLE ${table} RENAME COLUMN note TO remark`)
+      await sql(`INSERT INTO ${table} (id, v, remark) VALUES (90, 9, 'second'), (91, 9, NULL)`)
+      await sql(`UPDATE ${table} SET v = 21 WHERE id = 2`)
+    },
+    columns: 'id, v, remark',
+  },
+  {
+    name: 'a column added, dropped and added again under another type while the mirror was down',
+    setup: ['CREATE TABLE {t} (id INT PRIMARY KEY, v INT NULL) DEFAULT CHARACTER SET utf8mb4', 'INSERT INTO {t} VALUES (1, 10), (2, 20)'],
+    downtime: true,
+    run: async (table) => {
+      await sql(`ALTER TABLE ${table} ADD COLUMN extra INT NULL`)
+      await sql(`INSERT INTO ${table} (id, v, extra) VALUES (50, 5, 500)`)
+      await sql(`ALTER TABLE ${table} DROP COLUMN extra`)
+      await sql(`ALTER TABLE ${table} ADD COLUMN extra VARCHAR(10) NULL`)
+      await sql(`INSERT INTO ${table} (id, v, extra) VALUES (90, 9, 'text')`)
+      await sql(`UPDATE ${table} SET v = 21 WHERE id = 2`)
+    },
+    columns: 'id, v, extra',
+  },
+  {
+    // The first statement is read against a table that no longer has `b`,
+    // so its text column is described from what the source still shows:
+    // latin1, as the table is, not the utf8mb4 a bare declaration reads as.
+    name: 'two columns added to a latin1 table and one dropped while the mirror was down',
+    setup: ['CREATE TABLE {t} (id INT PRIMARY KEY, v INT NULL) DEFAULT CHARACTER SET latin1', 'INSERT INTO {t} VALUES (1, 10), (2, 20)'],
+    downtime: true,
+    run: async (table) => {
+      await sql(`ALTER TABLE ${table} ADD COLUMN a VARCHAR(10) NULL, ADD COLUMN b INT NULL`)
+      await sql(`INSERT INTO ${table} (id, v, a, b) VALUES (50, 5, 'café', 1)`)
+      await sql(`ALTER TABLE ${table} DROP COLUMN b`)
+      await sql(`INSERT INTO ${table} (id, v, a) VALUES (90, 9, 'señor')`)
+      await sql(`UPDATE ${table} SET v = 21 WHERE id = 2`)
+    },
+    columns: 'id, v, a',
+  },
+  {
+    // An online schema-change tool: build the new shape beside the table,
+    // copy the rows, swap the names in one statement, drop the old one.
+    name: 'a rebuilt copy swapped in under the table name',
+    setup: [
+      'CREATE TABLE {t} (id INT PRIMARY KEY, v INT NULL, KEY ix_v (v)) DEFAULT CHARACTER SET utf8mb4',
+      'INSERT INTO {t} VALUES (1, 10), (2, 20), (3, 30)',
+    ],
+    run: async (table) => {
+      await sql(`CREATE TABLE _${table}_new LIKE ${table}`)
+      await sql(`ALTER TABLE _${table}_new ADD COLUMN extra INT NULL, ADD INDEX ix_extra (extra)`)
+      await sql(`INSERT INTO _${table}_new (id, v) SELECT id, v FROM ${table}`)
+      await sql(`INSERT INTO ${table} (id, v) VALUES (40, 4)`)
+      await sql(`INSERT INTO _${table}_new (id, v) VALUES (40, 4)`)
+      await sql(`RENAME TABLE ${table} TO _${table}_old, _${table}_new TO ${table}`)
+      await sql(`DROP TABLE _${table}_old`)
+      await sql(`INSERT INTO ${table} (id, v, extra) VALUES (90, 9, 900)`)
+      await sql(`UPDATE ${table} SET v = 21, extra = 2 WHERE id = 2`)
+    },
+    columns: 'id, v, extra',
+  },
+  {
+    // Schema changes land between the writes of a busy table with a
+    // composite primary key and a unique key, not after them.
+    name: 'columns added and widened in the middle of a stream of writes',
+    setup: [
+      'CREATE TABLE {t} (id INT NOT NULL, region INT NOT NULL, code VARCHAR(20) NULL, v INT NULL, ' +
+        'PRIMARY KEY (id, region), UNIQUE KEY uq_code (code)) DEFAULT CHARACTER SET utf8mb4',
+      "INSERT INTO {t} VALUES (1, 1, 'c1', 10), (2, 1, 'c2', 20), (3, 2, 'c3', 30)",
+    ],
+    run: async (table) => {
+      let next = 100
+      const burst = async (rows: number, columns: string, values: (id: number) => string) => {
+        for (let written = 0; written < rows; written += 1) {
+          next += 1
+          await sql(`INSERT INTO ${table} (${columns}) VALUES (${values(next)})`)
+          if (written % 5 === 0) await sql(`UPDATE ${table} SET v = v + 1 WHERE id = ${next - 1} AND region = 1`)
+          if (written % 11 === 0) await sql(`DELETE FROM ${table} WHERE id = ${next - 3} AND region = 1`)
+        }
+      }
+      await burst(60, 'id, region, code, v', (id) => `${id}, 1, 'c${id}', ${id}`)
+      await sql(`ALTER TABLE ${table} ADD COLUMN extra INT NULL, ALGORITHM=INSTANT`)
+      await burst(60, 'id, region, code, v, extra', (id) => `${id}, 1, 'c${id}', ${id}, ${id * 2}`)
+      await sql(`ALTER TABLE ${table} MODIFY code VARCHAR(64) NULL`)
+      await burst(60, 'id, region, code, v, extra', (id) => `${id}, 1, 'code-longer-than-twenty-${id}', ${id}, NULL`)
+      await sql(`ALTER TABLE ${table} ADD COLUMN label VARCHAR(16) NULL AFTER code, ADD INDEX ix_v (v)`)
+      await burst(60, 'id, region, code, label, v, extra', (id) => `${id}, 1, 'c${id}', 'l${id}', ${id}, 1`)
+    },
+    columns: 'id, region, code, label, v, extra',
+  },
+]
+
 function narrowedTable(index: number) {
   return `n_${String(index).padStart(2, '0')}`
 }
@@ -1200,6 +1321,10 @@ async function main() {
     await sql(`INSERT INTO ${table} VALUES ${narrowed.rows.join(', ')}`)
   }
 
+  for (const [index, scenario] of scenarios.entries()) {
+    for (const statement of scenario.setup) await sql(statement.replaceAll('{t}', scenarioTable(index)))
+  }
+
   pintailBinary = process.env.PINTAIL_E2E_BINARY
     ? resolve(process.env.PINTAIL_E2E_BINARY)
     : await (async () => {
@@ -1323,6 +1448,18 @@ async function main() {
     for (const write of narrowed.writes) await sql(write.replaceAll('{t}', table))
   }
 
+  for (const [index, scenario] of scenarios.entries()) {
+    untouched.set(scenarioTable(index), [1])
+    if (!scenario.downtime) await scenario.run(scenarioTable(index))
+  }
+  // The changes a stopped mirror meets all at once when it comes back.
+  log('stopping the replica for the schema changes made while it is down')
+  await stopPintail()
+  for (const [index, scenario] of scenarios.entries()) {
+    if (scenario.downtime) await scenario.run(scenarioTable(index))
+  }
+  await startPintail()
+
   const families = [
     ...cases.map((testCase, index) => ({
       table: tableName(index),
@@ -1343,6 +1480,11 @@ async function main() {
       table: narrowedTable(index),
       name: narrowed.name,
       columns: narrowed.projection ?? 'id, v',
+    })),
+    ...scenarios.map((scenario, index) => ({
+      table: scenarioTable(index),
+      name: scenario.name,
+      columns: scenario.columns,
     })),
   ]
   log('checking every table against the source after its migration')
@@ -1414,6 +1556,23 @@ async function main() {
           : 'recopied, with the reason given',
       ok ? 'PASS' : 'FAIL',
       ok ? undefined : quarantine ?? 'no quarantine line and no in-place line',
+    )
+  }
+
+  // And how it took each scenario.
+  for (const [index, scenario] of scenarios.entries()) {
+    const table = scenarioTable(index)
+    const quarantine = pintailOutput
+      .join('')
+      .split('\n')
+      .find((line) => line.includes(`table quarantined db=${databaseId} table=${table}:`))
+    const ok = scenario.recopies === undefined || scenario.recopies === Boolean(quarantine)
+    record(
+      table,
+      scenario.name,
+      quarantine ? 'taken by recopying the table' : 'taken without a quarantine',
+      ok ? 'PASS' : 'FAIL',
+      ok ? undefined : quarantine ?? 'expected a recopy and saw none',
     )
   }
 
