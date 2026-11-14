@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4308;
+const EXPECTED_CASES: usize = 4310;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5712,6 +5712,20 @@ fn engine_error_cases() -> Vec<OracleCase> {
                     DATE_SUB(placed_at, INTERVAL CONCAT('-', REPEAT('9', 15 + id)) HOUR), \
                     MAKETIME(REPEAT('7', 15 + id), 0, 0), MAKETIME(REPEAT('1', id + 2), id, 0) \
              FROM orders ORDER BY id",
+        ),
+        // FORMAT writes every digit of a number an integer of its units
+        // cannot hold, and text past the double range as the largest double.
+        ordered(
+            "format numbers with more digits than a unit count holds",
+            "SELECT FORMAT(1.5e300, 1), FORMAT(-1.5e30, 31), FORMAT(1e60, 2), FORMAT('1e400', 0), \
+                    FORMAT('-1e400', 2), FORMAT(-1.7976931348623157E+307, 256), \
+                    FORMAT(9.999999e37, 1, 'de_DE'), FORMAT(123456789e30, 3, 'en_IN'), \
+                    FORMAT(CONCAT_WS(5445796E25, 5306463, 30837), -358821)",
+        ),
+        ordered(
+            "format numbers with more digits than a unit count holds",
+            "SELECT id, FORMAT(score * 1e40, 2), FORMAT(score * -1.5e250, 0, 'sv_SE') \
+             FROM events ORDER BY id",
         ),
     ]
 }

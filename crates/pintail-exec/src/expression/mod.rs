@@ -4252,21 +4252,37 @@ fn evaluate_eager_scalar_inner(
                 Value::Int64(number) => number.to_string(),
                 Value::UInt64(number) => number.to_string(),
                 Value::Boolean(flag) => u8::from(*flag).to_string(),
-                other => format!("{:.15}", mysql_f64(other)?),
+                other => double_digits(mysql_f64(other)?),
             };
-            let units = pintail_types::parse_decimal_rounded(&text, scale)
-                .or_else(|| {
-                    pintail_types::parse_decimal_rounded(
-                        &format!("{:.15}", parse_mysql_number(&text)),
-                        scale,
-                    )
-                })
-                .ok_or(ExecError::NumericOverflow)?;
             let style = match values.get(2) {
                 Some(locale) => NumberStyle::of_locale(&scalar_string(locale)?),
                 None => NumberStyle::EN_US,
             };
-            Ok(Value::Utf8(format_grouped(units, scale, style)))
+            let units = pintail_types::parse_decimal_rounded(&text, scale).or_else(|| {
+                pintail_types::parse_decimal_rounded(
+                    &format!("{:.15}", parse_mysql_number(&text)),
+                    scale,
+                )
+            });
+            if let Some(units) = units {
+                return Ok(Value::Utf8(format_grouped(units, scale, style)));
+            }
+            // More digits than an integer of units holds: an exact number
+            // as it is written, anything else as the double it reads as,
+            // which stops at the largest one.
+            let plain = text
+                .strip_prefix(['-', '+'])
+                .unwrap_or(&text)
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || byte == b'.');
+            let text = if plain {
+                text
+            } else {
+                double_digits(parse_mysql_number(&text).clamp(f64::MIN, f64::MAX))
+            };
+            format_grouped_digits(&text, scale, style)
+                .map(Value::Utf8)
+                .ok_or(ExecError::NumericOverflow)
         }
         ScalarFunction::ToBase64 => {
             let bytes = match &values[0] {
@@ -8287,10 +8303,77 @@ fn uuid_bytes(text: &[u8]) -> Option<[u8; 16]> {
     Some(bytes)
 }
 
+/// The digits `FORMAT` reads from a double: fifteen decimals, or the
+/// shortest digits that name the double once it is too large to have any.
+fn double_digits(number: f64) -> String {
+    if number.abs() >= 1e15 && number.is_finite() {
+        format!("{number}")
+    } else {
+        format!("{number:.15}")
+    }
+}
+
+/// [`format_grouped`] for a number written as `[-]digits[.digits]` of any
+/// length, rounded half away from zero at `scale`.
+fn format_grouped_digits(text: &str, scale: u8, style: NumberStyle) -> Option<String> {
+    let (negative, digits) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    if !whole
+        .bytes()
+        .chain(fraction.bytes())
+        .all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let scale = usize::from(scale);
+    let mut magnitude = whole.as_bytes().to_vec();
+    magnitude.extend(fraction.bytes().chain(std::iter::repeat(b'0')).take(scale));
+    if fraction
+        .as_bytes()
+        .get(scale)
+        .is_some_and(|digit| *digit >= b'5')
+    {
+        let mut carried = true;
+        for digit in magnitude.iter_mut().rev() {
+            if *digit == b'9' {
+                *digit = b'0';
+            } else {
+                *digit += 1;
+                carried = false;
+                break;
+            }
+        }
+        if carried {
+            magnitude.insert(0, b'1');
+        }
+    }
+    let magnitude = String::from_utf8(magnitude).ok()?;
+    let magnitude = magnitude.trim_start_matches('0');
+    let zero = magnitude.is_empty();
+    Some(group_digits(
+        if negative && !zero { "-" } else { "" },
+        if zero {
+            "0".to_owned()
+        } else {
+            magnitude.to_owned()
+        },
+        scale,
+        style,
+    ))
+}
+
 fn format_grouped(units: i128, scale: u8, style: NumberStyle) -> String {
     let sign = if units < 0 { "-" } else { "" };
     let magnitude = units.unsigned_abs().to_string();
-    let scale = usize::from(scale);
+    group_digits(sign, magnitude, usize::from(scale), style)
+}
+
+/// Writes the digits of a count of `10^-scale` units as a grouped number.
+fn group_digits(sign: &str, magnitude: String, scale: usize, style: NumberStyle) -> String {
     let padded = if magnitude.len() <= scale {
         format!("{}{magnitude}", "0".repeat(scale + 1 - magnitude.len()))
     } else {
