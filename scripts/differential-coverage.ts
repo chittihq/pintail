@@ -65,6 +65,7 @@ export function operatorUses(sql: string): string[] {
     } else if (token === 'IN') { if (next === '(') use(negated ? 'not-in' : 'in') }
     else if (token === 'EXISTS') { if (next === '(' && previous !== 'IF') use(negated ? 'not-exists' : 'exists') }
     else if (token === 'LIKE') { if (previous !== 'SOUNDS') use(negated ? 'not-like' : 'like') }
+    else if (token === 'SOUNDS') { if (next === 'LIKE') use('sounds-like') }
     else if (token === 'REGEXP' || token === 'RLIKE') use(negated ? 'not-regexp' : 'regexp')
     else if (token === 'IS') {
       const not = next === 'NOT', subject = tokens[i + (not ? 2 : 1)]

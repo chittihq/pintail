@@ -2450,80 +2450,75 @@
       "priority": "P1"
     },
     "POSITION": {
-      "status": "unassessed",
-      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "status": "implemented-unverified",
+      "note": "The POSITION(x IN y) form of LOCATE, compared with MySQL in the fixed oracle.",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs",
         "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "CURRENT_DATE": {
-      "status": "unassessed",
-      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "status": "implemented-unverified",
+      "note": "A zero-argument clock function, written with or without parentheses; compared with MySQL in the fixed oracle by shape and against the other clock functions, since its value has no fixed answer.",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs",
         "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "CURRENT_TIMESTAMP": {
-      "status": "unassessed",
-      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "status": "partial",
+      "note": "A zero-argument clock function, written with or without parentheses; compared with MySQL in the fixed oracle by shape. A fractional-seconds argument is refused (docs/limitations.md).",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs",
-        "crates/pintail-sql/src/binder/function.rs"
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "LOCALTIME": {
-      "status": "unassessed",
-      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "status": "partial",
+      "note": "A zero-argument clock function, written with or without parentheses; compared with MySQL in the fixed oracle by shape. A fractional-seconds argument is refused (docs/limitations.md).",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs",
-        "crates/pintail-sql/src/binder/function.rs"
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "LOCALTIMESTAMP": {
-      "status": "unassessed",
-      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "status": "partial",
+      "note": "A zero-argument clock function, written with or without parentheses; compared with MySQL in the fixed oracle by shape. A fractional-seconds argument is refused (docs/limitations.md).",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs",
-        "crates/pintail-sql/src/binder/function.rs"
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "MID": {
-      "status": "unassessed",
-      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "status": "implemented-unverified",
+      "note": "A spelling of SUBSTRING, with its FROM and FOR form, compared with MySQL in the fixed oracle.",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs",
         "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "ADDDATE": {
-      "status": "unassessed",
-      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "status": "implemented-unverified",
+      "note": "Bound through the shared date-arithmetic path, in its day-count and INTERVAL forms, and compared with MySQL in the fixed oracle across column types and calendar edges.",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs",
         "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "SUBDATE": {
-      "status": "unassessed",
-      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "status": "implemented-unverified",
+      "note": "Bound through the shared date-arithmetic path, in its day-count and INTERVAL forms, and compared with MySQL in the fixed oracle across column types and calendar edges.",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs",
         "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
@@ -2613,6 +2608,16 @@
       "note": "Accepted in the select list and HAVING of a WITH ROLLUP query and compared with MySQL in the fixed oracle; refused in ORDER BY (docs/limitations.md).",
       "evidence": [
         "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "INTERVAL": {
+      "status": "partial",
+      "note": "The INTERVAL(N, N1, ...) comparison function, compared with MySQL in the fixed oracle; docs/limitations.md records its difference over long unordered lists.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
         "docs/limitations.md"
       ],
       "scope": "analytics",

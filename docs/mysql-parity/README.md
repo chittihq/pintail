@@ -27,12 +27,12 @@ No MySQL implementation files are vendored into Pintail.
 | Operators and special constructs | 47 |
 | Feature contracts | 87 |
 
-Among the callable names, 125 have implementation evidence awaiting semantic
-verification, 44 have known restrictions, 21 are identified gaps, 92 need
+Among the callable names, 175 have implementation evidence awaiting semantic
+verification, 61 have known restrictions, 2 are identified gaps, 44 need
 assessment, and 185 are outside the current scope. These numbers are **not a
 compatibility percentage**: aliases, internal functions, optional modules and
 different overloads would distort that measure. Feature totals are 8 with
-implementation evidence, 46 partial, 10 gaps, 16 unassessed and 7 excluded.
+implementation evidence, 50 partial, 9 gaps, 13 unassessed and 7 excluded.
 
 MySQL 8.4 is the primary baseline because it is Pintail's principal oracle.
 MySQL 8.0 must retain its own patch-pinned tests and evidence; this audit has
@@ -193,6 +193,10 @@ function names: literals and comments establish nothing, the `AND` of a
 `BETWEEN` or of a window frame is not the logical operator, a signed numeric
 literal is not unary minus, `*` counts only between two operands, and `||`
 is never counted because one SQL mode makes it concatenation.
+
+Generation needs the banked oracle and end-to-end results to describe the
+corpus as it stands: after a gate banks them, run the refresh and then the
+generator. Evidence older than the corpus is refused, never reused.
 
 After banking a matching E2E run, refresh with
 `bun run scripts/refresh-differential-evidence.ts`, then regenerate with

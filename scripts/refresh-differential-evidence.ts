@@ -6,7 +6,9 @@ import { differentialQueries } from '../tests/e2e/queries.ts'
 import { differentialCases, sha256, validateEvidence, oracleEvidenceFromLedger, type DifferentialEvidence } from './differential-coverage.ts'
 
 const root = resolve(import.meta.dir, '..')
-const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' })
+// The banked oracle ledger holds every case's SQL: it passed the megabyte a
+// child's output is capped at by default once the corpus passed 3,000 cases.
+const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 1 << 30 })
 const ledgerPath = 'tests/e2e/results.md'
 const corpusPath = 'tests/e2e/queries.ts'
 const commit = git('log', '-1', '--format=%H', '--', ledgerPath).trim()

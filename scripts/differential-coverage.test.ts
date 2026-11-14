@@ -58,5 +58,6 @@ test('operators are attributed by ledger id, and only where the token is the ope
   expect(ids('SELECT EXISTS (SELECT 1), NOT EXISTS (SELECT 2), CASE WHEN a THEN 1 END')).toEqual(['case', 'exists', 'not-exists'])
   expect(ids("SELECT j->'$.a', j->>'$.b', 1 MEMBER OF(j), a DIV 2, a MOD 2, MOD(a, 2), a % 2, a / 2 FROM t")).toEqual(['div', 'divide', 'json-column-path', 'json-inline-path', 'member-of', 'mod'])
   expect(ids('SELECT a & 1, b | 2, c ^ 3, ~d, e << 1, f >> 1, g XOR h, i || j FROM t')).toEqual(['bitwise-and', 'bitwise-invert', 'bitwise-or', 'bitwise-xor', 'left-shift', 'right-shift', 'xor'])
+  expect(ids("SELECT a SOUNDS LIKE b, c LIKE 'x' FROM t")).toEqual(['like', 'sounds-like'])
   expect(ids('SET @a = 1')).toEqual([])
 })
