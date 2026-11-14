@@ -3831,6 +3831,49 @@ async function waitUntil(
   }
 }
 
+/// Everything the replica printed, so a phase can be asked what it decided.
+const pintailOutput: string[] = []
+
+function relayPintail(stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream) {
+  void (async () => {
+    const decoder = new TextDecoder()
+    for await (const chunk of stream) {
+      sink.write(chunk)
+      pintailOutput.push(decoder.decode(chunk, { stream: true }))
+    }
+  })()
+}
+
+/// The tables each phase is expected to take out of service and copy again.
+/// A table that converges after a recopy reads exactly like one that never
+/// left, so convergence alone passes a migration that cost a large table
+/// minutes of refused queries. Any quarantine not named here fails its phase.
+const expectedQuarantines: Record<string, string[]> = {}
+
+let quarantinesSeen = 0
+
+/// Fails `phase` for every table quarantined during it that it does not
+/// expect.
+function verifyService(phase: string) {
+  const lines = pintailOutput
+    .join('')
+    .split('\n')
+    .filter((line) => line.includes('table quarantined db='))
+  const fresh = lines.slice(quarantinesSeen)
+  quarantinesSeen = lines.length
+  const expected = new Set(expectedQuarantines[phase] ?? [])
+  const tables = [...new Set(fresh.map((line) => /table=([^:\s]+)/.exec(line)?.[1] ?? '?'))]
+  const surprising = tables.filter((table) => !expected.has(table))
+  record(
+    phase,
+    `service:${phase}:no table left service unexpectedly`,
+    surprising.length === 0 ? 'PASS' : 'FAIL',
+    surprising.length === 0
+      ? undefined
+      : fresh.filter((line) => surprising.some((table) => line.includes(`table=${table}:`))).join(' | '),
+  )
+}
+
 function record(phase: string, check: string, status: CheckResult['status'], detail?: string) {
   results.push({ phase, check, status, detail })
   if (status !== 'PASS') log(`${status} ${check}${detail ? ` — ${detail}` : ''}`)
@@ -4403,8 +4446,8 @@ async function startPintail(queryMemoryLimit?: number, extraEnv: Record<string, 
     ],
     {
       cwd: repository,
-      stdout: 'inherit',
-      stderr: 'inherit',
+      stdout: 'pipe',
+      stderr: 'pipe',
       env: {
         ...process.env,
         // Test cadence: every adoption/auto-include/re-probe wait in the
@@ -4422,6 +4465,8 @@ async function startPintail(queryMemoryLimit?: number, extraEnv: Record<string, 
       },
     },
   )
+  relayPintail(pintailProcess.stdout as ReadableStream<Uint8Array>, process.stdout)
+  relayPintail(pintailProcess.stderr as ReadableStream<Uint8Array>, process.stderr)
   for (let attempt = 0; attempt < 240; attempt += 1) {
     try {
       const response = await fetch(`${pintailUrl}/health`)
@@ -4607,6 +4652,7 @@ async function main() {
     await verifyConvergence(name)
     const convergedAt = Date.now()
     await verifyCorpus(name)
+    verifyService(name)
     const done = Date.now()
     phaseTimings.push({
       phase: name,
