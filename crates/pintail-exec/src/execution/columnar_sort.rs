@@ -266,8 +266,15 @@ pub(super) fn top_k(
     let mut reserved = 0_usize;
     let mut cutoff = None;
     while let Some(mut batch) = input.next_batch(memory)? {
-        if let Some(key) = keys.first() {
-            narrow(&mut batch, cutoff.as_ref(), *key, k)?;
+        // The bound a batch was narrowed by holds for every batch after it:
+        // k rows at or before it are already kept. Waiting for the first
+        // cut to name one left a sort whose batches each narrow to a few
+        // rows - input in the sort's own order - without a cutoff for as
+        // many batches as a cut waits for, each narrowed by its own rows.
+        if let Some(key) = keys.first()
+            && let Some(applied) = narrow(&mut batch, cutoff.as_ref(), *key, k)?
+        {
+            cutoff = Some(applied);
         }
         let visible = batch.visible_row_count();
         if visible == 0 {
@@ -310,9 +317,14 @@ pub(super) fn top_k(
             return Ok(TopK::Unkept(kept));
         }
         reserved = now;
-        cutoff = (rows == k)
+        // The k-th row of everything read is at or before any bound a
+        // batch was narrowed by; where the cut names none, that one stands.
+        if let Some(kth) = (rows == k)
             .then(|| keys.first().and_then(|key| Cutoff::of(&kept, *key)))
-            .flatten();
+            .flatten()
+        {
+            cutoff = Some(kth);
+        }
     }
     ColumnarSorted::new(kept, keys, width, collation, Some(k), memory).map(TopK::Sorted)
 }
@@ -366,44 +378,60 @@ impl Cutoff {
 /// arriving against the sort's direction - newest last, sorted newest
 /// first - otherwise passes the cutoff of the batches before it whole.
 /// Equal keys stay, so ties still resolve by arrival. A column that does
-/// not order as units leaves the batch whole.
+/// not order as units leaves the batch whole. Answers the bound the rows
+/// were tested against, when it is a new one: k rows at or before it are
+/// kept, so it is a cutoff for the batches that follow.
 fn narrow(
     batch: &mut RecordBatch,
     cutoff: Option<&Cutoff>,
     key: BoundOrderKey,
     k: usize,
-) -> Result<(), ExecError> {
+) -> Result<Option<Cutoff>, ExecError> {
     let Some(column) = batch.column(key.index) else {
-        return Ok(());
+        return Ok(None);
     };
     let order = |left: &Option<i128>, right: &Option<i128>| {
         null_order(key, left.is_none(), right.is_none())
             .unwrap_or_else(|| directed(left.cmp(right), key))
     };
     let years = four_digit_years(column.data_type());
+    if let Some(bound) = cutoff
+        .filter(|cutoff| cutoff.data_type == column.data_type())
+        .and_then(|cutoff| cutoff.units)
+        && all_order_after(column, key, years.as_ref(), bound)
+    {
+        crate::counters::count(|counters| counters.top_k_batches_passed_over += 1);
+        batch.set_selection(crate::SelectionMask::none(batch.row_count()))?;
+        return Ok(None);
+    }
     let rows = batch.selection().selected_rows().collect::<Vec<_>>();
     let Some(units) = rows
         .iter()
         .map(|row| units_at(column, *row, key, years.as_ref()).ok())
         .collect::<Option<Vec<_>>>()
     else {
-        return Ok(());
+        return Ok(None);
     };
     let mut bound = cutoff
         .filter(|cutoff| cutoff.data_type == column.data_type())
         .map(|cutoff| cutoff.units);
+    let mut tightened = false;
     if k > 0 && units.len() > k.saturating_mul(2) {
         let mut ranked = units.clone();
         let (_, own, _) = ranked.select_nth_unstable_by(k - 1, order);
         let own = *own;
         bound = Some(match bound {
-            Some(earlier) if order(&earlier, &own).is_lt() => earlier,
-            _ => own,
+            Some(earlier) if order(&earlier, &own).is_le() => earlier,
+            _ => {
+                tightened = true;
+                own
+            }
         });
     }
     let Some(bound) = bound else {
-        return Ok(());
+        return Ok(None);
     };
+    let data_type = column.data_type();
     let mut selection = batch.selection().clone();
     for (row, units) in rows.iter().zip(&units) {
         if order(units, &bound).is_gt() {
@@ -411,7 +439,73 @@ fn narrow(
         }
     }
     batch.set_selection(selection)?;
-    Ok(())
+    Ok(tightened.then_some(Cutoff {
+        data_type,
+        units: bound,
+    }))
+}
+
+/// Whether every row of `column` orders after `bound`, the first key of
+/// the sort's k-th row so far, answered from the extremes of its packed
+/// values: one pass over the buffer, where [`narrow`] otherwise reads each
+/// row's units, ranks them and tests them one by one. Input that arrives
+/// in the sort's own direction - a table appended in time order, read for
+/// its earliest rows - is every batch after the first few, and each of
+/// them was read that way only to be left out whole.
+///
+/// Only for a signed integer or packed calendar column without a NULL,
+/// whose values order as [`units_at`] reads them; `false` for any other,
+/// which leaves the batch to the row-wise test. Rows the batch's selection
+/// already left out are counted too, which can only answer `false` where
+/// the selected rows alone would have answered `true`.
+fn all_order_after(
+    column: &ColumnVector,
+    key: BoundOrderKey,
+    years: Option<&std::ops::RangeInclusive<i128>>,
+    bound: i128,
+) -> bool {
+    let Some((typed, validity)) = column.typed() else {
+        return false;
+    };
+    if !validity.no_nulls() {
+        return false;
+    }
+    let (values, step, calendar) = match (column.data_type(), typed) {
+        (data_type, TypedValues::Int64(values)) if data_type.storage_type() == DataType::Int64 => {
+            (values, 1, false)
+        }
+        (
+            data_type @ (DataType::Date32 | DataType::DateTime64 { .. }),
+            TypedValues::Temporal { units, text },
+        ) if key.value_kind != pintail_sql::OrderValueKind::Decimal && text.derived() => {
+            let step = match data_type {
+                DataType::DateTime64 { fsp } => 10_i64.pow(6 - u32::from(fsp.min(6))),
+                _ => 1,
+            };
+            (units, step, true)
+        }
+        _ => return false,
+    };
+    if values.is_empty() {
+        return false;
+    }
+    let (low, high) = values
+        .iter()
+        .fold((i64::MAX, i64::MIN), |(low, high), value| {
+            (low.min(*value), high.max(*value))
+        });
+    // The units a value is spelled at never rise above it and never fall
+    // as it rises, so the extremes' spellings bound every row's.
+    let spelled = |value: i64| i128::from(value - value.rem_euclid(step));
+    let (low, high) = (spelled(low), spelled(high));
+    if calendar && !years.is_some_and(|years| years.contains(&low) && years.contains(&high)) {
+        return false;
+    }
+    if key.ascending {
+        low > bound
+    } else {
+        high < bound
+    }
 }
 
 /// The years `0000` to `9999` in `data_type`'s units, where canonical text

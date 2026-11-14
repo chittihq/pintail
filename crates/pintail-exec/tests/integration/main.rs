@@ -155,6 +155,7 @@ mod text_key_lookup;
 mod text_pair_first_row;
 mod text_range_predicates;
 mod timestamp_session_zone;
+mod top_k_ordered_input;
 mod top_k_sort;
 mod ungrouped_column_fold;
 mod unit_key_lanes;

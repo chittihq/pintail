@@ -105,6 +105,9 @@ pub struct ExecCounters {
     /// Batches whose exact decimal comparison with a constant was answered
     /// as one integer comparison over the column's packed units.
     pub decimal_masks_packed: u64,
+    /// Batches a limited sort left out whole because the extremes of their
+    /// first key's packed values order after its k-th row so far.
+    pub top_k_batches_passed_over: u64,
 }
 
 thread_local! {
@@ -145,6 +148,7 @@ thread_local! {
             range_join_second_bounds: 0,
             range_join_pairs_tested: 0,
             decimal_masks_packed: 0,
+            top_k_batches_passed_over: 0,
         })
     };
 }
