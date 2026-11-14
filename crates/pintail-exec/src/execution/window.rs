@@ -856,6 +856,127 @@ impl WindowSorter {
     }
 }
 
+/// Rows of a spilled run read back together to evaluate a window's keys.
+const SPILLED_KEY_ROWS: usize = 1024;
+
+/// Reads a spilled run back, appends each row's partition keys, order keys
+/// and arguments, and hands the rows to the sort that orders them.
+///
+/// The rows are read `SPILLED_KEY_ROWS` at a time and the expressions are
+/// evaluated over one batch of them: a batch built per row was most of what
+/// this cost. With `weigh`, a plain text key is replaced by its collation
+/// weights, which order and compare equal exactly as the text does under
+/// that collation; the sort then compares bytes where it weighed both texts
+/// at every comparison. `None`, with `weigh`, when a weighed key column
+/// also holds an ENUM value.
+#[allow(clippy::too_many_arguments)]
+fn stage_spilled_rows(
+    run: &crate::spill::ClosedRun,
+    window: &CompiledWindow,
+    input_types: &[DataType],
+    width: usize,
+    memory: &MemoryTracker,
+    collation: Collation,
+    weigh: bool,
+) -> Result<Option<WindowSorter>, ExecError> {
+    let key_start = width + 1;
+    let key_count = window.partition.len() + window.order.len();
+    // The collation each key is weighed under, for the keys that are.
+    let weighed = (0..key_count)
+        .map(|position| {
+            let ordinary = position < window.partition.len()
+                || window.order[position - window.partition.len()].3 == OrderValueKind::Ordinary;
+            (weigh && ordinary && window.key_types.get(position) == Some(&Some(DataType::Utf8)))
+                .then(|| {
+                    window
+                        .key_collation(position)
+                        .and_then(Collation::from_mysql_name)
+                        .unwrap_or(collation)
+                })
+        })
+        .collect::<Vec<_>>();
+    let mut order = window.sort_keys_from(key_start);
+    for (key, weighed) in order.iter_mut().zip(&weighed) {
+        if weighed.is_some() {
+            // Weights compare as bytes.
+            key.collation = None;
+        }
+    }
+    order.push(plain_order_key(width, None));
+    let mut sorter = WindowSorter::new(order, collation);
+    let mut reader = run.open().map_err(window_io)?;
+    let mut rows: Vec<Vec<Value>> = Vec::with_capacity(SPILLED_KEY_ROWS);
+    loop {
+        memory.check_interruption()?;
+        rows.clear();
+        // Fewer rows at a time under a small ceiling: the rows read back
+        // are held twice while their keys are evaluated.
+        let mut held = 0_usize;
+        while rows.len() < SPILLED_KEY_ROWS
+            && held <= memory.limit() / 64
+            && let Some(payload) = reader.next().map_err(window_io)?
+        {
+            let row = crate::spill::Decoder::new(payload)
+                .values()
+                .map_err(ExecError::Source)?;
+            held = held.saturating_add(estimated_row_payload_bytes(&row));
+            rows.push(row);
+        }
+        if rows.is_empty() {
+            break;
+        }
+        let inputs = rows
+            .iter()
+            .map(|row| row[..input_types.len()].to_vec())
+            .collect::<Vec<_>>();
+        let batch =
+            crate::RecordBatch::new(rows.len(), super::rows_to_columns(&inputs, input_types)?)?;
+        drop(inputs);
+        memory.ensure_transient(batch.estimated_bytes().saturating_add(held))?;
+        crate::counters::count(|counters| {
+            counters.window_spill_rows_batched = counters
+                .window_spill_rows_batched
+                .saturating_add(rows.len() as u64);
+        });
+        for (index, mut row) in rows.drain(..).enumerate() {
+            let keys = window
+                .partition
+                .iter()
+                .chain(window.order.iter().map(|(expr, _, _, _)| expr));
+            for (expr, weighed) in keys.zip(&weighed) {
+                let value = expr.evaluate(&batch, index)?;
+                row.push(match (weighed, value) {
+                    (Some(collation), Value::Utf8(text)) => {
+                        Value::Binary(super::join::collation_sort_key(&text, *collation))
+                    }
+                    (None, value) | (Some(_), value @ Value::Null) => value,
+                    // Anything else orders against text by rules of its
+                    // own.
+                    (Some(_), _) => return Ok(None),
+                });
+            }
+            match &window.function {
+                CompiledWindowFunction::Aggregate(_, argument)
+                | CompiledWindowFunction::Extreme { argument, .. } => {
+                    row.push(argument.evaluate(&batch, index)?);
+                }
+                CompiledWindowFunction::Offset {
+                    argument, default, ..
+                } => {
+                    row.push(argument.evaluate(&batch, index)?);
+                    if let Some(default) = default {
+                        row.push(default.evaluate(&batch, index)?);
+                    }
+                }
+                _ => {}
+            }
+            memory.ensure_transient(estimated_row_payload_bytes(&row))?;
+            sorter.push(row, memory)?;
+        }
+    }
+    Ok(Some(sorter))
+}
+
 fn evaluate_spilled_window(
     run: crate::spill::ClosedRun,
     window: &CompiledWindow,
@@ -865,44 +986,19 @@ fn evaluate_spilled_window(
     collation: Collation,
 ) -> Result<crate::spill::ClosedRun, ExecError> {
     let key_start = width + 1;
-    let mut order = window.sort_keys_from(key_start);
-    order.push(plain_order_key(width, None));
-    let mut sorter = WindowSorter::new(order, collation);
-    let mut reader = run.open().map_err(window_io)?;
-    while let Some(payload) = reader.next().map_err(window_io)? {
-        memory.check_interruption()?;
-        let mut row = crate::spill::Decoder::new(payload)
-            .values()
-            .map_err(ExecError::Source)?;
-        let batch = crate::RecordBatch::new(
-            1,
-            super::rows_to_columns(&[row[..input_types.len()].to_vec()], input_types)?,
-        )?;
-        for expr in &window.partition {
-            row.push(expr.evaluate(&batch, 0)?);
-        }
-        for (expr, _, _, _) in &window.order {
-            row.push(expr.evaluate(&batch, 0)?);
-        }
-        match &window.function {
-            CompiledWindowFunction::Aggregate(_, argument)
-            | CompiledWindowFunction::Extreme { argument, .. } => {
-                row.push(argument.evaluate(&batch, 0)?);
-            }
-            CompiledWindowFunction::Offset {
-                argument, default, ..
-            } => {
-                row.push(argument.evaluate(&batch, 0)?);
-                if let Some(default) = default {
-                    row.push(default.evaluate(&batch, 0)?);
-                }
-            }
-            _ => {}
-        }
-        memory.ensure_transient(batch.estimated_bytes() + estimated_row_payload_bytes(&row))?;
-        sorter.push(row, memory)?;
-    }
-    drop(reader);
+    // Text keys go into the sort as their collation weights, built once a
+    // row. A key column that turns out to hold ENUM values beside plain
+    // text is the one case weights cannot stand in for - an ENUM orders
+    // against text by its label - and the run is then staged again with
+    // the values as they are.
+    let sorter =
+        match stage_spilled_rows(&run, window, input_types, width, memory, collation, true)? {
+            Some(sorter) => sorter,
+            None => stage_spilled_rows(&run, window, input_types, width, memory, collation, false)?
+                .ok_or(ExecError::InvalidPhysicalPlan(
+                    "a spilled window staged without weights declined",
+                ))?,
+        };
     drop(run);
     let mut merged = sorter.finish(None, memory)?;
     let mut writer = window_writer(memory)?;
