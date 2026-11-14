@@ -959,6 +959,8 @@ const scenarios: Scenario[] = [
       await sql(`UPDATE ${table} SET v = 21 WHERE id = 2`)
     },
     columns: 'id, v, remark',
+    // The rename is read against a table that has moved on twice.
+    recopies: true,
   },
   {
     name: 'a column added, dropped and added again under another type while the mirror was down',
@@ -973,6 +975,7 @@ const scenarios: Scenario[] = [
       await sql(`UPDATE ${table} SET v = 21 WHERE id = 2`)
     },
     columns: 'id, v, extra',
+    recopies: false,
   },
   {
     // The first statement is read against a table that no longer has `b`,
@@ -989,6 +992,7 @@ const scenarios: Scenario[] = [
       await sql(`UPDATE ${table} SET v = 21 WHERE id = 2`)
     },
     columns: 'id, v, a',
+    recopies: false,
   },
   {
     // An online schema-change tool: build the new shape beside the table,
@@ -1010,6 +1014,7 @@ const scenarios: Scenario[] = [
       await sql(`UPDATE ${table} SET v = 21, extra = 2 WHERE id = 2`)
     },
     columns: 'id, v, extra',
+    recopies: false,
   },
   {
     // Schema changes land between the writes of a busy table with a
@@ -1039,6 +1044,7 @@ const scenarios: Scenario[] = [
       await burst(60, 'id, region, code, label, v, extra', (id) => `${id}, 1, 'c${id}', 'l${id}', ${id}, 1`)
     },
     columns: 'id, region, code, label, v, extra',
+    recopies: false,
   },
 ]
 

@@ -1,8 +1,8 @@
 # Pintail schema-migration differential gate
 
-Measured 2026-11-14T03:36:43.606Z against `mysql:8.4`.
+Measured 2026-11-14T03:48:11.317Z against `mysql:8.4`.
 
-**383 passed, 0 failed.**
+**403 passed, 0 failed.**
 
 | Family | Check | Status | Detail |
 |---|---|---|---|
@@ -230,6 +230,16 @@ Measured 2026-11-14T03:36:43.606Z against `mysql:8.4`.
 | primary key made composite | rows the migration never wrote to are not stale | PASS |  |
 | an alter with no clause | the whole table matches the source after the migration | PASS |  |
 | an alter with no clause | rows the migration never wrote to are not stale | PASS |  |
+| a text column added, widened and renamed while the mirror was down | the whole table matches the source after the migration | PASS |  |
+| a text column added, widened and renamed while the mirror was down | rows the migration never wrote to are not stale | PASS |  |
+| a column added, dropped and added again under another type while the mirror was down | the whole table matches the source after the migration | PASS |  |
+| a column added, dropped and added again under another type while the mirror was down | rows the migration never wrote to are not stale | PASS |  |
+| two columns added to a latin1 table and one dropped while the mirror was down | the whole table matches the source after the migration | PASS |  |
+| two columns added to a latin1 table and one dropped while the mirror was down | rows the migration never wrote to are not stale | PASS |  |
+| a rebuilt copy swapped in under the table name | the whole table matches the source after the migration | PASS |  |
+| a rebuilt copy swapped in under the table name | rows the migration never wrote to are not stale | PASS |  |
+| columns added and widened in the middle of a stream of writes | the whole table matches the source after the migration | PASS |  |
+| columns added and widened in the middle of a stream of writes | rows the migration never wrote to are not stale | PASS |  |
 | integer width narrows | taken by recopying the table | PASS |  |
 | integer width widens | taken without a quarantine | PASS |  |
 | signedness changes | taken by recopying the table | PASS |  |
@@ -308,6 +318,11 @@ Measured 2026-11-14T03:36:43.606Z against `mysql:8.4`.
 | unique key made composite beside the primary key | taken without a quarantine | PASS |  |
 | primary key made composite | recopied, with the reason given | PASS |  |
 | an alter with no clause | taken without a quarantine | PASS |  |
+| a text column added, widened and renamed while the mirror was down | taken by recopying the table | PASS |  |
+| a column added, dropped and added again under another type while the mirror was down | taken without a quarantine | PASS |  |
+| two columns added to a latin1 table and one dropped while the mirror was down | taken without a quarantine | PASS |  |
+| a rebuilt copy swapped in under the table name | taken without a quarantine | PASS |  |
+| columns added and widened in the middle of a stream of writes | taken without a quarantine | PASS |  |
 | integer width narrows | the table still matches the source after a restart | PASS |  |
 | integer width widens | the table still matches the source after a restart | PASS |  |
 | signedness changes | the table still matches the source after a restart | PASS |  |
@@ -389,3 +404,8 @@ Measured 2026-11-14T03:36:43.606Z against `mysql:8.4`.
 | unique key made composite beside the primary key | the table still matches the source after a restart | PASS |  |
 | primary key made composite | the table still matches the source after a restart | PASS |  |
 | an alter with no clause | the table still matches the source after a restart | PASS |  |
+| a text column added, widened and renamed while the mirror was down | the table still matches the source after a restart | PASS |  |
+| a column added, dropped and added again under another type while the mirror was down | the table still matches the source after a restart | PASS |  |
+| two columns added to a latin1 table and one dropped while the mirror was down | the table still matches the source after a restart | PASS |  |
+| a rebuilt copy swapped in under the table name | the table still matches the source after a restart | PASS |  |
+| columns added and widened in the middle of a stream of writes | the table still matches the source after a restart | PASS |  |
