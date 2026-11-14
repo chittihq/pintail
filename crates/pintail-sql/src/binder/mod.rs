@@ -10162,6 +10162,8 @@ fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> S
             op: UnaryOperator::Plus,
             expr: value,
         } if matches!(value.as_ref(), Expr::Value(_)) => projection_name(value, source, clause),
+        // The NULL literal is named in capitals however it is written.
+        Expr::Value(value) if matches!(value.value, SqlValue::Null) => "NULL".to_owned(),
         Expr::Value(_) => source
             .and_then(|sql| source_text(sql, expr, clause))
             .map_or_else(|| expr.to_string(), |text| text.trim_end().to_owned()),
