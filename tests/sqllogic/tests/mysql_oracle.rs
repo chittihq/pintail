@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3026;
+const EXPECTED_CASES: usize = 3035;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6642,6 +6642,46 @@ fn relational_edge_cases() -> Vec<OracleCase> {
         ordered(
             "outer join-condition subquery",
             "SELECT x.id, y.id FROM bounds x LEFT JOIN bounds y ON x.frac BETWEEN y.frac - 1 AND y.frac + 1 AND y.txt NOT IN (SELECT z.txt FROM bounds z WHERE z.id > x.id AND z.txt IS NOT NULL) ORDER BY x.id, y.id",
+        ),
+        // A DISTINCT subquery correlated inside its own join's ON: the
+        // members, the existence and the one-row value are those of the
+        // rows DISTINCT keeps, with NULL members, duplicates and an inner
+        // side that matches nothing.
+        ordered(
+            "distinct correlated subquery",
+            "SELECT u.id, u.id IN (SELECT DISTINCT o.user_id FROM orders o JOIN events e ON e.id = o.id AND o.user_id = u.id) FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "distinct correlated subquery",
+            "SELECT u.id, u.id NOT IN (SELECT DISTINCT o.user_id FROM orders o JOIN events e ON e.id = o.id AND o.user_id = u.id + 100) FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "distinct correlated subquery",
+            "SELECT x.id, x.id IN (SELECT DISTINCT y.n FROM bounds y JOIN bounds z ON z.id = y.id AND y.u = x.u), x.id NOT IN (SELECT DISTINCT y.n FROM bounds y JOIN bounds z ON z.id = y.id AND y.u = x.u) FROM bounds x ORDER BY x.id",
+        ),
+        ordered(
+            "distinct correlated subquery",
+            "SELECT e.id, e.score NOT IN (SELECT DISTINCT b.n FROM bounds b JOIN events f ON f.id = b.id AND f.active = e.active) FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "distinct correlated subquery",
+            "SELECT u.id, (SELECT DISTINCT o.user_id FROM orders o JOIN events e ON e.id = o.id AND o.user_id = u.id) FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "distinct correlated subquery",
+            "SELECT u.id, (SELECT DISTINCT o.total - o.total FROM orders o JOIN events e ON e.id = o.id AND o.user_id = u.id) FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "distinct correlated subquery",
+            "SELECT u.id, DATE('2024-01-15') IN (SELECT DISTINCT DATE(o.placed_at) FROM orders o JOIN users v ON v.id = o.user_id AND o.user_id = u.id), EXISTS (SELECT DISTINCT o.status, v.name FROM orders o JOIN users v ON v.id = o.user_id AND o.user_id = u.id WHERE o.total > 20) FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "distinct correlated subquery",
+            "SELECT e.id, e.note IN (SELECT DISTINCT f.note FROM events f JOIN users u ON u.id = f.id AND f.active = e.active) FROM events e ORDER BY e.id",
+        ),
+        ordered(
+            "distinct correlated subquery",
+            "SELECT u.id FROM users u WHERE u.id NOT IN (SELECT DISTINCT o.user_id FROM orders o JOIN events e ON e.id = o.id AND o.user_id = u.id AND e.score > 20) ORDER BY u.id",
         ),
     ]
 }

@@ -1019,3 +1019,64 @@ fn the_first_row_by_key_beyond_the_outer_value_is_found_by_position() {
         assert_eq!(other.indexes, 0, "{}", other.profile);
     }
 }
+
+/// DISTINCT changes no answer of a membership or an existence test, so it
+/// must not be what sends one to the per-row path. The correlation sits in
+/// the inner join's ON here, which keeps each subquery from becoming a join
+/// of the outer query: before the set-at-a-time form took a DISTINCT
+/// subquery, these ran once per parcel.
+#[test]
+fn a_distinct_subquery_over_a_join_answers_every_row_in_one_execution() {
+    let fixture = fixture(300);
+    let listed = ran(
+        &fixture,
+        "SELECT p.id, \
+           p.weight IN (SELECT DISTINCT s.ok FROM scans s INNER JOIN zones z \
+                          ON z.id = s.zone_id AND s.parcel_id = p.id), \
+           p.weight NOT IN (SELECT DISTINCT s.ok FROM scans s INNER JOIN zones z \
+                          ON z.id = s.zone_id AND s.parcel_id = p.id), \
+           EXISTS (SELECT DISTINCT s.ok, z.open FROM scans s INNER JOIN zones z \
+                          ON z.id = s.zone_id AND s.parcel_id = p.id WHERE z.open = 1) \
+         FROM parcels p ORDER BY p.id",
+    );
+    assert_eq!(listed.rows.len(), 300);
+    for row in &listed.rows {
+        let parcel: u64 = row[0].parse().expect("id");
+        let scans = scans_of(parcel);
+        let found = scans.iter().any(|(ok, _)| *ok == Some(weight(parcel)));
+        let undecided = scans.iter().any(|(ok, _)| ok.is_none());
+        let open = scans.iter().any(|(_, zone)| zone % 2 == 1);
+        assert_eq!(
+            row[1..],
+            [
+                membership(found, undecided, false),
+                membership(found, undecided, true),
+                u8::from(open).to_string(),
+            ],
+            "parcel {parcel}"
+        );
+    }
+    // The two memberships are one subquery written twice, answered once.
+    assert!(
+        listed.sets >= 2 && listed.per_row == 0,
+        "{}",
+        listed.profile
+    );
+
+    // Text keeps one of the spellings its collation holds equal, and which
+    // one is the execution's choice: a DISTINCT text member stays per-row.
+    let _ = take_dependent_declines();
+    let text = ran(
+        &fixture,
+        "SELECT p.id FROM parcels p WHERE p.label IN (SELECT DISTINCT q.label FROM parcels q \
+           INNER JOIN scans s ON s.parcel_id = q.id AND q.id = p.id) ORDER BY p.id",
+    );
+    assert!(text.per_row > 0 && text.sets == 0, "{}", text.profile);
+    let declines = take_dependent_declines();
+    assert!(
+        declines
+            .iter()
+            .any(|line| line.contains("no set form: it has a window function or DISTINCT")),
+        "{declines:?}"
+    );
+}

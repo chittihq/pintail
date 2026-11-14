@@ -36,7 +36,12 @@
 //!   under its ordinal, NULL members included, and the executor hands each
 //!   outer row the rows of its own tuple. The three-valued answer of
 //!   `IN` and `NOT IN` is then computed from those members exactly as it
-//!   is from the members a per-row execution returns.
+//!   is from the members a per-row execution returns. A `DISTINCT` one is
+//!   distinct over the ordinal and the value together, which is distinct
+//!   within each outer row; it is taken only for a value whose equal
+//!   values share one spelling (whole numbers, decimals, dates and
+//!   date-times), because which of two equal rows survives is not the
+//!   per-row execution's choice here.
 //! - **The outer rows must join something.** With no conjunct equating the
 //!   first inner table with an outer value there is nothing to join on,
 //!   and the form is not built. Where the equality names a later table of
@@ -142,8 +147,11 @@ impl Binder<'_> {
         if !bound.group_by.is_empty() || bound.having.is_some() {
             return Err("it has GROUP BY or HAVING");
         }
-        if !bound.windows.is_empty() || bound.distinct {
-            return Err("it has a window function or DISTINCT");
+        // DISTINCT is kept where the rows it drops are copies of the ones it
+        // keeps (decided below); elsewhere it refuses the form.
+        let refuses_distinct = "it has a window function or DISTINCT";
+        if !bound.windows.is_empty() {
+            return Err(refuses_distinct);
         }
         if bound.from.len() != 1
             || !bound.union_all.is_empty()
@@ -185,6 +193,37 @@ impl Binder<'_> {
             }
             Shape::First(order)
         };
+        // Rows read one by one stay distinct per outer row when the form is
+        // distinct over the ordinal and the value. Which of two equal rows
+        // survives is the execution's choice, so the value must be of a
+        // type whose equal values are one spelling: text keeps one of the
+        // spellings a collation holds equal, and a double one of two zeros.
+        if bound.distinct
+            && !(matches!(shape, Shape::Rows)
+                && (!single
+                    || bound.projection.first().is_some_and(|projection| {
+                        matches!(
+                            projection.expr.data_type,
+                            Some(
+                                DataType::Boolean
+                                    | DataType::Int8
+                                    | DataType::Int16
+                                    | DataType::Int32
+                                    | DataType::Int64
+                                    | DataType::UInt8
+                                    | DataType::UInt16
+                                    | DataType::UInt32
+                                    | DataType::UInt64
+                                    | DataType::Year
+                                    | DataType::Decimal { .. }
+                                    | DataType::Date32
+                                    | DataType::DateTime64 { .. }
+                            )
+                        )
+                    })))
+        {
+            return Err(refuses_distinct);
+        }
         let SetExpr::Select(inner) = query.body.as_ref() else {
             return Err("it is not one SELECT over one FROM item");
         };
@@ -215,10 +254,9 @@ impl Binder<'_> {
         }) {
             return Err("it joins by something other than INNER or LEFT");
         }
-        let selection = inner
-            .selection
-            .as_ref()
-            .ok_or("it has no WHERE to join the outer rows on")?;
+        // With no WHERE the outer rows can still be joined on, by an
+        // equality an inner join's ON holds.
+        let selection = inner.selection.as_ref();
 
         // Every qualified name that resolves in the outer scope. A name the
         // subquery resolves itself is also collected when an outer relation
@@ -373,7 +411,7 @@ impl Binder<'_> {
 
         // Conjuncts the first inner table can take as its join condition:
         // they read it and the outer relations and nothing else.
-        let conjuncts = split_and_conjuncts(selection);
+        let conjuncts = selection.map(split_and_conjuncts).unwrap_or_default();
         let mut base_scope = outer_scope.clone();
         base_scope.push(first_table.clone());
         let (joined, kept): (Vec<&Expr>, Vec<&Expr>) = conjuncts
@@ -493,7 +531,7 @@ impl Binder<'_> {
                 if !set_bound.aggregates.is_empty()
                     || !set_bound.group_by.is_empty()
                     || !set_bound.windows.is_empty()
-                    || set_bound.distinct
+                    || set_bound.distinct != bound.distinct
                     || set_bound.limit.is_some()
                 {
                     return Err(rebound);
