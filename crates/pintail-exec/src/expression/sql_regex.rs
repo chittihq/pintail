@@ -252,22 +252,7 @@ impl Program {
                 continue;
             }
             result.push_str(&text[copied..slots[0]]);
-            regex_automata::util::interpolate::string(
-                replacement,
-                |group, out| {
-                    let Some(slot) = group.checked_mul(2) else {
-                        return;
-                    };
-                    if let (Some(&start), Some(&end)) = (slots.get(slot), slots.get(slot + 1))
-                        && start != usize::MAX
-                        && end != usize::MAX
-                    {
-                        out.push_str(&text[start..end]);
-                    }
-                },
-                |name| self.group_index(name),
-                &mut result,
-            );
+            self.expand_replacement(replacement, text, &slots, &mut result)?;
             copied = slots[1];
             if occurrence != 0 {
                 break;
@@ -275,6 +260,98 @@ impl Program {
         }
         result.push_str(&text[copied..]);
         Ok(result)
+    }
+
+    /// Writes one match's replacement. `$n` is the text of group `n`, read
+    /// with as many digits as still name a group; `${name}` is a named
+    /// group; a backslash makes the next character literal, with `\uXXXX`
+    /// and `\UXXXXXXXX` spelling a code point. A `$` that starts neither
+    /// form and a group the pattern does not have are errors, as they are
+    /// in `MySQL`.
+    fn expand_replacement(
+        &self,
+        replacement: &str,
+        text: &str,
+        slots: &[usize],
+        out: &mut String,
+    ) -> Result<(), ExecError> {
+        let groups = slots.len() / 2;
+        let push_group = |group: usize, out: &mut String| {
+            if let (Some(&start), Some(&end)) = (slots.get(group * 2), slots.get(group * 2 + 1))
+                && start != usize::MAX
+                && end != usize::MAX
+            {
+                out.push_str(&text[start..end]);
+            }
+        };
+        let mut chars = replacement.chars().peekable();
+        while let Some(character) = chars.next() {
+            match character {
+                '\\' => {
+                    let Some(escaped) = chars.next() else {
+                        break;
+                    };
+                    let width = match escaped {
+                        'u' => 4,
+                        'U' => 8,
+                        _ => {
+                            out.push(escaped);
+                            continue;
+                        }
+                    };
+                    let mut code = 0_u32;
+                    for _ in 0..width {
+                        let digit = chars
+                            .next()
+                            .and_then(|digit| digit.to_digit(16))
+                            .ok_or(ExecError::InvalidExpressionType)?;
+                        code = code * 16 + digit;
+                    }
+                    out.push(char::from_u32(code).ok_or(ExecError::InvalidExpressionType)?);
+                }
+                '$' => match chars.peek().copied() {
+                    Some(first) if first.is_ascii_digit() => {
+                        let mut group = 0_usize;
+                        let mut read = 0;
+                        while let Some(digit) = chars.peek().and_then(|digit| digit.to_digit(10)) {
+                            let wider = group * 10 + digit as usize;
+                            if read > 0 && wider >= groups {
+                                break;
+                            }
+                            group = wider;
+                            read += 1;
+                            chars.next();
+                        }
+                        if group >= groups {
+                            return Err(ExecError::InvalidExpressionType);
+                        }
+                        push_group(group, out);
+                    }
+                    Some('{') => {
+                        chars.next();
+                        let mut name = String::new();
+                        loop {
+                            match chars.next() {
+                                Some('}') => break,
+                                Some(letter) => name.push(letter),
+                                None => return Err(ExecError::InvalidExpressionType),
+                            }
+                        }
+                        let named = !name.is_empty()
+                            && !name.starts_with(|first: char| first.is_ascii_digit())
+                            && name.chars().all(|letter| letter.is_ascii_alphanumeric());
+                        let group = named
+                            .then(|| self.group_index(&name))
+                            .flatten()
+                            .ok_or(ExecError::InvalidExpressionType)?;
+                        push_group(group, out);
+                    }
+                    _ => return Err(ExecError::InvalidExpressionType),
+                },
+                other => out.push(other),
+            }
+        }
+        Ok(())
     }
 
     fn group_index(&self, name: &str) -> Option<usize> {
