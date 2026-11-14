@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- An `ALTER TABLE` that changed a column and also named how to carry it
+  out (`MODIFY c VARCHAR(64), ALGORITHM = INPLACE, LOCK = NONE`, or an
+  `ADD COLUMN ... , ALGORITHM = INSTANT`) quarantined the table for a
+  recopy. It is now read as the column change alone and adopted in place
+  when that change allows it.
+- `COUNT` of a right-side expression over a left join counted rather than
+  run gave nothing for a left row with no pair, where an expression that
+  is not NULL over the missing side, such as `COUNT(COALESCE(b.id, 0))`
+  or `COUNT(b.id IS NULL)`, counts it once.
+- The indexes a counted join holds are charged to the query's memory
+  ceiling; a ceiling too small for them runs the join as written.
+- A row compared with a subquery that aggregates without `GROUP BY` beside
+  a plain value, `(a, b) = (SELECT COUNT(*), 7 FROM t)`, failed as
+  returning more than one row, or read no row over an empty table.
+
 ## [0.1.8-rc3] - 2026-10-27
 
 Upgrading moves the metadata schema to version 26. A directory this
