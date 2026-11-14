@@ -15,6 +15,8 @@ mod oracle_boundaries;
 mod oracle_calendar;
 #[path = "support/oracle_candidates.rs"]
 mod oracle_candidates;
+#[path = "support/oracle_lateral.rs"]
+mod oracle_lateral;
 #[path = "support/oracle_ledger.rs"]
 mod oracle_ledger;
 #[path = "support/oracle_physical.rs"]
@@ -44,7 +46,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3035;
+const EXPECTED_CASES: usize = 3167;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1464,6 +1466,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     cases.extend(hand_written_cases());
     cases.extend(oracle_boundaries::cases());
     cases.extend(oracle_calendar::cases());
+    cases.extend(oracle_lateral::cases());
     for corpus in [
         include_str!("support/oracle_reviewed_cases.json"),
         include_str!("support/oracle_seed_cases.json"),
@@ -6742,7 +6745,7 @@ fn documented_rejects_stay_explicit() {
     ])
     .expect("provider");
 
-    for (family, sql, needle) in reject_cases() {
+    for (family, sql, needle) in reject_cases().into_iter().chain(oracle_lateral::rejects()) {
         let error = match execute_pintail(sql, &catalog, &provider) {
             Ok(rows) => panic!(
                 "{family}: expected reject for `{sql}`, got {} row(s)",
