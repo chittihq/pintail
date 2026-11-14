@@ -263,6 +263,12 @@ stays readable as a list of things to fix.
   BIGINT is refused as out of range, where MySQL answers it (`-255 %
   CAST(7 AS UNSIGNED)` is -3).
 
+- A DOUBLE read as a date and time carries the fraction of its shortest
+  decimal spelling, where MySQL carries the digits of the binary value: a
+  packed fourteen-digit date and time leaves a double too few bits for its
+  fraction, so `ADDDATE(20010101235959.9e0, INTERVAL 1 DAY)` ends in
+  `.900000` here and `.898438` there.
+
 - `TIME_TRUNCATE_FRACTIONAL` switches a cast to DATETIME or TIME from
   rounding to truncation and nothing else. Date and time text read by a
   function - `EXTRACT`, `SECOND`, `MICROSECOND`, `DATE`, `TIMESTAMPDIFF`,
