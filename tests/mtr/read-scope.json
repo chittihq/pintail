@@ -2,6 +2,72 @@
   "version": 1,
   "entries": [
     {
+      "file": "ctype_sjis",
+      "id": "ba27acd82fe905f9",
+      "category": "session-side-effect",
+      "reason": "The variable is assigned by a SET statement Pintail refuses (a character set outside those it converts), so the read observes a variable that was never written."
+    },
+    {
+      "file": "ctype_sjis",
+      "id": "59291408b439faaa",
+      "category": "session-side-effect",
+      "reason": "The variable is assigned by a SET statement Pintail refuses (a character set outside those it converts), so the read observes a variable that was never written."
+    },
+    {
+      "file": "ctype_sjis",
+      "id": "419fa326cbb8e44d",
+      "category": "session-side-effect",
+      "reason": "The variable is assigned by a SET statement Pintail refuses (a character set outside those it converts), so the read observes a variable that was never written."
+    },
+    {
+      "file": "ctype_sjis",
+      "id": "fa34306672ab1b2a",
+      "category": "session-side-effect",
+      "reason": "The variable is assigned by a SET statement Pintail refuses (a character set outside those it converts), so the read observes a variable that was never written."
+    },
+    {
+      "file": "ctype_ujis",
+      "id": "021aa43a9213ac6c",
+      "category": "session-side-effect",
+      "reason": "The SELECT assigns a variable from another whose SET statement Pintail refused (a character set outside those it converts)."
+    },
+    {
+      "file": "ctype_ujis",
+      "id": "0a417ec78063b85a",
+      "category": "session-side-effect",
+      "reason": "The SELECT assigns a variable from another whose SET statement Pintail refused (a character set outside those it converts)."
+    },
+    {
+      "file": "ctype_ujis",
+      "id": "cf89835c509192c5",
+      "category": "session-side-effect",
+      "reason": "The SELECT assigns a variable from another whose SET statement Pintail refused (a character set outside those it converts)."
+    },
+    {
+      "file": "ctype_ujis",
+      "id": "461287b96ab0cff1",
+      "category": "session-side-effect",
+      "reason": "The SELECT assigns a variable from another whose SET statement Pintail refused (a character set outside those it converts)."
+    },
+    {
+      "file": "ctype_utf8mb4_uca",
+      "id": "180f5b186274f9df",
+      "category": "session-side-effect",
+      "reason": "The compared variables are reassigned by SET statements Pintail refuses (CHAR ... USING), so the read observes their earlier values."
+    },
+    {
+      "file": "xml",
+      "id": "746acfcd873078ed",
+      "category": "session-side-effect",
+      "reason": "The variable is written by SELECT ... INTO, which Pintail refuses, so the read observes its earlier value."
+    },
+    {
+      "file": "type_set",
+      "id": "b413c50d70d55a4a",
+      "category": "fixture-engine",
+      "reason": "The fixture is a local SET column declared with a duplicate member under a non-strict mode, written by number."
+    },
+    {
       "file": "delete",
       "id": "1cb1faa4251a0fdc",
       "category": "fixture-write",
@@ -80,6 +146,12 @@
       "reason": "The assertion depends on stored-routine diagnostics and condition state."
     },
     {
+      "file": "grant2",
+      "id": "6240afc8f1d8b150",
+      "category": "fixture-write",
+      "reason": "The variable is set from a count of rows that LOAD DATA wrote; the local fixture does not load the file."
+    },
+    {
       "file": "group_skip_scan",
       "id": "2a2cabb3e5b7a3c1",
       "category": "routine",
@@ -114,6 +186,12 @@
       "id": "aed78bd148c892ad",
       "category": "routine",
       "reason": "A stored procedure populates the fixture before the selected rows are compared."
+    },
+    {
+      "file": "having",
+      "id": "5a0541416b15a1a5",
+      "category": "routine",
+      "reason": "The selected rows are counters a stored function updates each time a query calls it."
     },
     {
       "file": "index_skip_scan_end_range",
