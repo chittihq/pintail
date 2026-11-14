@@ -10870,6 +10870,20 @@ fn evaluate_arithmetic(
             result.map(Value::UInt64).ok_or(ExecError::NumericOverflow)
         }
         Some(DataType::Int64) => {
+            // A signed dividend over an unsigned divisor: the remainder of
+            // the magnitudes, signed as the dividend. The divisor may be
+            // past the signed range, and the remainder never is.
+            if let (BinaryOp::Modulo, Value::UInt64(divisor)) = (op, right) {
+                let dividend = mysql_i64(left)?;
+                if *divisor == 0 {
+                    return Ok(divided_by_zero());
+                }
+                let remainder = i128::from(dividend.unsigned_abs() % divisor);
+                let signed = if dividend < 0 { -remainder } else { remainder };
+                return i64::try_from(signed)
+                    .map(Value::Int64)
+                    .map_err(|_| ExecError::NumericOverflow);
+            }
             let left = mysql_i64(left)?;
             let right = mysql_i64(right)?;
             let result = match op {
@@ -10877,6 +10891,9 @@ fn evaluate_arithmetic(
                 BinaryOp::Subtract => left.checked_sub(right),
                 BinaryOp::Multiply => left.checked_mul(right),
                 BinaryOp::IntegerDivide if right != 0 => left.checked_div(right),
+                // Nothing remains of a division by -1, the lowest BIGINT's
+                // included, whose quotient no BIGINT holds.
+                BinaryOp::Modulo if right == -1 => Some(0),
                 BinaryOp::Modulo if right != 0 => left.checked_rem(right),
                 BinaryOp::Divide if right == 0 => return Ok(divided_by_zero()),
                 BinaryOp::IntegerDivide | BinaryOp::Modulo if right == 0 => {

@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4336;
+const EXPECTED_CASES: usize = 4339;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5917,6 +5917,27 @@ fn engine_error_cases() -> Vec<OracleCase> {
             "negated dates and times",
             "SELECT id, -placed_at, -DATE(placed_at), -TIME(placed_at) FROM orders \
              WHERE -placed_at < -20200101000000 ORDER BY id",
+        ),
+        // A remainder is as signed as its dividend, whatever divides it.
+        ordered(
+            "remainder of a signed dividend by an unsigned divisor",
+            "SELECT -255 % CAST(7 AS UNSIGNED), MOD(-255, CAST(7 AS UNSIGNED)), \
+                    -255 MOD CAST(7 AS UNSIGNED), CAST(255 AS UNSIGNED) % -7, \
+                    -9223372036854775808 % CAST(18446744073709551615 AS UNSIGNED), \
+                    CAST(18446744073709551615 AS UNSIGNED) % -9223372036854775808, \
+                    -1 % CAST(18446744073709551615 AS UNSIGNED), -7 % CAST(0 AS UNSIGNED), \
+                    -9223372036854775808 % CAST(9223372036854775808 AS UNSIGNED), \
+                    -9223372036854775808 % CAST(9223372036854775809 AS UNSIGNED), \
+                    -9223372036854775808 MOD -1, -9223372036854775808 % -1, MOD(-7, -1)",
+        ),
+        ordered(
+            "remainder of a signed dividend by an unsigned divisor",
+            "SELECT id, n % u, MOD(n, u), n MOD u, u % n, MOD(u, n), id % u, \
+                    n % CAST(id AS UNSIGNED) FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "remainder of a signed dividend by an unsigned divisor",
+            "SELECT id FROM bounds WHERE n % u < 0 ORDER BY id",
         ),
     ]
 }

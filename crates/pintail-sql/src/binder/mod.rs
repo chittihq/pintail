@@ -8493,6 +8493,10 @@ fn arithmetic_type(
         )
     {
         Some(DataType::Float64)
+    } else if op == BinaryOp::Modulo && left != DataType::UInt64 {
+        // A remainder is as signed as its dividend, whatever divides it:
+        // -255 % CAST(7 AS UNSIGNED) is -3.
+        Some(DataType::Int64)
     } else if left == DataType::UInt64 || right == DataType::UInt64 {
         // Either BIGINT UNSIGNED operand makes the whole result unsigned,
         // as in MySQL: CAST(-3 AS UNSIGNED) + 0 answers the wrapped value,

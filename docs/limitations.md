@@ -297,9 +297,6 @@ stays readable as a list of things to fix.
   MySQL refuses a quotient past the signed range. A negated hex or bit
   literal past 2^53 prints with an exponent (`-0x8000000000000000` is
   `-9.223372036854776e18`), where MySQL prints the same DOUBLE without one.
-  A remainder whose dividend is negative and whose divisor is an unsigned
-  BIGINT is refused as out of range, where MySQL answers it (`-255 %
-  CAST(7 AS UNSIGNED)` is -3).
 
 - A DOUBLE read as a date and time carries the fraction of its shortest
   decimal spelling, where MySQL carries the digits of the binary value: a
