@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-11-14T04:17:58.794Z.
+Measured 2026-11-14T11:19:22.954Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**7539 passed, 0 failed, 5 documented-gap warnings, 49 skipped.**
+**7830 passed, 0 failed, 4 documented-gap warnings, 49 skipped.**
 
-230 unique corpus queries produced 6670 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+239 unique corpus queries produced 6931 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -21,6 +21,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | converge:checkins | PASS |  |
 | snapshot | converge:counters | PASS |  |
 | snapshot | converge:customers | PASS |  |
+| snapshot | converge:documents | PASS |  |
 | snapshot | converge:flash_sales | PASS |  |
 | snapshot | converge:listing_entries | PASS |  |
 | snapshot | converge:listing_groups | PASS |  |
@@ -95,6 +96,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | query:coalesce and ifnull | PASS |  |
 | snapshot | query:enum and set filters | PASS |  |
 | snapshot | query:unsigned boundary readback | PASS |  |
+| snapshot | query:json: a stored document reads back as the text the source stores | PASS |  |
 | snapshot | query:derived table | PASS |  |
 | snapshot | query:group_concat single expression | PASS |  |
 | snapshot | query:window ranking per group | PASS |  |
@@ -240,6 +242,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | snapshot | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | snapshot | query:where: DATE() of a TIMESTAMP | PASS |  |
+| snapshot | query:where: a DATE column against computed text at midnight | PASS |  |
+| snapshot | query:where: a DATE column against computed text with a time | PASS |  |
+| snapshot | query:where: a DATE column equal to computed text with a time | PASS |  |
+| snapshot | query:where: a DATE column in a computed list | PASS |  |
+| snapshot | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| snapshot | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| snapshot | query:where: a TIMESTAMP within a computed month | PASS |  |
+| snapshot | query:where: DATETIME(6) between computed bounds | PASS |  |
 | snapshot | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | snapshot | query:where: DECIMAL against a string literal | PASS |  |
 | snapshot | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -299,6 +309,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | converge:checkins | PASS |  |
 | orm-compat | converge:counters | PASS |  |
 | orm-compat | converge:customers | PASS |  |
+| orm-compat | converge:documents | PASS |  |
 | orm-compat | converge:flash_sales | PASS |  |
 | orm-compat | converge:listing_entries | PASS |  |
 | orm-compat | converge:listing_groups | PASS |  |
@@ -373,6 +384,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | query:coalesce and ifnull | PASS |  |
 | orm-compat | query:enum and set filters | PASS |  |
 | orm-compat | query:unsigned boundary readback | PASS |  |
+| orm-compat | query:json: a stored document reads back as the text the source stores | PASS |  |
 | orm-compat | query:derived table | PASS |  |
 | orm-compat | query:group_concat single expression | PASS |  |
 | orm-compat | query:window ranking per group | PASS |  |
@@ -518,6 +530,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | orm-compat | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | orm-compat | query:where: DATE() of a TIMESTAMP | PASS |  |
+| orm-compat | query:where: a DATE column against computed text at midnight | PASS |  |
+| orm-compat | query:where: a DATE column against computed text with a time | PASS |  |
+| orm-compat | query:where: a DATE column equal to computed text with a time | PASS |  |
+| orm-compat | query:where: a DATE column in a computed list | PASS |  |
+| orm-compat | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| orm-compat | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| orm-compat | query:where: a TIMESTAMP within a computed month | PASS |  |
+| orm-compat | query:where: DATETIME(6) between computed bounds | PASS |  |
 | orm-compat | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | orm-compat | query:where: DECIMAL against a string literal | PASS |  |
 | orm-compat | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -553,6 +573,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | converge:checkins | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
+| crud | converge:documents | PASS |  |
 | crud | converge:flash_sales | PASS |  |
 | crud | converge:listing_entries | PASS |  |
 | crud | converge:listing_groups | PASS |  |
@@ -627,6 +648,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:coalesce and ifnull | PASS |  |
 | crud | query:enum and set filters | PASS |  |
 | crud | query:unsigned boundary readback | PASS |  |
+| crud | query:json: a stored document reads back as the text the source stores | PASS |  |
 | crud | query:derived table | PASS |  |
 | crud | query:group_concat single expression | PASS |  |
 | crud | query:window ranking per group | PASS |  |
@@ -772,6 +794,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | crud | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | crud | query:where: DATE() of a TIMESTAMP | PASS |  |
+| crud | query:where: a DATE column against computed text at midnight | PASS |  |
+| crud | query:where: a DATE column against computed text with a time | PASS |  |
+| crud | query:where: a DATE column equal to computed text with a time | PASS |  |
+| crud | query:where: a DATE column in a computed list | PASS |  |
+| crud | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| crud | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| crud | query:where: a TIMESTAMP within a computed month | PASS |  |
+| crud | query:where: DATETIME(6) between computed bounds | PASS |  |
 | crud | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | crud | query:where: DECIMAL against a string literal | PASS |  |
 | crud | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -807,6 +837,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | converge:checkins | PASS |  |
 | composite-keys | converge:counters | PASS |  |
 | composite-keys | converge:customers | PASS |  |
+| composite-keys | converge:documents | PASS |  |
 | composite-keys | converge:flash_sales | PASS |  |
 | composite-keys | converge:listing_entries | PASS |  |
 | composite-keys | converge:listing_groups | PASS |  |
@@ -881,6 +912,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | query:coalesce and ifnull | PASS |  |
 | composite-keys | query:enum and set filters | PASS |  |
 | composite-keys | query:unsigned boundary readback | PASS |  |
+| composite-keys | query:json: a stored document reads back as the text the source stores | PASS |  |
 | composite-keys | query:derived table | PASS |  |
 | composite-keys | query:group_concat single expression | PASS |  |
 | composite-keys | query:window ranking per group | PASS |  |
@@ -1026,6 +1058,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | composite-keys | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | composite-keys | query:where: DATE() of a TIMESTAMP | PASS |  |
+| composite-keys | query:where: a DATE column against computed text at midnight | PASS |  |
+| composite-keys | query:where: a DATE column against computed text with a time | PASS |  |
+| composite-keys | query:where: a DATE column equal to computed text with a time | PASS |  |
+| composite-keys | query:where: a DATE column in a computed list | PASS |  |
+| composite-keys | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| composite-keys | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| composite-keys | query:where: a TIMESTAMP within a computed month | PASS |  |
+| composite-keys | query:where: DATETIME(6) between computed bounds | PASS |  |
 | composite-keys | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | composite-keys | query:where: DECIMAL against a string literal | PASS |  |
 | composite-keys | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -1061,6 +1101,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | converge:checkins | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
+| type-edges | converge:documents | PASS |  |
 | type-edges | converge:flash_sales | PASS |  |
 | type-edges | converge:listing_entries | PASS |  |
 | type-edges | converge:listing_groups | PASS |  |
@@ -1135,6 +1176,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:coalesce and ifnull | PASS |  |
 | type-edges | query:enum and set filters | PASS |  |
 | type-edges | query:unsigned boundary readback | PASS |  |
+| type-edges | query:json: a stored document reads back as the text the source stores | PASS |  |
 | type-edges | query:derived table | PASS |  |
 | type-edges | query:group_concat single expression | PASS |  |
 | type-edges | query:window ranking per group | PASS |  |
@@ -1280,6 +1322,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | type-edges | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | type-edges | query:where: DATE() of a TIMESTAMP | PASS |  |
+| type-edges | query:where: a DATE column against computed text at midnight | PASS |  |
+| type-edges | query:where: a DATE column against computed text with a time | PASS |  |
+| type-edges | query:where: a DATE column equal to computed text with a time | PASS |  |
+| type-edges | query:where: a DATE column in a computed list | PASS |  |
+| type-edges | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| type-edges | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| type-edges | query:where: a TIMESTAMP within a computed month | PASS |  |
+| type-edges | query:where: DATETIME(6) between computed bounds | PASS |  |
 | type-edges | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | type-edges | query:where: DECIMAL against a string literal | PASS |  |
 | type-edges | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -1318,6 +1368,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | converge:checkins | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
+| ddl | converge:documents | PASS |  |
 | ddl | converge:flash_sales | PASS |  |
 | ddl | converge:listing_entries | PASS |  |
 | ddl | converge:listing_groups | PASS |  |
@@ -1394,6 +1445,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | query:coalesce and ifnull | PASS |  |
 | ddl | query:enum and set filters | PASS |  |
 | ddl | query:unsigned boundary readback | PASS |  |
+| ddl | query:json: a stored document reads back as the text the source stores | PASS |  |
 | ddl | query:derived table | PASS |  |
 | ddl | query:group_concat single expression | PASS |  |
 | ddl | query:window ranking per group | PASS |  |
@@ -1539,6 +1591,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | ddl | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | ddl | query:where: DATE() of a TIMESTAMP | PASS |  |
+| ddl | query:where: a DATE column against computed text at midnight | PASS |  |
+| ddl | query:where: a DATE column against computed text with a time | PASS |  |
+| ddl | query:where: a DATE column equal to computed text with a time | PASS |  |
+| ddl | query:where: a DATE column in a computed list | PASS |  |
+| ddl | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| ddl | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| ddl | query:where: a TIMESTAMP within a computed month | PASS |  |
+| ddl | query:where: DATETIME(6) between computed bounds | PASS |  |
 | ddl | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | ddl | query:where: DECIMAL against a string literal | PASS |  |
 | ddl | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -1574,6 +1634,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | converge:checkins | PASS |  |
 | schema-drift-minimal | converge:counters | PASS |  |
 | schema-drift-minimal | converge:customers | PASS |  |
+| schema-drift-minimal | converge:documents | PASS |  |
 | schema-drift-minimal | converge:flash_sales | PASS |  |
 | schema-drift-minimal | converge:listing_entries | PASS |  |
 | schema-drift-minimal | converge:listing_groups | PASS |  |
@@ -1650,6 +1711,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | query:coalesce and ifnull | PASS |  |
 | schema-drift-minimal | query:enum and set filters | PASS |  |
 | schema-drift-minimal | query:unsigned boundary readback | PASS |  |
+| schema-drift-minimal | query:json: a stored document reads back as the text the source stores | PASS |  |
 | schema-drift-minimal | query:derived table | PASS |  |
 | schema-drift-minimal | query:group_concat single expression | PASS |  |
 | schema-drift-minimal | query:window ranking per group | PASS |  |
@@ -1795,6 +1857,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | schema-drift-minimal | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | schema-drift-minimal | query:where: DATE() of a TIMESTAMP | PASS |  |
+| schema-drift-minimal | query:where: a DATE column against computed text at midnight | PASS |  |
+| schema-drift-minimal | query:where: a DATE column against computed text with a time | PASS |  |
+| schema-drift-minimal | query:where: a DATE column equal to computed text with a time | PASS |  |
+| schema-drift-minimal | query:where: a DATE column in a computed list | PASS |  |
+| schema-drift-minimal | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| schema-drift-minimal | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| schema-drift-minimal | query:where: a TIMESTAMP within a computed month | PASS |  |
+| schema-drift-minimal | query:where: DATETIME(6) between computed bounds | PASS |  |
 | schema-drift-minimal | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | schema-drift-minimal | query:where: DECIMAL against a string literal | PASS |  |
 | schema-drift-minimal | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -1830,6 +1900,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | converge:checkins | PASS |  |
 | schema-drift-unseen | converge:counters | PASS |  |
 | schema-drift-unseen | converge:customers | PASS |  |
+| schema-drift-unseen | converge:documents | PASS |  |
 | schema-drift-unseen | converge:flash_sales | PASS |  |
 | schema-drift-unseen | converge:listing_entries | PASS |  |
 | schema-drift-unseen | converge:listing_groups | PASS |  |
@@ -1906,6 +1977,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:coalesce and ifnull | PASS |  |
 | schema-drift-unseen | query:enum and set filters | PASS |  |
 | schema-drift-unseen | query:unsigned boundary readback | PASS |  |
+| schema-drift-unseen | query:json: a stored document reads back as the text the source stores | PASS |  |
 | schema-drift-unseen | query:derived table | PASS |  |
 | schema-drift-unseen | query:group_concat single expression | PASS |  |
 | schema-drift-unseen | query:window ranking per group | PASS |  |
@@ -2051,6 +2123,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | schema-drift-unseen | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | schema-drift-unseen | query:where: DATE() of a TIMESTAMP | PASS |  |
+| schema-drift-unseen | query:where: a DATE column against computed text at midnight | PASS |  |
+| schema-drift-unseen | query:where: a DATE column against computed text with a time | PASS |  |
+| schema-drift-unseen | query:where: a DATE column equal to computed text with a time | PASS |  |
+| schema-drift-unseen | query:where: a DATE column in a computed list | PASS |  |
+| schema-drift-unseen | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| schema-drift-unseen | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| schema-drift-unseen | query:where: a TIMESTAMP within a computed month | PASS |  |
+| schema-drift-unseen | query:where: DATETIME(6) between computed bounds | PASS |  |
 | schema-drift-unseen | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | schema-drift-unseen | query:where: DECIMAL against a string literal | PASS |  |
 | schema-drift-unseen | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -2092,6 +2172,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | converge:checkins | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
+| churn | converge:documents | PASS |  |
 | churn | converge:flash_sales | PASS |  |
 | churn | converge:listing_entries | PASS |  |
 | churn | converge:listing_groups | PASS |  |
@@ -2168,6 +2249,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | query:coalesce and ifnull | PASS |  |
 | churn | query:enum and set filters | PASS |  |
 | churn | query:unsigned boundary readback | PASS |  |
+| churn | query:json: a stored document reads back as the text the source stores | PASS |  |
 | churn | query:derived table | PASS |  |
 | churn | query:group_concat single expression | PASS |  |
 | churn | query:window ranking per group | PASS |  |
@@ -2313,6 +2395,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | churn | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | churn | query:where: DATE() of a TIMESTAMP | PASS |  |
+| churn | query:where: a DATE column against computed text at midnight | PASS |  |
+| churn | query:where: a DATE column against computed text with a time | PASS |  |
+| churn | query:where: a DATE column equal to computed text with a time | PASS |  |
+| churn | query:where: a DATE column in a computed list | PASS |  |
+| churn | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| churn | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| churn | query:where: a TIMESTAMP within a computed month | PASS |  |
+| churn | query:where: DATETIME(6) between computed bounds | PASS |  |
 | churn | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | churn | query:where: DECIMAL against a string literal | PASS |  |
 | churn | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -2348,6 +2438,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | converge:checkins | PASS |  |
 | contention | converge:counters | PASS |  |
 | contention | converge:customers | PASS |  |
+| contention | converge:documents | PASS |  |
 | contention | converge:flash_sales | PASS |  |
 | contention | converge:listing_entries | PASS |  |
 | contention | converge:listing_groups | PASS |  |
@@ -2424,6 +2515,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | query:coalesce and ifnull | PASS |  |
 | contention | query:enum and set filters | PASS |  |
 | contention | query:unsigned boundary readback | PASS |  |
+| contention | query:json: a stored document reads back as the text the source stores | PASS |  |
 | contention | query:derived table | PASS |  |
 | contention | query:group_concat single expression | PASS |  |
 | contention | query:window ranking per group | PASS |  |
@@ -2569,6 +2661,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | contention | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | contention | query:where: DATE() of a TIMESTAMP | PASS |  |
+| contention | query:where: a DATE column against computed text at midnight | PASS |  |
+| contention | query:where: a DATE column against computed text with a time | PASS |  |
+| contention | query:where: a DATE column equal to computed text with a time | PASS |  |
+| contention | query:where: a DATE column in a computed list | PASS |  |
+| contention | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| contention | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| contention | query:where: a TIMESTAMP within a computed month | PASS |  |
+| contention | query:where: DATETIME(6) between computed bounds | PASS |  |
 | contention | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | contention | query:where: DECIMAL against a string literal | PASS |  |
 | contention | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -2609,6 +2709,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | converge:checkins | PASS |  |
 | execution-budget | converge:counters | PASS |  |
 | execution-budget | converge:customers | PASS |  |
+| execution-budget | converge:documents | PASS |  |
 | execution-budget | converge:flash_sales | PASS |  |
 | execution-budget | converge:listing_entries | PASS |  |
 | execution-budget | converge:listing_groups | PASS |  |
@@ -2685,6 +2786,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:coalesce and ifnull | PASS |  |
 | execution-budget | query:enum and set filters | PASS |  |
 | execution-budget | query:unsigned boundary readback | PASS |  |
+| execution-budget | query:json: a stored document reads back as the text the source stores | PASS |  |
 | execution-budget | query:derived table | PASS |  |
 | execution-budget | query:group_concat single expression | PASS |  |
 | execution-budget | query:window ranking per group | PASS |  |
@@ -2830,6 +2932,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | execution-budget | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | execution-budget | query:where: DATE() of a TIMESTAMP | PASS |  |
+| execution-budget | query:where: a DATE column against computed text at midnight | PASS |  |
+| execution-budget | query:where: a DATE column against computed text with a time | PASS |  |
+| execution-budget | query:where: a DATE column equal to computed text with a time | PASS |  |
+| execution-budget | query:where: a DATE column in a computed list | PASS |  |
+| execution-budget | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| execution-budget | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| execution-budget | query:where: a TIMESTAMP within a computed month | PASS |  |
+| execution-budget | query:where: DATETIME(6) between computed bounds | PASS |  |
 | execution-budget | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | execution-budget | query:where: DECIMAL against a string literal | PASS |  |
 | execution-budget | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -2890,6 +3000,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | connection-collation | converge:checkins | PASS |  |
 | connection-collation | converge:counters | PASS |  |
 | connection-collation | converge:customers | PASS |  |
+| connection-collation | converge:documents | PASS |  |
 | connection-collation | converge:flash_sales | PASS |  |
 | connection-collation | converge:listing_entries | PASS |  |
 | connection-collation | converge:listing_groups | PASS |  |
@@ -2966,6 +3077,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | connection-collation | query:coalesce and ifnull | PASS |  |
 | connection-collation | query:enum and set filters | PASS |  |
 | connection-collation | query:unsigned boundary readback | PASS |  |
+| connection-collation | query:json: a stored document reads back as the text the source stores | PASS |  |
 | connection-collation | query:derived table | PASS |  |
 | connection-collation | query:group_concat single expression | PASS |  |
 | connection-collation | query:window ranking per group | PASS |  |
@@ -3111,6 +3223,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | connection-collation | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | connection-collation | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | connection-collation | query:where: DATE() of a TIMESTAMP | PASS |  |
+| connection-collation | query:where: a DATE column against computed text at midnight | PASS |  |
+| connection-collation | query:where: a DATE column against computed text with a time | PASS |  |
+| connection-collation | query:where: a DATE column equal to computed text with a time | PASS |  |
+| connection-collation | query:where: a DATE column in a computed list | PASS |  |
+| connection-collation | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| connection-collation | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| connection-collation | query:where: a TIMESTAMP within a computed month | PASS |  |
+| connection-collation | query:where: DATETIME(6) between computed bounds | PASS |  |
 | connection-collation | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | connection-collation | query:where: DECIMAL against a string literal | PASS |  |
 | connection-collation | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -3150,6 +3270,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | converge:checkins | PASS |  |
 | spill | converge:counters | PASS |  |
 | spill | converge:customers | PASS |  |
+| spill | converge:documents | PASS |  |
 | spill | converge:flash_sales | PASS |  |
 | spill | converge:listing_entries | PASS |  |
 | spill | converge:listing_groups | PASS |  |
@@ -3226,6 +3347,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:coalesce and ifnull | PASS |  |
 | spill | query:enum and set filters | PASS |  |
 | spill | query:unsigned boundary readback | PASS |  |
+| spill | query:json: a stored document reads back as the text the source stores | PASS |  |
 | spill | query:derived table | PASS |  |
 | spill | query:group_concat single expression | PASS |  |
 | spill | query:window ranking per group | PASS |  |
@@ -3371,6 +3493,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | spill | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | spill | query:where: DATE() of a TIMESTAMP | PASS |  |
+| spill | query:where: a DATE column against computed text at midnight | PASS |  |
+| spill | query:where: a DATE column against computed text with a time | PASS |  |
+| spill | query:where: a DATE column equal to computed text with a time | PASS |  |
+| spill | query:where: a DATE column in a computed list | PASS |  |
+| spill | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| spill | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| spill | query:where: a TIMESTAMP within a computed month | PASS |  |
+| spill | query:where: DATETIME(6) between computed bounds | PASS |  |
 | spill | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | spill | query:where: DECIMAL against a string literal | PASS |  |
 | spill | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -3410,6 +3540,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | converge:checkins | PASS |  |
 | pooling | converge:counters | PASS |  |
 | pooling | converge:customers | PASS |  |
+| pooling | converge:documents | PASS |  |
 | pooling | converge:flash_sales | PASS |  |
 | pooling | converge:listing_entries | PASS |  |
 | pooling | converge:listing_groups | PASS |  |
@@ -3486,6 +3617,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:coalesce and ifnull | PASS |  |
 | pooling | query:enum and set filters | PASS |  |
 | pooling | query:unsigned boundary readback | PASS |  |
+| pooling | query:json: a stored document reads back as the text the source stores | PASS |  |
 | pooling | query:derived table | PASS |  |
 | pooling | query:group_concat single expression | PASS |  |
 | pooling | query:window ranking per group | PASS |  |
@@ -3631,6 +3763,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | pooling | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | pooling | query:where: DATE() of a TIMESTAMP | PASS |  |
+| pooling | query:where: a DATE column against computed text at midnight | PASS |  |
+| pooling | query:where: a DATE column against computed text with a time | PASS |  |
+| pooling | query:where: a DATE column equal to computed text with a time | PASS |  |
+| pooling | query:where: a DATE column in a computed list | PASS |  |
+| pooling | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| pooling | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| pooling | query:where: a TIMESTAMP within a computed month | PASS |  |
+| pooling | query:where: DATETIME(6) between computed bounds | PASS |  |
 | pooling | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | pooling | query:where: DECIMAL against a string literal | PASS |  |
 | pooling | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -3685,6 +3825,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | converge:checkins | PASS |  |
 | local-database | converge:counters | PASS |  |
 | local-database | converge:customers | PASS |  |
+| local-database | converge:documents | PASS |  |
 | local-database | converge:flash_sales | PASS |  |
 | local-database | converge:listing_entries | PASS |  |
 | local-database | converge:listing_groups | PASS |  |
@@ -3761,6 +3902,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | query:coalesce and ifnull | PASS |  |
 | local-database | query:enum and set filters | PASS |  |
 | local-database | query:unsigned boundary readback | PASS |  |
+| local-database | query:json: a stored document reads back as the text the source stores | PASS |  |
 | local-database | query:derived table | PASS |  |
 | local-database | query:group_concat single expression | PASS |  |
 | local-database | query:window ranking per group | PASS |  |
@@ -3906,6 +4048,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | local-database | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | local-database | query:where: DATE() of a TIMESTAMP | PASS |  |
+| local-database | query:where: a DATE column against computed text at midnight | PASS |  |
+| local-database | query:where: a DATE column against computed text with a time | PASS |  |
+| local-database | query:where: a DATE column equal to computed text with a time | PASS |  |
+| local-database | query:where: a DATE column in a computed list | PASS |  |
+| local-database | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| local-database | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| local-database | query:where: a TIMESTAMP within a computed month | PASS |  |
+| local-database | query:where: DATETIME(6) between computed bounds | PASS |  |
 | local-database | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | local-database | query:where: DECIMAL against a string literal | PASS |  |
 | local-database | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -3942,6 +4092,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | converge:checkins | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
+| restart | converge:documents | PASS |  |
 | restart | converge:flash_sales | PASS |  |
 | restart | converge:listing_entries | PASS |  |
 | restart | converge:listing_groups | PASS |  |
@@ -4018,6 +4169,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:coalesce and ifnull | PASS |  |
 | restart | query:enum and set filters | PASS |  |
 | restart | query:unsigned boundary readback | PASS |  |
+| restart | query:json: a stored document reads back as the text the source stores | PASS |  |
 | restart | query:derived table | PASS |  |
 | restart | query:group_concat single expression | PASS |  |
 | restart | query:window ranking per group | PASS |  |
@@ -4163,6 +4315,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | restart | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | restart | query:where: DATE() of a TIMESTAMP | PASS |  |
+| restart | query:where: a DATE column against computed text at midnight | PASS |  |
+| restart | query:where: a DATE column against computed text with a time | PASS |  |
+| restart | query:where: a DATE column equal to computed text with a time | PASS |  |
+| restart | query:where: a DATE column in a computed list | PASS |  |
+| restart | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| restart | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| restart | query:where: a TIMESTAMP within a computed month | PASS |  |
+| restart | query:where: DATETIME(6) between computed bounds | PASS |  |
 | restart | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | restart | query:where: DECIMAL against a string literal | PASS |  |
 | restart | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -4187,12 +4347,12 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:row compared with a correlated aggregating subquery | PASS |  |
 | restart | query:the session database beside a table | PASS |  |
 | restart | service:restart:no table left service unexpectedly | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150024 sync_runs rows for db_3f359b74e2e4b6726313406a4a6a4e34 |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150023 sync_runs rows for db_42645f05969fbdd35f25f5f216d0a839 |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
-| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 3ms over 150000 rows |
-| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 4ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 11ms p99 28ms |
-| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 15ms |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 2ms p95 4ms over 150000 rows |
+| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 2ms p95 4ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 16ms p99 34ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 33ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
 | activity-history | converge:Fact | PASS |  |
@@ -4204,6 +4364,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | converge:checkins | PASS |  |
 | activity-history | converge:counters | PASS |  |
 | activity-history | converge:customers | PASS |  |
+| activity-history | converge:documents | PASS |  |
 | activity-history | converge:flash_sales | PASS |  |
 | activity-history | converge:listing_entries | PASS |  |
 | activity-history | converge:listing_groups | PASS |  |
@@ -4280,6 +4441,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:coalesce and ifnull | PASS |  |
 | activity-history | query:enum and set filters | PASS |  |
 | activity-history | query:unsigned boundary readback | PASS |  |
+| activity-history | query:json: a stored document reads back as the text the source stores | PASS |  |
 | activity-history | query:derived table | PASS |  |
 | activity-history | query:group_concat single expression | PASS |  |
 | activity-history | query:window ranking per group | PASS |  |
@@ -4425,6 +4587,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | activity-history | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | activity-history | query:where: DATE() of a TIMESTAMP | PASS |  |
+| activity-history | query:where: a DATE column against computed text at midnight | PASS |  |
+| activity-history | query:where: a DATE column against computed text with a time | PASS |  |
+| activity-history | query:where: a DATE column equal to computed text with a time | PASS |  |
+| activity-history | query:where: a DATE column in a computed list | PASS |  |
+| activity-history | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| activity-history | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| activity-history | query:where: a TIMESTAMP within a computed month | PASS |  |
+| activity-history | query:where: DATETIME(6) between computed bounds | PASS |  |
 | activity-history | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | activity-history | query:where: DECIMAL against a string literal | PASS |  |
 | activity-history | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -4449,10 +4619,10 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:row compared with a correlated aggregating subquery | PASS |  |
 | activity-history | query:the session database beside a table | PASS |  |
 | activity-history | service:activity-history:no table left service unexpectedly | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4800 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4800 requests: p50 3ms p99 14ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 17ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 3357 vs source 3357 |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4803 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4803 requests: p50 3ms p99 15ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 15ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 5555 vs source 5555 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
@@ -4464,6 +4634,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | poll-storm | converge:checkins | PASS |  |
 | poll-storm | converge:counters | PASS |  |
 | poll-storm | converge:customers | PASS |  |
+| poll-storm | converge:documents | PASS |  |
 | poll-storm | converge:flash_sales | PASS |  |
 | poll-storm | converge:listing_entries | PASS |  |
 | poll-storm | converge:listing_groups | PASS |  |
@@ -4540,6 +4711,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | poll-storm | query:coalesce and ifnull | PASS |  |
 | poll-storm | query:enum and set filters | PASS |  |
 | poll-storm | query:unsigned boundary readback | PASS |  |
+| poll-storm | query:json: a stored document reads back as the text the source stores | PASS |  |
 | poll-storm | query:derived table | PASS |  |
 | poll-storm | query:group_concat single expression | PASS |  |
 | poll-storm | query:window ranking per group | PASS |  |
@@ -4685,6 +4857,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | poll-storm | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | poll-storm | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | poll-storm | query:where: DATE() of a TIMESTAMP | PASS |  |
+| poll-storm | query:where: a DATE column against computed text at midnight | PASS |  |
+| poll-storm | query:where: a DATE column against computed text with a time | PASS |  |
+| poll-storm | query:where: a DATE column equal to computed text with a time | PASS |  |
+| poll-storm | query:where: a DATE column in a computed list | PASS |  |
+| poll-storm | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| poll-storm | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| poll-storm | query:where: a TIMESTAMP within a computed month | PASS |  |
+| poll-storm | query:where: DATETIME(6) between computed bounds | PASS |  |
 | poll-storm | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | poll-storm | query:where: DECIMAL against a string literal | PASS |  |
 | poll-storm | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -4741,6 +4921,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | converge:checkins | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
+| control-plane | converge:documents | PASS |  |
 | control-plane | converge:flash_sales | PASS |  |
 | control-plane | converge:keyless_log | PASS |  |
 | control-plane | converge:listing_entries | PASS |  |
@@ -4818,6 +4999,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | query:coalesce and ifnull | PASS |  |
 | control-plane | query:enum and set filters | PASS |  |
 | control-plane | query:unsigned boundary readback | PASS |  |
+| control-plane | query:json: a stored document reads back as the text the source stores | PASS |  |
 | control-plane | query:derived table | PASS |  |
 | control-plane | query:group_concat single expression | PASS |  |
 | control-plane | query:window ranking per group | PASS |  |
@@ -4963,6 +5145,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | control-plane | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | control-plane | query:where: DATE() of a TIMESTAMP | PASS |  |
+| control-plane | query:where: a DATE column against computed text at midnight | PASS |  |
+| control-plane | query:where: a DATE column against computed text with a time | PASS |  |
+| control-plane | query:where: a DATE column equal to computed text with a time | PASS |  |
+| control-plane | query:where: a DATE column in a computed list | PASS |  |
+| control-plane | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| control-plane | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| control-plane | query:where: a TIMESTAMP within a computed month | PASS |  |
+| control-plane | query:where: DATETIME(6) between computed bounds | PASS |  |
 | control-plane | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | control-plane | query:where: DECIMAL against a string literal | PASS |  |
 | control-plane | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -4999,6 +5189,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | converge:checkins | PASS |  |
 | snapshot-ddl-window | converge:counters | PASS |  |
 | snapshot-ddl-window | converge:customers | PASS |  |
+| snapshot-ddl-window | converge:documents | PASS |  |
 | snapshot-ddl-window | converge:flash_sales | PASS |  |
 | snapshot-ddl-window | converge:keyless_log | PASS |  |
 | snapshot-ddl-window | converge:listing_entries | PASS |  |
@@ -5076,6 +5267,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | query:coalesce and ifnull | PASS |  |
 | snapshot-ddl-window | query:enum and set filters | PASS |  |
 | snapshot-ddl-window | query:unsigned boundary readback | PASS |  |
+| snapshot-ddl-window | query:json: a stored document reads back as the text the source stores | PASS |  |
 | snapshot-ddl-window | query:derived table | PASS |  |
 | snapshot-ddl-window | query:group_concat single expression | PASS |  |
 | snapshot-ddl-window | query:window ranking per group | PASS |  |
@@ -5221,6 +5413,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | snapshot-ddl-window | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | snapshot-ddl-window | query:where: DATE() of a TIMESTAMP | PASS |  |
+| snapshot-ddl-window | query:where: a DATE column against computed text at midnight | PASS |  |
+| snapshot-ddl-window | query:where: a DATE column against computed text with a time | PASS |  |
+| snapshot-ddl-window | query:where: a DATE column equal to computed text with a time | PASS |  |
+| snapshot-ddl-window | query:where: a DATE column in a computed list | PASS |  |
+| snapshot-ddl-window | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| snapshot-ddl-window | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| snapshot-ddl-window | query:where: a TIMESTAMP within a computed month | PASS |  |
+| snapshot-ddl-window | query:where: DATETIME(6) between computed bounds | PASS |  |
 | snapshot-ddl-window | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | snapshot-ddl-window | query:where: DECIMAL against a string literal | PASS |  |
 | snapshot-ddl-window | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -5261,6 +5461,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | converge:checkins | PASS |  |
 | drop-table-cdc | converge:counters | PASS |  |
 | drop-table-cdc | converge:customers | PASS |  |
+| drop-table-cdc | converge:documents | PASS |  |
 | drop-table-cdc | converge:flash_sales | PASS |  |
 | drop-table-cdc | converge:keyless_log | PASS |  |
 | drop-table-cdc | converge:listing_entries | PASS |  |
@@ -5338,6 +5539,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | query:coalesce and ifnull | PASS |  |
 | drop-table-cdc | query:enum and set filters | PASS |  |
 | drop-table-cdc | query:unsigned boundary readback | PASS |  |
+| drop-table-cdc | query:json: a stored document reads back as the text the source stores | PASS |  |
 | drop-table-cdc | query:derived table | PASS |  |
 | drop-table-cdc | query:group_concat single expression | PASS |  |
 | drop-table-cdc | query:window ranking per group | PASS |  |
@@ -5483,6 +5685,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | drop-table-cdc | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | drop-table-cdc | query:where: DATE() of a TIMESTAMP | PASS |  |
+| drop-table-cdc | query:where: a DATE column against computed text at midnight | PASS |  |
+| drop-table-cdc | query:where: a DATE column against computed text with a time | PASS |  |
+| drop-table-cdc | query:where: a DATE column equal to computed text with a time | PASS |  |
+| drop-table-cdc | query:where: a DATE column in a computed list | PASS |  |
+| drop-table-cdc | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| drop-table-cdc | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| drop-table-cdc | query:where: a TIMESTAMP within a computed month | PASS |  |
+| drop-table-cdc | query:where: DATETIME(6) between computed bounds | PASS |  |
 | drop-table-cdc | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | drop-table-cdc | query:where: DECIMAL against a string literal | PASS |  |
 | drop-table-cdc | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -5521,6 +5731,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | converge:checkins | PASS |  |
 | drop-table-recreate | converge:counters | PASS |  |
 | drop-table-recreate | converge:customers | PASS |  |
+| drop-table-recreate | converge:documents | PASS |  |
 | drop-table-recreate | converge:flash_sales | PASS |  |
 | drop-table-recreate | converge:keyless_log | PASS |  |
 | drop-table-recreate | converge:listing_entries | PASS |  |
@@ -5598,6 +5809,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | query:coalesce and ifnull | PASS |  |
 | drop-table-recreate | query:enum and set filters | PASS |  |
 | drop-table-recreate | query:unsigned boundary readback | PASS |  |
+| drop-table-recreate | query:json: a stored document reads back as the text the source stores | PASS |  |
 | drop-table-recreate | query:derived table | PASS |  |
 | drop-table-recreate | query:group_concat single expression | PASS |  |
 | drop-table-recreate | query:window ranking per group | PASS |  |
@@ -5743,6 +5955,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | drop-table-recreate | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | drop-table-recreate | query:where: DATE() of a TIMESTAMP | PASS |  |
+| drop-table-recreate | query:where: a DATE column against computed text at midnight | PASS |  |
+| drop-table-recreate | query:where: a DATE column against computed text with a time | PASS |  |
+| drop-table-recreate | query:where: a DATE column equal to computed text with a time | PASS |  |
+| drop-table-recreate | query:where: a DATE column in a computed list | PASS |  |
+| drop-table-recreate | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| drop-table-recreate | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| drop-table-recreate | query:where: a TIMESTAMP within a computed month | PASS |  |
+| drop-table-recreate | query:where: DATETIME(6) between computed bounds | PASS |  |
 | drop-table-recreate | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | drop-table-recreate | query:where: DECIMAL against a string literal | PASS |  |
 | drop-table-recreate | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -5770,7 +5990,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_3f359b74e2e4b6726313406a4a6a4e34","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-11-14T04:13:20.354989925+00:00","updated_at":"2026-11-14T04:16:49.367761021+00:00"},"tables":30,"rows":7270} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -5783,6 +6003,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | converge:checkins | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
 | drop-table-polling | converge:customers | PASS |  |
+| drop-table-polling | converge:documents | PASS |  |
 | drop-table-polling | converge:flash_sales | PASS |  |
 | drop-table-polling | converge:keyless_log | PASS |  |
 | drop-table-polling | converge:listing_entries | PASS |  |
@@ -5860,6 +6081,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | query:coalesce and ifnull | PASS |  |
 | drop-table-polling | query:enum and set filters | PASS |  |
 | drop-table-polling | query:unsigned boundary readback | PASS |  |
+| drop-table-polling | query:json: a stored document reads back as the text the source stores | PASS |  |
 | drop-table-polling | query:derived table | PASS |  |
 | drop-table-polling | query:group_concat single expression | PASS |  |
 | drop-table-polling | query:window ranking per group | PASS |  |
@@ -6005,6 +6227,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | drop-table-polling | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | drop-table-polling | query:where: DATE() of a TIMESTAMP | PASS |  |
+| drop-table-polling | query:where: a DATE column against computed text at midnight | PASS |  |
+| drop-table-polling | query:where: a DATE column against computed text with a time | PASS |  |
+| drop-table-polling | query:where: a DATE column equal to computed text with a time | PASS |  |
+| drop-table-polling | query:where: a DATE column in a computed list | PASS |  |
+| drop-table-polling | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| drop-table-polling | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| drop-table-polling | query:where: a TIMESTAMP within a computed month | PASS |  |
+| drop-table-polling | query:where: DATETIME(6) between computed bounds | PASS |  |
 | drop-table-polling | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | drop-table-polling | query:where: DECIMAL against a string literal | PASS |  |
 | drop-table-polling | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -6044,6 +6274,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | converge:checkins | PASS |  |
 | restart-during-snapshot | converge:counters | PASS |  |
 | restart-during-snapshot | converge:customers | PASS |  |
+| restart-during-snapshot | converge:documents | PASS |  |
 | restart-during-snapshot | converge:flash_sales | PASS |  |
 | restart-during-snapshot | converge:keyless_log | PASS |  |
 | restart-during-snapshot | converge:listing_entries | PASS |  |
@@ -6121,6 +6352,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | query:coalesce and ifnull | PASS |  |
 | restart-during-snapshot | query:enum and set filters | PASS |  |
 | restart-during-snapshot | query:unsigned boundary readback | PASS |  |
+| restart-during-snapshot | query:json: a stored document reads back as the text the source stores | PASS |  |
 | restart-during-snapshot | query:derived table | PASS |  |
 | restart-during-snapshot | query:group_concat single expression | PASS |  |
 | restart-during-snapshot | query:window ranking per group | PASS |  |
@@ -6266,6 +6498,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | restart-during-snapshot | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | restart-during-snapshot | query:where: DATE() of a TIMESTAMP | PASS |  |
+| restart-during-snapshot | query:where: a DATE column against computed text at midnight | PASS |  |
+| restart-during-snapshot | query:where: a DATE column against computed text with a time | PASS |  |
+| restart-during-snapshot | query:where: a DATE column equal to computed text with a time | PASS |  |
+| restart-during-snapshot | query:where: a DATE column in a computed list | PASS |  |
+| restart-during-snapshot | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| restart-during-snapshot | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| restart-during-snapshot | query:where: a TIMESTAMP within a computed month | PASS |  |
+| restart-during-snapshot | query:where: DATETIME(6) between computed bounds | PASS |  |
 | restart-during-snapshot | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | restart-during-snapshot | query:where: DECIMAL against a string literal | PASS |  |
 | restart-during-snapshot | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -6307,6 +6547,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | converge:checkins | PASS |  |
 | restart-during-resync | converge:counters | PASS |  |
 | restart-during-resync | converge:customers | PASS |  |
+| restart-during-resync | converge:documents | PASS |  |
 | restart-during-resync | converge:flash_sales | PASS |  |
 | restart-during-resync | converge:keyless_log | PASS |  |
 | restart-during-resync | converge:listing_entries | PASS |  |
@@ -6384,6 +6625,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:coalesce and ifnull | PASS |  |
 | restart-during-resync | query:enum and set filters | PASS |  |
 | restart-during-resync | query:unsigned boundary readback | PASS |  |
+| restart-during-resync | query:json: a stored document reads back as the text the source stores | PASS |  |
 | restart-during-resync | query:derived table | PASS |  |
 | restart-during-resync | query:group_concat single expression | PASS |  |
 | restart-during-resync | query:window ranking per group | PASS |  |
@@ -6529,6 +6771,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | restart-during-resync | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | restart-during-resync | query:where: DATE() of a TIMESTAMP | PASS |  |
+| restart-during-resync | query:where: a DATE column against computed text at midnight | PASS |  |
+| restart-during-resync | query:where: a DATE column against computed text with a time | PASS |  |
+| restart-during-resync | query:where: a DATE column equal to computed text with a time | PASS |  |
+| restart-during-resync | query:where: a DATE column in a computed list | PASS |  |
+| restart-during-resync | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| restart-during-resync | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| restart-during-resync | query:where: a TIMESTAMP within a computed month | PASS |  |
+| restart-during-resync | query:where: DATETIME(6) between computed bounds | PASS |  |
 | restart-during-resync | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | restart-during-resync | query:where: DECIMAL against a string literal | PASS |  |
 | restart-during-resync | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -6554,13 +6804,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:the session database beside a table | PASS |  |
 | restart-during-resync | service:restart-during-resync:no table left service unexpectedly | PASS |  |
 | memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 85 ok, dashboards 86 ok; no errors |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 85 ok, dashboards 101 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
 | memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 85 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 169ms p99 824ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 11ms over 6 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 165MB with a 256MB budget |
-| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200600 vs source 200600 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 200ms p99 981ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 16ms over 7 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 160MB with a 256MB budget |
+| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200700 vs source 200700 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
 | memory-pressure | converge:Event | PASS |  |
@@ -6573,6 +6823,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | memory-pressure | converge:checkins | PASS |  |
 | memory-pressure | converge:counters | PASS |  |
 | memory-pressure | converge:customers | PASS |  |
+| memory-pressure | converge:documents | PASS |  |
 | memory-pressure | converge:flash_sales | PASS |  |
 | memory-pressure | converge:keyless_log | PASS |  |
 | memory-pressure | converge:listing_entries | PASS |  |
@@ -6650,6 +6901,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | memory-pressure | query:coalesce and ifnull | PASS |  |
 | memory-pressure | query:enum and set filters | PASS |  |
 | memory-pressure | query:unsigned boundary readback | PASS |  |
+| memory-pressure | query:json: a stored document reads back as the text the source stores | PASS |  |
 | memory-pressure | query:derived table | PASS |  |
 | memory-pressure | query:group_concat single expression | PASS |  |
 | memory-pressure | query:window ranking per group | PASS |  |
@@ -6795,6 +7047,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | memory-pressure | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | memory-pressure | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | memory-pressure | query:where: DATE() of a TIMESTAMP | PASS |  |
+| memory-pressure | query:where: a DATE column against computed text at midnight | PASS |  |
+| memory-pressure | query:where: a DATE column against computed text with a time | PASS |  |
+| memory-pressure | query:where: a DATE column equal to computed text with a time | PASS |  |
+| memory-pressure | query:where: a DATE column in a computed list | PASS |  |
+| memory-pressure | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| memory-pressure | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| memory-pressure | query:where: a TIMESTAMP within a computed month | PASS |  |
+| memory-pressure | query:where: DATETIME(6) between computed bounds | PASS |  |
 | memory-pressure | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | memory-pressure | query:where: DECIMAL against a string literal | PASS |  |
 | memory-pressure | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -6823,7 +7083,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
 | reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 4.4s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 65MB before, peak 391MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 118MB before, peak 299MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
@@ -6835,6 +7095,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | converge:checkins | PASS |  |
 | reconcile-memory | converge:counters | PASS |  |
 | reconcile-memory | converge:customers | PASS |  |
+| reconcile-memory | converge:documents | PASS |  |
 | reconcile-memory | converge:flash_sales | PASS |  |
 | reconcile-memory | converge:keyless_log | PASS |  |
 | reconcile-memory | converge:listing_entries | PASS |  |
@@ -6912,6 +7173,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | query:coalesce and ifnull | PASS |  |
 | reconcile-memory | query:enum and set filters | PASS |  |
 | reconcile-memory | query:unsigned boundary readback | PASS |  |
+| reconcile-memory | query:json: a stored document reads back as the text the source stores | PASS |  |
 | reconcile-memory | query:derived table | PASS |  |
 | reconcile-memory | query:group_concat single expression | PASS |  |
 | reconcile-memory | query:window ranking per group | PASS |  |
@@ -7057,6 +7319,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | reconcile-memory | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | reconcile-memory | query:where: DATE() of a TIMESTAMP | PASS |  |
+| reconcile-memory | query:where: a DATE column against computed text at midnight | PASS |  |
+| reconcile-memory | query:where: a DATE column against computed text with a time | PASS |  |
+| reconcile-memory | query:where: a DATE column equal to computed text with a time | PASS |  |
+| reconcile-memory | query:where: a DATE column in a computed list | PASS |  |
+| reconcile-memory | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| reconcile-memory | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| reconcile-memory | query:where: a TIMESTAMP within a computed month | PASS |  |
+| reconcile-memory | query:where: DATETIME(6) between computed bounds | PASS |  |
 | reconcile-memory | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | reconcile-memory | query:where: DECIMAL against a string literal | PASS |  |
 | reconcile-memory | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -7100,6 +7370,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | converge:checkins | PASS |  |
 | drop-database | converge:counters | PASS |  |
 | drop-database | converge:customers | PASS |  |
+| drop-database | converge:documents | PASS |  |
 | drop-database | converge:flash_sales | PASS |  |
 | drop-database | converge:keyless_log | PASS |  |
 | drop-database | converge:listing_entries | PASS |  |
@@ -7177,6 +7448,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | query:coalesce and ifnull | PASS |  |
 | drop-database | query:enum and set filters | PASS |  |
 | drop-database | query:unsigned boundary readback | PASS |  |
+| drop-database | query:json: a stored document reads back as the text the source stores | PASS |  |
 | drop-database | query:derived table | PASS |  |
 | drop-database | query:group_concat single expression | PASS |  |
 | drop-database | query:window ranking per group | PASS |  |
@@ -7322,6 +7594,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | drop-database | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | drop-database | query:where: DATE() of a TIMESTAMP | PASS |  |
+| drop-database | query:where: a DATE column against computed text at midnight | PASS |  |
+| drop-database | query:where: a DATE column against computed text with a time | PASS |  |
+| drop-database | query:where: a DATE column equal to computed text with a time | PASS |  |
+| drop-database | query:where: a DATE column in a computed list | PASS |  |
+| drop-database | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| drop-database | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| drop-database | query:where: a TIMESTAMP within a computed month | PASS |  |
+| drop-database | query:where: DATETIME(6) between computed bounds | PASS |  |
 | drop-database | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | drop-database | query:where: DECIMAL against a string literal | PASS |  |
 | drop-database | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -7357,6 +7637,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | converge:checkins | PASS |  |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
+| ddl-documented-gaps | converge:documents | PASS |  |
 | ddl-documented-gaps | converge:flash_sales | PASS |  |
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
 | ddl-documented-gaps | converge:listing_entries | PASS |  |
@@ -7434,6 +7715,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | query:coalesce and ifnull | PASS |  |
 | ddl-documented-gaps | query:enum and set filters | PASS |  |
 | ddl-documented-gaps | query:unsigned boundary readback | PASS |  |
+| ddl-documented-gaps | query:json: a stored document reads back as the text the source stores | PASS |  |
 | ddl-documented-gaps | query:derived table | PASS |  |
 | ddl-documented-gaps | query:group_concat single expression | PASS |  |
 | ddl-documented-gaps | query:window ranking per group | PASS |  |
@@ -7579,6 +7861,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
 | ddl-documented-gaps | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
 | ddl-documented-gaps | query:where: DATE() of a TIMESTAMP | PASS |  |
+| ddl-documented-gaps | query:where: a DATE column against computed text at midnight | PASS |  |
+| ddl-documented-gaps | query:where: a DATE column against computed text with a time | PASS |  |
+| ddl-documented-gaps | query:where: a DATE column equal to computed text with a time | PASS |  |
+| ddl-documented-gaps | query:where: a DATE column in a computed list | PASS |  |
+| ddl-documented-gaps | query:where: DATE() of a TIMESTAMP against a formatted day | PASS |  |
+| ddl-documented-gaps | query:where: DATE() of a TIMESTAMP against today, formatted | PASS |  |
+| ddl-documented-gaps | query:where: a TIMESTAMP within a computed month | PASS |  |
+| ddl-documented-gaps | query:where: DATETIME(6) between computed bounds | PASS |  |
 | ddl-documented-gaps | query:where: DATETIME(6) against a fractional literal | PASS |  |
 | ddl-documented-gaps | query:where: DECIMAL against a string literal | PASS |  |
 | ddl-documented-gaps | query:where: DECIMAL BETWEEN two negatives | PASS |  |
@@ -7608,33 +7898,33 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 0.2 | 1.0 |
-| orm-compat | 2.8 | 0.1 | 1.0 |
-| crud | 0.0 | 0.1 | 0.8 |
+| snapshot | 0.0 | 0.1 | 1.0 |
+| orm-compat | 3.1 | 0.2 | 1.2 |
+| crud | 0.0 | 0.1 | 0.9 |
 | composite-keys | 0.0 | 0.1 | 0.8 |
 | type-edges | 0.0 | 0.1 | 0.8 |
-| ddl | 5.4 | 0.6 | 0.8 |
-| schema-drift-minimal | 0.0 | 0.2 | 0.9 |
-| schema-drift-unseen | 0.0 | 2.2 | 0.9 |
-| churn | 0.6 | 0.9 | 1.1 |
-| contention | 12.9 | 0.3 | 1.7 |
-| execution-budget | 0.0 | 0.2 | 1.7 |
-| connection-collation | 0.4 | 0.3 | 1.6 |
-| spill | 3.9 | 0.3 | 1.1 |
-| pooling | 0.1 | 0.1 | 0.9 |
-| local-database | 0.0 | 0.1 | 0.9 |
-| restart | 0.5 | 0.2 | 0.8 |
-| activity-history | 1.4 | 0.2 | 0.9 |
-| poll-storm | 21.0 | 0.1 | 0.9 |
-| control-plane | 19.6 | 0.1 | 0.7 |
-| snapshot-ddl-window | 5.1 | 0.1 | 0.7 |
-| drop-table-cdc | 5.4 | 0.1 | 0.7 |
-| drop-table-recreate | 5.6 | 0.1 | 0.7 |
-| drop-table-polling | 101.1 | 0.1 | 0.7 |
-| restart-during-snapshot | 2.2 | 0.2 | 0.8 |
-| restart-during-resync | 4.2 | 0.2 | 0.8 |
-| memory-pressure | 7.2 | 0.1 | 0.7 |
-| reconcile-memory | 32.3 | 0.2 | 0.8 |
-| drop-database | 10.6 | 0.2 | 0.9 |
-| ddl-documented-gaps | 0.0 | 0.4 | 0.8 |
-| total | 242.4 | 8.0 | 26.9 |
+| ddl | 7.7 | 0.6 | 0.5 |
+| schema-drift-minimal | 0.0 | 0.1 | 0.6 |
+| schema-drift-unseen | 0.0 | 0.4 | 1.0 |
+| churn | 0.4 | 0.9 | 0.7 |
+| contention | 13.6 | 0.1 | 1.0 |
+| execution-budget | 0.0 | 0.2 | 1.2 |
+| connection-collation | 0.2 | 0.1 | 0.9 |
+| spill | 5.5 | 0.5 | 1.1 |
+| pooling | 0.1 | 0.2 | 1.1 |
+| local-database | 0.0 | 0.1 | 1.1 |
+| restart | 0.5 | 0.5 | 0.9 |
+| activity-history | 1.4 | 0.4 | 0.9 |
+| poll-storm | 21.2 | 0.1 | 1.0 |
+| control-plane | 21.6 | 0.3 | 0.9 |
+| snapshot-ddl-window | 5.2 | 0.2 | 0.9 |
+| drop-table-cdc | 5.4 | 0.2 | 1.0 |
+| drop-table-recreate | 5.7 | 0.2 | 0.9 |
+| drop-table-polling | 36.0 | 0.2 | 1.1 |
+| restart-during-snapshot | 2.6 | 0.2 | 1.1 |
+| restart-during-resync | 4.5 | 0.2 | 0.9 |
+| memory-pressure | 7.9 | 0.3 | 1.0 |
+| reconcile-memory | 28.0 | 0.2 | 0.8 |
+| drop-database | 9.6 | 0.1 | 0.9 |
+| ddl-documented-gaps | 0.0 | 0.1 | 0.8 |
+| total | 180.2 | 6.8 | 26.8 |

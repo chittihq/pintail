@@ -1,6 +1,6 @@
 # Pintail schema-migration differential gate
 
-Measured 2026-11-14T04:21:09.870Z against `mysql:8.4`.
+Measured 2026-11-14T11:31:25.366Z against `mysql:8.4`.
 
 **403 passed, 0 failed.**
 

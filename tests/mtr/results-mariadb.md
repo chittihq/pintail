@@ -1,719 +1,719 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-11-14T04:09:12.397Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-11-14T11:31:53.168Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-Replay mode: local. Source commit: 4a82f3c84ce3f64ba9ef12f3637b43a6095bec10; source dirty: false. Binary SHA-256: f565fae7beb4f5dce2e953416a381a4f4a2b1e5a67ced9fa32ba8f315c196f94.
+Replay mode: local. Source commit: 8e56ca285d43a156cbe6911508490de19318df28; source dirty: false. Binary SHA-256: a099ed4327421891c3b337805620b496acaaed658ed697d14b25dcb031e35da7.
 
-**9,343 of 9,683 compared SELECTs match MySQL byte-for-byte** (96.5%), **out of 30,174 SELECTs replayed** - 20,491 never reached a comparison, so this is a share of what could be compared and not of the suite. 334 differ in rows, 6 in column names only. 3,811 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
+**9,873 of 10,026 compared SELECTs match MySQL byte-for-byte** (98.5%; the 430 session-diverged SELECTs are not in that percentage: counted as mismatches it is 94.4%), **out of 30,174 SELECTs replayed** - 20,148 never reached a comparison, so this is a share of what could be compared and not of the suite. 153 differ in rows, 0 in column names only. 3,038 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. 430 did not match after Pintail and MySQL disagreed on a session statement, and say nothing while the sessions differ. Fixtures: 25,847 accepted, 1,076 rejected by Pintail, 25,244 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
-| File | Statements | Exact | Mismatch | Names | Pintail error | Tainted | MySQL error | Setup ok | Setup rejected | Unsupported | Session | Skipped |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1st | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| aborted_clients | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| adddate_454 | 6 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 1 | 1 | 0 | 0 |
-| alias | 130 | 17 | 0 | 0 | 0 | 2 | 0 | 26 | 1 | 27 | 4 | 45 |
-| almost_full | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 |
-| alter_table | 53 | 0 | 0 | 0 | 0 | 9 | 0 | 21 | 2 | 11 | 1 | 9 |
-| alter_table-big | 33 | 1 | 0 | 0 | 0 | 0 | 1 | 9 | 0 | 4 | 16 | 2 |
-| alter_table_autoinc-5574 | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 2 | 0 | 0 |
-| alter_table_combinations | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| alter_table_errors | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 1 | 8 | 0 | 11 |
-| alter_table_locknone | 181 | 0 | 0 | 0 | 0 | 0 | 0 | 84 | 2 | 60 | 0 | 34 |
-| alter_table_locknone_notembedded | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 13 | 0 | 1 |
-| alter_table_online | 133 | 3 | 0 | 0 | 0 | 3 | 0 | 31 | 3 | 49 | 9 | 34 |
-| alter_table_trans | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 1 | 5 | 0 | 2 |
-| alter_user | 47 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 2 | 13 |
-| analyze | 184 | 2 | 0 | 0 | 0 | 0 | 0 | 41 | 1 | 45 | 20 | 41 |
-| analyze_engine_stats | 24 | 3 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 10 | 3 | 3 |
-| analyze_engine_stats2 | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 4 | 3 |
-| analyze_format_json | 115 | 1 | 0 | 0 | 0 | 0 | 0 | 61 | 2 | 19 | 2 | 28 |
-| analyze_format_json_emb | 6 | 1 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 1 | 0 |
-| analyze_format_json_timings | 28 | 3 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 9 | 7 | 0 |
-| analyze_stmt | 125 | 6 | 0 | 0 | 0 | 3 | 0 | 60 | 0 | 9 | 3 | 44 |
-| analyze_stmt_orderby | 52 | 0 | 0 | 0 | 0 | 0 | 0 | 18 | 0 | 9 | 0 | 25 |
-| analyze_stmt_prefetch_count | 28 | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 13 | 4 |
-| analyze_stmt_privileges | 21 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 | 3 | 1 | 14 |
-| analyze_stmt_privileges2 | 2334 | 0 | 0 | 0 | 0 | 107 | 0 | 0 | 0 | 341 | 2 | 1884 |
-| ansi | 37 | 10 | 0 | 0 | 0 | 0 | 1 | 5 | 0 | 0 | 7 | 12 |
-| assign_key_cache | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 7 |
-| auto_increment | 276 | 3 | 0 | 0 | 0 | 33 | 0 | 80 | 19 | 91 | 11 | 24 |
-| bad_user_table | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 14 | 0 | 8 |
-| bench_count_distinct | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 |
-| bigint | 148 | 52 | 0 | 0 | 5 | 18 | 0 | 51 | 5 | 9 | 2 | 5 |
-| binary | 82 | 10 | 0 | 0 | 0 | 29 | 0 | 24 | 3 | 11 | 0 | 3 |
-| binary_to_hex | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 0 | 1 | 4 |
-| bind_address_resolution | 4 | 2 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
-| bind_multiple_addresses_resolution | 5 | 2 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 |
-| bool | 30 | 20 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 3 | 0 |
-| brackets | 856 | 193 | 1 | 0 | 12 | 151 | 60 | 87 | 9 | 222 | 0 | 84 |
-| bulk_replace | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 1 |
-| cache_temporal_4265 | 18 | 3 | 0 | 0 | 0 | 1 | 0 | 12 | 0 | 1 | 1 | 0 |
-| case | 171 | 59 | 2 | 0 | 4 | 6 | 0 | 47 | 2 | 11 | 12 | 28 |
-| cast | 366 | 144 | 2 | 0 | 13 | 16 | 9 | 61 | 3 | 35 | 24 | 58 |
-| change_user | 39 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 12 |
-| change_user_notembedded | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| check | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
-| check_constraint | 213 | 1 | 0 | 0 | 0 | 14 | 0 | 36 | 12 | 62 | 13 | 75 |
-| check_constraint_show | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 1 |
-| check_view_protocol | 11 | 2 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 4 |
-| cli_options_force_protocol_not_win | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| cli_options_force_protocol_win | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| comment_column | 73 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 12 | 5 | 13 |
-| comment_column2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 12 | 0 | 2 |
-| comment_database | 39 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 4 | 24 |
-| comment_index | 55 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 5 | 4 | 13 |
-| comment_table | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 | 5 | 5 |
-| comments | 42 | 28 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 10 |
-| commit | 318 | 4 | 0 | 0 | 3 | 26 | 0 | 16 | 0 | 41 | 54 | 162 |
-| commit_1innodb | 240 | 1 | 0 | 0 | 0 | 56 | 0 | 16 | 0 | 46 | 10 | 111 |
-| compare | 50 | 13 | 0 | 0 | 0 | 8 | 0 | 18 | 4 | 2 | 0 | 5 |
-| compound † | 48 | 4 | 0 | 0 | 0 | 0 | 1 | 7 | 0 | 9 | 9 | 18 |
-| connect2 | 23 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 13 |
-| consistent_snapshot | 15 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 0 | 5 | 0 | 4 |
-| constraints | 95 | 0 | 0 | 0 | 0 | 2 | 0 | 29 | 3 | 14 | 7 | 40 |
-| contributors | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| costs | 44 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 1 | 37 |
-| count_distinct | 73 | 14 | 0 | 0 | 0 | 2 | 0 | 50 | 0 | 2 | 4 | 1 |
-| count_distinct2 | 26 | 20 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 1 |
-| count_distinct3 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 1 |
-| create | 797 | 11 | 0 | 0 | 1 | 76 | 0 | 241 | 12 | 181 | 29 | 237 |
-| create-big | 113 | 4 | 0 | 0 | 0 | 0 | 2 | 25 | 0 | 0 | 73 | 9 |
-| create-uca | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 2 |
-| create_delayed | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
-| create_drop_db | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 12 |
-| create_drop_function | 25 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 5 | 1 | 10 |
-| create_drop_index | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 8 |
-| create_drop_procedure | 23 | 0 | 3 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 0 | 8 |
-| create_drop_udf | 11 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 4 |
-| create_drop_user | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 15 |
-| create_drop_view | 21 | 2 | 0 | 0 | 0 | 1 | 1 | 5 | 0 | 3 | 0 | 5 |
-| create_not_windows | 14 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 1 | 4 |
-| create_or_replace | 274 | 4 | 0 | 0 | 0 | 13 | 1 | 66 | 0 | 80 | 6 | 89 |
-| create_or_replace2 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 3 | 3 |
-| create_or_replace_permission | 26 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 21 |
-| create_or_replace_pfs | 15 | 2 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 3 | 0 | 2 |
-| create_replace_tmp | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 0 | 0 |
-| create_select | 26 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 5 | 2 | 11 |
-| create_user | 38 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 24 |
-| create_utf8 | 32 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 6 | 3 | 12 |
-| create_w_max_indexes_128 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 7 |
-| create_w_max_indexes_64 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 1 | 0 | 10 |
-| create_windows | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| cset_narrowing | 42 | 0 | 0 | 0 | 1 | 8 | 0 | 5 | 1 | 4 | 5 | 15 |
-| cte_cycle | 30 | 0 | 0 | 0 | 0 | 2 | 7 | 13 | 0 | 3 | 0 | 5 |
-| cte_nonrecursive | 150 | 40 | 0 | 0 | 1 | 4 | 1 | 19 | 0 | 10 | 16 | 59 |
-| cte_nonrecursive_not_embedded | 16 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 3 | 8 |
-| cte_recursive | 488 | 46 | 4 | 0 | 15 | 16 | 31 | 182 | 2 | 35 | 82 | 73 |
-| cte_recursive_not_embedded | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 1 |
-| ctype_ascii | 7 | 2 | 0 | 0 | 1 | 0 | 0 | 3 | 0 | 0 | 1 | 0 |
-| ctype_big5 | 455 | 28 | 0 | 0 | 111 | 48 | 18 | 57 | 3 | 115 | 39 | 20 |
-| ctype_binary | 878 | 147 | 1 | 0 | 5 | 36 | 17 | 234 | 12 | 215 | 7 | 196 |
-| ctype_collate | 172 | 1 | 0 | 0 | 10 | 24 | 4 | 37 | 4 | 43 | 8 | 41 |
-| ctype_collate_column | 103 | 0 | 0 | 0 | 0 | 3 | 0 | 13 | 2 | 40 | 0 | 15 |
-| ctype_collate_context | 114 | 0 | 0 | 0 | 0 | 0 | 0 | 19 | 1 | 25 | 15 | 54 |
-| ctype_collate_database | 69 | 0 | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 1 | 3 | 49 |
-| ctype_collate_implicit | 95 | 0 | 0 | 0 | 1 | 1 | 0 | 8 | 0 | 3 | 32 | 26 |
-| ctype_collate_implicit_def | 34 | 0 | 0 | 0 | 5 | 0 | 0 | 5 | 0 | 8 | 3 | 0 |
-| ctype_collate_implicit_utf32 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
-| ctype_collate_table | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 4 | 2 | 10 |
-| ctype_cp1250_ch | 349 | 27 | 4 | 0 | 99 | 30 | 19 | 44 | 4 | 46 | 40 | 28 |
-| ctype_cp1251 | 946 | 150 | 3 | 0 | 5 | 48 | 17 | 240 | 16 | 251 | 7 | 198 |
-| ctype_cp850 | 7 | 1 | 0 | 0 | 1 | 0 | 0 | 2 | 0 | 0 | 2 | 1 |
-| ctype_cp866 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| ctype_cp932 | 169 | 0 | 0 | 0 | 0 | 52 | 2 | 25 | 1 | 44 | 22 | 21 |
-| ctype_create | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 18 | 7 | 40 |
-| ctype_dec8 | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 15 |
-| ctype_errors | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 9 | 14 |
-| ctype_eucjpms | 627 | 4 | 0 | 0 | 226 | 93 | 20 | 73 | 4 | 135 | 25 | 37 |
-| ctype_euckr | 240 | 18 | 0 | 0 | 4 | 25 | 0 | 36 | 3 | 105 | 29 | 8 |
-| ctype_filename | 100 | 9 | 0 | 0 | 0 | 1 | 2 | 45 | 1 | 7 | 18 | 15 |
-| ctype_filesystem | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 |
-| ctype_gb2312 | 423 | 18 | 0 | 0 | 110 | 43 | 18 | 52 | 1 | 108 | 37 | 20 |
-| ctype_gbk | 549 | 18 | 0 | 0 | 227 | 43 | 18 | 53 | 3 | 111 | 39 | 21 |
-| ctype_gbk_export_import | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| ctype_hebrew | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 2 | 1 | 0 |
-| ctype_latin1 | 1092 | 183 | 1 | 0 | 14 | 50 | 17 | 279 | 13 | 286 | 29 | 203 |
-| ctype_latin1_de | 242 | 15 | 0 | 0 | 69 | 44 | 9 | 33 | 2 | 46 | 6 | 12 |
-| ctype_latin2 | 201 | 6 | 0 | 0 | 60 | 25 | 18 | 32 | 1 | 33 | 7 | 13 |
-| ctype_latin2_ch | 331 | 4 | 8 | 0 | 73 | 50 | 64 | 34 | 3 | 59 | 11 | 17 |
-| ctype_ldml | 719 | 78 | 0 | 0 | 0 | 55 | 22 | 34 | 0 | 484 | 16 | 29 |
-| ctype_like_range | 113 | 0 | 0 | 0 | 0 | 38 | 0 | 11 | 1 | 59 | 1 | 3 |
-| ctype_many | 226 | 0 | 0 | 0 | 1 | 19 | 0 | 9 | 6 | 159 | 7 | 25 |
-| ctype_mb | 19 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 0 | 6 | 0 | 8 |
-| ctype_nopad_8bit | 2185 | 0 | 0 | 0 | 0 | 1012 | 0 | 460 | 0 | 460 | 161 | 92 |
-| ctype_partitions | 18 | 0 | 0 | 0 | 0 | 6 | 0 | 3 | 3 | 6 | 0 | 0 |
-| ctype_recoding | 155 | 7 | 0 | 0 | 0 | 28 | 0 | 32 | 5 | 15 | 37 | 31 |
-| ctype_sjis | 435 | 8 | 4 | 2 | 112 | 52 | 20 | 51 | 4 | 120 | 28 | 17 |
-| ctype_swe7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 6 | 0 |
-| ctype_tis620 | 500 | 56 | 0 | 0 | 53 | 100 | 19 | 71 | 1 | 118 | 29 | 40 |
-| ctype_uca | 1687 | 30 | 0 | 0 | 210 | 247 | 18 | 341 | 8 | 581 | 140 | 90 |
-| ctype_uca_partitions | 42 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 | 30 | 2 | 1 |
-| ctype_ucs | 1515 | 250 | 2 | 0 | 24 | 127 | 18 | 320 | 45 | 399 | 74 | 236 |
-| ctype_ucs2_def | 19 | 1 | 0 | 0 | 0 | 0 | 0 | 8 | 2 | 3 | 0 | 5 |
-| ctype_ucs2_turkish_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 |
-| ctype_ucs2_uca | 110 | 0 | 0 | 0 | 0 | 46 | 0 | 21 | 0 | 27 | 11 | 5 |
-| ctype_ucs2_unicode_520_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 |
-| ctype_ujis | 1737 | 20 | 4 | 0 | 236 | 111 | 20 | 80 | 11 | 1171 | 42 | 26 |
-| ctype_ujis_ucs2 | 1172 | 0 | 0 | 0 | 0 | 4 | 0 | 18 | 3 | 1147 | 0 | 0 |
-| ctype_utf16 | 955 | 136 | 3 | 0 | 110 | 153 | 23 | 111 | 38 | 206 | 102 | 52 |
-| ctype_utf16_def | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
-| ctype_utf16_uca | 934 | 24 | 0 | 0 | 99 | 143 | 9 | 169 | 7 | 374 | 64 | 32 |
-| ctype_utf16le | 952 | 110 | 2 | 0 | 110 | 166 | 18 | 126 | 36 | 245 | 62 | 52 |
-| ctype_utf32 | 1051 | 135 | 15 | 0 | 115 | 154 | 30 | 127 | 47 | 225 | 108 | 75 |
-| ctype_utf32_def | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| ctype_utf32_not_embedded | 29 | 0 | 0 | 0 | 0 | 10 | 0 | 2 | 0 | 5 | 1 | 11 |
-| ctype_utf32_uca | 959 | 24 | 0 | 0 | 99 | 142 | 9 | 173 | 8 | 371 | 83 | 37 |
-| ctype_utf8 | 1845 | 331 | 2 | 0 | 30 | 120 | 24 | 562 | 26 | 363 | 71 | 298 |
-| ctype_utf8_uca | 162 | 0 | 0 | 0 | 0 | 52 | 0 | 27 | 0 | 56 | 16 | 11 |
-| ctype_utf8mb3_turkish_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 |
-| ctype_utf8mb3_unicode_520_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 |
-| ctype_utf8mb4 | 1460 | 197 | 2 | 0 | 119 | 161 | 31 | 430 | 14 | 231 | 106 | 143 |
-| ctype_utf8mb4_0900 | 49 | 0 | 0 | 0 | 1 | 0 | 0 | 14 | 1 | 13 | 2 | 15 |
-| ctype_utf8mb4_0900_ai_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 |
-| ctype_utf8mb4_0900_mem | 31 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 1 | 27 |
-| ctype_utf8mb4_turkish_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 |
-| ctype_utf8mb4_uca | 866 | 0 | 0 | 0 | 0 | 111 | 2 | 224 | 2 | 378 | 52 | 91 |
-| ctype_utf8mb4_uca1400_ai_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 |
-| ctype_utf8mb4_uca_allkeys1400 | 20 | 0 | 0 | 0 | 0 | 6 | 0 | 6 | 0 | 6 | 1 | 1 |
-| ctype_utf8mb4_uca_allkeys400 | 18 | 0 | 0 | 0 | 0 | 4 | 0 | 6 | 0 | 6 | 1 | 1 |
-| ctype_utf8mb4_uca_allkeys520 | 18 | 0 | 0 | 0 | 0 | 4 | 0 | 6 | 0 | 6 | 1 | 1 |
-| ctype_utf8mb4_unicode_520_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 |
-| ctype_utf8mb4_unicode_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 |
-| ctype_utf8mb4_unicode_ci_def | 21 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 7 | 1 |
-| custom_aggregate_functions | 338 | 2 | 0 | 0 | 0 | 1 | 85 | 87 | 0 | 53 | 37 | 73 |
-| custom_aggregates_i_s | 28 | 0 | 0 | 0 | 0 | 0 | 2 | 8 | 0 | 2 | 0 | 16 |
-| date_formats | 113 | 58 | 1 | 0 | 7 | 6 | 0 | 12 | 0 | 7 | 19 | 3 |
-| datetime_456 | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 0 | 0 | 0 |
-| ddl_i18n_koi8r | 366 | 0 | 0 | 0 | 18 | 15 | 6 | 4 | 0 | 58 | 77 | 143 |
-| ddl_i18n_utf8 | 366 | 0 | 0 | 0 | 18 | 15 | 6 | 6 | 0 | 56 | 77 | 143 |
-| default | 1310 | 2 | 0 | 0 | 1 | 197 | 0 | 255 | 48 | 426 | 69 | 306 |
-| default_session | 71 | 0 | 0 | 0 | 0 | 7 | 0 | 5 | 1 | 28 | 9 | 13 |
-| default_storage_engine | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| delayed | 172 | 12 | 0 | 0 | 0 | 7 | 0 | 33 | 3 | 53 | 35 | 27 |
-| delayed_blob | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 2 | 2 |
-| delete | 290 | 13 | 4 | 0 | 0 | 18 | 0 | 94 | 4 | 64 | 10 | 81 |
-| delete_returning | 79 | 1 | 0 | 0 | 0 | 10 | 0 | 20 | 0 | 28 | 7 | 13 |
-| delete_single_to_multi | 445 | 0 | 0 | 0 | 0 | 0 | 2 | 327 | 1 | 54 | 36 | 25 |
-| delete_use_source | 115 | 2 | 0 | 0 | 0 | 20 | 0 | 9 | 0 | 45 | 14 | 25 |
-| delete_use_source_engines | 1104 | 20 | 4 | 0 | 3 | 195 | 24 | 231 | 0 | 332 | 138 | 157 |
-| delimiter_command_case_sensitivity | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| deprecated_features | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 12 |
-| derived | 40 | 14 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 2 | 11 |
-| derived_cond_pushdown | 811 | 22 | 0 | 0 | 3 | 41 | 0 | 386 | 1 | 155 | 80 | 119 |
-| derived_opt | 21 | 2 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 3 | 4 |
-| derived_view | 1111 | 47 | 8 | 0 | 6 | 82 | 0 | 404 | 4 | 111 | 214 | 227 |
-| desc_index_min_max | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 10 | 0 | 0 |
-| desc_index_range | 47 | 1 | 0 | 0 | 0 | 5 | 0 | 14 | 0 | 7 | 4 | 9 |
-| dirty_close | 9 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 0 | 0 |
-| distinct | 417 | 68 | 0 | 0 | 3 | 26 | 1 | 184 | 4 | 50 | 25 | 46 |
-| distinct_notembedded | 35 | 15 | 0 | 0 | 0 | 6 | 0 | 7 | 0 | 2 | 3 | 2 |
-| drop | 116 | 1 | 0 | 0 | 0 | 2 | 0 | 25 | 0 | 9 | 8 | 69 |
-| drop_bad_db_type | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 3 | 7 |
-| drop_combinations | 161 | 0 | 0 | 0 | 0 | 0 | 0 | 29 | 0 | 25 | 3 | 104 |
-| drop_table_force | 67 | 1 | 0 | 0 | 0 | 0 | 0 | 34 | 0 | 4 | 0 | 28 |
-| dyncol | 579 | 2 | 0 | 0 | 0 | 43 | 386 | 27 | 0 | 40 | 18 | 63 |
-| empty_string_literal | 75 | 15 | 0 | 4 | 15 | 1 | 0 | 7 | 2 | 5 | 14 | 11 |
-| empty_table | 31 | 5 | 0 | 0 | 2 | 0 | 0 | 13 | 0 | 0 | 5 | 5 |
-| endspace | 71 | 18 | 0 | 0 | 2 | 22 | 0 | 13 | 0 | 9 | 0 | 7 |
-| enforce_storage_engine | 82 | 1 | 0 | 0 | 0 | 0 | 0 | 25 | 2 | 14 | 14 | 21 |
-| enforce_storage_engine_opt | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 2 |
-| engine_error_in_alter-8453 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 3 | 1 |
-| error_simulation | 53 | 0 | 0 | 0 | 0 | 2 | 0 | 20 | 0 | 5 | 17 | 7 |
-| errors | 103 | 5 | 0 | 0 | 0 | 0 | 0 | 27 | 0 | 9 | 7 | 54 |
-| except | 60 | 9 | 0 | 0 | 0 | 0 | 0 | 19 | 1 | 3 | 13 | 15 |
-| except_all | 69 | 19 | 0 | 0 | 0 | 0 | 0 | 19 | 1 | 3 | 12 | 15 |
-| execution_constants | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0 | 0 |
-| explain | 170 | 2 | 0 | 0 | 0 | 2 | 0 | 52 | 0 | 38 | 30 | 46 |
-| explain_json | 184 | 1 | 0 | 0 | 0 | 1 | 0 | 79 | 0 | 20 | 13 | 70 |
-| explain_json_format_partitions | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 1 | 1 | 0 | 5 |
-| explain_non_select | 118 | 5 | 0 | 0 | 0 | 0 | 0 | 59 | 3 | 7 | 2 | 42 |
-| explain_slowquerylog | 26 | 3 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 9 | 5 |
-| ext_key_noPK_6794 | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 4 | 0 | 1 |
-| features | 75 | 8 | 1 | 0 | 4 | 0 | 1 | 27 | 1 | 5 | 11 | 17 |
-| fetch_first | 235 | 1 | 1 | 0 | 0 | 63 | 66 | 40 | 0 | 16 | 9 | 37 |
-| filesort_bad_i_s-7585 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 1 | 2 |
-| filesort_pack | 8 | 2 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 3 | 0 |
-| fix_priv_tables | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| flush2 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 8 |
-| foreign_key | 42 | 1 | 0 | 0 | 0 | 1 | 0 | 18 | 0 | 4 | 0 | 17 |
-| foreign_key_lowercase0 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 1 |
-| frm_bad_row_type-7333 | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 3 |
-| fulltext2 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 |
-| fulltext3 | 16 | 0 | 0 | 0 | 0 | 1 | 1 | 5 | 2 | 3 | 2 | 2 |
-| func_analyse | 146 | 0 | 0 | 0 | 0 | 14 | 12 | 64 | 3 | 28 | 4 | 19 |
-| func_bit | 45 | 19 | 10 | 0 | 0 | 0 | 5 | 0 | 0 | 1 | 0 | 10 |
-| func_concat | 115 | 13 | 1 | 0 | 0 | 28 | 1 | 31 | 10 | 12 | 5 | 9 |
-| func_crypt | 84 | 0 | 0 | 0 | 0 | 11 | 24 | 17 | 3 | 10 | 10 | 9 |
-| func_date_add | 76 | 8 | 0 | 0 | 4 | 7 | 0 | 11 | 2 | 31 | 2 | 9 |
-| func_default | 88 | 0 | 0 | 0 | 2 | 21 | 0 | 22 | 9 | 21 | 1 | 9 |
-| func_digest | 485 | 468 | 0 | 0 | 0 | 4 | 0 | 3 | 1 | 2 | 6 | 1 |
-| func_equal | 25 | 13 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 | 0 |
-| func_extract | 149 | 75 | 18 | 0 | 0 | 0 | 4 | 18 | 0 | 4 | 4 | 26 |
-| func_format | 53 | 0 | 0 | 0 | 45 | 0 | 0 | 7 | 0 | 0 | 1 | 0 |
-| func_gconcat | 255 | 67 | 0 | 0 | 12 | 27 | 0 | 107 | 8 | 10 | 10 | 12 |
-| func_group | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| func_hybrid_type | 628 | 68 | 12 | 0 | 2 | 15 | 1 | 260 | 1 | 75 | 53 | 131 |
-| func_if | 66 | 21 | 1 | 0 | 6 | 0 | 0 | 33 | 0 | 0 | 2 | 2 |
-| func_in | 427 | 102 | 4 | 0 | 8 | 11 | 3 | 134 | 2 | 26 | 34 | 103 |
-| func_int | 61 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 61 |
-| func_isnull | 47 | 0 | 0 | 0 | 0 | 12 | 0 | 14 | 4 | 2 | 4 | 9 |
-| func_json | 1422 | 346 | 16 | 0 | 264 | 62 | 191 | 97 | 4 | 50 | 318 | 67 |
-| func_json_notembedded | 38 | 18 | 0 | 0 | 1 | 0 | 8 | 0 | 0 | 2 | 7 | 2 |
-| func_kdf | 42 | 0 | 0 | 0 | 2 | 0 | 37 | 0 | 0 | 0 | 2 | 1 |
-| func_like | 154 | 32 | 0 | 0 | 4 | 11 | 20 | 49 | 3 | 12 | 9 | 14 |
-| func_math | 1158 | 243 | 4 | 0 | 22 | 161 | 28 | 205 | 8 | 248 | 41 | 186 |
-| func_misc | 489 | 183 | 2 | 0 | 25 | 10 | 4 | 68 | 3 | 25 | 20 | 55 |
-| func_op | 21 | 10 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 3 | 2 |
-| func_regexp | 87 | 18 | 0 | 0 | 2 | 1 | 8 | 25 | 0 | 16 | 13 | 4 |
-| func_regexp_pcre | 253 | 107 | 4 | 0 | 43 | 0 | 44 | 21 | 0 | 2 | 23 | 8 |
-| func_replace | 37 | 0 | 0 | 0 | 0 | 12 | 0 | 11 | 6 | 4 | 0 | 4 |
-| func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 |
-| func_sapdb | 88 | 76 | 0 | 0 | 1 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
-| func_set | 66 | 36 | 0 | 0 | 0 | 0 | 0 | 20 | 0 | 1 | 0 | 5 |
-| func_sformat | 161 | 0 | 0 | 0 | 0 | 9 | 82 | 24 | 4 | 10 | 15 | 17 |
-| func_str | 955 | 426 | 0 | 0 | 97 | 19 | 64 | 185 | 3 | 27 | 18 | 101 |
-| func_test | 128 | 63 | 1 | 0 | 13 | 4 | 0 | 16 | 2 | 10 | 1 | 18 |
-| func_time | 1047 | 499 | 18 | 0 | 22 | 38 | 17 | 217 | 7 | 42 | 79 | 74 |
-| func_time_hires | 55 | 19 | 0 | 0 | 0 | 8 | 0 | 8 | 2 | 5 | 6 | 6 |
-| func_time_round | 139 | 43 | 22 | 0 | 1 | 0 | 2 | 63 | 0 | 0 | 8 | 0 |
-| func_timestamp | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 |
-| func_weight_string | 58 | 1 | 0 | 0 | 13 | 7 | 4 | 8 | 1 | 8 | 2 | 14 |
-| function_defaults | 41 | 3 | 0 | 0 | 0 | 5 | 0 | 16 | 2 | 10 | 4 | 1 |
-| function_defaults_notembedded | 64 | 0 | 0 | 0 | 0 | 0 | 14 | 8 | 0 | 8 | 24 | 10 |
-| gcc296 | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 0 |
-| get_diagnostics | 616 | 98 | 5 | 0 | 3 | 3 | 0 | 66 | 1 | 88 | 192 | 160 |
-| grant2 | 455 | 2 | 1 | 0 | 1 | 12 | 3 | 32 | 0 | 100 | 27 | 252 |
-| grant3 | 123 | 0 | 0 | 0 | 0 | 1 | 1 | 4 | 0 | 15 | 4 | 74 |
-| grant4 | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 41 | 4 | 75 |
-| grant5 | 273 | 0 | 0 | 0 | 0 | 2 | 0 | 6 | 0 | 49 | 13 | 199 |
-| greedy_optimizer | 231 | 0 | 0 | 0 | 0 | 5 | 0 | 96 | 1 | 16 | 14 | 90 |
-| group_by | 902 | 130 | 1 | 0 | 12 | 69 | 14 | 352 | 12 | 67 | 57 | 160 |
-| group_by_cardinality | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 3 | 2 | 6 |
-| group_by_null | 4 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0 | 0 | 0 | 0 |
-| group_min_max | 526 | 19 | 3 | 0 | 5 | 163 | 0 | 70 | 0 | 39 | 6 | 221 |
-| group_min_max_notembedded | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 1 | 2 | 0 |
-| having | 355 | 79 | 0 | 0 | 2 | 16 | 1 | 194 | 2 | 15 | 17 | 28 |
-| having_cond_pushdown | 118 | 11 | 0 | 0 | 0 | 4 | 0 | 66 | 1 | 10 | 10 | 16 |
-| help | 91 | 11 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 37 | 4 | 36 |
-| host_cache_size_functionality | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 1 | 5 |
-| huge_frm-6224 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
-| ignored_index | 104 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 1 | 32 | 0 | 49 |
-| implicit_char_to_num_conversion | 99 | 0 | 0 | 0 | 0 | 78 | 0 | 11 | 0 | 10 | 0 | 0 |
-| implicit_commit | 39 | 0 | 0 | 0 | 0 | 0 | 1 | 11 | 0 | 12 | 5 | 10 |
-| in_datetime_241 | 4 | 1 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| in_subq_cond_pushdown | 45 | 6 | 0 | 0 | 0 | 1 | 1 | 32 | 1 | 3 | 0 | 1 |
-| index_intersect | 158 | 3 | 0 | 0 | 0 | 64 | 0 | 14 | 0 | 31 | 12 | 34 |
-| information_schema | 229 | 0 | 0 | 0 | 2 | 10 | 0 | 21 | 1 | 50 | 9 | 85 |
-| information_schema-big | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| information_schema2 | 14 | 0 | 0 | 0 | 0 | 1 | 0 | 6 | 0 | 3 | 0 | 0 |
-| information_schema_all_engines | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
-| information_schema_chmod | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 |
-| information_schema_columns | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 3 |
-| information_schema_inno | 35 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 10 | 3 | 4 |
-| information_schema_linux | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| information_schema_parameters | 92 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 14 | 16 | 41 |
-| information_schema_part | 39 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 7 | 5 | 0 | 3 |
-| information_schema_prepare | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 |
-| information_schema_routines | 82 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 14 | 42 |
-| information_schema_stats | 31 | 3 | 0 | 0 | 0 | 2 | 0 | 6 | 0 | 5 | 1 | 2 |
-| information_schema_tables | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 10 | 0 | 9 |
-| information_schema_temp_table | 131 | 0 | 0 | 0 | 0 | 1 | 0 | 33 | 0 | 39 | 6 | 39 |
-| insert | 76 | 1 | 0 | 0 | 0 | 6 | 0 | 20 | 5 | 25 | 4 | 6 |
-| insert_notembedded | 75 | 0 | 0 | 0 | 0 | 4 | 0 | 18 | 0 | 13 | 2 | 38 |
-| insert_returning | 202 | 1 | 0 | 0 | 0 | 11 | 0 | 32 | 0 | 63 | 26 | 69 |
-| insert_returning_datatypes | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 5 | 0 | 0 |
-| insert_select | 262 | 9 | 0 | 0 | 0 | 35 | 0 | 96 | 8 | 72 | 14 | 27 |
-| insert_update | 199 | 14 | 0 | 0 | 0 | 31 | 0 | 56 | 4 | 65 | 8 | 14 |
-| insert_update_autoinc-7150 | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 1 | 0 | 0 |
-| intersect | 161 | 17 | 0 | 0 | 6 | 2 | 0 | 73 | 1 | 11 | 25 | 26 |
-| intersect_all | 302 | 28 | 0 | 0 | 9 | 43 | 4 | 101 | 1 | 34 | 29 | 53 |
-| invisible_field | 227 | 0 | 0 | 0 | 0 | 48 | 0 | 32 | 20 | 72 | 8 | 46 |
-| ipv4_and_ipv6 | 12 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| ipv4_as_ipv6 | 36 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
-| ipv6 | 18 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| item_types | 30 | 1 | 0 | 0 | 0 | 6 | 1 | 8 | 0 | 7 | 2 | 5 |
-| join | 681 | 95 | 2 | 0 | 11 | 38 | 1 | 325 | 3 | 84 | 21 | 97 |
-| join_cache | 1410 | 86 | 2 | 0 | 11 | 88 | 0 | 473 | 6 | 176 | 333 | 232 |
-| join_cache_cardinality | 21 | 0 | 0 | 0 | 0 | 0 | 6 | 3 | 0 | 2 | 6 | 4 |
-| join_cache_notasan | 17 | 2 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 8 | 2 |
-| join_nested | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 2 | 0 |
-| join_nested_jcl6 | 41 | 0 | 0 | 0 | 1 | 3 | 0 | 12 | 0 | 8 | 13 | 4 |
-| join_optimizer | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 1 | 8 | 3 | 4 |
-| join_outer | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 2 | 1 |
-| join_outer_jcl6 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 |
-| json_equals | 25 | 0 | 0 | 0 | 0 | 5 | 12 | 4 | 2 | 0 | 1 | 0 |
-| json_normalize | 59 | 2 | 0 | 0 | 0 | 4 | 23 | 10 | 1 | 2 | 14 | 3 |
-| key | 256 | 15 | 0 | 0 | 0 | 20 | 0 | 98 | 8 | 50 | 1 | 63 |
-| key_cache | 334 | 6 | 0 | 0 | 0 | 29 | 0 | 31 | 0 | 79 | 13 | 93 |
-| key_diff | 8 | 3 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 1 |
-| key_primary | 11 | 3 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 2 |
-| keyread | 13 | 0 | 0 | 0 | 0 | 2 | 0 | 7 | 0 | 3 | 0 | 1 |
-| keywords | 163 | 35 | 0 | 0 | 0 | 2 | 0 | 76 | 1 | 21 | 0 | 28 |
-| large_pages | 9 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 1 | 2 | 0 | 2 |
-| last_value | 20 | 7 | 0 | 0 | 0 | 1 | 5 | 4 | 0 | 1 | 0 | 2 |
-| leaks | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 |
-| limit | 70 | 2 | 0 | 0 | 0 | 12 | 0 | 16 | 2 | 15 | 9 | 8 |
-| limit_rows_examined | 260 | 3 | 0 | 0 | 1 | 14 | 59 | 76 | 2 | 12 | 24 | 65 |
-| load_timezones_with_alter_algorithm_inplace | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 12 | 0 | 2 |
-| loaddata | 265 | 7 | 0 | 0 | 1 | 46 | 1 | 76 | 2 | 83 | 29 | 17 |
-| loadxml | 64 | 8 | 0 | 0 | 0 | 3 | 0 | 18 | 0 | 26 | 4 | 5 |
-| locale | 122 | 43 | 0 | 0 | 0 | 5 | 21 | 11 | 1 | 1 | 29 | 10 |
-| locked_temporary-5955 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
-| long_host | 77 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 7 | 2 | 55 |
-| long_tmpdir | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
-| long_unique | 283 | 1 | 0 | 0 | 0 | 13 | 0 | 31 | 1 | 79 | 0 | 149 |
-| long_unique_big | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 1 | 6 |
-| long_unique_bugs | 362 | 0 | 0 | 0 | 0 | 37 | 0 | 86 | 9 | 171 | 4 | 55 |
-| long_unique_bugs_replication | 35 | 0 | 0 | 0 | 0 | 4 | 0 | 3 | 0 | 23 | 1 | 4 |
-| long_unique_delayed | 9 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 5 | 0 | 1 |
-| long_unique_update | 93 | 0 | 0 | 0 | 0 | 15 | 0 | 4 | 0 | 51 | 0 | 20 |
-| long_unique_using_hash | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 0 | 7 |
-| lotofstack | 33 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 5 | 8 | 17 |
-| lowercase_fs_off | 79 | 0 | 0 | 0 | 1 | 0 | 2 | 12 | 0 | 13 | 5 | 43 |
-| lowercase_fs_on | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| lowercase_mixed_tmpdir | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 | 0 |
-| lowercase_table | 84 | 1 | 0 | 0 | 0 | 1 | 11 | 19 | 0 | 15 | 6 | 28 |
-| lowercase_table2 | 204 | 2 | 0 | 0 | 0 | 8 | 4 | 36 | 1 | 44 | 11 | 87 |
-| lowercase_table4 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 |
-| lowercase_table5 | 96 | 2 | 0 | 0 | 0 | 1 | 4 | 19 | 0 | 25 | 0 | 40 |
-| lowercase_table_qcache | 23 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 5 | 4 | 11 |
-| lowercase_utf8 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 2 |
-| lowercase_view | 53 | 1 | 0 | 0 | 0 | 1 | 3 | 11 | 0 | 20 | 2 | 13 |
-| master_info_numeric_validation | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| max_session_mem_used | 33 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 13 | 11 |
-| max_statement_time | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 4 | 1 |
-| mdev-21101 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 0 |
-| mdev-25830 | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 5 | 8 |
-| mdev-31636 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| mdev-33070 | 4 | 1 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 |
-| mdev-35046 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 1 | 6 |
-| mdev-35721-ubsan | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 3 | 0 | 1 |
-| mdev-35765 | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 2 | 0 | 0 | 0 |
-| mdev-37000 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 0 |
-| mdev13607 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 1 |
-| mdev19198 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 5 |
-| mdev316 | 7 | 3 | 0 | 0 | 1 | 0 | 2 | 0 | 0 | 0 | 1 | 0 |
-| mdev375 | 9 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 6 |
-| mdev6830 | 15 | 1 | 0 | 0 | 0 | 1 | 0 | 6 | 0 | 2 | 3 | 2 |
-| mdev_14586 | 27 | 0 | 0 | 0 | 0 | 4 | 0 | 5 | 0 | 18 | 0 | 0 |
-| mdev_19276 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
-| mdev_22370 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
-| mdev_38998 | 10 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 7 | 0 | 0 |
-| mdev_39118 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| mdev_39118-win | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| metadata | 104 | 22 | 0 | 0 | 3 | 14 | 0 | 27 | 2 | 11 | 4 | 5 |
-| mrr_icp_extra | 58 | 4 | 0 | 0 | 1 | 0 | 0 | 29 | 0 | 1 | 5 | 18 |
-| multi_statement | 11 | 3 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 0 | 2 |
-| multi_update | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 |
-| multi_update_big | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| multi_update_tiny_hash | 22 | 1 | 0 | 0 | 0 | 2 | 0 | 9 | 1 | 9 | 0 | 0 |
-| my_getopt_case_insensitive | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| my_print_defaults | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| myisampack | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 12 | 0 | 6 |
-| mysql | 94 | 6 | 0 | 0 | 0 | 3 | 6 | 24 | 0 | 16 | 5 | 34 |
-| mysql-interactive | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql-metadata | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 0 |
-| mysql5613mysql | 48 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 16 |
-| mysql57_virtual | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 2 | 0 | 4 |
-| mysql57nopart | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
-| mysql_binary_mode | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 |
-| mysql_binary_zero_insert | 6 | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 2 |
-| mysql_comments | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 8 |
-| mysql_connector_net | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_cp932 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_embedded | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_install_db_win | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 4 | 0 |
-| mysql_install_db_win_admin | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| mysql_install_db_win_utf8 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| mysql_json_table_recreate | 61 | 0 | 0 | 0 | 0 | 3 | 0 | 11 | 0 | 16 | 1 | 29 |
-| mysql_locale_posix | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| mysql_not_windows | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_protocols | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_tzinfo_to_sql_symlink | 84 | 0 | 0 | 0 | 0 | 35 | 0 | 6 | 0 | 30 | 2 | 0 |
-| mysqld--help † | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
-| mysqld_option_err | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| name_const_replacement | 18 | 1 | 1 | 0 | 0 | 0 | 1 | 7 | 0 | 1 | 0 | 7 |
-| named_pipe | 1446 | 0 | 0 | 0 | 0 | 113 | 0 | 15 | 3 | 1241 | 11 | 43 |
-| natural_sort_key | 24 | 0 | 0 | 0 | 0 | 4 | 6 | 2 | 0 | 5 | 1 | 2 |
-| negation_elimination | 68 | 34 | 0 | 0 | 0 | 1 | 0 | 4 | 0 | 1 | 0 | 28 |
-| no-threads | 5 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| non_blocking_api | 6 | 2 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 |
-| null | 341 | 44 | 4 | 0 | 1 | 7 | 3 | 121 | 3 | 62 | 18 | 78 |
-| null_aware_cardinality | 42 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 7 | 5 | 21 |
-| null_key | 164 | 15 | 0 | 0 | 0 | 20 | 0 | 42 | 0 | 33 | 2 | 42 |
-| odbc | 17 | 0 | 0 | 0 | 1 | 2 | 0 | 5 | 1 | 2 | 2 | 1 |
-| olap | 222 | 64 | 0 | 0 | 15 | 4 | 1 | 101 | 0 | 8 | 3 | 19 |
-| old-mode | 115 | 10 | 1 | 0 | 0 | 19 | 0 | 24 | 7 | 23 | 18 | 10 |
-| openssl_1 | 36 | 3 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 1 | 19 |
-| openssl_6975 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 6 |
-| opt_trace | 580 | 15 | 0 | 0 | 4 | 7 | 4 | 194 | 5 | 73 | 103 | 89 |
-| opt_trace_default | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| opt_trace_security | 91 | 0 | 0 | 0 | 0 | 10 | 0 | 8 | 0 | 4 | 23 | 29 |
-| opt_trace_selectivity | 38 | 0 | 0 | 0 | 0 | 17 | 4 | 1 | 0 | 3 | 4 | 1 |
-| opt_trace_ucs2 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 1 | 1 |
-| opt_tvc | 74 | 6 | 0 | 0 | 0 | 0 | 0 | 30 | 0 | 5 | 32 | 1 |
-| optimizer_costs | 105 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 13 | 9 | 43 |
-| optimizer_costs2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| order_by | 680 | 21 | 0 | 0 | 2 | 107 | 3 | 199 | 6 | 147 | 78 | 102 |
-| order_by-mdev-10122 | 31 | 22 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| order_by_limit_join | 69 | 3 | 0 | 0 | 0 | 0 | 0 | 17 | 0 | 9 | 29 | 11 |
-| order_by_optimizer | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 5 | 0 | 2 |
-| order_by_pack_big | 42 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 12 | 15 | 11 |
-| order_by_sortkey | 29 | 0 | 0 | 0 | 0 | 5 | 0 | 2 | 1 | 17 | 1 | 3 |
-| order_by_zerolength-4285 | 13 | 1 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 3 | 2 |
-| order_fill_sortbuf | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 1 |
-| outfile | 34 | 0 | 0 | 0 | 5 | 0 | 0 | 6 | 0 | 5 | 3 | 15 |
-| outfile_loaddata | 42 | 0 | 0 | 0 | 0 | 14 | 0 | 13 | 2 | 11 | 2 | 0 |
-| overflow | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| packet | 14 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 7 |
-| parser | 768 | 42 | 5 | 0 | 15 | 7 | 32 | 209 | 2 | 23 | 37 | 371 |
-| parser_not_embedded | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 26 |
-| perror | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
-| perror-win | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
-| pool_of_threads | 1448 | 0 | 0 | 0 | 0 | 113 | 0 | 15 | 3 | 1241 | 13 | 43 |
-| precedence | 3444 | 0 | 0 | 0 | 0 | 1139 | 0 | 0 | 0 | 1152 | 1 | 1 |
-| precedence_bugs | 30 | 3 | 0 | 0 | 0 | 2 | 0 | 12 | 0 | 4 | 0 | 9 |
-| preload | 62 | 0 | 0 | 0 | 0 | 8 | 0 | 4 | 1 | 18 | 2 | 26 |
-| prepare | 56 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 2 | 6 | 31 | 2 |
-| processlist | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 8 | 1 |
-| processlist_notembedded | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 4 | 0 |
-| progress_976225 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 1 |
-| public_basic | 64 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 7 | 1 | 52 |
-| public_privileges | 172 | 2 | 0 | 0 | 0 | 0 | 11 | 15 | 0 | 16 | 21 | 107 |
-| quick_select_4161 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 4 | 1 |
-| range | 828 | 104 | 0 | 0 | 24 | 67 | 2 | 312 | 11 | 135 | 45 | 127 |
-| range_interrupted-13751 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 3 | 2 |
-| range_mrr_icp | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
-| range_notembedded | 80 | 11 | 0 | 0 | 1 | 0 | 0 | 27 | 0 | 1 | 33 | 6 |
-| read_only | 134 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 23 | 2 | 90 |
-| rename | 88 | 0 | 0 | 0 | 3 | 3 | 1 | 24 | 0 | 28 | 0 | 29 |
-| renamedb | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
-| reopen_temp_table | 120 | 1 | 0 | 0 | 0 | 11 | 4 | 24 | 0 | 43 | 3 | 34 |
-| repair | 119 | 3 | 0 | 0 | 0 | 1 | 1 | 33 | 1 | 20 | 18 | 41 |
-| repair_symlink-5543 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 0 | 2 |
-| replace | 21 | 0 | 0 | 0 | 0 | 1 | 0 | 8 | 0 | 8 | 0 | 4 |
-| replace_returning | 87 | 0 | 0 | 0 | 0 | 4 | 0 | 8 | 0 | 34 | 12 | 29 |
-| replace_returning_datatypes | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 0 | 0 |
-| replace_returning_err | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 24 |
-| rollback | 14 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 2 | 0 | 5 |
-| round | 130 | 0 | 0 | 0 | 0 | 9 | 0 | 30 | 8 | 83 | 0 | 0 |
-| row | 180 | 88 | 0 | 0 | 2 | 8 | 0 | 43 | 4 | 0 | 1 | 33 |
-| row-checksum | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 25 | 3 | 12 | 1 | 31 |
-| row-checksum-old | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| rowid_filter | 325 | 0 | 0 | 0 | 0 | 1 | 0 | 300 | 1 | 11 | 5 | 7 |
-| rownum | 325 | 7 | 1 | 0 | 0 | 82 | 6 | 70 | 0 | 45 | 43 | 68 |
-| sargable_casefold | 62 | 0 | 0 | 0 | 1 | 5 | 0 | 6 | 0 | 6 | 5 | 38 |
-| sargable_casefold_notembedded | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 2 | 3 |
-| sargable_casefold_part | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 2 | 3 |
-| sargable_date_cond | 147 | 0 | 0 | 0 | 1 | 29 | 1 | 32 | 1 | 13 | 20 | 50 |
-| schema | 31 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 22 |
-| second_frac-9175 | 5 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 | 0 | 2 |
-| secondary_key_costs | 44 | 0 | 0 | 0 | 0 | 1 | 2 | 5 | 0 | 9 | 13 | 12 |
-| select | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 1 |
-| select_found | 28 | 0 | 0 | 0 | 2 | 3 | 0 | 8 | 1 | 0 | 0 | 1 |
-| select_jcl6 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 1 |
-| select_pkeycache | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| select_safe | 55 | 1 | 0 | 0 | 0 | 4 | 0 | 7 | 0 | 16 | 12 | 14 |
-| selectivity | 952 | 27 | 2 | 0 | 2 | 12 | 0 | 472 | 3 | 108 | 200 | 122 |
-| selectivity_no_engine | 143 | 4 | 0 | 0 | 0 | 2 | 0 | 54 | 1 | 11 | 42 | 27 |
-| selectivity_notembedded | 85 | 0 | 0 | 0 | 0 | 2 | 0 | 7 | 0 | 44 | 21 | 6 |
-| servers | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 43 | 1 | 19 |
-| set_operation | 133 | 8 | 0 | 0 | 0 | 29 | 0 | 34 | 0 | 48 | 8 | 5 |
-| set_operation_oracle | 87 | 9 | 0 | 0 | 2 | 8 | 0 | 31 | 0 | 7 | 14 | 16 |
-| set_statement | 306 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 21 | 145 | 77 |
-| set_statement_notembedded | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 1 | 4 |
-| show | 55 | 3 | 0 | 0 | 2 | 0 | 0 | 18 | 0 | 4 | 0 | 24 |
-| show_analyze | 130 | 1 | 0 | 0 | 0 | 0 | 0 | 17 | 0 | 48 | 54 | 10 |
-| show_analyze_json | 119 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 48 | 51 | 12 |
-| show_bad_definer-5553 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 3 |
-| show_check | 498 | 0 | 0 | 0 | 0 | 4 | 0 | 66 | 2 | 99 | 38 | 276 |
-| show_create_user | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 24 |
-| show_explain | 457 | 0 | 1 | 0 | 1 | 4 | 0 | 95 | 0 | 148 | 155 | 49 |
-| show_explain_json | 174 | 0 | 1 | 0 | 1 | 0 | 0 | 13 | 0 | 67 | 73 | 19 |
-| show_explain_non_select | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 7 | 8 | 0 |
-| show_function_with_pad_char_to_full_length | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 4 |
-| show_profile | 6 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 |
-| show_row_order-9226 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 |
-| sighup-6580 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| simultaneous_assignment | 81 | 1 | 2 | 0 | 0 | 14 | 0 | 19 | 1 | 22 | 3 | 19 |
-| single_delete_update | 260 | 0 | 0 | 0 | 0 | 40 | 0 | 44 | 0 | 46 | 0 | 130 |
-| skip_grants | 64 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 18 | 1 | 35 |
-| skip_name_resolve | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 18 |
-| slowlog_enospace-10508 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 2 | 3 |
-| slowlog_integrity | 35 | 3 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 8 | 10 | 11 |
-| socket_conflict | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 0 |
-| sp2 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 6 |
-| sql_mode | 250 | 5 | 1 | 0 | 18 | 9 | 1 | 30 | 4 | 11 | 109 | 49 |
-| sql_mode_pad_char_to_full_length | 49 | 0 | 0 | 0 | 0 | 0 | 0 | 14 | 0 | 16 | 13 | 6 |
-| sql_safe_updates | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 4 | 1 | 5 |
-| stat_tables | 907 | 3 | 0 | 0 | 0 | 11 | 0 | 321 | 1 | 369 | 92 | 67 |
-| stat_tables-enospc | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 5 | 2 |
-| stat_tables_disabled | 331 | 0 | 0 | 0 | 0 | 0 | 0 | 300 | 1 | 3 | 15 | 10 |
-| stat_tables_missing | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 2 |
-| stat_tables_par | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| stat_tables_rbr | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 4 | 2 |
-| stat_tables_repl | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 3 | 0 | 6 |
-| statement-expr | 32 | 1 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 2 | 1 | 19 |
-| statistics | 494 | 0 | 0 | 0 | 0 | 15 | 0 | 37 | 3 | 159 | 75 | 81 |
-| statistics_close | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 1 |
-| statistics_json | 403 | 5 | 0 | 0 | 4 | 15 | 0 | 78 | 8 | 79 | 37 | 154 |
-| status | 35 | 3 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 2 | 4 | 11 |
-| status2 | 26 | 2 | 0 | 0 | 1 | 0 | 0 | 5 | 0 | 4 | 0 | 13 |
-| str_to_datetime_457 | 9 | 4 | 4 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
-| strict | 602 | 12 | 0 | 0 | 0 | 15 | 0 | 101 | 17 | 102 | 46 | 304 |
-| strict_autoinc_1myisam | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 0 | 5 | 3 |
-| strict_autoinc_2innodb | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 0 | 5 | 3 |
-| strict_autoinc_3heap | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 0 | 5 | 3 |
-| strings | 16 | 1 | 0 | 0 | 0 | 0 | 0 | 5 | 2 | 3 | 1 | 4 |
-| subselect | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 |
-| subselect2 | 153 | 7 | 0 | 0 | 0 | 3 | 0 | 53 | 7 | 56 | 17 | 9 |
-| subselect3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 |
-| subselect3_jcl6 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
-| subselect4 | 1013 | 144 | 1 | 0 | 12 | 29 | 2 | 416 | 3 | 63 | 155 | 183 |
-| subselect_cache | 984 | 44 | 0 | 0 | 18 | 11 | 0 | 646 | 1 | 17 | 92 | 152 |
-| subselect_elimination | 70 | 3 | 0 | 0 | 1 | 4 | 0 | 20 | 1 | 19 | 8 | 13 |
-| subselect_exists2in | 341 | 17 | 0 | 0 | 3 | 15 | 1 | 159 | 0 | 29 | 80 | 37 |
-| subselect_exists2in_costmat | 54 | 0 | 0 | 0 | 0 | 4 | 0 | 3 | 0 | 32 | 8 | 7 |
-| subselect_extra | 144 | 7 | 0 | 0 | 0 | 10 | 0 | 59 | 0 | 25 | 8 | 35 |
-| subselect_extra_no_semijoin | 17 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 8 | 4 |
-| subselect_firstmatch | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 2 | 3 | 1 |
-| subselect_mat | 163 | 18 | 0 | 0 | 2 | 7 | 0 | 65 | 0 | 21 | 27 | 22 |
-| subselect_mat_analyze_json | 36 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 6 | 18 |
-| subselect_mat_cost | 93 | 0 | 0 | 0 | 0 | 18 | 0 | 3 | 0 | 33 | 10 | 29 |
-| subselect_mat_cost_bugs | 199 | 13 | 1 | 0 | 2 | 2 | 0 | 122 | 0 | 11 | 30 | 17 |
-| subselect_no_exists_to_in | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subselect_no_mat | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 |
-| subselect_no_opts | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
-| subselect_no_scache | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
-| subselect_no_semijoin | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 8 | 1 |
-| subselect_notembedded | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 2 |
-| subselect_nulls | 45 | 14 | 0 | 0 | 10 | 0 | 0 | 18 | 0 | 0 | 3 | 0 |
-| subselect_partial_match | 416 | 13 | 0 | 0 | 78 | 7 | 0 | 199 | 0 | 4 | 54 | 61 |
-| subselect_sj | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 5 | 2 |
-| subselect_sj2 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 2 |
-| subselect_sj2_jcl6 | 65 | 3 | 0 | 0 | 0 | 1 | 0 | 23 | 0 | 1 | 28 | 9 |
-| subselect_sj2_mat | 144 | 10 | 0 | 0 | 0 | 4 | 0 | 69 | 0 | 3 | 34 | 22 |
-| subselect_sj_jcl6 | 102 | 5 | 0 | 0 | 0 | 5 | 0 | 30 | 0 | 7 | 46 | 9 |
-| subselect_sj_mat | 872 | 47 | 0 | 0 | 5 | 61 | 0 | 373 | 21 | 105 | 144 | 111 |
-| subselect_sj_nonmerged | 48 | 1 | 0 | 0 | 0 | 5 | 0 | 18 | 0 | 11 | 7 | 6 |
-| subselect_union_rand | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 |
-| sum_distinct | 27 | 3 | 0 | 0 | 0 | 10 | 0 | 6 | 1 | 6 | 1 | 0 |
-| sum_distinct-big | 43 | 0 | 0 | 0 | 0 | 14 | 0 | 6 | 0 | 8 | 12 | 3 |
-| symlink | 92 | 0 | 0 | 0 | 0 | 3 | 1 | 22 | 2 | 29 | 5 | 28 |
-| synchronization | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
-| sysdate_is_now | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| table_elim | 281 | 5 | 0 | 0 | 2 | 9 | 0 | 137 | 1 | 42 | 5 | 79 |
-| table_keyinfo-6838 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 3 | 0 |
-| table_options | 79 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 27 | 8 | 36 |
-| table_options_notembedded | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 4 | 9 |
-| table_value_constr | 415 | 4 | 0 | 0 | 0 | 19 | 129 | 34 | 0 | 40 | 108 | 79 |
-| tablelock | 78 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 1 | 20 | 0 | 41 |
-| tc_heuristic_recover | 14 | 4 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 3 | 5 |
-| temp_table | 362 | 2 | 0 | 0 | 1 | 42 | 4 | 68 | 1 | 152 | 10 | 82 |
-| temp_table_frm | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 7 | 0 |
-| temp_table_symlink | 18 | 1 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 11 | 0 | 3 |
-| temporal_literal | 202 | 58 | 0 | 0 | 0 | 4 | 3 | 30 | 4 | 15 | 47 | 41 |
-| temporal_scale_4283 | 8 | 0 | 0 | 0 | 2 | 0 | 0 | 6 | 0 | 0 | 0 | 0 |
-| timeout | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 7 | 0 | 23 |
-| timezone | 33 | 7 | 0 | 0 | 0 | 1 | 0 | 5 | 1 | 15 | 1 | 3 |
-| timezone2 | 357 | 32 | 1 | 0 | 3 | 50 | 2 | 72 | 6 | 55 | 90 | 26 |
-| timezone3 | 18 | 2 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 7 | 0 | 0 |
-| timezone4 | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| tls_version | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| tlsv13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| tmp_table_count-7586 | 36 | 1 | 0 | 0 | 0 | 1 | 0 | 9 | 0 | 6 | 2 | 14 |
-| tmp_table_error | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 2 |
-| trans_read_only | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 3 | 4 |
-| transaction_timeout | 22 | 4 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 6 | 9 |
-| truncate | 92 | 1 | 0 | 0 | 0 | 15 | 0 | 17 | 1 | 23 | 0 | 35 |
-| truncate-stale-6500 | 13 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 1 | 2 | 1 | 2 |
-| truncate_badse | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 4 |
-| truncate_coverage | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 1 | 8 | 5 |
-| truncate_notembedded | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 4 |
-| type_binary | 99 | 20 | 0 | 0 | 3 | 11 | 0 | 49 | 0 | 7 | 5 | 4 |
-| type_bit | 297 | 60 | 1 | 0 | 0 | 25 | 0 | 131 | 10 | 38 | 3 | 28 |
-| type_blob | 417 | 18 | 3 | 0 | 1 | 102 | 0 | 144 | 8 | 48 | 16 | 76 |
-| type_bool | 4 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0 | 0 | 0 | 0 |
-| type_char | 7 | 4 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| type_date | 431 | 59 | 10 | 0 | 2 | 22 | 2 | 181 | 10 | 34 | 49 | 54 |
-| type_date_round | 71 | 5 | 3 | 0 | 0 | 10 | 0 | 41 | 1 | 7 | 2 | 2 |
-| type_datetime | 86 | 7 | 0 | 0 | 0 | 15 | 0 | 20 | 8 | 21 | 8 | 7 |
-| type_datetime_hires | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 5 | 1 | 1 |
-| type_datetime_round | 93 | 7 | 2 | 0 | 0 | 12 | 0 | 48 | 1 | 12 | 8 | 3 |
-| type_decimal | 443 | 40 | 0 | 0 | 5 | 21 | 0 | 268 | 12 | 51 | 21 | 24 |
-| type_enum | 337 | 30 | 3 | 0 | 4 | 29 | 0 | 160 | 9 | 37 | 16 | 49 |
-| type_float | 409 | 61 | 10 | 0 | 2 | 30 | 6 | 171 | 3 | 58 | 16 | 51 |
-| type_hex_hybrid | 18 | 1 | 0 | 0 | 2 | 2 | 0 | 5 | 0 | 2 | 1 | 4 |
-| type_int | 329 | 36 | 2 | 0 | 1 | 32 | 7 | 88 | 10 | 57 | 9 | 85 |
-| type_interval | 8 | 0 | 0 | 0 | 0 | 0 | 2 | 6 | 0 | 0 | 0 | 0 |
-| type_json | 64 | 4 | 0 | 0 | 0 | 7 | 1 | 14 | 2 | 15 | 2 | 19 |
-| type_nchar | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 5 | 0 | 0 | 7 |
-| type_newdecimal | 349 | 184 | 1 | 0 | 5 | 7 | 0 | 90 | 6 | 20 | 10 | 26 |
-| type_newdecimal-big | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 |
-| type_num | 457 | 12 | 0 | 0 | 0 | 112 | 0 | 200 | 7 | 30 | 2 | 94 |
-| type_ranges | 73 | 3 | 0 | 0 | 0 | 13 | 0 | 18 | 1 | 24 | 1 | 12 |
-| type_row | 33 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 4 | 23 |
-| type_set | 172 | 16 | 0 | 0 | 4 | 18 | 0 | 70 | 4 | 23 | 8 | 29 |
-| type_temporal_mariadb53 | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 0 | 6 |
-| type_temporal_mysql56 | 7 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 | 3 |
-| type_time | 950 | 109 | 20 | 0 | 3 | 62 | 3 | 236 | 3 | 349 | 56 | 102 |
-| type_time_6065 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 1 | 0 |
-| type_time_hires | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 5 | 1 | 1 |
-| type_time_round | 128 | 16 | 0 | 0 | 0 | 12 | 1 | 74 | 1 | 14 | 6 | 4 |
-| type_timestamp | 810 | 21 | 1 | 0 | 0 | 99 | 2 | 193 | 37 | 169 | 118 | 167 |
-| type_timestamp_hires | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 5 | 1 | 1 |
-| type_timestamp_round | 100 | 5 | 2 | 0 | 0 | 11 | 0 | 47 | 1 | 14 | 19 | 1 |
-| type_uint | 37 | 3 | 1 | 0 | 0 | 3 | 0 | 17 | 0 | 6 | 5 | 2 |
-| type_varbinary | 7 | 2 | 0 | 0 | 2 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| type_varchar | 47 | 4 | 0 | 0 | 0 | 2 | 0 | 31 | 0 | 6 | 0 | 4 |
-| type_varchar_mysql41 | 39 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 11 | 0 | 23 |
-| type_year | 202 | 15 | 2 | 0 | 1 | 68 | 0 | 59 | 3 | 37 | 4 | 10 |
-| udf | 233 | 3 | 0 | 0 | 0 | 14 | 44 | 39 | 1 | 21 | 12 | 93 |
-| udf_notembedded | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 1 | 0 | 1 |
-| udf_skip_grants | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| union | 916 | 94 | 1 | 0 | 20 | 57 | 6 | 350 | 13 | 127 | 32 | 154 |
-| unique | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 5 | 0 | 0 |
-| update | 348 | 8 | 3 | 0 | 2 | 25 | 0 | 138 | 8 | 96 | 4 | 62 |
-| update_ignore_216 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 | 0 |
-| update_single_to_multi | 387 | 0 | 0 | 0 | 0 | 0 | 0 | 302 | 1 | 9 | 46 | 29 |
-| update_use_source | 878 | 0 | 0 | 0 | 3 | 201 | 0 | 37 | 0 | 436 | 6 | 195 |
-| user_limits | 78 | 5 | 0 | 0 | 0 | 8 | 0 | 3 | 0 | 6 | 1 | 47 |
-| user_var | 267 | 51 | 3 | 0 | 13 | 12 | 8 | 88 | 1 | 20 | 41 | 18 |
-| varbinary | 69 | 22 | 0 | 0 | 1 | 7 | 0 | 21 | 1 | 5 | 0 | 12 |
-| view | 2978 | 72 | 24 | 0 | 5 | 322 | 4 | 913 | 14 | 676 | 165 | 763 |
-| view_alias | 52 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 9 | 0 | 34 |
-| wait_timeout | 4 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 |
-| warnings | 50 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 13 | 6 | 14 |
-| warnings_engine_disabled | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| win | 904 | 166 | 2 | 0 | 10 | 59 | 19 | 418 | 3 | 40 | 52 | 131 |
-| win_as_arg_to_aggregate_func | 33 | 2 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 25 |
-| win_avg | 5 | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| win_big | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 1 | 2 |
-| win_big-mdev-10092 | 13 | 0 | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 1 | 5 |
-| win_big-mdev-11697 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 2 | 7 |
-| win_bit | 12 | 6 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 |
-| win_empty_over | 19 | 8 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 2 | 0 | 4 |
-| win_first_last_value | 16 | 5 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 0 | 1 |
-| win_i_s | 10 | 3 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 4 |
-| win_insert_select | 37 | 0 | 0 | 0 | 0 | 9 | 0 | 2 | 0 | 17 | 9 | 0 |
-| win_lead_lag | 16 | 3 | 0 | 0 | 0 | 0 | 8 | 3 | 0 | 0 | 0 | 2 |
-| win_min_max | 49 | 39 | 0 | 0 | 0 | 0 | 4 | 6 | 0 | 0 | 0 | 0 |
-| win_nth_value | 8 | 2 | 0 | 0 | 0 | 0 | 3 | 3 | 0 | 0 | 0 | 0 |
-| win_ntile | 49 | 28 | 0 | 0 | 0 | 1 | 4 | 8 | 1 | 1 | 0 | 6 |
-| win_orderby | 58 | 7 | 0 | 0 | 1 | 1 | 26 | 13 | 0 | 2 | 0 | 8 |
-| win_percent_cume | 6 | 3 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| win_percentile | 111 | 0 | 0 | 0 | 0 | 3 | 36 | 36 | 2 | 13 | 0 | 20 |
-| win_rank | 18 | 0 | 0 | 0 | 0 | 0 | 6 | 12 | 0 | 0 | 0 | 0 |
-| win_std | 36 | 24 | 0 | 0 | 0 | 0 | 5 | 5 | 0 | 0 | 0 | 2 |
-| win_sum | 9 | 2 | 0 | 0 | 1 | 0 | 0 | 5 | 1 | 0 | 0 | 0 |
-| windows | 30 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 6 | 3 | 15 |
-| winservice_basic | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| winservice_i18n | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| wolfssl | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| xml | 433 | 0 | 0 | 0 | 332 | 7 | 2 | 17 | 3 | 7 | 38 | 27 |
-| xtradb_mrr | 68 | 0 | 0 | 0 | 0 | 14 | 0 | 18 | 0 | 21 | 8 | 5 |
+| File | Statements | Exact | Mismatch | Names | Pintail error | Tainted | MySQL error | Setup ok | Setup rejected | Unsupported | Session | Skipped | Session diverged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1st | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| aborted_clients | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| adddate_454 | 6 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 1 | 1 | 0 | 0 | 0 |
+| alias | 130 | 17 | 0 | 0 | 0 | 2 | 0 | 26 | 1 | 27 | 4 | 45 | 0 |
+| almost_full | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 0 |
+| alter_table | 53 | 0 | 0 | 0 | 0 | 9 | 0 | 21 | 2 | 11 | 1 | 9 | 0 |
+| alter_table-big | 33 | 1 | 0 | 0 | 0 | 0 | 1 | 9 | 0 | 4 | 16 | 2 | 0 |
+| alter_table_autoinc-5574 | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 2 | 0 | 0 | 0 |
+| alter_table_combinations | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| alter_table_errors | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 1 | 8 | 0 | 11 | 0 |
+| alter_table_locknone | 181 | 0 | 0 | 0 | 0 | 0 | 0 | 84 | 2 | 60 | 0 | 34 | 0 |
+| alter_table_locknone_notembedded | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 13 | 0 | 1 | 0 |
+| alter_table_online | 133 | 3 | 0 | 0 | 0 | 3 | 0 | 31 | 3 | 49 | 9 | 34 | 0 |
+| alter_table_trans | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 1 | 5 | 0 | 2 | 0 |
+| alter_user | 47 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 2 | 13 | 0 |
+| analyze | 184 | 2 | 0 | 0 | 0 | 0 | 0 | 41 | 1 | 45 | 20 | 41 | 0 |
+| analyze_engine_stats | 24 | 3 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 10 | 3 | 3 | 0 |
+| analyze_engine_stats2 | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 4 | 3 | 0 |
+| analyze_format_json | 115 | 1 | 0 | 0 | 0 | 0 | 0 | 61 | 2 | 19 | 2 | 28 | 0 |
+| analyze_format_json_emb | 6 | 1 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 1 | 0 | 0 |
+| analyze_format_json_timings | 28 | 3 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 9 | 7 | 0 | 0 |
+| analyze_stmt | 125 | 6 | 0 | 0 | 0 | 3 | 0 | 60 | 0 | 9 | 3 | 44 | 0 |
+| analyze_stmt_orderby | 52 | 0 | 0 | 0 | 0 | 0 | 0 | 18 | 0 | 9 | 0 | 25 | 0 |
+| analyze_stmt_prefetch_count | 28 | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 13 | 4 | 0 |
+| analyze_stmt_privileges | 21 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 | 3 | 1 | 14 | 0 |
+| analyze_stmt_privileges2 | 2334 | 0 | 0 | 0 | 0 | 107 | 0 | 0 | 0 | 341 | 2 | 1884 | 0 |
+| ansi | 37 | 10 | 0 | 0 | 0 | 0 | 1 | 5 | 0 | 0 | 7 | 12 | 0 |
+| assign_key_cache | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 7 | 0 |
+| auto_increment | 276 | 3 | 0 | 0 | 0 | 33 | 0 | 80 | 19 | 91 | 11 | 24 | 0 |
+| bad_user_table | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 14 | 0 | 8 | 0 |
+| bench_count_distinct | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 | 0 |
+| bigint | 148 | 57 | 0 | 0 | 0 | 18 | 0 | 51 | 5 | 9 | 2 | 5 | 0 |
+| binary | 82 | 10 | 0 | 0 | 0 | 29 | 0 | 24 | 3 | 11 | 0 | 3 | 0 |
+| binary_to_hex | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 0 | 1 | 4 | 0 |
+| bind_address_resolution | 4 | 2 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| bind_multiple_addresses_resolution | 5 | 2 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 | 0 |
+| bool | 30 | 20 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 3 | 0 | 0 |
+| brackets | 856 | 197 | 1 | 0 | 8 | 151 | 60 | 87 | 9 | 222 | 0 | 84 | 0 |
+| bulk_replace | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 1 | 0 |
+| cache_temporal_4265 | 18 | 3 | 0 | 0 | 0 | 1 | 0 | 12 | 0 | 1 | 1 | 0 | 0 |
+| case | 171 | 59 | 2 | 0 | 4 | 6 | 0 | 47 | 2 | 11 | 12 | 28 | 0 |
+| cast | 366 | 151 | 2 | 0 | 6 | 16 | 9 | 61 | 3 | 35 | 24 | 58 | 0 |
+| change_user | 39 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 12 | 0 |
+| change_user_notembedded | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| check | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 | 0 |
+| check_constraint | 213 | 1 | 0 | 0 | 0 | 14 | 0 | 36 | 12 | 62 | 13 | 75 | 0 |
+| check_constraint_show | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 1 | 0 |
+| check_view_protocol | 11 | 2 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 4 | 0 |
+| cli_options_force_protocol_not_win | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| cli_options_force_protocol_win | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| comment_column | 73 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 12 | 5 | 13 | 0 |
+| comment_column2 | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 12 | 0 | 2 | 0 |
+| comment_database | 39 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 4 | 24 | 0 |
+| comment_index | 55 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 5 | 4 | 13 | 0 |
+| comment_table | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 | 5 | 5 | 0 |
+| comments | 42 | 28 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 10 | 0 |
+| commit | 318 | 4 | 0 | 0 | 3 | 26 | 0 | 16 | 0 | 41 | 54 | 162 | 0 |
+| commit_1innodb | 240 | 1 | 0 | 0 | 0 | 56 | 0 | 16 | 0 | 46 | 10 | 111 | 0 |
+| compare | 50 | 13 | 0 | 0 | 0 | 8 | 0 | 18 | 4 | 2 | 0 | 5 | 0 |
+| compound † | 48 | 4 | 0 | 0 | 0 | 0 | 1 | 7 | 0 | 9 | 9 | 18 | 0 |
+| connect2 | 23 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 13 | 0 |
+| consistent_snapshot | 15 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 0 | 5 | 0 | 4 | 0 |
+| constraints | 95 | 0 | 0 | 0 | 0 | 2 | 0 | 29 | 3 | 14 | 7 | 40 | 0 |
+| contributors | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| costs | 44 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 1 | 37 | 0 |
+| count_distinct | 73 | 14 | 0 | 0 | 0 | 2 | 0 | 50 | 0 | 2 | 4 | 1 | 0 |
+| count_distinct2 | 26 | 20 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 1 | 0 |
+| count_distinct3 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 1 | 0 |
+| create | 797 | 11 | 0 | 0 | 1 | 76 | 0 | 241 | 12 | 181 | 29 | 237 | 0 |
+| create-big | 113 | 4 | 0 | 0 | 0 | 0 | 2 | 25 | 0 | 0 | 73 | 9 | 0 |
+| create-uca | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 2 | 0 |
+| create_delayed | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| create_drop_db | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 12 | 0 |
+| create_drop_function | 25 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 5 | 1 | 10 | 0 |
+| create_drop_index | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 8 | 0 |
+| create_drop_procedure | 23 | 0 | 3 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 0 | 8 | 0 |
+| create_drop_udf | 11 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 4 | 0 |
+| create_drop_user | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 15 | 0 |
+| create_drop_view | 21 | 2 | 0 | 0 | 0 | 1 | 1 | 5 | 0 | 3 | 0 | 5 | 0 |
+| create_not_windows | 14 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 1 | 4 | 0 |
+| create_or_replace | 274 | 4 | 0 | 0 | 0 | 13 | 1 | 66 | 0 | 80 | 6 | 89 | 0 |
+| create_or_replace2 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 3 | 3 | 0 |
+| create_or_replace_permission | 26 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 21 | 0 |
+| create_or_replace_pfs | 15 | 2 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 3 | 0 | 2 | 0 |
+| create_replace_tmp | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 0 | 0 | 0 |
+| create_select | 26 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 5 | 2 | 11 | 0 |
+| create_user | 38 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 24 | 0 |
+| create_utf8 | 32 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 6 | 3 | 12 | 0 |
+| create_w_max_indexes_128 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 7 | 0 |
+| create_w_max_indexes_64 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 1 | 0 | 10 | 0 |
+| create_windows | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| cset_narrowing | 42 | 1 | 0 | 0 | 0 | 8 | 0 | 5 | 1 | 4 | 5 | 15 | 0 |
+| cte_cycle | 30 | 0 | 0 | 0 | 0 | 2 | 7 | 13 | 0 | 3 | 0 | 5 | 0 |
+| cte_nonrecursive | 150 | 40 | 0 | 0 | 1 | 4 | 1 | 19 | 0 | 10 | 16 | 59 | 0 |
+| cte_nonrecursive_not_embedded | 16 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 3 | 8 | 0 |
+| cte_recursive | 488 | 50 | 0 | 0 | 15 | 16 | 31 | 182 | 2 | 35 | 82 | 73 | 0 |
+| cte_recursive_not_embedded | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 1 | 0 |
+| ctype_ascii | 7 | 2 | 0 | 0 | 1 | 0 | 0 | 3 | 0 | 0 | 1 | 0 | 0 |
+| ctype_big5 | 455 | 29 | 0 | 0 | 57 | 48 | 18 | 57 | 3 | 115 | 39 | 20 | 53 |
+| ctype_binary | 878 | 150 | 0 | 0 | 2 | 36 | 17 | 234 | 12 | 215 | 7 | 196 | 1 |
+| ctype_collate | 172 | 3 | 0 | 0 | 8 | 24 | 4 | 37 | 4 | 43 | 8 | 41 | 0 |
+| ctype_collate_column | 103 | 0 | 0 | 0 | 0 | 3 | 0 | 13 | 2 | 40 | 0 | 15 | 0 |
+| ctype_collate_context | 114 | 0 | 0 | 0 | 0 | 0 | 0 | 19 | 1 | 25 | 15 | 54 | 0 |
+| ctype_collate_database | 69 | 0 | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 1 | 3 | 49 | 0 |
+| ctype_collate_implicit | 95 | 1 | 0 | 0 | 0 | 1 | 0 | 8 | 0 | 3 | 32 | 26 | 0 |
+| ctype_collate_implicit_def | 34 | 5 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 8 | 3 | 0 | 0 |
+| ctype_collate_implicit_utf32 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
+| ctype_collate_table | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 4 | 2 | 10 | 0 |
+| ctype_cp1250_ch | 349 | 29 | 0 | 0 | 66 | 30 | 19 | 44 | 4 | 46 | 40 | 28 | 35 |
+| ctype_cp1251 | 946 | 152 | 0 | 0 | 2 | 48 | 17 | 240 | 16 | 251 | 7 | 198 | 4 |
+| ctype_cp850 | 7 | 1 | 0 | 0 | 1 | 0 | 0 | 2 | 0 | 0 | 2 | 1 | 0 |
+| ctype_cp866 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ctype_cp932 | 169 | 0 | 0 | 0 | 0 | 52 | 2 | 25 | 1 | 44 | 22 | 21 | 0 |
+| ctype_create | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 18 | 7 | 40 | 0 |
+| ctype_dec8 | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 15 | 0 |
+| ctype_errors | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 9 | 14 | 0 |
+| ctype_eucjpms | 627 | 4 | 0 | 0 | 166 | 93 | 20 | 73 | 4 | 135 | 25 | 37 | 60 |
+| ctype_euckr | 240 | 19 | 0 | 0 | 2 | 25 | 0 | 36 | 3 | 105 | 29 | 8 | 1 |
+| ctype_filename | 100 | 9 | 0 | 0 | 0 | 1 | 2 | 45 | 1 | 7 | 18 | 15 | 0 |
+| ctype_filesystem | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 | 0 |
+| ctype_gb2312 | 423 | 19 | 0 | 0 | 56 | 43 | 18 | 52 | 1 | 108 | 37 | 20 | 53 |
+| ctype_gbk | 549 | 19 | 0 | 0 | 165 | 43 | 18 | 53 | 3 | 111 | 39 | 21 | 61 |
+| ctype_gbk_export_import | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| ctype_hebrew | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 2 | 1 | 0 | 0 |
+| ctype_latin1 | 1092 | 189 | 0 | 0 | 8 | 50 | 17 | 279 | 13 | 286 | 29 | 203 | 1 |
+| ctype_latin1_de | 242 | 15 | 0 | 0 | 69 | 44 | 9 | 33 | 2 | 46 | 6 | 12 | 0 |
+| ctype_latin2 | 201 | 6 | 0 | 0 | 60 | 25 | 18 | 32 | 1 | 33 | 7 | 13 | 0 |
+| ctype_latin2_ch | 331 | 4 | 0 | 0 | 73 | 50 | 64 | 34 | 3 | 59 | 11 | 17 | 8 |
+| ctype_ldml | 719 | 78 | 0 | 0 | 0 | 55 | 22 | 34 | 0 | 484 | 16 | 29 | 0 |
+| ctype_like_range | 113 | 0 | 0 | 0 | 0 | 38 | 0 | 11 | 1 | 59 | 1 | 3 | 0 |
+| ctype_many | 226 | 0 | 0 | 0 | 1 | 19 | 0 | 9 | 6 | 159 | 7 | 25 | 0 |
+| ctype_mb | 19 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 0 | 6 | 0 | 8 | 0 |
+| ctype_nopad_8bit | 2185 | 0 | 0 | 0 | 0 | 1012 | 0 | 460 | 0 | 460 | 161 | 92 | 0 |
+| ctype_partitions | 18 | 0 | 0 | 0 | 0 | 6 | 0 | 3 | 3 | 6 | 0 | 0 | 0 |
+| ctype_recoding | 155 | 7 | 0 | 0 | 0 | 28 | 0 | 32 | 5 | 15 | 37 | 31 | 0 |
+| ctype_sjis | 435 | 8 | 0 | 0 | 60 | 52 | 20 | 51 | 4 | 120 | 28 | 17 | 58 |
+| ctype_swe7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 6 | 0 | 0 |
+| ctype_tis620 | 500 | 56 | 0 | 0 | 53 | 100 | 19 | 71 | 1 | 118 | 29 | 40 | 0 |
+| ctype_uca | 1687 | 63 | 0 | 0 | 175 | 247 | 18 | 341 | 8 | 581 | 140 | 90 | 2 |
+| ctype_uca_partitions | 42 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 | 30 | 2 | 1 | 0 |
+| ctype_ucs | 1515 | 263 | 1 | 0 | 11 | 127 | 18 | 320 | 45 | 399 | 74 | 236 | 1 |
+| ctype_ucs2_def | 19 | 1 | 0 | 0 | 0 | 0 | 0 | 8 | 2 | 3 | 0 | 5 | 0 |
+| ctype_ucs2_turkish_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 | 0 |
+| ctype_ucs2_uca | 110 | 0 | 0 | 0 | 0 | 46 | 0 | 21 | 0 | 27 | 11 | 5 | 0 |
+| ctype_ucs2_unicode_520_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 | 0 |
+| ctype_ujis | 1737 | 20 | 0 | 0 | 176 | 111 | 20 | 80 | 11 | 1171 | 42 | 26 | 64 |
+| ctype_ujis_ucs2 | 1172 | 0 | 0 | 0 | 0 | 4 | 0 | 18 | 3 | 1147 | 0 | 0 | 0 |
+| ctype_utf16 | 955 | 138 | 3 | 0 | 108 | 153 | 23 | 111 | 38 | 206 | 102 | 52 | 0 |
+| ctype_utf16_def | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 |
+| ctype_utf16_uca | 934 | 25 | 0 | 0 | 97 | 143 | 9 | 169 | 7 | 374 | 64 | 32 | 1 |
+| ctype_utf16le | 952 | 112 | 2 | 0 | 108 | 166 | 18 | 126 | 36 | 245 | 62 | 52 | 0 |
+| ctype_utf32 | 1051 | 142 | 9 | 0 | 108 | 154 | 30 | 127 | 47 | 225 | 108 | 75 | 6 |
+| ctype_utf32_def | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| ctype_utf32_not_embedded | 29 | 0 | 0 | 0 | 0 | 10 | 0 | 2 | 0 | 5 | 1 | 11 | 0 |
+| ctype_utf32_uca | 959 | 25 | 0 | 0 | 97 | 142 | 9 | 173 | 8 | 371 | 83 | 37 | 1 |
+| ctype_utf8 | 1845 | 351 | 0 | 0 | 12 | 120 | 24 | 562 | 26 | 363 | 71 | 298 | 0 |
+| ctype_utf8_uca | 162 | 0 | 0 | 0 | 0 | 52 | 0 | 27 | 0 | 56 | 16 | 11 | 0 |
+| ctype_utf8mb3_turkish_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 | 0 |
+| ctype_utf8mb3_unicode_520_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 | 0 |
+| ctype_utf8mb4 | 1460 | 262 | 0 | 0 | 56 | 161 | 31 | 430 | 14 | 231 | 106 | 143 | 0 |
+| ctype_utf8mb4_0900 | 49 | 0 | 0 | 0 | 1 | 0 | 0 | 14 | 1 | 13 | 2 | 15 | 0 |
+| ctype_utf8mb4_0900_ai_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 | 0 |
+| ctype_utf8mb4_0900_mem | 31 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 1 | 27 | 0 |
+| ctype_utf8mb4_turkish_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 | 0 |
+| ctype_utf8mb4_uca | 866 | 0 | 0 | 0 | 0 | 111 | 2 | 224 | 2 | 378 | 52 | 91 | 0 |
+| ctype_utf8mb4_uca1400_ai_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 | 0 |
+| ctype_utf8mb4_uca_allkeys1400 | 20 | 0 | 0 | 0 | 0 | 6 | 0 | 6 | 0 | 6 | 1 | 1 | 0 |
+| ctype_utf8mb4_uca_allkeys400 | 18 | 0 | 0 | 0 | 0 | 4 | 0 | 6 | 0 | 6 | 1 | 1 | 0 |
+| ctype_utf8mb4_uca_allkeys520 | 18 | 0 | 0 | 0 | 0 | 4 | 0 | 6 | 0 | 6 | 1 | 1 | 0 |
+| ctype_utf8mb4_unicode_520_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 | 0 |
+| ctype_utf8mb4_unicode_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 | 0 |
+| ctype_utf8mb4_unicode_ci_def | 21 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 7 | 1 | 0 |
+| custom_aggregate_functions | 338 | 2 | 0 | 0 | 0 | 1 | 85 | 87 | 0 | 53 | 37 | 73 | 0 |
+| custom_aggregates_i_s | 28 | 0 | 0 | 0 | 0 | 0 | 2 | 8 | 0 | 2 | 0 | 16 | 0 |
+| date_formats | 113 | 66 | 0 | 0 | 0 | 6 | 0 | 12 | 0 | 7 | 19 | 3 | 0 |
+| datetime_456 | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 0 | 0 | 0 | 0 |
+| ddl_i18n_koi8r | 366 | 0 | 0 | 0 | 18 | 15 | 6 | 4 | 0 | 58 | 77 | 143 | 0 |
+| ddl_i18n_utf8 | 366 | 0 | 0 | 0 | 18 | 15 | 6 | 6 | 0 | 56 | 77 | 143 | 0 |
+| default | 1310 | 2 | 0 | 0 | 1 | 197 | 0 | 255 | 48 | 426 | 69 | 306 | 0 |
+| default_session | 71 | 0 | 0 | 0 | 0 | 7 | 0 | 5 | 1 | 28 | 9 | 13 | 0 |
+| default_storage_engine | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| delayed | 172 | 12 | 0 | 0 | 0 | 7 | 0 | 33 | 3 | 53 | 35 | 27 | 0 |
+| delayed_blob | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 2 | 2 | 0 |
+| delete | 290 | 13 | 4 | 0 | 0 | 18 | 0 | 94 | 4 | 64 | 10 | 81 | 0 |
+| delete_returning | 79 | 1 | 0 | 0 | 0 | 10 | 0 | 20 | 0 | 28 | 7 | 13 | 0 |
+| delete_single_to_multi | 445 | 0 | 0 | 0 | 0 | 0 | 2 | 327 | 1 | 54 | 36 | 25 | 0 |
+| delete_use_source | 115 | 2 | 0 | 0 | 0 | 20 | 0 | 9 | 0 | 45 | 14 | 25 | 0 |
+| delete_use_source_engines | 1104 | 20 | 4 | 0 | 3 | 195 | 24 | 231 | 0 | 332 | 138 | 157 | 0 |
+| delimiter_command_case_sensitivity | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| deprecated_features | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 |
+| derived | 40 | 14 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 2 | 11 | 0 |
+| derived_cond_pushdown | 811 | 22 | 0 | 0 | 3 | 41 | 0 | 386 | 1 | 155 | 80 | 119 | 0 |
+| derived_opt | 21 | 2 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 3 | 4 | 0 |
+| derived_view | 1111 | 48 | 8 | 0 | 5 | 82 | 0 | 404 | 4 | 111 | 214 | 227 | 0 |
+| desc_index_min_max | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 10 | 0 | 0 | 0 |
+| desc_index_range | 47 | 1 | 0 | 0 | 0 | 5 | 0 | 14 | 0 | 7 | 4 | 9 | 0 |
+| dirty_close | 9 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 0 | 0 | 0 |
+| distinct | 417 | 68 | 0 | 0 | 3 | 26 | 1 | 184 | 4 | 50 | 25 | 46 | 0 |
+| distinct_notembedded | 35 | 15 | 0 | 0 | 0 | 6 | 0 | 7 | 0 | 2 | 3 | 2 | 0 |
+| drop | 116 | 1 | 0 | 0 | 0 | 2 | 0 | 25 | 0 | 9 | 8 | 69 | 0 |
+| drop_bad_db_type | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 3 | 7 | 0 |
+| drop_combinations | 161 | 0 | 0 | 0 | 0 | 0 | 0 | 29 | 0 | 25 | 3 | 104 | 0 |
+| drop_table_force | 67 | 1 | 0 | 0 | 0 | 0 | 0 | 34 | 0 | 4 | 0 | 28 | 0 |
+| dyncol | 579 | 2 | 0 | 0 | 0 | 43 | 386 | 27 | 0 | 40 | 18 | 63 | 0 |
+| empty_string_literal | 75 | 28 | 0 | 0 | 6 | 1 | 0 | 7 | 2 | 5 | 14 | 11 | 0 |
+| empty_table | 31 | 7 | 0 | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 5 | 5 | 0 |
+| endspace | 71 | 18 | 0 | 0 | 2 | 22 | 0 | 13 | 0 | 9 | 0 | 7 | 0 |
+| enforce_storage_engine | 82 | 1 | 0 | 0 | 0 | 0 | 0 | 25 | 2 | 14 | 14 | 21 | 0 |
+| enforce_storage_engine_opt | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 2 | 0 |
+| engine_error_in_alter-8453 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 3 | 1 | 0 |
+| error_simulation | 53 | 0 | 0 | 0 | 0 | 2 | 0 | 20 | 0 | 5 | 17 | 7 | 0 |
+| errors | 103 | 5 | 0 | 0 | 0 | 0 | 0 | 27 | 0 | 9 | 7 | 54 | 0 |
+| except | 60 | 9 | 0 | 0 | 0 | 0 | 0 | 19 | 1 | 3 | 13 | 15 | 0 |
+| except_all | 69 | 19 | 0 | 0 | 0 | 0 | 0 | 19 | 1 | 3 | 12 | 15 | 0 |
+| execution_constants | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0 | 0 | 0 |
+| explain | 170 | 2 | 0 | 0 | 0 | 2 | 0 | 52 | 0 | 38 | 30 | 46 | 0 |
+| explain_json | 184 | 1 | 0 | 0 | 0 | 1 | 0 | 79 | 0 | 20 | 13 | 70 | 0 |
+| explain_json_format_partitions | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 1 | 1 | 0 | 5 | 0 |
+| explain_non_select | 118 | 5 | 0 | 0 | 0 | 0 | 0 | 59 | 3 | 7 | 2 | 42 | 0 |
+| explain_slowquerylog | 26 | 3 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 9 | 5 | 0 |
+| ext_key_noPK_6794 | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 4 | 0 | 1 | 0 |
+| features | 75 | 8 | 1 | 0 | 4 | 0 | 1 | 27 | 1 | 5 | 11 | 17 | 0 |
+| fetch_first | 235 | 1 | 1 | 0 | 0 | 63 | 66 | 40 | 0 | 16 | 9 | 37 | 0 |
+| filesort_bad_i_s-7585 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 1 | 2 | 0 |
+| filesort_pack | 8 | 2 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 3 | 0 | 0 |
+| fix_priv_tables | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| flush2 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 8 | 0 |
+| foreign_key | 42 | 1 | 0 | 0 | 0 | 1 | 0 | 18 | 0 | 4 | 0 | 17 | 0 |
+| foreign_key_lowercase0 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 1 | 0 |
+| frm_bad_row_type-7333 | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 0 | 0 | 3 | 0 |
+| fulltext2 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 | 0 |
+| fulltext3 | 16 | 0 | 0 | 0 | 0 | 1 | 1 | 5 | 2 | 3 | 2 | 2 | 0 |
+| func_analyse | 146 | 0 | 0 | 0 | 0 | 14 | 12 | 64 | 3 | 28 | 4 | 19 | 0 |
+| func_bit | 45 | 29 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 1 | 0 | 10 | 0 |
+| func_concat | 115 | 13 | 1 | 0 | 0 | 28 | 1 | 31 | 10 | 12 | 5 | 9 | 0 |
+| func_crypt | 84 | 0 | 0 | 0 | 0 | 11 | 24 | 17 | 3 | 10 | 10 | 9 | 0 |
+| func_date_add | 76 | 12 | 0 | 0 | 0 | 7 | 0 | 11 | 2 | 31 | 2 | 9 | 0 |
+| func_default | 88 | 0 | 0 | 0 | 2 | 21 | 0 | 22 | 9 | 21 | 1 | 9 | 0 |
+| func_digest | 485 | 468 | 0 | 0 | 0 | 4 | 0 | 3 | 1 | 2 | 6 | 1 | 0 |
+| func_equal | 25 | 13 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 | 0 | 0 |
+| func_extract | 149 | 82 | 11 | 0 | 0 | 0 | 4 | 18 | 0 | 4 | 4 | 26 | 0 |
+| func_format | 53 | 0 | 0 | 0 | 45 | 0 | 0 | 7 | 0 | 0 | 1 | 0 | 0 |
+| func_gconcat | 255 | 67 | 0 | 0 | 12 | 27 | 0 | 107 | 8 | 10 | 10 | 12 | 0 |
+| func_group | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| func_hybrid_type | 628 | 79 | 3 | 0 | 0 | 15 | 1 | 260 | 1 | 75 | 53 | 131 | 0 |
+| func_if | 66 | 25 | 1 | 0 | 2 | 0 | 0 | 33 | 0 | 0 | 2 | 2 | 0 |
+| func_in | 427 | 103 | 4 | 0 | 7 | 11 | 3 | 134 | 2 | 26 | 34 | 103 | 0 |
+| func_int | 61 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 61 | 0 |
+| func_isnull | 47 | 0 | 0 | 0 | 0 | 12 | 0 | 14 | 4 | 2 | 4 | 9 | 0 |
+| func_json | 1422 | 377 | 0 | 0 | 249 | 62 | 191 | 97 | 4 | 50 | 318 | 67 | 0 |
+| func_json_notembedded | 38 | 18 | 0 | 0 | 1 | 0 | 8 | 0 | 0 | 2 | 7 | 2 | 0 |
+| func_kdf | 42 | 0 | 0 | 0 | 2 | 0 | 37 | 0 | 0 | 0 | 2 | 1 | 0 |
+| func_like | 154 | 32 | 0 | 0 | 4 | 11 | 20 | 49 | 3 | 12 | 9 | 14 | 0 |
+| func_math | 1158 | 261 | 2 | 0 | 4 | 161 | 28 | 205 | 8 | 248 | 41 | 186 | 2 |
+| func_misc | 489 | 183 | 2 | 0 | 25 | 10 | 4 | 68 | 3 | 25 | 20 | 55 | 0 |
+| func_op | 21 | 10 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 3 | 2 | 0 |
+| func_regexp | 87 | 20 | 0 | 0 | 0 | 1 | 8 | 25 | 0 | 16 | 13 | 4 | 0 |
+| func_regexp_pcre | 253 | 149 | 0 | 0 | 5 | 0 | 44 | 21 | 0 | 2 | 23 | 8 | 0 |
+| func_replace | 37 | 0 | 0 | 0 | 0 | 12 | 0 | 11 | 6 | 4 | 0 | 4 | 0 |
+| func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 | 0 |
+| func_sapdb | 88 | 76 | 0 | 0 | 1 | 3 | 0 | 4 | 0 | 1 | 2 | 1 | 0 |
+| func_set | 66 | 36 | 0 | 0 | 0 | 0 | 0 | 20 | 0 | 1 | 0 | 5 | 0 |
+| func_sformat | 161 | 0 | 0 | 0 | 0 | 9 | 82 | 24 | 4 | 10 | 15 | 17 | 0 |
+| func_str | 955 | 468 | 0 | 0 | 55 | 19 | 64 | 185 | 3 | 27 | 18 | 101 | 0 |
+| func_test | 128 | 76 | 1 | 0 | 0 | 4 | 0 | 16 | 2 | 10 | 1 | 18 | 0 |
+| func_time | 1047 | 516 | 0 | 0 | 12 | 38 | 17 | 217 | 7 | 42 | 79 | 74 | 11 |
+| func_time_hires | 55 | 19 | 0 | 0 | 0 | 8 | 0 | 8 | 2 | 5 | 6 | 6 | 0 |
+| func_time_round | 139 | 63 | 3 | 0 | 0 | 0 | 2 | 63 | 0 | 0 | 8 | 0 | 0 |
+| func_timestamp | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 | 0 |
+| func_weight_string | 58 | 6 | 0 | 0 | 8 | 7 | 4 | 8 | 1 | 8 | 2 | 14 | 0 |
+| function_defaults | 41 | 3 | 0 | 0 | 0 | 5 | 0 | 16 | 2 | 10 | 4 | 1 | 0 |
+| function_defaults_notembedded | 64 | 0 | 0 | 0 | 0 | 0 | 14 | 8 | 0 | 8 | 24 | 10 | 0 |
+| gcc296 | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
+| get_diagnostics | 616 | 98 | 5 | 0 | 3 | 3 | 0 | 66 | 1 | 88 | 192 | 160 | 0 |
+| grant2 | 455 | 2 | 0 | 0 | 1 | 12 | 3 | 32 | 0 | 100 | 27 | 252 | 1 |
+| grant3 | 123 | 0 | 0 | 0 | 0 | 1 | 1 | 4 | 0 | 15 | 4 | 74 | 0 |
+| grant4 | 133 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 41 | 4 | 75 | 0 |
+| grant5 | 273 | 0 | 0 | 0 | 0 | 2 | 0 | 6 | 0 | 49 | 13 | 199 | 0 |
+| greedy_optimizer | 231 | 0 | 0 | 0 | 0 | 5 | 0 | 96 | 1 | 16 | 14 | 90 | 0 |
+| group_by | 902 | 130 | 1 | 0 | 12 | 69 | 14 | 352 | 12 | 67 | 57 | 160 | 0 |
+| group_by_cardinality | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 3 | 2 | 6 | 0 |
+| group_by_null | 4 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0 | 0 | 0 | 0 | 0 |
+| group_min_max | 526 | 20 | 3 | 0 | 4 | 163 | 0 | 70 | 0 | 39 | 6 | 221 | 0 |
+| group_min_max_notembedded | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 1 | 2 | 0 | 0 |
+| having | 355 | 79 | 0 | 0 | 2 | 16 | 1 | 194 | 2 | 15 | 17 | 28 | 0 |
+| having_cond_pushdown | 118 | 11 | 0 | 0 | 0 | 4 | 0 | 66 | 1 | 10 | 10 | 16 | 0 |
+| help | 91 | 11 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 37 | 4 | 36 | 0 |
+| host_cache_size_functionality | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 1 | 5 | 0 |
+| huge_frm-6224 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 |
+| ignored_index | 104 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 1 | 32 | 0 | 49 | 0 |
+| implicit_char_to_num_conversion | 99 | 0 | 0 | 0 | 0 | 78 | 0 | 11 | 0 | 10 | 0 | 0 | 0 |
+| implicit_commit | 39 | 0 | 0 | 0 | 0 | 0 | 1 | 11 | 0 | 12 | 5 | 10 | 0 |
+| in_datetime_241 | 4 | 1 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| in_subq_cond_pushdown | 45 | 6 | 0 | 0 | 0 | 1 | 1 | 32 | 1 | 3 | 0 | 1 | 0 |
+| index_intersect | 158 | 3 | 0 | 0 | 0 | 64 | 0 | 14 | 0 | 31 | 12 | 34 | 0 |
+| information_schema | 229 | 0 | 0 | 0 | 2 | 10 | 0 | 21 | 1 | 50 | 9 | 85 | 0 |
+| information_schema-big | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| information_schema2 | 14 | 0 | 0 | 0 | 0 | 1 | 0 | 6 | 0 | 3 | 0 | 0 | 0 |
+| information_schema_all_engines | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 |
+| information_schema_chmod | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
+| information_schema_columns | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 3 | 0 |
+| information_schema_inno | 35 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 10 | 3 | 4 | 0 |
+| information_schema_linux | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| information_schema_parameters | 92 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 14 | 16 | 41 | 0 |
+| information_schema_part | 39 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 7 | 5 | 0 | 3 | 0 |
+| information_schema_prepare | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 0 |
+| information_schema_routines | 82 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 14 | 42 | 0 |
+| information_schema_stats | 31 | 3 | 0 | 0 | 0 | 2 | 0 | 6 | 0 | 5 | 1 | 2 | 0 |
+| information_schema_tables | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 10 | 0 | 9 | 0 |
+| information_schema_temp_table | 131 | 0 | 0 | 0 | 0 | 1 | 0 | 33 | 0 | 39 | 6 | 39 | 0 |
+| insert | 76 | 1 | 0 | 0 | 0 | 6 | 0 | 20 | 5 | 25 | 4 | 6 | 0 |
+| insert_notembedded | 75 | 0 | 0 | 0 | 0 | 4 | 0 | 18 | 0 | 13 | 2 | 38 | 0 |
+| insert_returning | 202 | 1 | 0 | 0 | 0 | 11 | 0 | 32 | 0 | 63 | 26 | 69 | 0 |
+| insert_returning_datatypes | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 5 | 0 | 0 | 0 |
+| insert_select | 262 | 9 | 0 | 0 | 0 | 35 | 0 | 96 | 8 | 72 | 14 | 27 | 0 |
+| insert_update | 199 | 14 | 0 | 0 | 0 | 31 | 0 | 56 | 4 | 65 | 8 | 14 | 0 |
+| insert_update_autoinc-7150 | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 1 | 0 | 0 | 0 |
+| intersect | 161 | 19 | 0 | 0 | 4 | 2 | 0 | 73 | 1 | 11 | 25 | 26 | 0 |
+| intersect_all | 302 | 31 | 1 | 0 | 5 | 43 | 4 | 101 | 1 | 34 | 29 | 53 | 0 |
+| invisible_field | 227 | 0 | 0 | 0 | 0 | 48 | 0 | 32 | 20 | 72 | 8 | 46 | 0 |
+| ipv4_and_ipv6 | 12 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| ipv4_as_ipv6 | 36 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 |
+| ipv6 | 18 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| item_types | 30 | 1 | 0 | 0 | 0 | 6 | 1 | 8 | 0 | 7 | 2 | 5 | 0 |
+| join | 681 | 98 | 2 | 0 | 8 | 38 | 1 | 325 | 3 | 84 | 21 | 97 | 0 |
+| join_cache | 1410 | 89 | 2 | 0 | 8 | 88 | 0 | 473 | 6 | 176 | 333 | 232 | 0 |
+| join_cache_cardinality | 21 | 0 | 0 | 0 | 0 | 0 | 6 | 3 | 0 | 2 | 6 | 4 | 0 |
+| join_cache_notasan | 17 | 2 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 8 | 2 | 0 |
+| join_nested | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 2 | 0 | 0 |
+| join_nested_jcl6 | 41 | 1 | 0 | 0 | 0 | 3 | 0 | 12 | 0 | 8 | 13 | 4 | 0 |
+| join_optimizer | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 1 | 8 | 3 | 4 | 0 |
+| join_outer | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 2 | 1 | 0 |
+| join_outer_jcl6 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
+| json_equals | 25 | 0 | 0 | 0 | 0 | 5 | 12 | 4 | 2 | 0 | 1 | 0 | 0 |
+| json_normalize | 59 | 2 | 0 | 0 | 0 | 4 | 23 | 10 | 1 | 2 | 14 | 3 | 0 |
+| key | 256 | 15 | 0 | 0 | 0 | 20 | 0 | 98 | 8 | 50 | 1 | 63 | 0 |
+| key_cache | 334 | 6 | 0 | 0 | 0 | 29 | 0 | 31 | 0 | 79 | 13 | 93 | 0 |
+| key_diff | 8 | 3 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 1 | 0 |
+| key_primary | 11 | 3 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 2 | 0 |
+| keyread | 13 | 0 | 0 | 0 | 0 | 2 | 0 | 7 | 0 | 3 | 0 | 1 | 0 |
+| keywords | 163 | 35 | 0 | 0 | 0 | 2 | 0 | 76 | 1 | 21 | 0 | 28 | 0 |
+| large_pages | 9 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 1 | 2 | 0 | 2 | 0 |
+| last_value | 20 | 7 | 0 | 0 | 0 | 1 | 5 | 4 | 0 | 1 | 0 | 2 | 0 |
+| leaks | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 | 0 |
+| limit | 70 | 2 | 0 | 0 | 0 | 12 | 0 | 16 | 2 | 15 | 9 | 8 | 0 |
+| limit_rows_examined | 260 | 3 | 0 | 0 | 1 | 14 | 59 | 76 | 2 | 12 | 24 | 65 | 0 |
+| load_timezones_with_alter_algorithm_inplace | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 12 | 0 | 2 | 0 |
+| loaddata | 265 | 7 | 0 | 0 | 1 | 46 | 1 | 76 | 2 | 83 | 29 | 17 | 0 |
+| loadxml | 64 | 8 | 0 | 0 | 0 | 3 | 0 | 18 | 0 | 26 | 4 | 5 | 0 |
+| locale | 122 | 43 | 0 | 0 | 0 | 5 | 21 | 11 | 1 | 1 | 29 | 10 | 0 |
+| locked_temporary-5955 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |
+| long_host | 77 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 7 | 2 | 55 | 0 |
+| long_tmpdir | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |
+| long_unique | 283 | 1 | 0 | 0 | 0 | 13 | 0 | 31 | 1 | 79 | 0 | 149 | 0 |
+| long_unique_big | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 1 | 6 | 0 |
+| long_unique_bugs | 362 | 0 | 0 | 0 | 0 | 37 | 0 | 86 | 9 | 171 | 4 | 55 | 0 |
+| long_unique_bugs_replication | 35 | 0 | 0 | 0 | 0 | 4 | 0 | 3 | 0 | 23 | 1 | 4 | 0 |
+| long_unique_delayed | 9 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 5 | 0 | 1 | 0 |
+| long_unique_update | 93 | 0 | 0 | 0 | 0 | 15 | 0 | 4 | 0 | 51 | 0 | 20 | 0 |
+| long_unique_using_hash | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 0 | 7 | 0 |
+| lotofstack | 33 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 5 | 8 | 17 | 0 |
+| lowercase_fs_off | 79 | 0 | 0 | 0 | 1 | 0 | 2 | 12 | 0 | 13 | 5 | 43 | 0 |
+| lowercase_fs_on | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| lowercase_mixed_tmpdir | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 | 0 | 0 |
+| lowercase_table | 84 | 1 | 0 | 0 | 0 | 1 | 11 | 19 | 0 | 15 | 6 | 28 | 0 |
+| lowercase_table2 | 204 | 2 | 0 | 0 | 0 | 8 | 4 | 36 | 1 | 44 | 11 | 87 | 0 |
+| lowercase_table4 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 0 |
+| lowercase_table5 | 96 | 2 | 0 | 0 | 0 | 1 | 4 | 19 | 0 | 25 | 0 | 40 | 0 |
+| lowercase_table_qcache | 23 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 5 | 4 | 11 | 0 |
+| lowercase_utf8 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 2 | 0 |
+| lowercase_view | 53 | 1 | 0 | 0 | 0 | 1 | 3 | 11 | 0 | 20 | 2 | 13 | 0 |
+| master_info_numeric_validation | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| max_session_mem_used | 33 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 13 | 11 | 0 |
+| max_statement_time | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 4 | 1 | 0 |
+| mdev-21101 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 0 | 0 |
+| mdev-25830 | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 5 | 8 | 0 |
+| mdev-31636 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| mdev-33070 | 4 | 1 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 | 0 |
+| mdev-35046 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 1 | 6 | 0 |
+| mdev-35721-ubsan | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 3 | 0 | 1 | 0 |
+| mdev-35765 | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 2 | 0 | 0 | 0 | 0 |
+| mdev-37000 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 0 | 0 |
+| mdev13607 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 1 | 0 |
+| mdev19198 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 5 | 0 |
+| mdev316 | 7 | 3 | 0 | 0 | 1 | 0 | 2 | 0 | 0 | 0 | 1 | 0 | 0 |
+| mdev375 | 9 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 6 | 0 |
+| mdev6830 | 15 | 1 | 0 | 0 | 0 | 1 | 0 | 6 | 0 | 2 | 3 | 2 | 0 |
+| mdev_14586 | 27 | 0 | 0 | 0 | 0 | 4 | 0 | 5 | 0 | 18 | 0 | 0 | 0 |
+| mdev_19276 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 |
+| mdev_22370 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 |
+| mdev_38998 | 10 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 7 | 0 | 0 | 0 |
+| mdev_39118 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| mdev_39118-win | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| metadata | 104 | 22 | 0 | 0 | 3 | 14 | 0 | 27 | 2 | 11 | 4 | 5 | 0 |
+| mrr_icp_extra | 58 | 4 | 0 | 0 | 1 | 0 | 0 | 29 | 0 | 1 | 5 | 18 | 0 |
+| multi_statement | 11 | 3 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 0 | 2 | 0 |
+| multi_update | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 | 0 |
+| multi_update_big | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| multi_update_tiny_hash | 22 | 1 | 0 | 0 | 0 | 2 | 0 | 9 | 1 | 9 | 0 | 0 | 0 |
+| my_getopt_case_insensitive | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| my_print_defaults | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| myisampack | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 12 | 0 | 6 | 0 |
+| mysql | 94 | 6 | 0 | 0 | 0 | 3 | 6 | 24 | 0 | 16 | 5 | 34 | 0 |
+| mysql-interactive | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql-metadata | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 0 | 0 |
+| mysql5613mysql | 48 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 16 | 0 |
+| mysql57_virtual | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 2 | 0 | 4 | 0 |
+| mysql57nopart | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| mysql_binary_mode | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 |
+| mysql_binary_zero_insert | 6 | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 2 | 0 |
+| mysql_comments | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 8 | 0 |
+| mysql_connector_net | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_cp932 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_embedded | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_install_db_win | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 4 | 0 | 0 |
+| mysql_install_db_win_admin | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| mysql_install_db_win_utf8 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| mysql_json_table_recreate | 61 | 0 | 0 | 0 | 0 | 3 | 0 | 11 | 0 | 16 | 1 | 29 | 0 |
+| mysql_locale_posix | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| mysql_not_windows | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_protocols | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_tzinfo_to_sql_symlink | 84 | 0 | 0 | 0 | 0 | 35 | 0 | 6 | 0 | 30 | 2 | 0 | 0 |
+| mysqld--help † | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 | 0 |
+| mysqld_option_err | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| name_const_replacement | 18 | 1 | 1 | 0 | 0 | 0 | 1 | 7 | 0 | 1 | 0 | 7 | 0 |
+| named_pipe | 1446 | 0 | 0 | 0 | 0 | 113 | 0 | 15 | 3 | 1241 | 11 | 43 | 0 |
+| natural_sort_key | 24 | 0 | 0 | 0 | 0 | 4 | 6 | 2 | 0 | 5 | 1 | 2 | 0 |
+| negation_elimination | 68 | 34 | 0 | 0 | 0 | 1 | 0 | 4 | 0 | 1 | 0 | 28 | 0 |
+| no-threads | 5 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| non_blocking_api | 6 | 2 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| null | 341 | 49 | 0 | 0 | 0 | 7 | 3 | 121 | 3 | 62 | 18 | 78 | 0 |
+| null_aware_cardinality | 42 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 7 | 5 | 21 | 0 |
+| null_key | 164 | 15 | 0 | 0 | 0 | 20 | 0 | 42 | 0 | 33 | 2 | 42 | 0 |
+| odbc | 17 | 0 | 0 | 0 | 1 | 2 | 0 | 5 | 1 | 2 | 2 | 1 | 0 |
+| olap | 222 | 64 | 1 | 0 | 14 | 4 | 1 | 101 | 0 | 8 | 3 | 19 | 0 |
+| old-mode | 115 | 11 | 0 | 0 | 0 | 19 | 0 | 24 | 7 | 23 | 18 | 10 | 0 |
+| openssl_1 | 36 | 3 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 1 | 19 | 0 |
+| openssl_6975 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 6 | 0 |
+| opt_trace | 580 | 16 | 0 | 0 | 3 | 7 | 4 | 194 | 5 | 73 | 103 | 89 | 0 |
+| opt_trace_default | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| opt_trace_security | 91 | 0 | 0 | 0 | 0 | 10 | 0 | 8 | 0 | 4 | 23 | 29 | 0 |
+| opt_trace_selectivity | 38 | 0 | 0 | 0 | 0 | 17 | 4 | 1 | 0 | 3 | 4 | 1 | 0 |
+| opt_trace_ucs2 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 1 | 1 | 0 |
+| opt_tvc | 74 | 6 | 0 | 0 | 0 | 0 | 0 | 30 | 0 | 5 | 32 | 1 | 0 |
+| optimizer_costs | 105 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 13 | 9 | 43 | 0 |
+| optimizer_costs2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| order_by | 680 | 21 | 0 | 0 | 2 | 107 | 3 | 199 | 6 | 147 | 78 | 102 | 0 |
+| order_by-mdev-10122 | 31 | 22 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| order_by_limit_join | 69 | 3 | 0 | 0 | 0 | 0 | 0 | 17 | 0 | 9 | 29 | 11 | 0 |
+| order_by_optimizer | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 5 | 0 | 2 | 0 |
+| order_by_pack_big | 42 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 12 | 15 | 11 | 0 |
+| order_by_sortkey | 29 | 0 | 0 | 0 | 0 | 5 | 0 | 2 | 1 | 17 | 1 | 3 | 0 |
+| order_by_zerolength-4285 | 13 | 1 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 3 | 2 | 0 |
+| order_fill_sortbuf | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 1 | 0 |
+| outfile | 34 | 0 | 0 | 0 | 5 | 0 | 0 | 6 | 0 | 5 | 3 | 15 | 0 |
+| outfile_loaddata | 42 | 0 | 0 | 0 | 0 | 14 | 0 | 13 | 2 | 11 | 2 | 0 | 0 |
+| overflow | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| packet | 14 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 7 | 0 |
+| parser | 768 | 47 | 0 | 0 | 15 | 7 | 32 | 209 | 2 | 23 | 37 | 371 | 0 |
+| parser_not_embedded | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 26 | 0 |
+| perror | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
+| perror-win | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
+| pool_of_threads | 1448 | 0 | 0 | 0 | 0 | 113 | 0 | 15 | 3 | 1241 | 13 | 43 | 0 |
+| precedence | 3444 | 0 | 0 | 0 | 0 | 1139 | 0 | 0 | 0 | 1152 | 1 | 1 | 0 |
+| precedence_bugs | 30 | 3 | 0 | 0 | 0 | 2 | 0 | 12 | 0 | 4 | 0 | 9 | 0 |
+| preload | 62 | 0 | 0 | 0 | 0 | 8 | 0 | 4 | 1 | 18 | 2 | 26 | 0 |
+| prepare | 56 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 2 | 6 | 31 | 2 | 0 |
+| processlist | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 8 | 1 | 0 |
+| processlist_notembedded | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 4 | 0 | 0 |
+| progress_976225 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 1 | 0 |
+| public_basic | 64 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 7 | 1 | 52 | 0 |
+| public_privileges | 172 | 2 | 0 | 0 | 0 | 0 | 11 | 15 | 0 | 16 | 21 | 107 | 0 |
+| quick_select_4161 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 4 | 1 | 0 |
+| range | 828 | 104 | 0 | 0 | 24 | 67 | 2 | 312 | 11 | 135 | 45 | 127 | 0 |
+| range_interrupted-13751 | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 3 | 2 | 0 |
+| range_mrr_icp | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
+| range_notembedded | 80 | 11 | 0 | 0 | 1 | 0 | 0 | 27 | 0 | 1 | 33 | 6 | 0 |
+| read_only | 134 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 23 | 2 | 90 | 0 |
+| rename | 88 | 0 | 0 | 0 | 3 | 3 | 1 | 24 | 0 | 28 | 0 | 29 | 0 |
+| renamedb | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 |
+| reopen_temp_table | 120 | 1 | 0 | 0 | 0 | 11 | 4 | 24 | 0 | 43 | 3 | 34 | 0 |
+| repair | 119 | 3 | 0 | 0 | 0 | 1 | 1 | 33 | 1 | 20 | 18 | 41 | 0 |
+| repair_symlink-5543 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
+| replace | 21 | 0 | 0 | 0 | 0 | 1 | 0 | 8 | 0 | 8 | 0 | 4 | 0 |
+| replace_returning | 87 | 0 | 0 | 0 | 0 | 4 | 0 | 8 | 0 | 34 | 12 | 29 | 0 |
+| replace_returning_datatypes | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 0 | 0 | 0 |
+| replace_returning_err | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 24 | 0 |
+| rollback | 14 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 2 | 0 | 5 | 0 |
+| round | 130 | 0 | 0 | 0 | 0 | 9 | 0 | 30 | 8 | 83 | 0 | 0 | 0 |
+| row | 180 | 88 | 0 | 0 | 2 | 8 | 0 | 43 | 4 | 0 | 1 | 33 | 0 |
+| row-checksum | 72 | 0 | 0 | 0 | 0 | 0 | 0 | 25 | 3 | 12 | 1 | 31 | 0 |
+| row-checksum-old | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| rowid_filter | 325 | 0 | 0 | 0 | 0 | 1 | 0 | 300 | 1 | 11 | 5 | 7 | 0 |
+| rownum | 325 | 7 | 1 | 0 | 0 | 82 | 6 | 70 | 0 | 45 | 43 | 68 | 0 |
+| sargable_casefold | 62 | 0 | 0 | 0 | 1 | 5 | 0 | 6 | 0 | 6 | 5 | 38 | 0 |
+| sargable_casefold_notembedded | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 2 | 3 | 0 |
+| sargable_casefold_part | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 2 | 3 | 0 |
+| sargable_date_cond | 147 | 0 | 0 | 0 | 1 | 29 | 1 | 32 | 1 | 13 | 20 | 50 | 0 |
+| schema | 31 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 22 | 0 |
+| second_frac-9175 | 5 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
+| secondary_key_costs | 44 | 0 | 0 | 0 | 0 | 1 | 2 | 5 | 0 | 9 | 13 | 12 | 0 |
+| select | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 1 | 0 |
+| select_found | 28 | 0 | 0 | 0 | 2 | 3 | 0 | 8 | 1 | 0 | 0 | 1 | 0 |
+| select_jcl6 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 1 | 0 |
+| select_pkeycache | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| select_safe | 55 | 1 | 0 | 0 | 0 | 4 | 0 | 7 | 0 | 16 | 12 | 14 | 0 |
+| selectivity | 952 | 27 | 2 | 0 | 2 | 12 | 0 | 472 | 3 | 108 | 200 | 122 | 0 |
+| selectivity_no_engine | 143 | 4 | 0 | 0 | 0 | 2 | 0 | 54 | 1 | 11 | 42 | 27 | 0 |
+| selectivity_notembedded | 85 | 0 | 0 | 0 | 0 | 2 | 0 | 7 | 0 | 44 | 21 | 6 | 0 |
+| servers | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 43 | 1 | 19 | 0 |
+| set_operation | 133 | 8 | 0 | 0 | 0 | 29 | 0 | 34 | 0 | 48 | 8 | 5 | 0 |
+| set_operation_oracle | 87 | 9 | 0 | 0 | 2 | 8 | 0 | 31 | 0 | 7 | 14 | 16 | 0 |
+| set_statement | 306 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 21 | 145 | 77 | 0 |
+| set_statement_notembedded | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 1 | 4 | 0 |
+| show | 55 | 3 | 0 | 0 | 2 | 0 | 0 | 18 | 0 | 4 | 0 | 24 | 0 |
+| show_analyze | 130 | 1 | 0 | 0 | 0 | 0 | 0 | 17 | 0 | 48 | 54 | 10 | 0 |
+| show_analyze_json | 119 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 48 | 51 | 12 | 0 |
+| show_bad_definer-5553 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 3 | 0 |
+| show_check | 498 | 0 | 0 | 0 | 0 | 4 | 0 | 66 | 2 | 99 | 38 | 276 | 0 |
+| show_create_user | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 24 | 0 |
+| show_explain | 457 | 0 | 0 | 0 | 0 | 4 | 0 | 95 | 0 | 148 | 155 | 49 | 2 |
+| show_explain_json | 174 | 0 | 0 | 0 | 0 | 0 | 0 | 13 | 0 | 67 | 73 | 19 | 2 |
+| show_explain_non_select | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 7 | 8 | 0 | 0 |
+| show_function_with_pad_char_to_full_length | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 4 | 0 |
+| show_profile | 6 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 | 0 |
+| show_row_order-9226 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 | 0 |
+| sighup-6580 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| simultaneous_assignment | 81 | 1 | 0 | 0 | 0 | 14 | 0 | 19 | 1 | 22 | 3 | 19 | 2 |
+| single_delete_update | 260 | 0 | 0 | 0 | 0 | 40 | 0 | 44 | 0 | 46 | 0 | 130 | 0 |
+| skip_grants | 64 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 18 | 1 | 35 | 0 |
+| skip_name_resolve | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 18 | 0 |
+| slowlog_enospace-10508 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 2 | 3 | 0 |
+| slowlog_integrity | 35 | 3 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 8 | 10 | 11 | 0 |
+| socket_conflict | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 0 | 0 |
+| sp2 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 6 | 0 |
+| sql_mode | 250 | 5 | 1 | 0 | 18 | 9 | 1 | 30 | 4 | 11 | 109 | 49 | 0 |
+| sql_mode_pad_char_to_full_length | 49 | 0 | 0 | 0 | 0 | 0 | 0 | 14 | 0 | 16 | 13 | 6 | 0 |
+| sql_safe_updates | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 4 | 1 | 5 | 0 |
+| stat_tables | 907 | 3 | 0 | 0 | 0 | 11 | 0 | 321 | 1 | 369 | 92 | 67 | 0 |
+| stat_tables-enospc | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 5 | 2 | 0 |
+| stat_tables_disabled | 331 | 0 | 0 | 0 | 0 | 0 | 0 | 300 | 1 | 3 | 15 | 10 | 0 |
+| stat_tables_missing | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 2 | 0 |
+| stat_tables_par | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| stat_tables_rbr | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 4 | 2 | 0 |
+| stat_tables_repl | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 3 | 0 | 6 | 0 |
+| statement-expr | 32 | 1 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 2 | 1 | 19 | 0 |
+| statistics | 494 | 0 | 0 | 0 | 0 | 15 | 0 | 37 | 3 | 159 | 75 | 81 | 0 |
+| statistics_close | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 1 | 0 |
+| statistics_json | 403 | 8 | 0 | 0 | 1 | 15 | 0 | 78 | 8 | 79 | 37 | 154 | 0 |
+| status | 35 | 3 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 2 | 4 | 11 | 0 |
+| status2 | 26 | 2 | 0 | 0 | 1 | 0 | 0 | 5 | 0 | 4 | 0 | 13 | 0 |
+| str_to_datetime_457 | 9 | 4 | 4 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| strict | 602 | 12 | 0 | 0 | 0 | 15 | 0 | 101 | 17 | 102 | 46 | 304 | 0 |
+| strict_autoinc_1myisam | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 0 | 5 | 3 | 0 |
+| strict_autoinc_2innodb | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 0 | 5 | 3 | 0 |
+| strict_autoinc_3heap | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 0 | 5 | 3 | 0 |
+| strings | 16 | 1 | 0 | 0 | 0 | 0 | 0 | 5 | 2 | 3 | 1 | 4 | 0 |
+| subselect | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 0 |
+| subselect2 | 153 | 7 | 0 | 0 | 0 | 3 | 0 | 53 | 7 | 56 | 17 | 9 | 0 |
+| subselect3 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 |
+| subselect3_jcl6 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
+| subselect4 | 1013 | 146 | 1 | 0 | 10 | 29 | 2 | 416 | 3 | 63 | 155 | 183 | 0 |
+| subselect_cache | 984 | 44 | 0 | 0 | 18 | 11 | 0 | 646 | 1 | 17 | 92 | 152 | 0 |
+| subselect_elimination | 70 | 4 | 0 | 0 | 0 | 4 | 0 | 20 | 1 | 19 | 8 | 13 | 0 |
+| subselect_exists2in | 341 | 17 | 0 | 0 | 3 | 15 | 1 | 159 | 0 | 29 | 80 | 37 | 0 |
+| subselect_exists2in_costmat | 54 | 0 | 0 | 0 | 0 | 4 | 0 | 3 | 0 | 32 | 8 | 7 | 0 |
+| subselect_extra | 144 | 7 | 0 | 0 | 0 | 10 | 0 | 59 | 0 | 25 | 8 | 35 | 0 |
+| subselect_extra_no_semijoin | 17 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 8 | 4 | 0 |
+| subselect_firstmatch | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 2 | 3 | 1 | 0 |
+| subselect_mat | 163 | 18 | 0 | 0 | 2 | 7 | 0 | 65 | 0 | 21 | 27 | 22 | 0 |
+| subselect_mat_analyze_json | 36 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 6 | 18 | 0 |
+| subselect_mat_cost | 93 | 0 | 0 | 0 | 0 | 18 | 0 | 3 | 0 | 33 | 10 | 29 | 0 |
+| subselect_mat_cost_bugs | 199 | 13 | 1 | 0 | 2 | 2 | 0 | 122 | 0 | 11 | 30 | 17 | 0 |
+| subselect_no_exists_to_in | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subselect_no_mat | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 |
+| subselect_no_opts | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
+| subselect_no_scache | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
+| subselect_no_semijoin | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 8 | 1 | 0 |
+| subselect_notembedded | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 2 | 0 |
+| subselect_nulls | 45 | 14 | 0 | 0 | 10 | 0 | 0 | 18 | 0 | 0 | 3 | 0 | 0 |
+| subselect_partial_match | 416 | 13 | 0 | 0 | 78 | 7 | 0 | 199 | 0 | 4 | 54 | 61 | 0 |
+| subselect_sj | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 5 | 2 | 0 |
+| subselect_sj2 | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 2 | 0 |
+| subselect_sj2_jcl6 | 65 | 3 | 0 | 0 | 0 | 1 | 0 | 23 | 0 | 1 | 28 | 9 | 0 |
+| subselect_sj2_mat | 144 | 10 | 0 | 0 | 0 | 4 | 0 | 69 | 0 | 3 | 34 | 22 | 0 |
+| subselect_sj_jcl6 | 102 | 5 | 0 | 0 | 0 | 5 | 0 | 30 | 0 | 7 | 46 | 9 | 0 |
+| subselect_sj_mat | 872 | 48 | 0 | 0 | 4 | 61 | 0 | 373 | 21 | 105 | 144 | 111 | 0 |
+| subselect_sj_nonmerged | 48 | 1 | 0 | 0 | 0 | 5 | 0 | 18 | 0 | 11 | 7 | 6 | 0 |
+| subselect_union_rand | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 | 0 | 0 | 0 | 0 |
+| sum_distinct | 27 | 3 | 0 | 0 | 0 | 10 | 0 | 6 | 1 | 6 | 1 | 0 | 0 |
+| sum_distinct-big | 43 | 0 | 0 | 0 | 0 | 14 | 0 | 6 | 0 | 8 | 12 | 3 | 0 |
+| symlink | 92 | 0 | 0 | 0 | 0 | 3 | 1 | 22 | 2 | 29 | 5 | 28 | 0 |
+| synchronization | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| sysdate_is_now | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| table_elim | 281 | 6 | 0 | 0 | 1 | 9 | 0 | 137 | 1 | 42 | 5 | 79 | 0 |
+| table_keyinfo-6838 | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 3 | 0 | 0 |
+| table_options | 79 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 27 | 8 | 36 | 0 |
+| table_options_notembedded | 19 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 4 | 9 | 0 |
+| table_value_constr | 415 | 4 | 0 | 0 | 0 | 19 | 129 | 34 | 0 | 40 | 108 | 79 | 0 |
+| tablelock | 78 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 1 | 20 | 0 | 41 | 0 |
+| tc_heuristic_recover | 14 | 4 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 3 | 5 | 0 |
+| temp_table | 362 | 2 | 0 | 0 | 1 | 42 | 4 | 68 | 1 | 152 | 10 | 82 | 0 |
+| temp_table_frm | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 7 | 0 | 0 |
+| temp_table_symlink | 18 | 1 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 11 | 0 | 3 | 0 |
+| temporal_literal | 202 | 58 | 0 | 0 | 0 | 4 | 3 | 30 | 4 | 15 | 47 | 41 | 0 |
+| temporal_scale_4283 | 8 | 2 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 |
+| timeout | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 7 | 0 | 23 | 0 |
+| timezone | 33 | 7 | 0 | 0 | 0 | 1 | 0 | 5 | 1 | 15 | 1 | 3 | 0 |
+| timezone2 | 357 | 32 | 1 | 0 | 3 | 50 | 2 | 72 | 6 | 55 | 90 | 26 | 0 |
+| timezone3 | 18 | 2 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 7 | 0 | 0 | 0 |
+| timezone4 | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| tls_version | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| tlsv13 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| tmp_table_count-7586 | 36 | 1 | 0 | 0 | 0 | 1 | 0 | 9 | 0 | 6 | 2 | 14 | 0 |
+| tmp_table_error | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 2 | 0 |
+| trans_read_only | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 3 | 4 | 0 |
+| transaction_timeout | 22 | 4 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 6 | 9 | 0 |
+| truncate | 92 | 1 | 0 | 0 | 0 | 15 | 0 | 17 | 1 | 23 | 0 | 35 | 0 |
+| truncate-stale-6500 | 13 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 1 | 2 | 1 | 2 | 0 |
+| truncate_badse | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 4 | 0 |
+| truncate_coverage | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 1 | 8 | 5 | 0 |
+| truncate_notembedded | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 4 | 0 |
+| type_binary | 99 | 20 | 0 | 0 | 3 | 11 | 0 | 49 | 0 | 7 | 5 | 4 | 0 |
+| type_bit | 297 | 60 | 1 | 0 | 0 | 25 | 0 | 131 | 10 | 38 | 3 | 28 | 0 |
+| type_blob | 417 | 18 | 3 | 0 | 1 | 102 | 0 | 144 | 8 | 48 | 16 | 76 | 0 |
+| type_bool | 4 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0 | 0 | 0 | 0 | 0 |
+| type_char | 7 | 4 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| type_date | 431 | 67 | 2 | 0 | 2 | 22 | 2 | 181 | 10 | 34 | 49 | 54 | 0 |
+| type_date_round | 71 | 8 | 0 | 0 | 0 | 10 | 0 | 41 | 1 | 7 | 2 | 2 | 0 |
+| type_datetime | 86 | 7 | 0 | 0 | 0 | 15 | 0 | 20 | 8 | 21 | 8 | 7 | 0 |
+| type_datetime_hires | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 5 | 1 | 1 | 0 |
+| type_datetime_round | 93 | 9 | 0 | 0 | 0 | 12 | 0 | 48 | 1 | 12 | 8 | 3 | 0 |
+| type_decimal | 443 | 43 | 0 | 0 | 2 | 21 | 0 | 268 | 12 | 51 | 21 | 24 | 0 |
+| type_enum | 337 | 30 | 3 | 0 | 4 | 29 | 0 | 160 | 9 | 37 | 16 | 49 | 0 |
+| type_float | 409 | 65 | 7 | 0 | 1 | 30 | 6 | 171 | 3 | 58 | 16 | 51 | 0 |
+| type_hex_hybrid | 18 | 3 | 0 | 0 | 0 | 2 | 0 | 5 | 0 | 2 | 1 | 4 | 0 |
+| type_int | 329 | 36 | 2 | 0 | 1 | 32 | 7 | 88 | 10 | 57 | 9 | 85 | 0 |
+| type_interval | 8 | 0 | 0 | 0 | 0 | 0 | 2 | 6 | 0 | 0 | 0 | 0 | 0 |
+| type_json | 64 | 4 | 0 | 0 | 0 | 7 | 1 | 14 | 2 | 15 | 2 | 19 | 0 |
+| type_nchar | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 5 | 0 | 0 | 7 | 0 |
+| type_newdecimal | 349 | 187 | 0 | 0 | 3 | 7 | 0 | 90 | 6 | 20 | 10 | 26 | 0 |
+| type_newdecimal-big | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 |
+| type_num | 457 | 12 | 0 | 0 | 0 | 112 | 0 | 200 | 7 | 30 | 2 | 94 | 0 |
+| type_ranges | 73 | 3 | 0 | 0 | 0 | 13 | 0 | 18 | 1 | 24 | 1 | 12 | 0 |
+| type_row | 33 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 4 | 23 | 0 |
+| type_set | 172 | 16 | 0 | 0 | 4 | 18 | 0 | 70 | 4 | 23 | 8 | 29 | 0 |
+| type_temporal_mariadb53 | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 0 | 6 | 0 |
+| type_temporal_mysql56 | 7 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 | 3 | 0 |
+| type_time | 950 | 129 | 0 | 0 | 3 | 62 | 3 | 236 | 3 | 349 | 56 | 102 | 0 |
+| type_time_6065 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 1 | 0 | 0 |
+| type_time_hires | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 5 | 1 | 1 | 0 |
+| type_time_round | 128 | 16 | 0 | 0 | 0 | 12 | 1 | 74 | 1 | 14 | 6 | 4 | 0 |
+| type_timestamp | 810 | 22 | 0 | 0 | 0 | 99 | 2 | 193 | 37 | 169 | 118 | 167 | 0 |
+| type_timestamp_hires | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 5 | 1 | 1 | 0 |
+| type_timestamp_round | 100 | 7 | 0 | 0 | 0 | 11 | 0 | 47 | 1 | 14 | 19 | 1 | 0 |
+| type_uint | 37 | 3 | 1 | 0 | 0 | 3 | 0 | 17 | 0 | 6 | 5 | 2 | 0 |
+| type_varbinary | 7 | 2 | 0 | 0 | 2 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| type_varchar | 47 | 4 | 0 | 0 | 0 | 2 | 0 | 31 | 0 | 6 | 0 | 4 | 0 |
+| type_varchar_mysql41 | 39 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 11 | 0 | 23 | 0 |
+| type_year | 202 | 18 | 0 | 0 | 0 | 68 | 0 | 59 | 3 | 37 | 4 | 10 | 0 |
+| udf | 233 | 3 | 0 | 0 | 0 | 14 | 44 | 39 | 1 | 21 | 12 | 93 | 0 |
+| udf_notembedded | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 1 | 0 | 1 | 0 |
+| udf_skip_grants | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| union | 916 | 96 | 1 | 0 | 18 | 57 | 6 | 350 | 13 | 127 | 32 | 154 | 0 |
+| unique | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 5 | 0 | 0 | 0 |
+| update | 348 | 8 | 3 | 0 | 2 | 25 | 0 | 138 | 8 | 96 | 4 | 62 | 0 |
+| update_ignore_216 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 | 0 | 0 |
+| update_single_to_multi | 387 | 0 | 0 | 0 | 0 | 0 | 0 | 302 | 1 | 9 | 46 | 29 | 0 |
+| update_use_source | 878 | 0 | 0 | 0 | 3 | 201 | 0 | 37 | 0 | 436 | 6 | 195 | 0 |
+| user_limits | 78 | 5 | 0 | 0 | 0 | 8 | 0 | 3 | 0 | 6 | 1 | 47 | 0 |
+| user_var | 267 | 51 | 3 | 0 | 13 | 12 | 8 | 88 | 1 | 20 | 41 | 18 | 0 |
+| varbinary | 69 | 22 | 0 | 0 | 1 | 7 | 0 | 21 | 1 | 5 | 0 | 12 | 0 |
+| view | 2978 | 72 | 24 | 0 | 5 | 322 | 4 | 913 | 14 | 676 | 165 | 763 | 0 |
+| view_alias | 52 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 9 | 0 | 34 | 0 |
+| wait_timeout | 4 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 | 0 |
+| warnings | 50 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 13 | 6 | 14 | 0 |
+| warnings_engine_disabled | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| win | 904 | 167 | 2 | 0 | 9 | 59 | 19 | 418 | 3 | 40 | 52 | 131 | 0 |
+| win_as_arg_to_aggregate_func | 33 | 2 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 25 | 0 |
+| win_avg | 5 | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| win_big | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 1 | 2 | 0 |
+| win_big-mdev-10092 | 13 | 0 | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 1 | 5 | 0 |
+| win_big-mdev-11697 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 2 | 7 | 0 |
+| win_bit | 12 | 6 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 0 | 0 |
+| win_empty_over | 19 | 8 | 0 | 0 | 0 | 2 | 0 | 3 | 0 | 2 | 0 | 4 | 0 |
+| win_first_last_value | 16 | 5 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 0 | 1 | 0 |
+| win_i_s | 10 | 3 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 4 | 0 |
+| win_insert_select | 37 | 0 | 0 | 0 | 0 | 9 | 0 | 2 | 0 | 17 | 9 | 0 | 0 |
+| win_lead_lag | 16 | 3 | 0 | 0 | 0 | 0 | 8 | 3 | 0 | 0 | 0 | 2 | 0 |
+| win_min_max | 49 | 39 | 0 | 0 | 0 | 0 | 4 | 6 | 0 | 0 | 0 | 0 | 0 |
+| win_nth_value | 8 | 2 | 0 | 0 | 0 | 0 | 3 | 3 | 0 | 0 | 0 | 0 | 0 |
+| win_ntile | 49 | 28 | 0 | 0 | 0 | 1 | 4 | 8 | 1 | 1 | 0 | 6 | 0 |
+| win_orderby | 58 | 7 | 0 | 0 | 1 | 1 | 26 | 13 | 0 | 2 | 0 | 8 | 0 |
+| win_percent_cume | 6 | 3 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| win_percentile | 111 | 0 | 0 | 0 | 0 | 3 | 36 | 36 | 2 | 13 | 0 | 20 | 0 |
+| win_rank | 18 | 0 | 0 | 0 | 0 | 0 | 6 | 12 | 0 | 0 | 0 | 0 | 0 |
+| win_std | 36 | 24 | 0 | 0 | 0 | 0 | 5 | 5 | 0 | 0 | 0 | 2 | 0 |
+| win_sum | 9 | 2 | 0 | 0 | 1 | 0 | 0 | 5 | 1 | 0 | 0 | 0 | 0 |
+| windows | 30 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 6 | 3 | 15 | 0 |
+| winservice_basic | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| winservice_i18n | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| wolfssl | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| xml | 433 | 0 | 0 | 0 | 332 | 7 | 2 | 17 | 3 | 7 | 38 | 27 | 0 |
+| xtradb_mrr | 68 | 0 | 0 | 0 | 0 | 14 | 0 | 18 | 0 | 21 | 8 | 5 | 0 |
 
 † the parser dropped trailing lines it could not delimit.
 
@@ -721,30 +721,30 @@ Column names are compared with rows. Row order is compared when the outer query 
 
 | Count | Message |
 |---:|---|
-| 558 | Error: unsupported expression: weight_string(_, _, _, X_) |
-| 432 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR), _, _, X_) |
-| 432 | Error: unsupported expression: weight_string(CAST(_latin1 X_ AS CHAR), _, _, X_) |
-| 395 | Error: sql parser error: Expected: ), found: as at Line: _, Column: _ |
-| 360 | PREPARED: Error: Unknown prepared statement handler (stmt) |
+| 670 | Error: query engine failed: binary value is not valid UTF-_ for numeric coercion |
+| 574 | Error: unsupported expression: WEIGHT_STRING(_latin1 X_): the collation of this expression |
+| 354 | PREPARED: Error: Unknown prepared statement handler (stmt) |
+| 226 | Error: unsupported expression: WEIGHT_STRING(_): the collation of this connection is carri |
+| 175 | SESSION: Error: unknown column @@optimizer_switch |
 | 147 | INSERT: Error: only literal values are supported in INSERT, got _ |
-| 134 | Error: unsupported expression: weight_string(_) |
 | 126 | Error: unsupported expression: extractValue(@xml, _) |
+| 118 | SESSION: Error: Unknown character set: _ |
 | 103 | PREPARED: Error: Pintail's query surfaces are read-only |
+| 92 | SESSION: Error: Unknown collation: _ |
 | 75 | INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied |
 | 70 | PREPARED: Error: unexpected tokens after prepared statement command |
-| 61 | PREPARED: Error: Unknown prepared statement handler (stmt1) |
 | 60 | Error: unsupported expression: ExtractValue(_, _) |
 | 59 | Error: unsupported expression: extractValue(_, _) |
+| 58 | PREPARED: Error: Unknown prepared statement handler (stmt1) |
 | 57 | Error: unsupported expression: JSON_SCHEMA_VALID(@schema_array, _) |
 | 55 | DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line |
 | 55 | DDL: Error: character set utf32 is not supported on a local table |
-| 50 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR)) |
+| 53 | Error: unsupported expression: WEIGHT_STRING: weights under latin2_general_ci are not impl |
 | 46 | INSERT: Error: Column _ cannot be null |
-| 46 | Error: unsupported expression: weight_string(CAST(_latin1 X_ AS CHAR)) |
-| 45 | Error: query engine failed: bound expression has an invalid physical type |
+| 45 | Error: unsupported expression: WEIGHT_STRING: weights under latin1_swedish_ci are not impl |
 | 41 | PREPARED: Error: expected a user variable |
 | 40 | DDL: Error: Invalid default value for _ |
 | 40 | DDL: Error: character set ucs2 is not supported on a local table |
 | 39 | DDL: Error: character set utf16 is not supported on a local table |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwfvlst2-660644/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwgbd9af-199850/diffs/` (not committed).

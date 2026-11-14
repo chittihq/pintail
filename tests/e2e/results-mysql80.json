@@ -56,6 +56,11 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -422,6 +427,11 @@
   {
     "phase": "snapshot",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -1147,6 +1157,46 @@
   {
     "phase": "snapshot",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -1446,6 +1496,11 @@
   },
   {
     "phase": "orm-compat",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -1812,6 +1867,11 @@
   {
     "phase": "orm-compat",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -2537,6 +2597,46 @@
   {
     "phase": "orm-compat",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -2716,6 +2816,11 @@
   },
   {
     "phase": "crud",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -3082,6 +3187,11 @@
   {
     "phase": "crud",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -3807,6 +3917,46 @@
   {
     "phase": "crud",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -3986,6 +4136,11 @@
   },
   {
     "phase": "composite-keys",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -4352,6 +4507,11 @@
   {
     "phase": "composite-keys",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -5077,6 +5237,46 @@
   {
     "phase": "composite-keys",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -5256,6 +5456,11 @@
   },
   {
     "phase": "type-edges",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -5622,6 +5827,11 @@
   {
     "phase": "type-edges",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -6347,6 +6557,46 @@
   {
     "phase": "type-edges",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -6541,6 +6791,11 @@
   },
   {
     "phase": "ddl",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -6917,6 +7172,11 @@
   {
     "phase": "ddl",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -7642,6 +7902,46 @@
   {
     "phase": "ddl",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -7821,6 +8121,11 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -8197,6 +8502,11 @@
   {
     "phase": "schema-drift-minimal",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -8922,6 +9232,46 @@
   {
     "phase": "schema-drift-minimal",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -9101,6 +9451,11 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -9477,6 +9832,11 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -10202,6 +10562,46 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -10411,6 +10811,11 @@
   },
   {
     "phase": "churn",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -10787,6 +11192,11 @@
   {
     "phase": "churn",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -11512,6 +11922,46 @@
   {
     "phase": "churn",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -11691,6 +12141,11 @@
   },
   {
     "phase": "contention",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -12067,6 +12522,11 @@
   {
     "phase": "contention",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -12792,6 +13252,46 @@
   {
     "phase": "contention",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -12996,6 +13496,11 @@
   },
   {
     "phase": "execution-budget",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -13372,6 +13877,11 @@
   {
     "phase": "execution-budget",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -14097,6 +14607,46 @@
   {
     "phase": "execution-budget",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -14401,6 +14951,11 @@
   },
   {
     "phase": "connection-collation",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -14777,6 +15332,11 @@
   {
     "phase": "connection-collation",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -15502,6 +16062,46 @@
   {
     "phase": "connection-collation",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -15701,6 +16301,11 @@
   },
   {
     "phase": "spill",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -16077,6 +16682,11 @@
   {
     "phase": "spill",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -16802,6 +17412,46 @@
   {
     "phase": "spill",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -17001,6 +17651,11 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -17377,6 +18032,11 @@
   {
     "phase": "pooling",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -18102,6 +18762,46 @@
   {
     "phase": "pooling",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -18376,6 +19076,11 @@
   },
   {
     "phase": "local-database",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -18752,6 +19457,11 @@
   {
     "phase": "local-database",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -19477,6 +20187,46 @@
   {
     "phase": "local-database",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -19661,6 +20411,11 @@
   },
   {
     "phase": "restart",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -20037,6 +20792,11 @@
   {
     "phase": "restart",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -20762,6 +21522,46 @@
   {
     "phase": "restart",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -20888,7 +21688,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150024 sync_runs rows for db_3f359b74e2e4b6726313406a4a6a4e34"
+    "detail": "150023 sync_runs rows for db_42645f05969fbdd35f25f5f216d0a839"
   },
   {
     "phase": "activity-history",
@@ -20900,25 +21700,25 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 3ms over 150000 rows"
+    "detail": "p50 2ms p95 4ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 4ms"
+    "detail": "p50 2ms p95 4ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 11ms p99 28ms"
+    "detail": "p50 16ms p99 34ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 15ms"
+    "detail": "health p95 33ms"
   },
   {
     "phase": "activity-history",
@@ -20973,6 +21773,11 @@
   {
     "phase": "activity-history",
     "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:documents",
     "status": "PASS"
   },
   {
@@ -21353,6 +22158,11 @@
   {
     "phase": "activity-history",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -22078,6 +22888,46 @@
   {
     "phase": "activity-history",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -22204,25 +23054,25 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4800"
+    "detail": "0 failed of 4803"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4800 requests: p50 3ms p99 14ms"
+    "detail": "4803 requests: p50 3ms p99 15ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 17ms"
+    "detail": "health p99 15ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 3357 vs source 3357"
+    "detail": "orders replica 5555 vs source 5555"
   },
   {
     "phase": "poll-storm",
@@ -22277,6 +23127,11 @@
   {
     "phase": "poll-storm",
     "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:documents",
     "status": "PASS"
   },
   {
@@ -22657,6 +23512,11 @@
   {
     "phase": "poll-storm",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -23382,6 +24242,46 @@
   {
     "phase": "poll-storm",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -23666,6 +24566,11 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -24047,6 +24952,11 @@
   {
     "phase": "control-plane",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -24772,6 +25682,46 @@
   {
     "phase": "control-plane",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -24956,6 +25906,11 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -25337,6 +26292,11 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -26062,6 +27022,46 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -26267,6 +27267,11 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -26648,6 +27653,11 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -27373,6 +28383,46 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -27567,6 +28617,11 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -27948,6 +29003,11 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -28673,6 +29733,46 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -28813,8 +29913,7 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_3f359b74e2e4b6726313406a4a6a4e34\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-11-14T04:13:20.354989925+00:00\",\"updated_at\":\"2026-11-14T04:16:49.367761021+00:00\"},\"tables\":30,\"rows\":7270}"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -28874,6 +29973,11 @@
   {
     "phase": "drop-table-polling",
     "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "converge:documents",
     "status": "PASS"
   },
   {
@@ -29259,6 +30363,11 @@
   {
     "phase": "drop-table-polling",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -29984,6 +31093,46 @@
   {
     "phase": "drop-table-polling",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -30184,6 +31333,11 @@
   },
   {
     "phase": "restart-during-snapshot",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -30565,6 +31719,11 @@
   {
     "phase": "restart-during-snapshot",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -31290,6 +32449,46 @@
   {
     "phase": "restart-during-snapshot",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -31501,6 +32700,11 @@
   },
   {
     "phase": "restart-during-resync",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -31882,6 +33086,11 @@
   {
     "phase": "restart-during-resync",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -32607,6 +33816,46 @@
   {
     "phase": "restart-during-resync",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -32739,7 +33988,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 85 ok, dashboards 86 ok; no errors"
+    "detail": "wire 240 ok, http 85 ok, dashboards 101 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -32757,25 +34006,25 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 169ms p99 824ms over 240 queries"
+    "detail": "wire p50 200ms p99 981ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 11ms over 6 samples"
+    "detail": "health p99 16ms over 7 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 165MB with a 256MB budget"
+    "detail": "peak RSS 160MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 200600 vs source 200600"
+    "detail": "big 200700 vs source 200700"
   },
   {
     "phase": "memory-pressure",
@@ -32836,6 +34085,11 @@
   {
     "phase": "memory-pressure",
     "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:documents",
     "status": "PASS"
   },
   {
@@ -33221,6 +34475,11 @@
   {
     "phase": "memory-pressure",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -33946,6 +35205,46 @@
   {
     "phase": "memory-pressure",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -34096,7 +35395,7 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 65MB before, peak 391MB during (margin 768MB)"
+    "detail": "RSS 118MB before, peak 299MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
@@ -34151,6 +35450,11 @@
   {
     "phase": "reconcile-memory",
     "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "converge:documents",
     "status": "PASS"
   },
   {
@@ -34536,6 +35840,11 @@
   {
     "phase": "reconcile-memory",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -35261,6 +36570,46 @@
   {
     "phase": "reconcile-memory",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {
@@ -35481,6 +36830,11 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:flash_sales",
     "status": "PASS"
   },
@@ -35862,6 +37216,11 @@
   {
     "phase": "drop-database",
     "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:json: a stored document reads back as the text the source stores",
     "status": "PASS"
   },
   {
@@ -36591,6 +37950,46 @@
   },
   {
     "phase": "drop-database",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: DATETIME(6) between computed bounds",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "query:where: DATETIME(6) against a fractional literal",
     "status": "PASS"
   },
@@ -36763,6 +38162,11 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:documents",
     "status": "PASS"
   },
   {
@@ -37153,6 +38557,11 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "query:json: a stored document reads back as the text the source stores",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "query:derived table",
     "status": "PASS"
   },
@@ -37874,6 +39283,46 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a DATE column against computed text at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a DATE column against computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a DATE column equal to computed text with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a DATE column in a computed list",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: DATE() of a TIMESTAMP against a formatted day",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: DATE() of a TIMESTAMP against today, formatted",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a TIMESTAMP within a computed month",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: DATETIME(6) between computed bounds",
     "status": "PASS"
   },
   {

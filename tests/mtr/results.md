@@ -1,648 +1,648 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-11-14T04:01:59.222Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-11-14T11:23:19.175Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: 4a82f3c84ce3f64ba9ef12f3637b43a6095bec10; source dirty: false. Binary SHA-256: f565fae7beb4f5dce2e953416a381a4f4a2b1e5a67ced9fa32ba8f315c196f94.
+Replay mode: local. Source commit: 8e56ca285d43a156cbe6911508490de19318df28; source dirty: false. Binary SHA-256: a099ed4327421891c3b337805620b496acaaed658ed697d14b25dcb031e35da7.
 
-**10,100 of 10,227 compared SELECTs match MySQL byte-for-byte** (98.8%), **out of 23,119 SELECTs replayed** - 12,892 never reached a comparison, so this is a share of what could be compared and not of the suite. 124 differ in rows, 3 in column names only. 4,297 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
+**10,573 of 10,665 compared SELECTs match MySQL byte-for-byte** (99.1%; the 496 session-diverged SELECTs are not in that percentage: counted as mismatches it is 94.7%), **out of 23,119 SELECTs replayed** - 12,454 never reached a comparison, so this is a share of what could be compared and not of the suite. 92 differ in rows, 0 in column names only. 3,363 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. 496 did not match after Pintail and MySQL disagreed on a session statement, and say nothing while the sessions differ. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
-| File | Statements | Exact | Mismatch | Names | Pintail error | Tainted | MySQL error | Setup ok | Setup rejected | Unsupported | Session | Skipped |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1st | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| admin_interface | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
-| admin_interface_ipv4_mapped | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
-| alias | 80 | 17 | 0 | 0 | 0 | 1 | 0 | 17 | 1 | 15 | 2 | 27 |
-| almost_full | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 2 |
-| alter_table | 60 | 0 | 0 | 0 | 0 | 11 | 0 | 24 | 2 | 13 | 2 | 8 |
-| alter_table-big | 136 | 4 | 0 | 0 | 1 | 4 | 5 | 14 | 0 | 26 | 32 | 50 |
-| analyze | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 4 | 0 | 18 |
-| analyze_histogram | 21 | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 9 | 6 |
-| ansi | 9 | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 2 | 1 |
-| auto_increment | 249 | 3 | 0 | 0 | 0 | 30 | 0 | 73 | 16 | 88 | 12 | 14 |
-| basedir | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| bench_count_distinct | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 0 |
-| big_packets | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| big_packets_async | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| big_packets_boundary | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| big_packets_boundary_async | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| bigint | 171 | 65 | 0 | 0 | 6 | 20 | 0 | 53 | 5 | 12 | 2 | 7 |
-| binary | 82 | 18 | 0 | 0 | 2 | 19 | 0 | 29 | 1 | 8 | 0 | 3 |
-| binary_to_hex | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 | 0 | 1 | 4 |
-| bind_address_1_not_windows | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
-| bind_address_2_not_windows | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
-| bind_address_3 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
-| bool | 30 | 20 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 3 | 0 |
-| bulk_replace | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 1 |
-| case | 140 | 36 | 0 | 0 | 1 | 11 | 0 | 49 | 3 | 11 | 7 | 22 |
-| cast | 564 | 183 | 1 | 0 | 12 | 15 | 0 | 85 | 4 | 40 | 33 | 190 |
-| change_user | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 4 | 7 |
-| character_set_deprecation | 100 | 10 | 0 | 0 | 24 | 0 | 0 | 13 | 21 | 13 | 3 | 13 |
-| charset | 77 | 1 | 0 | 0 | 2 | 4 | 0 | 15 | 1 | 6 | 15 | 32 |
-| check | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 1 |
-| check_auto_permission | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| check_basedir | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| check_constraints | 991 | 9 | 0 | 0 | 0 | 41 | 0 | 157 | 69 | 232 | 26 | 435 |
-| clear_diag_area | 135 | 4 | 0 | 0 | 2 | 0 | 0 | 9 | 0 | 25 | 24 | 66 |
-| comment_column | 74 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 12 | 6 | 13 |
-| comment_column2 | 33 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 13 | 0 | 0 |
-| comment_index | 57 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 7 | 4 | 13 |
-| comment_table | 30 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 0 | 3 | 4 |
-| comments | 38 | 15 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 1 | 0 | 16 |
-| commit | 307 | 4 | 0 | 0 | 3 | 25 | 0 | 14 | 0 | 39 | 52 | 158 |
-| commit_1innodb | 243 | 1 | 0 | 0 | 0 | 56 | 0 | 16 | 0 | 47 | 10 | 113 |
-| comp_err | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| compare | 78 | 20 | 0 | 0 | 0 | 11 | 0 | 24 | 6 | 3 | 7 | 7 |
-| component | 98 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 89 |
-| component_set | 110 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 1 | 84 |
-| component_string_service | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| component_string_service_charset | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 2 |
-| component_string_service_long | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| condition_filter | 32 | 3 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 2 | 5 | 6 |
-| consistent_snapshot | 15 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 0 | 5 | 0 | 4 |
-| const_folding | 881 | 38 | 0 | 0 | 0 | 2 | 1 | 231 | 1 | 5 | 416 | 187 |
-| constraints | 176 | 0 | 0 | 0 | 0 | 0 | 0 | 23 | 2 | 61 | 13 | 77 |
-| count_distinct | 118 | 24 | 0 | 0 | 0 | 6 | 0 | 71 | 1 | 3 | 11 | 2 |
-| count_distinct2 | 27 | 20 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 1 | 0 |
-| count_distinct3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 0 |
-| create | 988 | 11 | 0 | 0 | 2 | 72 | 0 | 275 | 13 | 206 | 38 | 336 |
-| create-big | 112 | 4 | 0 | 0 | 0 | 0 | 2 | 25 | 0 | 1 | 71 | 9 |
-| create_if_not_exists | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 9 | 0 | 12 |
-| create_not_windows | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 1 |
-| create_select_atomic | 43 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 1 | 4 | 27 |
-| create_select_foreign_key | 46 | 0 | 0 | 0 | 0 | 3 | 0 | 11 | 2 | 9 | 8 | 13 |
-| create_select_tmp | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 5 |
-| create_w_max_indexes_64 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 1 | 0 | 10 |
-| ctype_ascii | 18 | 8 | 0 | 0 | 1 | 0 | 0 | 6 | 0 | 0 | 2 | 1 |
-| ctype_big5 | 292 | 17 | 0 | 0 | 110 | 27 | 0 | 34 | 3 | 61 | 28 | 6 |
-| ctype_binary | 862 | 161 | 0 | 0 | 6 | 35 | 0 | 231 | 12 | 209 | 7 | 192 |
-| ctype_collate | 187 | 8 | 0 | 0 | 18 | 22 | 0 | 47 | 2 | 41 | 9 | 40 |
-| ctype_cp1250_ch | 236 | 30 | 4 | 0 | 97 | 6 | 0 | 29 | 4 | 16 | 35 | 12 |
-| ctype_cp1251 | 922 | 161 | 0 | 0 | 6 | 47 | 0 | 236 | 15 | 245 | 7 | 193 |
-| ctype_cp932 | 19 | 0 | 0 | 0 | 0 | 6 | 0 | 1 | 1 | 2 | 9 | 0 |
-| ctype_create | 40 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 5 | 4 | 24 |
-| ctype_errors | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 6 | 12 |
-| ctype_eucjpms | 336 | 3 | 0 | 0 | 224 | 20 | 4 | 25 | 1 | 44 | 11 | 2 |
-| ctype_euckr | 148 | 12 | 0 | 0 | 3 | 19 | 0 | 24 | 3 | 55 | 23 | 5 |
-| ctype_filename | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 0 |
-| ctype_filesystem | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 |
-| ctype_gb18030 | 395 | 17 | 0 | 0 | 242 | 17 | 0 | 22 | 2 | 53 | 26 | 10 |
-| ctype_gb18030_conversion | 41 | 0 | 0 | 0 | 0 | 13 | 0 | 11 | 3 | 9 | 5 | 0 |
-| ctype_gb18030_encoding_cn | 335 | 0 | 0 | 0 | 33 | 31 | 50 | 16 | 9 | 99 | 76 | 20 |
-| ctype_gb18030_encoding_utf8 | 335 | 0 | 0 | 0 | 33 | 31 | 50 | 25 | 0 | 99 | 76 | 20 |
-| ctype_gb18030_ligatures | 185 | 0 | 0 | 0 | 0 | 12 | 0 | 3 | 3 | 47 | 2 | 118 |
-| ctype_gb2312 | 270 | 17 | 0 | 0 | 109 | 22 | 0 | 29 | 1 | 54 | 26 | 6 |
-| ctype_gbk | 396 | 17 | 0 | 0 | 226 | 22 | 0 | 30 | 3 | 57 | 28 | 7 |
-| ctype_hebrew | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 2 | 1 | 0 |
-| ctype_latin1 | 304 | 12 | 0 | 0 | 107 | 97 | 0 | 25 | 1 | 40 | 11 | 1 |
-| ctype_latin1_de | 157 | 10 | 0 | 0 | 68 | 29 | 0 | 17 | 3 | 21 | 3 | 3 |
-| ctype_latin2 | 92 | 5 | 0 | 0 | 48 | 2 | 0 | 15 | 1 | 15 | 4 | 0 |
-| ctype_latin2_ch | 181 | 4 | 8 | 0 | 73 | 23 | 0 | 21 | 2 | 39 | 9 | 0 |
-| ctype_ldml † | 204 | 0 | 0 | 0 | 0 | 26 | 22 | 19 | 0 | 109 | 11 | 16 |
-| ctype_like_range | 67 | 0 | 0 | 0 | 0 | 25 | 0 | 3 | 1 | 36 | 0 | 2 |
-| ctype_many | 223 | 0 | 0 | 0 | 0 | 29 | 0 | 9 | 5 | 159 | 8 | 13 |
-| ctype_mb | 22 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 0 | 6 | 0 | 11 |
-| ctype_recoding | 130 | 7 | 0 | 0 | 0 | 25 | 0 | 23 | 5 | 12 | 30 | 28 |
-| ctype_sjis | 267 | 8 | 4 | 0 | 112 | 29 | 2 | 24 | 4 | 56 | 20 | 2 |
-| ctype_tis620 | 177 | 43 | 0 | 0 | 52 | 8 | 0 | 11 | 1 | 33 | 25 | 0 |
-| ctype_uca | 845 | 19 | 0 | 0 | 206 | 90 | 0 | 79 | 7 | 394 | 30 | 9 |
-| ctype_ucs | 1347 | 258 | 0 | 0 | 25 | 96 | 0 | 300 | 37 | 330 | 67 | 220 |
-| ctype_ucs2_def | 13 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 1 | 0 | 3 |
-| ctype_ujis | 1443 | 19 | 4 | 0 | 236 | 36 | 0 | 31 | 7 | 1077 | 21 | 6 |
-| ctype_ujis_ucs2 | 1174 | 0 | 0 | 0 | 0 | 4 | 0 | 18 | 3 | 1147 | 2 | 0 |
-| ctype_unicode900 | 168 | 36 | 0 | 0 | 51 | 8 | 0 | 17 | 0 | 24 | 18 | 10 |
-| ctype_unicode900_as_ci | 139 | 12 | 0 | 0 | 51 | 8 | 0 | 17 | 0 | 24 | 17 | 6 |
-| ctype_unicode900_as_cs | 168 | 36 | 0 | 0 | 51 | 8 | 0 | 17 | 0 | 24 | 18 | 10 |
-| ctype_unicode900_casetable | 19 | 0 | 0 | 0 | 0 | 1 | 0 | 11 | 1 | 4 | 2 | 0 |
-| ctype_utf16 | 522 | 83 | 0 | 0 | 99 | 65 | 0 | 47 | 31 | 110 | 56 | 23 |
-| ctype_utf16_def | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| ctype_utf16_uca | 447 | 21 | 0 | 0 | 98 | 44 | 0 | 25 | 5 | 212 | 28 | 8 |
-| ctype_utf16le | 566 | 57 | 0 | 0 | 98 | 80 | 0 | 67 | 32 | 152 | 45 | 24 |
-| ctype_utf32 | 551 | 74 | 0 | 0 | 102 | 68 | 0 | 52 | 34 | 122 | 59 | 32 |
-| ctype_utf32_uca | 455 | 21 | 0 | 0 | 98 | 46 | 0 | 28 | 6 | 213 | 29 | 8 |
-| ctype_utf8 | 1816 | 325 | 2 | 0 | 31 | 119 | 0 | 567 | 27 | 345 | 74 | 314 |
-| ctype_utf8mb4 | 1034 | 160 | 2 | 0 | 71 | 97 | 0 | 314 | 13 | 176 | 90 | 100 |
-| ctype_utf8mb4_uca | 217 | 1 | 1 | 0 | 0 | 32 | 0 | 33 | 2 | 140 | 6 | 0 |
-| datadir_permission | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| date_formats | 120 | 54 | 1 | 0 | 7 | 6 | 0 | 19 | 0 | 7 | 19 | 7 |
-| ddl_i18n_koi8r | 365 | 0 | 0 | 0 | 18 | 15 | 6 | 4 | 0 | 58 | 76 | 143 |
-| ddl_i18n_utf8 | 365 | 0 | 0 | 0 | 18 | 15 | 6 | 6 | 0 | 56 | 76 | 143 |
-| default | 70 | 2 | 0 | 0 | 0 | 8 | 0 | 16 | 6 | 17 | 5 | 13 |
-| default_as_expr | 663 | 4 | 0 | 0 | 0 | 95 | 0 | 143 | 88 | 211 | 2 | 118 |
-| delete | 419 | 20 | 4 | 0 | 0 | 24 | 0 | 150 | 9 | 84 | 20 | 104 |
-| delete_all_rows | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
-| deprecate_eof | 48 | 0 | 1 | 0 | 4 | 1 | 0 | 6 | 0 | 17 | 6 | 13 |
-| deprecate_user_defined_collations | 12 | 0 | 0 | 0 | 0 | 1 | 1 | 2 | 0 | 5 | 0 | 3 |
-| deprecated_features | 90 | 6 | 0 | 0 | 5 | 1 | 0 | 16 | 8 | 8 | 7 | 35 |
-| deprecation_56 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| derived | 40 | 15 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 10 |
-| derived_ci | 10 | 2 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 0 | 3 |
-| derived_condition_pushdown | 256 | 17 | 0 | 0 | 0 | 10 | 0 | 77 | 2 | 35 | 80 | 32 |
-| derived_correlated | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 2 | 1 |
-| derived_correlated_hypergraph | 8 | 0 | 0 | 0 | 1 | 0 | 0 | 5 | 0 | 0 | 0 | 2 |
-| derived_cs | 10 | 2 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| derived_limit | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 |
-| dictionary_timestamp | 52 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 13 | 18 | 7 |
-| dirty_close | 9 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 0 | 0 |
-| disable_drop_rename_user | 170 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 38 | 24 | 107 |
-| disabled_replication | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 1 | 23 |
-| disabled_storage_engines | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 1 | 0 | 5 |
-| distinct | 69 | 20 | 0 | 0 | 0 | 4 | 0 | 28 | 0 | 9 | 0 | 8 |
-| dollar_identifier | 42 | 6 | 0 | 0 | 4 | 0 | 2 | 5 | 1 | 7 | 9 | 8 |
-| drop | 103 | 1 | 0 | 0 | 0 | 2 | 0 | 26 | 0 | 8 | 6 | 58 |
-| ds_mrr-big | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 6 | 1 | 0 |
-| empty_table | 6 | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| endspace | 76 | 18 | 0 | 0 | 2 | 22 | 0 | 13 | 0 | 9 | 2 | 10 |
-| engine_attribute | 123 | 0 | 0 | 0 | 0 | 0 | 0 | 18 | 0 | 40 | 0 | 43 |
-| eq_range_idx_stat | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 0 |
-| error_logging_verbosity | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 27 |
-| error_simulation | 41 | 0 | 0 | 0 | 0 | 2 | 0 | 16 | 0 | 3 | 13 | 7 |
-| errors | 112 | 5 | 0 | 0 | 0 | 0 | 0 | 32 | 0 | 7 | 8 | 60 |
-| examined_rows | 61 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 8 | 10 | 15 |
-| execution_constants | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0 | 0 |
-| explain | 79 | 2 | 0 | 0 | 0 | 0 | 0 | 24 | 0 | 11 | 14 | 28 |
-| explain_dml | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 6 | 0 | 18 |
-| explain_for_schema | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| explain_for_schema_hypergraph | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| explain_into | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| explain_into_hypergraph | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| explain_json_all | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| explain_json_hypergraph | 118 | 10 | 0 | 0 | 0 | 0 | 0 | 47 | 0 | 5 | 13 | 43 |
-| explain_json_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| explain_other | 73 | 0 | 0 | 0 | 0 | 2 | 0 | 27 | 1 | 9 | 18 | 16 |
-| explain_tree | 394 | 2 | 0 | 0 | 0 | 0 | 0 | 219 | 2 | 8 | 22 | 141 |
-| explain_tree_hypergraph | 59 | 0 | 0 | 0 | 0 | 0 | 0 | 14 | 1 | 7 | 0 | 37 |
-| filesort | 81 | 5 | 0 | 0 | 0 | 5 | 0 | 44 | 5 | 7 | 8 | 7 |
-| filesort_json | 15 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 2 | 4 | 2 | 1 |
-| filesort_pack | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
-| filter_single_col_idx_big | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 14 | 3 | 2 |
-| filter_single_col_idx_small | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 1 | 2 | 0 | 7 |
-| fix_priv_tables | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| flush2 | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 9 |
-| foreign_key | 1927 | 58 | 0 | 0 | 1 | 14 | 0 | 443 | 27 | 291 | 232 | 759 |
-| fulltext2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
-| fulltext3 | 15 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 3 | 3 | 2 | 2 |
-| func_aes | 104 | 0 | 0 | 0 | 61 | 12 | 0 | 4 | 2 | 4 | 13 | 7 |
-| func_aes_cfb1 | 25 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 7 | 4 |
-| func_aes_cfb128 | 25 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 7 | 4 |
-| func_aes_cfb8 | 25 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 7 | 4 |
-| func_aes_kdf_hkdf | 19 | 0 | 0 | 0 | 15 | 0 | 0 | 0 | 0 | 0 | 3 | 1 |
-| func_aes_kdf_pbkdf2_hmac | 28 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 0 | 3 | 7 |
-| func_aes_misc | 79 | 0 | 0 | 0 | 9 | 18 | 0 | 16 | 7 | 0 | 21 | 2 |
-| func_aes_ofb | 25 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 7 | 4 |
-| func_at_time_zone | 22 | 0 | 0 | 0 | 3 | 3 | 0 | 4 | 1 | 2 | 3 | 6 |
-| func_bitwise_ops | 387 | 36 | 0 | 0 | 0 | 241 | 0 | 26 | 2 | 17 | 22 | 43 |
-| func_comparison | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
-| func_concat | 48 | 13 | 1 | 0 | 0 | 0 | 0 | 18 | 0 | 2 | 0 | 10 |
-| func_date_add | 62 | 24 | 0 | 0 | 1 | 1 | 0 | 5 | 1 | 5 | 23 | 2 |
-| func_default | 13 | 0 | 0 | 0 | 2 | 0 | 0 | 7 | 0 | 0 | 0 | 4 |
-| func_digest | 566 | 473 | 0 | 0 | 9 | 0 | 0 | 16 | 1 | 12 | 24 | 8 |
-| func_digest_small_buffer | 12 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 7 | 2 | 1 |
-| func_equal | 29 | 13 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 3 |
-| func_gconcat | 261 | 71 | 0 | 0 | 11 | 27 | 0 | 108 | 8 | 10 | 10 | 14 |
-| func_group | 725 | 183 | 0 | 0 | 8 | 56 | 0 | 267 | 10 | 45 | 47 | 100 |
-| func_if | 99 | 32 | 0 | 0 | 6 | 0 | 0 | 45 | 0 | 1 | 4 | 10 |
-| func_in_all | 297 | 81 | 1 | 0 | 7 | 11 | 0 | 103 | 2 | 19 | 13 | 59 |
-| func_in_icp | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| func_in_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| func_in_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| func_in_mrr_cost | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| func_in_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| func_isnull | 35 | 3 | 0 | 0 | 0 | 2 | 0 | 19 | 2 | 3 | 0 | 3 |
-| func_like | 175 | 64 | 0 | 0 | 10 | 11 | 0 | 39 | 4 | 11 | 19 | 17 |
-| func_math | 568 | 189 | 2 | 0 | 6 | 38 | 0 | 106 | 5 | 49 | 32 | 133 |
-| func_md5 | 14 | 3 | 0 | 0 | 0 | 4 | 0 | 3 | 1 | 1 | 0 | 2 |
-| func_md5_fail | 2 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| func_misc | 35 | 20 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 6 | 2 |
-| func_op | 18 | 10 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 2 |
-| func_prefix_key | 193 | 2 | 0 | 0 | 0 | 10 | 0 | 20 | 4 | 10 | 0 | 147 |
-| func_rand | 22 | 2 | 0 | 0 | 0 | 4 | 0 | 6 | 0 | 2 | 0 | 6 |
-| func_regexp | 110 | 22 | 0 | 0 | 13 | 1 | 0 | 18 | 0 | 19 | 22 | 15 |
-| func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 |
-| func_sapdb | 88 | 76 | 0 | 0 | 1 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
-| func_set | 77 | 38 | 0 | 0 | 0 | 0 | 2 | 25 | 0 | 1 | 2 | 5 |
-| func_str | 834 | 432 | 0 | 0 | 99 | 12 | 0 | 147 | 2 | 16 | 18 | 94 |
-| func_test | 221 | 115 | 0 | 0 | 13 | 3 | 0 | 43 | 3 | 8 | 11 | 25 |
-| func_time | 599 | 339 | 0 | 0 | 23 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
-| func_timestamp | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 |
-| func_unixtime | 96 | 50 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 10 | 23 | 4 |
-| func_uuid | 99 | 29 | 0 | 0 | 0 | 9 | 0 | 12 | 3 | 8 | 9 | 29 |
-| func_weight_string | 84 | 1 | 0 | 0 | 18 | 6 | 0 | 17 | 0 | 11 | 5 | 26 |
-| function_defaults | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| functional_index | 227 | 4 | 0 | 0 | 0 | 6 | 0 | 97 | 6 | 34 | 2 | 72 |
-| gcc296 | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 0 |
-| generated_invisible_primary_key | 122 | 0 | 0 | 0 | 0 | 0 | 0 | 40 | 1 | 20 | 9 | 52 |
-| get_diagnostics | 225 | 19 | 4 | 0 | 3 | 0 | 0 | 27 | 0 | 26 | 40 | 106 |
-| get_table_share | 116 | 0 | 0 | 0 | 0 | 0 | 0 | 19 | 0 | 0 | 76 | 21 |
-| global_status_gr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| gr_member_actions | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| grant2 | 464 | 2 | 1 | 0 | 1 | 15 | 1 | 32 | 0 | 107 | 29 | 255 |
-| grant3 | 117 | 0 | 0 | 0 | 0 | 1 | 1 | 3 | 0 | 14 | 5 | 69 |
-| grant4 | 83 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 | 19 | 4 | 51 |
-| greedy_optimizer | 147 | 0 | 0 | 0 | 0 | 5 | 0 | 96 | 1 | 16 | 10 | 9 |
-| greedy_search | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
-| group_by | 1235 | 180 | 0 | 0 | 34 | 86 | 7 | 467 | 16 | 89 | 81 | 253 |
-| group_by_fd_no_prot | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 4 | 0 |
-| group_by_hypergraph | 76 | 9 | 0 | 0 | 0 | 0 | 0 | 13 | 0 | 3 | 0 | 51 |
-| group_skip_scan | 767 | 30 | 3 | 0 | 8 | 208 | 0 | 141 | 2 | 70 | 10 | 275 |
-| group_skip_scan_ext | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
-| group_skip_scan_ext_hypergraph | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
-| group_skip_scan_hypergraph | 769 | 30 | 3 | 0 | 8 | 205 | 0 | 147 | 2 | 71 | 10 | 273 |
-| gtids_anonymous_trxs_violations | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 5 | 5 |
-| hash_join | 150 | 21 | 0 | 0 | 0 | 1 | 0 | 64 | 1 | 21 | 6 | 36 |
-| hash_join_hypergraph | 150 | 21 | 0 | 0 | 0 | 1 | 0 | 64 | 1 | 21 | 6 | 36 |
-| having | 324 | 73 | 1 | 0 | 8 | 15 | 3 | 162 | 0 | 16 | 14 | 30 |
-| help | 64 | 11 | 0 | 0 | 0 | 0 | 0 | 3 | 1 | 29 | 2 | 18 |
-| help_verbose | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| histogram_auto_update | 73 | 4 | 0 | 0 | 0 | 0 | 0 | 28 | 0 | 0 | 2 | 26 |
-| histogram_background_error | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 1 | 3 |
-| histogram_background_error_throttling | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 4 |
-| histogram_equi_height | 334 | 0 | 0 | 0 | 0 | 0 | 0 | 46 | 0 | 7 | 0 | 278 |
-| histogram_singleton | 265 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 0 | 0 | 0 | 238 |
-| histogram_update_using_data | 231 | 0 | 0 | 0 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 171 |
-| histograms | 929 | 186 | 0 | 0 | 0 | 3 | 0 | 136 | 7 | 85 | 16 | 419 |
-| host_cache_size_functionality | 21 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 2 | 5 |
-| hostname_length | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| hostname_length_ipv4 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 11 |
-| hostname_length_ipv6 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 11 |
-| hypergraph_bugs | 345 | 3 | 0 | 0 | 2 | 4 | 0 | 117 | 3 | 21 | 31 | 158 |
-| hypergraph_cost_constants | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 4 | 8 | 14 |
-| hypergraph_oom | 22 | 1 | 0 | 0 | 0 | 0 | 0 | 19 | 0 | 0 | 1 | 1 |
-| ignore_strict | 345 | 20 | 0 | 0 | 0 | 25 | 0 | 123 | 4 | 84 | 23 | 66 |
-| implicit_char_to_num_conversion | 99 | 0 | 0 | 0 | 0 | 78 | 0 | 11 | 0 | 10 | 0 | 0 |
-| implicit_commit | 34 | 0 | 0 | 0 | 0 | 0 | 1 | 11 | 0 | 9 | 3 | 10 |
-| import | 163 | 7 | 0 | 0 | 0 | 10 | 3 | 44 | 2 | 21 | 3 | 73 |
-| import_schema_mismatch | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 | 3 |
-| import_symlink | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 2 | 0 | 0 |
-| inconsistent_scan | 17 | 0 | 0 | 0 | 0 | 6 | 0 | 3 | 0 | 4 | 3 | 1 |
-| index_skip_scan_end_range | 16 | 0 | 1 | 0 | 0 | 1 | 0 | 3 | 0 | 2 | 4 | 5 |
-| information_schema_ci | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| information_schema_cs | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| information_schema_inno | 36 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 6 | 5 | 4 |
-| information_schema_keywords | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| information_schema_parameters | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| information_schema_parameters_ci | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| information_schema_part | 49 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 12 | 5 | 1 | 6 |
-| information_schema_routines | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| information_schema_routines_ci | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| information_schema_statistics | 96 | 0 | 0 | 0 | 0 | 2 | 0 | 16 | 1 | 19 | 35 | 17 |
-| initialize | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| initialize-errors | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| initialize-sha256 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| initialize_plugins | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| insert | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| insert_select | 170 | 3 | 1 | 0 | 0 | 26 | 0 | 71 | 5 | 40 | 8 | 16 |
-| insert_update | 452 | 8 | 2 | 0 | 0 | 70 | 0 | 148 | 8 | 161 | 12 | 41 |
-| internal_tmp_disk_storage_engine | 82 | 2 | 0 | 0 | 1 | 15 | 0 | 14 | 0 | 13 | 11 | 26 |
-| invalid_collation | 26 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 8 | 1 | 12 |
-| invalid_comment | 34 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 4 | 2 | 26 |
-| invalid_text_sort | 6 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 1 | 0 | 0 | 0 |
-| invisible_columns | 333 | 1 | 0 | 0 | 0 | 63 | 0 | 49 | 22 | 79 | 4 | 112 |
-| invisible_indexes | 113 | 1 | 0 | 0 | 0 | 0 | 0 | 22 | 12 | 28 | 1 | 49 |
-| ipv4_as_ipv6 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
-| ipv6 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
-| join | 684 | 94 | 1 | 0 | 11 | 30 | 22 | 347 | 4 | 68 | 24 | 80 |
-| join_cache_bka | 520 | 24 | 0 | 0 | 3 | 10 | 13 | 282 | 2 | 71 | 28 | 86 |
-| join_cache_bka_nobnl | 520 | 24 | 0 | 0 | 3 | 10 | 13 | 282 | 2 | 71 | 28 | 86 |
-| join_cache_bnl | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| join_cache_nojb | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| join_nested | 334 | 43 | 0 | 0 | 23 | 35 | 0 | 136 | 0 | 38 | 9 | 50 |
-| join_nested_bka | 30 | 0 | 0 | 0 | 4 | 0 | 0 | 18 | 0 | 0 | 2 | 6 |
-| join_nested_bka_nobnl | 30 | 0 | 0 | 0 | 4 | 0 | 0 | 18 | 0 | 0 | 2 | 6 |
-| join_outer | 868 | 137 | 0 | 0 | 12 | 17 | 1 | 550 | 2 | 15 | 39 | 92 |
-| join_outer_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| join_outer_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| join_outer_bugs | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 4 | 3 | 1 |
-| key | 236 | 10 | 0 | 0 | 0 | 5 | 0 | 94 | 7 | 44 | 2 | 57 |
-| key_cache | 168 | 3 | 0 | 0 | 0 | 14 | 0 | 24 | 1 | 38 | 4 | 55 |
-| key_diff | 9 | 3 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 2 |
-| key_primary | 11 | 3 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 2 |
-| keywords | 76 | 17 | 0 | 0 | 0 | 2 | 0 | 40 | 1 | 5 | 0 | 11 |
-| lead_lag | 269 | 57 | 0 | 0 | 0 | 111 | 0 | 32 | 4 | 3 | 16 | 45 |
-| lead_lag_explain | 140 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 3 | 2 | 1 | 119 |
-| limit | 177 | 16 | 0 | 0 | 0 | 9 | 0 | 41 | 2 | 27 | 26 | 14 |
-| loaddata | 315 | 11 | 0 | 0 | 1 | 49 | 0 | 95 | 5 | 80 | 40 | 30 |
-| loaddata_special | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 6 |
-| loadxml | 67 | 8 | 0 | 0 | 0 | 3 | 0 | 23 | 0 | 28 | 0 | 5 |
-| locale | 62 | 37 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 14 | 3 |
-| long_table_name | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| long_tmpdir | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
-| loose_scan | 47 | 1 | 0 | 0 | 2 | 0 | 0 | 29 | 0 | 6 | 0 | 9 |
-| lowercase_fs_off † | 62 | 0 | 0 | 0 | 1 | 0 | 1 | 4 | 0 | 11 | 8 | 35 |
-| lowercase_fs_on | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| lowercase_mixed_tmpdir | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 | 0 |
-| lowercase_table | 75 | 1 | 0 | 0 | 0 | 1 | 11 | 20 | 0 | 13 | 4 | 20 |
-| lowercase_table2 | 168 | 2 | 0 | 0 | 0 | 10 | 2 | 41 | 1 | 39 | 8 | 50 |
-| lowercase_table4 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
-| lowercase_table5 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 3 | 6 |
-| lowercase_utf8 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 3 |
-| lowercase_view | 90 | 1 | 0 | 0 | 0 | 1 | 3 | 11 | 0 | 8 | 2 | 62 |
-| lpad | 25 | 23 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| materialize_cost | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 6 |
-| materialize_cost_hypergraph | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 6 |
-| max_statement_time | 122 | 10 | 3 | 0 | 1 | 1 | 0 | 9 | 0 | 40 | 29 | 15 |
-| mem_cnt_common | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mem_cnt_sql_keys | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 37 | 4 | 30 | 0 | 6 |
-| metadata | 87 | 20 | 0 | 0 | 1 | 19 | 0 | 26 | 3 | 7 | 5 | 4 |
-| mtr_unit_tests | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| multi_statement | 11 | 3 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 0 | 2 |
-| multi_update | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 0 | 7 |
-| multi_update2 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| multi_update_tiny_hash | 22 | 1 | 0 | 0 | 0 | 2 | 0 | 9 | 1 | 9 | 0 | 0 |
-| multiaddress_bind | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| myisampack | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 12 | 0 | 5 |
-| mysql | 58 | 4 | 0 | 0 | 0 | 1 | 0 | 17 | 0 | 10 | 2 | 24 |
-| mysql_batch_mode | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_binary_mode | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| mysql_commands | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_comments | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 6 |
-| mysql_config_editor | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 11 |
-| mysql_cp932 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_locale_posix | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 12 |
-| mysql_max_packet | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 0 | 0 | 2 |
-| mysql_os_user | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_os_user_unix | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_pager | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_protocols | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_tzinfo_to_sql | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 | 2 |
-| mysql_tzinfo_to_sql_errors | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysql_wait | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysqld--help-notwin † | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
-| mysqld--help-win † | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
-| mysqld--validate-config | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysqld_cmdline_warnings | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysqld_daemon | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| mysqld_safe | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 1 | 0 |
-| mysqldumpslow | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 2 |
-| mysqlimport | 14 | 0 | 0 | 0 | 0 | 0 | 1 | 4 | 0 | 2 | 0 | 7 |
-| named_pipe | 1444 | 0 | 0 | 0 | 0 | 118 | 0 | 15 | 4 | 1240 | 7 | 45 |
-| negation_elimination | 70 | 34 | 0 | 0 | 0 | 1 | 0 | 4 | 0 | 1 | 0 | 30 |
-| no-login-paths | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| no-threads | 5 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| no_engine_substitution | 90 | 1 | 0 | 0 | 0 | 0 | 0 | 24 | 0 | 9 | 22 | 30 |
-| non_table_atomic_ddl | 161 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 22 | 40 | 94 |
-| nth | 97 | 60 | 0 | 0 | 2 | 3 | 0 | 8 | 1 | 0 | 12 | 10 |
-| nth_explain | 47 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 1 | 43 |
-| null | 133 | 22 | 0 | 1 | 0 | 5 | 0 | 30 | 2 | 33 | 6 | 34 |
-| odbc | 33 | 0 | 0 | 0 | 1 | 9 | 0 | 9 | 2 | 5 | 2 | 2 |
-| offline_mode_privileges | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 27 |
-| olap | 223 | 66 | 0 | 0 | 16 | 9 | 0 | 92 | 0 | 6 | 6 | 23 |
-| openssl_1 | 37 | 5 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 2 | 19 |
-| opt_costmodel | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 15 | 0 | 6 |
-| opt_costmodel_pfs | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| opt_costmodel_tables | 42 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 16 | 0 | 8 |
-| opt_costmodel_warnings | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 8 |
-| opt_hint_timeout | 35 | 1 | 0 | 0 | 0 | 1 | 0 | 6 | 0 | 19 | 0 | 8 |
-| opt_hints | 459 | 4 | 0 | 0 | 41 | 45 | 0 | 47 | 0 | 63 | 41 | 213 |
-| opt_hints_index | 46 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 8 | 0 | 35 |
-| opt_hints_join_order | 121 | 0 | 0 | 0 | 0 | 0 | 0 | 82 | 1 | 5 | 0 | 33 |
-| opt_hints_lowercase | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 2 | 0 | 4 |
-| opt_hints_pfs | 15 | 7 | 0 | 0 | 5 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| opt_hints_set_var | 266 | 2 | 3 | 0 | 19 | 11 | 0 | 68 | 5 | 42 | 14 | 93 |
-| opt_hints_subquery | 200 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 31 | 162 |
-| optimize_table | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 | 22 |
-| optimizer_switch | 155 | 0 | 0 | 0 | 0 | 0 | 0 | 51 | 0 | 8 | 61 | 26 |
-| order_by_all | 160 | 25 | 0 | 0 | 2 | 16 | 0 | 76 | 3 | 9 | 2 | 26 |
-| order_by_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| order_by_limit | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 0 |
-| order_by_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| order_by_sortkey | 36 | 0 | 0 | 0 | 0 | 2 | 0 | 8 | 2 | 17 | 2 | 5 |
-| order_fill_sortbuf | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 1 | 0 |
-| outfile | 36 | 0 | 0 | 0 | 5 | 0 | 0 | 7 | 0 | 13 | 3 | 8 |
-| outfile_loaddata | 57 | 2 | 0 | 0 | 0 | 14 | 0 | 23 | 2 | 12 | 4 | 0 |
-| overflow | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| packet | 49 | 4 | 0 | 0 | 0 | 4 | 0 | 5 | 0 | 12 | 6 | 16 |
-| packet_big_test | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| parser | 1143 | 90 | 0 | 0 | 28 | 66 | 28 | 267 | 2 | 99 | 77 | 465 |
-| parser-big-64bit | 11 | 1 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 4 | 0 | 2 |
-| parser_57 | 14 | 0 | 4 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 1 |
-| parser_precedence | 137 | 125 | 0 | 0 | 2 | 0 | 0 | 4 | 0 | 0 | 0 | 6 |
-| perror | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| perror-win | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
-| point_select_hypergraph | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 4 | 1 |
-| populate_charsets | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 6 |
-| populate_collations_read_only | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| preload | 62 | 0 | 0 | 0 | 0 | 8 | 0 | 4 | 1 | 18 | 2 | 26 |
-| print_stacktrace | 3 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| qualify | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 5 |
-| qualify_hypergraph | 101 | 0 | 0 | 0 | 0 | 2 | 42 | 22 | 0 | 2 | 12 | 21 |
-| query_attributes | 17 | 0 | 0 | 0 | 9 | 0 | 0 | 0 | 0 | 6 | 0 | 2 |
-| query_expression | 632 | 126 | 0 | 0 | 0 | 17 | 8 | 110 | 4 | 110 | 44 | 205 |
-| query_expression-bugs | 62 | 2 | 0 | 0 | 0 | 1 | 0 | 24 | 0 | 1 | 25 | 1 |
-| range_all | 906 | 125 | 2 | 0 | 15 | 54 | 1 | 337 | 13 | 135 | 31 | 191 |
-| range_icp | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| range_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| range_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| range_mrr_cost | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| range_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| read_only | 176 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 0 | 35 | 7 | 105 |
-| read_only_ddl | 50 | 2 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 8 | 2 | 23 |
-| regular_expressions_func | 802 | 634 | 0 | 0 | 90 | 0 | 0 | 0 | 0 | 0 | 0 | 78 |
-| regular_expressions_func_icu_54 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| regular_expressions_utf-8 | 109 | 81 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 6 | 17 |
-| regular_expressions_utf-8_icu_58 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| regular_expressions_utf-8_icu_59 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| regular_expressions_utf-8_icu_67 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| removed_features | 33 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 27 |
-| rename | 206 | 7 | 0 | 0 | 3 | 8 | 2 | 31 | 1 | 34 | 21 | 97 |
-| rename_roles | 88 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 26 | 4 | 52 |
-| renamedb | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| repair | 56 | 0 | 0 | 0 | 0 | 0 | 0 | 21 | 0 | 7 | 8 | 20 |
-| replace | 23 | 0 | 0 | 0 | 0 | 1 | 0 | 8 | 0 | 8 | 2 | 4 |
-| revoke_if_exists | 162 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 153 |
-| roles | 570 | 0 | 0 | 0 | 12 | 2 | 1 | 13 | 0 | 162 | 43 | 261 |
-| roles-admin | 140 | 0 | 0 | 0 | 2 | 3 | 0 | 0 | 0 | 26 | 13 | 89 |
-| roles-ddl | 30 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 1 | 22 |
-| roles-view | 124 | 0 | 0 | 0 | 0 | 3 | 8 | 6 | 0 | 28 | 11 | 68 |
-| roles2 | 272 | 0 | 0 | 0 | 0 | 8 | 23 | 0 | 0 | 35 | 33 | 173 |
-| roles_bugs | 147 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 30 | 16 | 87 |
-| roles_bugs_wildcard | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 3 | 18 |
-| rollback | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 2 |
-| round | 133 | 1 | 0 | 0 | 0 | 9 | 0 | 30 | 8 | 83 | 2 | 0 |
-| row | 189 | 88 | 0 | 0 | 2 | 7 | 0 | 44 | 3 | 2 | 1 | 41 |
-| rpad | 25 | 23 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| schema | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| schema_read_only_ci | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 |
-| schema_read_only_cs | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 |
-| sdi_utf8 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
-| select_all | 2201 | 104 | 0 | 0 | 13 | 196 | 0 | 382 | 14 | 1281 | 18 | 169 |
-| select_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| select_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| select_count | 74 | 8 | 0 | 0 | 1 | 0 | 0 | 15 | 0 | 6 | 3 | 40 |
-| select_for_update | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 2 |
-| select_found | 32 | 0 | 0 | 0 | 2 | 3 | 0 | 8 | 1 | 1 | 0 | 2 |
-| select_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| select_icp_mrr_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| select_icp_mrr_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| select_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| select_none_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| select_none_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| select_safe | 150 | 2 | 0 | 0 | 0 | 18 | 0 | 17 | 1 | 19 | 39 | 42 |
-| session_tracker | 217 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 13 | 127 | 24 |
-| session_tracker_trx_state | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| shm | 1450 | 0 | 0 | 0 | 0 | 118 | 0 | 15 | 4 | 1240 | 9 | 49 |
-| show_check_ci | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| show_check_cs | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| show_parse_tree | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 29 |
-| show_processlist_state | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| show_profile | 6 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 |
-| sigusr1 | 17 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 0 |
-| single_delete_update | 267 | 0 | 0 | 0 | 0 | 44 | 0 | 46 | 1 | 46 | 0 | 130 |
-| skip_grants | 49 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 13 | 2 | 27 |
-| skip_name_resolve | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 |
-| skip_records_in_range | 47 | 0 | 8 | 0 | 0 | 0 | 1 | 7 | 0 | 1 | 27 | 3 |
-| skip_scan | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
-| skip_scan_hypergraph | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
-| sort_buffer_size_functionality | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| sql_mode | 297 | 5 | 2 | 0 | 18 | 8 | 1 | 31 | 4 | 9 | 107 | 99 |
-| status | 36 | 3 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 2 | 4 | 12 |
-| status2 | 25 | 2 | 0 | 0 | 1 | 0 | 0 | 5 | 0 | 4 | 0 | 13 |
-| strict | 729 | 35 | 0 | 0 | 0 | 24 | 0 | 132 | 19 | 122 | 64 | 328 |
-| strict_autoinc_1myisam | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 |
-| strict_autoinc_2innodb | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 |
-| strict_autoinc_3heap | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 |
-| subplan_tokens | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 4 | 6 |
-| subquery_all | 2246 | 406 | 4 | 0 | 75 | 217 | 4 | 939 | 22 | 146 | 52 | 357 |
-| subquery_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_antijoin | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 1 |
-| subquery_bugs | 442 | 12 | 0 | 0 | 4 | 6 | 4 | 283 | 7 | 13 | 53 | 59 |
-| subquery_exists | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 1 |
-| subquery_hypergraph | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 3 |
-| subquery_mat | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| subquery_mat_all | 451 | 21 | 0 | 0 | 1 | 44 | 0 | 187 | 9 | 55 | 19 | 113 |
-| subquery_mat_mixed_types | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 2 | 2 | 1 | 0 |
-| subquery_mat_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| subquery_nomat_nosj | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
-| subquery_nomat_nosj_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_nomat_nosj_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_none | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| subquery_none_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_none_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_scalar_to_derived | 108 | 5 | 0 | 0 | 1 | 0 | 0 | 61 | 0 | 4 | 10 | 27 |
-| subquery_scalar_to_derived_correlated | 201 | 5 | 0 | 0 | 3 | 5 | 0 | 128 | 0 | 17 | 15 | 28 |
-| subquery_sj_all | 82 | 4 | 0 | 0 | 0 | 11 | 0 | 28 | 0 | 9 | 8 | 22 |
-| subquery_sj_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_dupsweed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| subquery_sj_dupsweed_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_dupsweed_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_firstmatch | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| subquery_sj_firstmatch_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_firstmatch_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_loosescan | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| subquery_sj_loosescan_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_loosescan_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_mat | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| subquery_sj_mat_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_mat_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_mat_nosj | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| subquery_sj_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| subquery_sj_none_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_sj_none_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
-| subquery_table_to_derived | 99 | 12 | 2 | 0 | 1 | 0 | 0 | 24 | 0 | 2 | 20 | 33 |
-| subselect | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 |
-| sum_distinct | 30 | 1 | 0 | 0 | 0 | 12 | 0 | 8 | 2 | 6 | 1 | 0 |
-| sum_distinct-big | 31 | 0 | 0 | 0 | 0 | 8 | 0 | 6 | 0 | 15 | 1 | 1 |
-| symlink | 88 | 0 | 0 | 0 | 0 | 4 | 1 | 19 | 2 | 30 | 4 | 28 |
-| synchronization | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 |
-| sysdate_is_now | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
-| table_definition_cache_functionality | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 3 | 5 |
-| table_open_cache_functionality | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 3 | 10 |
-| table_value_constructor | 238 | 51 | 1 | 0 | 5 | 47 | 0 | 38 | 0 | 66 | 2 | 23 |
-| table_value_constructor_hypergraph | 242 | 54 | 1 | 0 | 5 | 47 | 0 | 38 | 0 | 67 | 2 | 23 |
-| tablelock | 64 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 1 | 15 | 0 | 36 |
-| tablesample | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 3 |
-| temp_table | 196 | 1 | 0 | 0 | 1 | 24 | 1 | 47 | 1 | 85 | 1 | 35 |
-| temporal_literal | 178 | 81 | 0 | 0 | 0 | 3 | 0 | 36 | 3 | 15 | 7 | 33 |
-| test_mysql_thd_store_service | 4 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 3 |
-| test_security_context | 16 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 2 |
-| time_truncate_fractional | 288 | 35 | 1 | 0 | 0 | 21 | 0 | 190 | 4 | 30 | 5 | 2 |
-| time_truncate_fractional_strict | 288 | 35 | 1 | 0 | 0 | 21 | 0 | 186 | 4 | 30 | 5 | 6 |
-| time_zone | 264 | 60 | 0 | 0 | 0 | 39 | 0 | 44 | 19 | 29 | 34 | 39 |
-| time_zone2 | 137 | 33 | 1 | 0 | 2 | 9 | 0 | 28 | 4 | 20 | 19 | 13 |
-| time_zone3 | 15 | 1 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 5 | 0 | 0 |
-| time_zone4 | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| time_zone_dst | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 4 | 1 | 3 | 0 | 0 |
-| time_zone_with_dst | 27 | 0 | 0 | 0 | 0 | 8 | 0 | 9 | 8 | 0 | 2 | 0 |
-| timestamps_in_priv_tables | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 7 | 0 | 8 |
-| tls_certificate_validation_ca_path | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| tls_certificate_validation_crl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| tmpdir | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| trans_read_only | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 4 | 1 |
-| truncate | 102 | 1 | 0 | 0 | 0 | 15 | 0 | 20 | 1 | 25 | 0 | 40 |
-| truncate_coverage | 26 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 7 | 11 |
-| truth_value_transform | 18 | 7 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 8 |
-| type_binary | 109 | 34 | 1 | 0 | 0 | 12 | 1 | 41 | 1 | 9 | 2 | 8 |
-| type_blob | 410 | 25 | 0 | 0 | 1 | 94 | 0 | 111 | 8 | 26 | 16 | 128 |
-| type_date | 88 | 19 | 0 | 0 | 0 | 5 | 0 | 54 | 1 | 7 | 2 | 0 |
-| type_datetime | 76 | 8 | 0 | 0 | 0 | 11 | 0 | 17 | 5 | 19 | 10 | 6 |
-| type_decimal | 370 | 34 | 0 | 0 | 4 | 21 | 0 | 238 | 15 | 38 | 11 | 9 |
-| type_enum | 151 | 6 | 0 | 0 | 6 | 12 | 0 | 74 | 7 | 12 | 10 | 23 |
-| type_float | 262 | 37 | 0 | 0 | 2 | 12 | 0 | 114 | 6 | 57 | 3 | 31 |
-| type_nchar | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 5 | 0 | 0 | 7 |
-| type_newdecimal | 349 | 181 | 1 | 0 | 5 | 10 | 0 | 91 | 9 | 16 | 11 | 25 |
-| type_newdecimal-big | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 |
-| type_ranges | 76 | 2 | 0 | 0 | 0 | 14 | 0 | 18 | 1 | 24 | 3 | 13 |
-| type_set | 44 | 4 | 1 | 0 | 0 | 2 | 0 | 23 | 2 | 4 | 3 | 5 |
-| type_string | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| type_temporal_fractional | 1195 | 157 | 1 | 0 | 0 | 91 | 0 | 627 | 10 | 184 | 34 | 77 |
-| type_time | 134 | 53 | 0 | 0 | 1 | 7 | 0 | 57 | 4 | 4 | 6 | 2 |
-| type_timestamp | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 0 | 3 | 0 |
-| type_timestamp_explicit | 71 | 0 | 0 | 0 | 0 | 4 | 0 | 15 | 4 | 22 | 6 | 20 |
-| type_uint | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 1 | 0 |
-| type_varchar | 39 | 4 | 0 | 0 | 0 | 0 | 0 | 31 | 0 | 1 | 0 | 3 |
-| type_year | 151 | 11 | 0 | 0 | 0 | 37 | 0 | 45 | 9 | 14 | 2 | 24 |
-| udf | 209 | 3 | 0 | 0 | 2 | 10 | 38 | 36 | 0 | 16 | 15 | 85 |
-| udf_services | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| udf_skip_grants | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
-| unary_query_term | 40 | 1 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 2 | 22 | 6 |
-| union | 931 | 74 | 0 | 0 | 13 | 52 | 0 | 306 | 15 | 163 | 32 | 201 |
-| unique_option_prefixes | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| unix_wait_timeout | 6 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 |
-| upd_del_single_to_multi | 76 | 0 | 0 | 0 | 0 | 6 | 0 | 5 | 0 | 28 | 4 | 33 |
-| update | 329 | 9 | 1 | 0 | 0 | 21 | 0 | 119 | 6 | 96 | 16 | 59 |
-| use_database_fail | 13 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 3 | 4 |
-| user_comment | 89 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 18 | 4 | 45 |
-| user_if_exists | 92 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 13 | 0 | 52 |
-| user_limits | 58 | 5 | 0 | 0 | 0 | 8 | 0 | 3 | 0 | 7 | 2 | 29 |
-| user_var | 374 | 66 | 4 | 0 | 15 | 15 | 0 | 103 | 3 | 21 | 108 | 29 |
-| using_hypergraph_optimizer | 91 | 7 | 0 | 0 | 0 | 5 | 0 | 16 | 1 | 13 | 26 | 0 |
-| utf8_hugeid_ci | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| utility_warnings | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 1 | 2 |
-| varbinary | 159 | 57 | 0 | 2 | 1 | 25 | 0 | 16 | 3 | 10 | 19 | 18 |
-| version_token | 77 | 3 | 0 | 0 | 0 | 0 | 23 | 2 | 0 | 0 | 13 | 34 |
-| version_token_errors | 17 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 0 | 0 | 0 | 9 |
-| view | 2611 | 54 | 27 | 0 | 3 | 233 | 0 | 668 | 17 | 632 | 114 | 845 |
-| view_alias | 48 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 8 | 0 | 32 |
-| wait_for_disk_space | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 2 | 0 | 2 |
-| wait_timeout | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| warnings | 53 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 15 | 8 | 13 |
-| warnings_engine_disabled | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| window_bitwise_ops | 75 | 0 | 0 | 0 | 0 | 22 | 0 | 10 | 9 | 20 | 2 | 12 |
-| window_functions | 1821 | 457 | 0 | 0 | 58 | 199 | 1 | 598 | 14 | 87 | 124 | 256 |
-| window_functions_big | 35 | 0 | 0 | 0 | 0 | 2 | 0 | 5 | 3 | 11 | 13 | 0 |
-| window_functions_bugs | 217 | 43 | 0 | 0 | 7 | 6 | 0 | 110 | 2 | 5 | 16 | 28 |
-| window_functions_explain | 502 | 1 | 0 | 0 | 1 | 1 | 0 | 124 | 1 | 34 | 11 | 328 |
-| window_functions_in2exists | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 8 |
-| window_functions_in2exists_hypergraph | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 8 |
-| window_functions_interesting_orders | 31 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 6 | 0 | 19 |
-| window_jsonaggs | 93 | 14 | 1 | 0 | 31 | 2 | 0 | 38 | 0 | 2 | 0 | 5 |
-| window_min_max | 295 | 73 | 0 | 0 | 4 | 43 | 3 | 125 | 0 | 31 | 5 | 8 |
-| window_std_var | 277 | 68 | 0 | 0 | 4 | 26 | 2 | 125 | 0 | 27 | 6 | 16 |
-| window_std_var_optimized | 277 | 68 | 0 | 0 | 4 | 26 | 2 | 125 | 0 | 27 | 6 | 16 |
-| windows | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 5 | 3 | 15 |
-| with_explain | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| with_non_recursive | 23 | 11 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 8 |
-| with_non_recursive_bugs | 113 | 6 | 0 | 0 | 2 | 6 | 0 | 53 | 3 | 17 | 2 | 21 |
-| with_recursive | 38 | 10 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 2 | 19 |
-| with_recursive_bugs | 32 | 8 | 0 | 0 | 2 | 0 | 0 | 18 | 0 | 0 | 2 | 2 |
-| with_recursive_closure | 19 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 | 3 | 7 | 3 |
-| with_recursive_solver | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 4 |
-| wl14965 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 17 |
-| xml | 394 | 0 | 1 | 0 | 313 | 0 | 0 | 6 | 0 | 3 | 42 | 29 |
-| xml_report_invalid_chars | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| File | Statements | Exact | Mismatch | Names | Pintail error | Tainted | MySQL error | Setup ok | Setup rejected | Unsupported | Session | Skipped | Session diverged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1st | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| admin_interface | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 |
+| admin_interface_ipv4_mapped | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 |
+| alias | 80 | 17 | 0 | 0 | 0 | 1 | 0 | 17 | 1 | 15 | 2 | 27 | 0 |
+| almost_full | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 2 | 0 |
+| alter_table | 60 | 0 | 0 | 0 | 0 | 11 | 0 | 24 | 2 | 13 | 2 | 8 | 0 |
+| alter_table-big | 136 | 4 | 0 | 0 | 1 | 4 | 5 | 14 | 0 | 26 | 32 | 50 | 0 |
+| analyze | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 4 | 0 | 18 | 0 |
+| analyze_histogram | 21 | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 9 | 6 | 0 |
+| ansi | 9 | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 2 | 1 | 0 |
+| auto_increment | 249 | 3 | 0 | 0 | 0 | 30 | 0 | 73 | 16 | 88 | 12 | 14 | 0 |
+| basedir | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| bench_count_distinct | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 0 | 0 |
+| big_packets | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| big_packets_async | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| big_packets_boundary | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| big_packets_boundary_async | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bigint | 171 | 71 | 0 | 0 | 0 | 20 | 0 | 53 | 5 | 12 | 2 | 7 | 0 |
+| binary | 82 | 18 | 0 | 0 | 2 | 19 | 0 | 29 | 1 | 8 | 0 | 3 | 0 |
+| binary_to_hex | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 | 0 | 1 | 4 | 0 |
+| bind_address_1_not_windows | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
+| bind_address_2_not_windows | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
+| bind_address_3 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
+| bool | 30 | 20 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 3 | 0 | 0 |
+| bulk_replace | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 1 | 0 |
+| case | 140 | 36 | 0 | 0 | 1 | 11 | 0 | 49 | 3 | 11 | 7 | 22 | 0 |
+| cast | 564 | 193 | 1 | 0 | 2 | 15 | 0 | 85 | 4 | 40 | 33 | 190 | 0 |
+| change_user | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 4 | 7 | 0 |
+| character_set_deprecation | 100 | 14 | 0 | 0 | 20 | 0 | 0 | 13 | 21 | 13 | 3 | 13 | 0 |
+| charset | 77 | 1 | 0 | 0 | 2 | 4 | 0 | 15 | 1 | 6 | 15 | 32 | 0 |
+| check | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 1 | 0 |
+| check_auto_permission | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| check_basedir | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| check_constraints | 991 | 9 | 0 | 0 | 0 | 41 | 0 | 157 | 69 | 232 | 26 | 435 | 0 |
+| clear_diag_area | 135 | 4 | 0 | 0 | 2 | 0 | 0 | 9 | 0 | 25 | 24 | 66 | 0 |
+| comment_column | 74 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 12 | 6 | 13 | 0 |
+| comment_column2 | 33 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 13 | 0 | 0 | 0 |
+| comment_index | 57 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 7 | 4 | 13 | 0 |
+| comment_table | 30 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 0 | 3 | 4 | 0 |
+| comments | 38 | 15 | 0 | 0 | 3 | 0 | 0 | 3 | 0 | 1 | 0 | 16 | 0 |
+| commit | 307 | 4 | 0 | 0 | 3 | 25 | 0 | 14 | 0 | 39 | 52 | 158 | 0 |
+| commit_1innodb | 243 | 1 | 0 | 0 | 0 | 56 | 0 | 16 | 0 | 47 | 10 | 113 | 0 |
+| comp_err | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| compare | 78 | 20 | 0 | 0 | 0 | 11 | 0 | 24 | 6 | 3 | 7 | 7 | 0 |
+| component | 98 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 89 | 0 |
+| component_set | 110 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 1 | 84 | 0 |
+| component_string_service | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| component_string_service_charset | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 2 | 0 |
+| component_string_service_long | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| condition_filter | 32 | 3 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 2 | 5 | 6 | 0 |
+| consistent_snapshot | 15 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 0 | 5 | 0 | 4 | 0 |
+| const_folding | 881 | 38 | 0 | 0 | 0 | 2 | 1 | 231 | 1 | 5 | 416 | 187 | 0 |
+| constraints | 176 | 0 | 0 | 0 | 0 | 0 | 0 | 23 | 2 | 61 | 13 | 77 | 0 |
+| count_distinct | 118 | 24 | 0 | 0 | 0 | 6 | 0 | 71 | 1 | 3 | 11 | 2 | 0 |
+| count_distinct2 | 27 | 20 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 1 | 0 | 0 |
+| count_distinct3 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 0 | 0 |
+| create | 988 | 11 | 0 | 0 | 2 | 72 | 0 | 275 | 13 | 206 | 38 | 336 | 0 |
+| create-big | 112 | 4 | 0 | 0 | 0 | 0 | 2 | 25 | 0 | 1 | 71 | 9 | 0 |
+| create_if_not_exists | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 9 | 0 | 12 | 0 |
+| create_not_windows | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 0 | 1 | 0 |
+| create_select_atomic | 43 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 1 | 4 | 27 | 0 |
+| create_select_foreign_key | 46 | 0 | 0 | 0 | 0 | 3 | 0 | 11 | 2 | 9 | 8 | 13 | 0 |
+| create_select_tmp | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 5 | 0 |
+| create_w_max_indexes_64 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 1 | 0 | 10 | 0 |
+| ctype_ascii | 18 | 8 | 0 | 0 | 1 | 0 | 0 | 6 | 0 | 0 | 2 | 1 | 0 |
+| ctype_big5 | 292 | 18 | 0 | 0 | 57 | 27 | 0 | 34 | 3 | 61 | 28 | 6 | 52 |
+| ctype_binary | 862 | 164 | 0 | 0 | 3 | 35 | 0 | 231 | 12 | 209 | 7 | 192 | 0 |
+| ctype_collate | 187 | 8 | 0 | 0 | 18 | 22 | 0 | 47 | 2 | 41 | 9 | 40 | 0 |
+| ctype_cp1250_ch | 236 | 32 | 0 | 0 | 66 | 6 | 0 | 29 | 4 | 16 | 35 | 12 | 33 |
+| ctype_cp1251 | 922 | 163 | 0 | 0 | 3 | 47 | 0 | 236 | 15 | 245 | 7 | 193 | 1 |
+| ctype_cp932 | 19 | 0 | 0 | 0 | 0 | 6 | 0 | 1 | 1 | 2 | 9 | 0 | 0 |
+| ctype_create | 40 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 5 | 4 | 24 | 0 |
+| ctype_errors | 20 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 6 | 12 | 0 |
+| ctype_eucjpms | 336 | 3 | 0 | 0 | 166 | 20 | 4 | 25 | 1 | 44 | 11 | 2 | 58 |
+| ctype_euckr | 148 | 13 | 0 | 0 | 2 | 19 | 0 | 24 | 3 | 55 | 23 | 5 | 0 |
+| ctype_filename | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 0 | 0 |
+| ctype_filesystem | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 | 0 |
+| ctype_gb18030 | 395 | 18 | 0 | 0 | 181 | 17 | 0 | 22 | 2 | 53 | 26 | 10 | 60 |
+| ctype_gb18030_conversion | 41 | 0 | 0 | 0 | 0 | 13 | 0 | 11 | 3 | 9 | 5 | 0 | 0 |
+| ctype_gb18030_encoding_cn | 335 | 0 | 0 | 0 | 33 | 31 | 50 | 16 | 9 | 99 | 76 | 20 | 0 |
+| ctype_gb18030_encoding_utf8 | 335 | 0 | 0 | 0 | 33 | 31 | 50 | 25 | 0 | 99 | 76 | 20 | 0 |
+| ctype_gb18030_ligatures | 185 | 0 | 0 | 0 | 0 | 12 | 0 | 3 | 3 | 47 | 2 | 118 | 0 |
+| ctype_gb2312 | 270 | 18 | 0 | 0 | 56 | 22 | 0 | 29 | 1 | 54 | 26 | 6 | 52 |
+| ctype_gbk | 396 | 18 | 0 | 0 | 165 | 22 | 0 | 30 | 3 | 57 | 28 | 7 | 60 |
+| ctype_hebrew | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 1 | 2 | 1 | 0 | 0 |
+| ctype_latin1 | 304 | 13 | 0 | 0 | 106 | 97 | 0 | 25 | 1 | 40 | 11 | 1 | 0 |
+| ctype_latin1_de | 157 | 10 | 0 | 0 | 68 | 29 | 0 | 17 | 3 | 21 | 3 | 3 | 0 |
+| ctype_latin2 | 92 | 5 | 0 | 0 | 48 | 2 | 0 | 15 | 1 | 15 | 4 | 0 | 0 |
+| ctype_latin2_ch | 181 | 4 | 0 | 0 | 73 | 23 | 0 | 21 | 2 | 39 | 9 | 0 | 8 |
+| ctype_ldml † | 204 | 0 | 0 | 0 | 0 | 26 | 22 | 19 | 0 | 109 | 11 | 16 | 0 |
+| ctype_like_range | 67 | 0 | 0 | 0 | 0 | 25 | 0 | 3 | 1 | 36 | 0 | 2 | 0 |
+| ctype_many | 223 | 0 | 0 | 0 | 0 | 29 | 0 | 9 | 5 | 159 | 8 | 13 | 0 |
+| ctype_mb | 22 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 0 | 6 | 0 | 11 | 0 |
+| ctype_recoding | 130 | 7 | 0 | 0 | 0 | 25 | 0 | 23 | 5 | 12 | 30 | 28 | 0 |
+| ctype_sjis | 267 | 8 | 0 | 0 | 60 | 29 | 2 | 24 | 4 | 56 | 20 | 2 | 56 |
+| ctype_tis620 | 177 | 43 | 0 | 0 | 52 | 8 | 0 | 11 | 1 | 33 | 25 | 0 | 0 |
+| ctype_uca | 845 | 52 | 0 | 0 | 171 | 90 | 0 | 79 | 7 | 394 | 30 | 9 | 2 |
+| ctype_ucs | 1347 | 271 | 0 | 0 | 12 | 96 | 0 | 300 | 37 | 330 | 67 | 220 | 0 |
+| ctype_ucs2_def | 13 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 1 | 1 | 0 | 3 | 0 |
+| ctype_ujis | 1443 | 19 | 0 | 0 | 176 | 36 | 0 | 31 | 7 | 1077 | 21 | 6 | 64 |
+| ctype_ujis_ucs2 | 1174 | 0 | 0 | 0 | 0 | 4 | 0 | 18 | 3 | 1147 | 2 | 0 | 0 |
+| ctype_unicode900 | 168 | 62 | 0 | 0 | 25 | 8 | 0 | 17 | 0 | 24 | 18 | 10 | 0 |
+| ctype_unicode900_as_ci | 139 | 13 | 0 | 0 | 25 | 8 | 0 | 17 | 0 | 24 | 17 | 6 | 25 |
+| ctype_unicode900_as_cs | 168 | 37 | 0 | 0 | 50 | 8 | 0 | 17 | 0 | 24 | 18 | 10 | 0 |
+| ctype_unicode900_casetable | 19 | 0 | 0 | 0 | 0 | 1 | 0 | 11 | 1 | 4 | 2 | 0 | 0 |
+| ctype_utf16 | 522 | 86 | 0 | 0 | 96 | 65 | 0 | 47 | 31 | 110 | 56 | 23 | 0 |
+| ctype_utf16_def | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| ctype_utf16_uca | 447 | 22 | 0 | 0 | 97 | 44 | 0 | 25 | 5 | 212 | 28 | 8 | 0 |
+| ctype_utf16le | 566 | 59 | 0 | 0 | 96 | 80 | 0 | 67 | 32 | 152 | 45 | 24 | 0 |
+| ctype_utf32 | 551 | 80 | 0 | 0 | 96 | 68 | 0 | 52 | 34 | 122 | 59 | 32 | 0 |
+| ctype_utf32_uca | 455 | 22 | 0 | 0 | 97 | 46 | 0 | 28 | 6 | 213 | 29 | 8 | 0 |
+| ctype_utf8 | 1816 | 345 | 0 | 0 | 13 | 119 | 0 | 567 | 27 | 345 | 74 | 314 | 0 |
+| ctype_utf8mb4 | 1034 | 178 | 0 | 0 | 31 | 97 | 0 | 314 | 13 | 176 | 90 | 100 | 24 |
+| ctype_utf8mb4_uca | 217 | 2 | 0 | 0 | 0 | 32 | 0 | 33 | 2 | 140 | 6 | 0 | 0 |
+| datadir_permission | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| date_formats | 120 | 62 | 0 | 0 | 0 | 6 | 0 | 19 | 0 | 7 | 19 | 7 | 0 |
+| ddl_i18n_koi8r | 365 | 0 | 0 | 0 | 18 | 15 | 6 | 4 | 0 | 58 | 76 | 143 | 0 |
+| ddl_i18n_utf8 | 365 | 0 | 0 | 0 | 18 | 15 | 6 | 6 | 0 | 56 | 76 | 143 | 0 |
+| default | 70 | 2 | 0 | 0 | 0 | 8 | 0 | 16 | 6 | 17 | 5 | 13 | 0 |
+| default_as_expr | 663 | 4 | 0 | 0 | 0 | 95 | 0 | 143 | 88 | 211 | 2 | 118 | 0 |
+| delete | 419 | 20 | 4 | 0 | 0 | 24 | 0 | 150 | 9 | 84 | 20 | 104 | 0 |
+| delete_all_rows | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 |
+| deprecate_eof | 48 | 0 | 1 | 0 | 4 | 1 | 0 | 6 | 0 | 17 | 6 | 13 | 0 |
+| deprecate_user_defined_collations | 12 | 0 | 0 | 0 | 0 | 1 | 1 | 2 | 0 | 5 | 0 | 3 | 0 |
+| deprecated_features | 90 | 10 | 0 | 0 | 1 | 1 | 0 | 16 | 8 | 8 | 7 | 35 | 0 |
+| deprecation_56 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| derived | 40 | 15 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 10 | 0 |
+| derived_ci | 10 | 2 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 0 | 3 | 0 |
+| derived_condition_pushdown | 256 | 17 | 0 | 0 | 0 | 10 | 0 | 77 | 2 | 35 | 80 | 32 | 0 |
+| derived_correlated | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 2 | 1 | 0 |
+| derived_correlated_hypergraph | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 | 2 | 0 |
+| derived_cs | 10 | 2 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
+| derived_limit | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 | 0 |
+| dictionary_timestamp | 52 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 13 | 18 | 7 | 0 |
+| dirty_close | 9 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 0 | 0 | 0 |
+| disable_drop_rename_user | 170 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 38 | 24 | 107 | 0 |
+| disabled_replication | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 1 | 23 | 0 |
+| disabled_storage_engines | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 1 | 0 | 5 | 0 |
+| distinct | 69 | 20 | 0 | 0 | 0 | 4 | 0 | 28 | 0 | 9 | 0 | 8 | 0 |
+| dollar_identifier | 42 | 6 | 0 | 0 | 4 | 0 | 2 | 5 | 1 | 7 | 9 | 8 | 0 |
+| drop | 103 | 1 | 0 | 0 | 0 | 2 | 0 | 26 | 0 | 8 | 6 | 58 | 0 |
+| ds_mrr-big | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 6 | 1 | 0 | 0 |
+| empty_table | 6 | 2 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| endspace | 76 | 18 | 0 | 0 | 2 | 22 | 0 | 13 | 0 | 9 | 2 | 10 | 0 |
+| engine_attribute | 123 | 0 | 0 | 0 | 0 | 0 | 0 | 18 | 0 | 40 | 0 | 43 | 0 |
+| eq_range_idx_stat | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 0 | 0 |
+| error_logging_verbosity | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 27 | 0 |
+| error_simulation | 41 | 0 | 0 | 0 | 0 | 2 | 0 | 16 | 0 | 3 | 13 | 7 | 0 |
+| errors | 112 | 5 | 0 | 0 | 0 | 0 | 0 | 32 | 0 | 7 | 8 | 60 | 0 |
+| examined_rows | 61 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 8 | 10 | 15 | 0 |
+| execution_constants | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0 | 0 | 0 |
+| explain | 79 | 2 | 0 | 0 | 0 | 0 | 0 | 24 | 0 | 11 | 14 | 28 | 0 |
+| explain_dml | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 6 | 0 | 18 | 0 |
+| explain_for_schema | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| explain_for_schema_hypergraph | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| explain_into | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| explain_into_hypergraph | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| explain_json_all | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| explain_json_hypergraph | 118 | 10 | 0 | 0 | 0 | 0 | 0 | 47 | 0 | 5 | 13 | 43 | 0 |
+| explain_json_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| explain_other | 73 | 0 | 0 | 0 | 0 | 2 | 0 | 27 | 1 | 9 | 18 | 16 | 0 |
+| explain_tree | 394 | 2 | 0 | 0 | 0 | 0 | 0 | 219 | 2 | 8 | 22 | 141 | 0 |
+| explain_tree_hypergraph | 59 | 0 | 0 | 0 | 0 | 0 | 0 | 14 | 1 | 7 | 0 | 37 | 0 |
+| filesort | 81 | 5 | 0 | 0 | 0 | 5 | 0 | 44 | 5 | 7 | 8 | 7 | 0 |
+| filesort_json | 15 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 2 | 4 | 2 | 1 | 0 |
+| filesort_pack | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 |
+| filter_single_col_idx_big | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 14 | 3 | 2 | 0 |
+| filter_single_col_idx_small | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 1 | 2 | 0 | 7 | 0 |
+| fix_priv_tables | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| flush2 | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 9 | 0 |
+| foreign_key | 1927 | 58 | 0 | 0 | 1 | 14 | 0 | 443 | 27 | 291 | 232 | 759 | 0 |
+| fulltext2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| fulltext3 | 15 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 3 | 3 | 2 | 2 | 0 |
+| func_aes | 104 | 0 | 0 | 0 | 61 | 12 | 0 | 4 | 2 | 4 | 13 | 7 | 0 |
+| func_aes_cfb1 | 25 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 7 | 4 | 0 |
+| func_aes_cfb128 | 25 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 7 | 4 | 0 |
+| func_aes_cfb8 | 25 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 7 | 4 | 0 |
+| func_aes_kdf_hkdf | 19 | 0 | 0 | 0 | 15 | 0 | 0 | 0 | 0 | 0 | 3 | 1 | 0 |
+| func_aes_kdf_pbkdf2_hmac | 28 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 0 | 3 | 7 | 0 |
+| func_aes_misc | 79 | 0 | 0 | 0 | 9 | 18 | 0 | 16 | 7 | 0 | 21 | 2 | 0 |
+| func_aes_ofb | 25 | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 7 | 4 | 0 |
+| func_at_time_zone | 22 | 0 | 0 | 0 | 3 | 3 | 0 | 4 | 1 | 2 | 3 | 6 | 0 |
+| func_bitwise_ops | 387 | 36 | 0 | 0 | 0 | 241 | 0 | 26 | 2 | 17 | 22 | 43 | 0 |
+| func_comparison | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| func_concat | 48 | 13 | 1 | 0 | 0 | 0 | 0 | 18 | 0 | 2 | 0 | 10 | 0 |
+| func_date_add | 62 | 25 | 0 | 0 | 0 | 1 | 0 | 5 | 1 | 5 | 23 | 2 | 0 |
+| func_default | 13 | 0 | 0 | 0 | 2 | 0 | 0 | 7 | 0 | 0 | 0 | 4 | 0 |
+| func_digest | 566 | 473 | 0 | 0 | 9 | 0 | 0 | 16 | 1 | 12 | 24 | 8 | 0 |
+| func_digest_small_buffer | 12 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 7 | 2 | 1 | 0 |
+| func_equal | 29 | 13 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 3 | 0 |
+| func_gconcat | 261 | 71 | 0 | 0 | 11 | 27 | 0 | 108 | 8 | 10 | 10 | 14 | 0 |
+| func_group | 725 | 185 | 0 | 0 | 6 | 56 | 0 | 267 | 10 | 45 | 47 | 100 | 0 |
+| func_if | 99 | 36 | 0 | 0 | 2 | 0 | 0 | 45 | 0 | 1 | 4 | 10 | 0 |
+| func_in_all | 297 | 82 | 1 | 0 | 6 | 11 | 0 | 103 | 2 | 19 | 13 | 59 | 0 |
+| func_in_icp | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| func_in_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| func_in_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| func_in_mrr_cost | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| func_in_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| func_isnull | 35 | 3 | 0 | 0 | 0 | 2 | 0 | 19 | 2 | 3 | 0 | 3 | 0 |
+| func_like | 175 | 64 | 0 | 0 | 10 | 11 | 0 | 39 | 4 | 11 | 19 | 17 | 0 |
+| func_math | 568 | 193 | 2 | 0 | 2 | 38 | 0 | 106 | 5 | 49 | 32 | 133 | 0 |
+| func_md5 | 14 | 3 | 0 | 0 | 0 | 4 | 0 | 3 | 1 | 1 | 0 | 2 | 0 |
+| func_md5_fail | 2 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| func_misc | 35 | 20 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 6 | 2 | 0 |
+| func_op | 18 | 10 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 2 | 0 |
+| func_prefix_key | 193 | 2 | 0 | 0 | 0 | 10 | 0 | 20 | 4 | 10 | 0 | 147 | 0 |
+| func_rand | 22 | 2 | 0 | 0 | 0 | 4 | 0 | 6 | 0 | 2 | 0 | 6 | 0 |
+| func_regexp | 110 | 23 | 0 | 0 | 12 | 1 | 0 | 18 | 0 | 19 | 22 | 15 | 0 |
+| func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 | 0 |
+| func_sapdb | 88 | 76 | 0 | 0 | 1 | 3 | 0 | 4 | 0 | 1 | 2 | 1 | 0 |
+| func_set | 77 | 38 | 0 | 0 | 0 | 0 | 2 | 25 | 0 | 1 | 2 | 5 | 0 |
+| func_str | 834 | 477 | 0 | 0 | 54 | 12 | 0 | 147 | 2 | 16 | 18 | 94 | 0 |
+| func_test | 221 | 128 | 0 | 0 | 0 | 3 | 0 | 43 | 3 | 8 | 11 | 25 | 0 |
+| func_time | 599 | 354 | 0 | 0 | 8 | 12 | 1 | 97 | 3 | 22 | 38 | 42 | 0 |
+| func_timestamp | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 | 0 |
+| func_unixtime | 96 | 50 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 10 | 23 | 4 | 0 |
+| func_uuid | 99 | 29 | 0 | 0 | 0 | 9 | 0 | 12 | 3 | 8 | 9 | 29 | 0 |
+| func_weight_string | 84 | 9 | 0 | 0 | 10 | 6 | 0 | 17 | 0 | 11 | 5 | 26 | 0 |
+| function_defaults | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| functional_index | 227 | 4 | 0 | 0 | 0 | 6 | 0 | 97 | 6 | 34 | 2 | 72 | 0 |
+| gcc296 | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
+| generated_invisible_primary_key | 122 | 0 | 0 | 0 | 0 | 0 | 0 | 40 | 1 | 20 | 9 | 52 | 0 |
+| get_diagnostics | 225 | 19 | 4 | 0 | 3 | 0 | 0 | 27 | 0 | 26 | 40 | 106 | 0 |
+| get_table_share | 116 | 0 | 0 | 0 | 0 | 0 | 0 | 19 | 0 | 0 | 76 | 21 | 0 |
+| global_status_gr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| gr_member_actions | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
+| grant2 | 464 | 2 | 0 | 0 | 1 | 15 | 1 | 32 | 0 | 107 | 29 | 255 | 1 |
+| grant3 | 117 | 0 | 0 | 0 | 0 | 1 | 1 | 3 | 0 | 14 | 5 | 69 | 0 |
+| grant4 | 83 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 | 19 | 4 | 51 | 0 |
+| greedy_optimizer | 147 | 0 | 0 | 0 | 0 | 5 | 0 | 96 | 1 | 16 | 10 | 9 | 0 |
+| greedy_search | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |
+| group_by | 1235 | 187 | 0 | 0 | 27 | 86 | 7 | 467 | 16 | 89 | 81 | 253 | 0 |
+| group_by_fd_no_prot | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 4 | 0 | 0 |
+| group_by_hypergraph | 76 | 9 | 0 | 0 | 0 | 0 | 0 | 13 | 0 | 3 | 0 | 51 | 0 |
+| group_skip_scan | 767 | 31 | 3 | 0 | 7 | 208 | 0 | 141 | 2 | 70 | 10 | 275 | 0 |
+| group_skip_scan_ext | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| group_skip_scan_ext_hypergraph | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| group_skip_scan_hypergraph | 769 | 31 | 3 | 0 | 7 | 205 | 0 | 147 | 2 | 71 | 10 | 273 | 0 |
+| gtids_anonymous_trxs_violations | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 4 | 5 | 5 | 0 |
+| hash_join | 150 | 21 | 0 | 0 | 0 | 1 | 0 | 64 | 1 | 21 | 6 | 36 | 0 |
+| hash_join_hypergraph | 150 | 21 | 0 | 0 | 0 | 1 | 0 | 64 | 1 | 21 | 6 | 36 | 0 |
+| having | 324 | 73 | 1 | 0 | 8 | 15 | 3 | 162 | 0 | 16 | 14 | 30 | 0 |
+| help | 64 | 11 | 0 | 0 | 0 | 0 | 0 | 3 | 1 | 29 | 2 | 18 | 0 |
+| help_verbose | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| histogram_auto_update | 73 | 4 | 0 | 0 | 0 | 0 | 0 | 28 | 0 | 0 | 2 | 26 | 0 |
+| histogram_background_error | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 1 | 3 | 0 |
+| histogram_background_error_throttling | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 4 | 0 |
+| histogram_equi_height | 334 | 0 | 0 | 0 | 0 | 0 | 0 | 46 | 0 | 7 | 0 | 278 | 0 |
+| histogram_singleton | 265 | 0 | 0 | 0 | 0 | 0 | 0 | 27 | 0 | 0 | 0 | 238 | 0 |
+| histogram_update_using_data | 231 | 0 | 0 | 0 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 171 | 0 |
+| histograms | 929 | 186 | 0 | 0 | 0 | 3 | 0 | 136 | 7 | 85 | 16 | 419 | 0 |
+| host_cache_size_functionality | 21 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 2 | 5 | 0 |
+| hostname_length | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| hostname_length_ipv4 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 11 | 0 |
+| hostname_length_ipv6 | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 11 | 0 |
+| hypergraph_bugs | 345 | 4 | 0 | 0 | 1 | 4 | 0 | 117 | 3 | 21 | 31 | 158 | 0 |
+| hypergraph_cost_constants | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 4 | 8 | 14 | 0 |
+| hypergraph_oom | 22 | 1 | 0 | 0 | 0 | 0 | 0 | 19 | 0 | 0 | 1 | 1 | 0 |
+| ignore_strict | 345 | 20 | 0 | 0 | 0 | 25 | 0 | 123 | 4 | 84 | 23 | 66 | 0 |
+| implicit_char_to_num_conversion | 99 | 0 | 0 | 0 | 0 | 78 | 0 | 11 | 0 | 10 | 0 | 0 | 0 |
+| implicit_commit | 34 | 0 | 0 | 0 | 0 | 0 | 1 | 11 | 0 | 9 | 3 | 10 | 0 |
+| import | 163 | 7 | 0 | 0 | 0 | 10 | 3 | 44 | 2 | 21 | 3 | 73 | 0 |
+| import_schema_mismatch | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 | 3 | 0 |
+| import_symlink | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 | 2 | 0 | 0 | 0 |
+| inconsistent_scan | 17 | 0 | 0 | 0 | 0 | 6 | 0 | 3 | 0 | 4 | 3 | 1 | 0 |
+| index_skip_scan_end_range | 16 | 0 | 1 | 0 | 0 | 1 | 0 | 3 | 0 | 2 | 4 | 5 | 0 |
+| information_schema_ci | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| information_schema_cs | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| information_schema_inno | 36 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 6 | 5 | 4 | 0 |
+| information_schema_keywords | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| information_schema_parameters | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| information_schema_parameters_ci | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| information_schema_part | 49 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 12 | 5 | 1 | 6 | 0 |
+| information_schema_routines | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| information_schema_routines_ci | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| information_schema_statistics | 96 | 0 | 0 | 0 | 0 | 2 | 0 | 16 | 1 | 19 | 35 | 17 | 0 |
+| initialize | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| initialize-errors | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| initialize-sha256 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| initialize_plugins | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| insert | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| insert_select | 170 | 3 | 1 | 0 | 0 | 26 | 0 | 71 | 5 | 40 | 8 | 16 | 0 |
+| insert_update | 452 | 8 | 2 | 0 | 0 | 70 | 0 | 148 | 8 | 161 | 12 | 41 | 0 |
+| internal_tmp_disk_storage_engine | 82 | 2 | 0 | 0 | 1 | 15 | 0 | 14 | 0 | 13 | 11 | 26 | 0 |
+| invalid_collation | 26 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 8 | 1 | 12 | 0 |
+| invalid_comment | 34 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 4 | 2 | 26 | 0 |
+| invalid_text_sort | 6 | 0 | 0 | 0 | 0 | 2 | 0 | 3 | 1 | 0 | 0 | 0 | 0 |
+| invisible_columns | 333 | 1 | 0 | 0 | 0 | 63 | 0 | 49 | 22 | 79 | 4 | 112 | 0 |
+| invisible_indexes | 113 | 1 | 0 | 0 | 0 | 0 | 0 | 22 | 12 | 28 | 1 | 49 | 0 |
+| ipv4_as_ipv6 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
+| ipv6 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
+| join | 684 | 97 | 1 | 0 | 8 | 30 | 22 | 347 | 4 | 68 | 24 | 80 | 0 |
+| join_cache_bka | 520 | 25 | 0 | 0 | 2 | 10 | 13 | 282 | 2 | 71 | 28 | 86 | 0 |
+| join_cache_bka_nobnl | 520 | 25 | 0 | 0 | 2 | 10 | 13 | 282 | 2 | 71 | 28 | 86 | 0 |
+| join_cache_bnl | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| join_cache_nojb | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| join_nested | 334 | 66 | 0 | 0 | 0 | 35 | 0 | 136 | 0 | 38 | 9 | 50 | 0 |
+| join_nested_bka | 30 | 4 | 0 | 0 | 0 | 0 | 0 | 18 | 0 | 0 | 2 | 6 | 0 |
+| join_nested_bka_nobnl | 30 | 4 | 0 | 0 | 0 | 0 | 0 | 18 | 0 | 0 | 2 | 6 | 0 |
+| join_outer | 868 | 143 | 0 | 0 | 6 | 17 | 1 | 550 | 2 | 15 | 39 | 92 | 0 |
+| join_outer_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| join_outer_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| join_outer_bugs | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 4 | 3 | 1 | 0 |
+| key | 236 | 10 | 0 | 0 | 0 | 5 | 0 | 94 | 7 | 44 | 2 | 57 | 0 |
+| key_cache | 168 | 3 | 0 | 0 | 0 | 14 | 0 | 24 | 1 | 38 | 4 | 55 | 0 |
+| key_diff | 9 | 3 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 2 | 0 |
+| key_primary | 11 | 3 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 2 | 0 |
+| keywords | 76 | 17 | 0 | 0 | 0 | 2 | 0 | 40 | 1 | 5 | 0 | 11 | 0 |
+| lead_lag | 269 | 57 | 0 | 0 | 0 | 111 | 0 | 32 | 4 | 3 | 16 | 45 | 0 |
+| lead_lag_explain | 140 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 3 | 2 | 1 | 119 | 0 |
+| limit | 177 | 16 | 0 | 0 | 0 | 9 | 0 | 41 | 2 | 27 | 26 | 14 | 0 |
+| loaddata | 315 | 11 | 0 | 0 | 1 | 49 | 0 | 95 | 5 | 80 | 40 | 30 | 0 |
+| loaddata_special | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 6 | 0 |
+| loadxml | 67 | 8 | 0 | 0 | 0 | 3 | 0 | 23 | 0 | 28 | 0 | 5 | 0 |
+| locale | 62 | 37 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 14 | 3 | 0 |
+| long_table_name | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| long_tmpdir | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |
+| loose_scan | 47 | 1 | 0 | 0 | 2 | 0 | 0 | 29 | 0 | 6 | 0 | 9 | 0 |
+| lowercase_fs_off † | 62 | 0 | 0 | 0 | 1 | 0 | 1 | 4 | 0 | 11 | 8 | 35 | 0 |
+| lowercase_fs_on | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| lowercase_mixed_tmpdir | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 | 0 | 0 |
+| lowercase_table | 75 | 1 | 0 | 0 | 0 | 1 | 11 | 20 | 0 | 13 | 4 | 20 | 0 |
+| lowercase_table2 | 168 | 2 | 0 | 0 | 0 | 10 | 2 | 41 | 1 | 39 | 8 | 50 | 0 |
+| lowercase_table4 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 |
+| lowercase_table5 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 3 | 6 | 0 |
+| lowercase_utf8 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 1 | 3 | 0 |
+| lowercase_view | 90 | 1 | 0 | 0 | 0 | 1 | 3 | 11 | 0 | 8 | 2 | 62 | 0 |
+| lpad | 25 | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| materialize_cost | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 6 | 0 |
+| materialize_cost_hypergraph | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 6 | 0 |
+| max_statement_time | 122 | 10 | 3 | 0 | 1 | 1 | 0 | 9 | 0 | 40 | 29 | 15 | 0 |
+| mem_cnt_common | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mem_cnt_sql_keys | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 37 | 4 | 30 | 0 | 6 | 0 |
+| metadata | 87 | 20 | 0 | 0 | 1 | 19 | 0 | 26 | 3 | 7 | 5 | 4 | 0 |
+| mtr_unit_tests | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| multi_statement | 11 | 3 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 0 | 2 | 0 |
+| multi_update | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 0 | 7 | 0 |
+| multi_update2 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| multi_update_tiny_hash | 22 | 1 | 0 | 0 | 0 | 2 | 0 | 9 | 1 | 9 | 0 | 0 | 0 |
+| multiaddress_bind | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| myisampack | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 12 | 0 | 5 | 0 |
+| mysql | 58 | 4 | 0 | 0 | 0 | 1 | 0 | 17 | 0 | 10 | 2 | 24 | 0 |
+| mysql_batch_mode | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_binary_mode | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| mysql_commands | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_comments | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 6 | 0 |
+| mysql_config_editor | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0 |
+| mysql_cp932 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_locale_posix | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 12 | 0 |
+| mysql_max_packet | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 0 | 0 | 2 | 0 |
+| mysql_os_user | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_os_user_unix | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_pager | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_protocols | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_tzinfo_to_sql | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 | 2 | 0 |
+| mysql_tzinfo_to_sql_errors | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysql_wait | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysqld--help-notwin † | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 | 0 |
+| mysqld--help-win † | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 0 | 0 | 0 |
+| mysqld--validate-config | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysqld_cmdline_warnings | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysqld_daemon | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mysqld_safe | 10 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 1 | 0 | 0 |
+| mysqldumpslow | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 2 | 0 |
+| mysqlimport | 14 | 0 | 0 | 0 | 0 | 0 | 1 | 4 | 0 | 2 | 0 | 7 | 0 |
+| named_pipe | 1444 | 0 | 0 | 0 | 0 | 118 | 0 | 15 | 4 | 1240 | 7 | 45 | 0 |
+| negation_elimination | 70 | 34 | 0 | 0 | 0 | 1 | 0 | 4 | 0 | 1 | 0 | 30 | 0 |
+| no-login-paths | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| no-threads | 5 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| no_engine_substitution | 90 | 1 | 0 | 0 | 0 | 0 | 0 | 24 | 0 | 9 | 22 | 30 | 0 |
+| non_table_atomic_ddl | 161 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 22 | 40 | 94 | 0 |
+| nth | 97 | 60 | 0 | 0 | 2 | 3 | 0 | 8 | 1 | 0 | 12 | 10 | 0 |
+| nth_explain | 47 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 1 | 43 | 0 |
+| null | 133 | 23 | 0 | 0 | 0 | 5 | 0 | 30 | 2 | 33 | 6 | 34 | 0 |
+| odbc | 33 | 0 | 0 | 0 | 1 | 9 | 0 | 9 | 2 | 5 | 2 | 2 | 0 |
+| offline_mode_privileges | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 27 | 0 |
+| olap | 223 | 66 | 0 | 0 | 16 | 9 | 0 | 92 | 0 | 6 | 6 | 23 | 0 |
+| openssl_1 | 37 | 5 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 2 | 19 | 0 |
+| opt_costmodel | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 15 | 0 | 6 | 0 |
+| opt_costmodel_pfs | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| opt_costmodel_tables | 42 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 16 | 0 | 8 | 0 |
+| opt_costmodel_warnings | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 16 | 0 | 8 | 0 |
+| opt_hint_timeout | 35 | 1 | 0 | 0 | 0 | 1 | 0 | 6 | 0 | 19 | 0 | 8 | 0 |
+| opt_hints | 459 | 4 | 0 | 0 | 41 | 45 | 0 | 47 | 0 | 63 | 41 | 213 | 0 |
+| opt_hints_index | 46 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 8 | 0 | 35 | 0 |
+| opt_hints_join_order | 121 | 0 | 0 | 0 | 0 | 0 | 0 | 82 | 1 | 5 | 0 | 33 | 0 |
+| opt_hints_lowercase | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 2 | 0 | 4 | 0 |
+| opt_hints_pfs | 15 | 7 | 0 | 0 | 5 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| opt_hints_set_var | 266 | 2 | 3 | 0 | 19 | 11 | 0 | 68 | 5 | 42 | 14 | 93 | 0 |
+| opt_hints_subquery | 200 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 31 | 162 | 0 |
+| optimize_table | 28 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 | 22 | 0 |
+| optimizer_switch | 155 | 0 | 0 | 0 | 0 | 0 | 0 | 51 | 0 | 8 | 61 | 26 | 0 |
+| order_by_all | 160 | 25 | 0 | 0 | 2 | 16 | 0 | 76 | 3 | 9 | 2 | 26 | 0 |
+| order_by_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| order_by_limit | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | 0 | 0 |
+| order_by_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| order_by_sortkey | 36 | 0 | 0 | 0 | 0 | 2 | 0 | 8 | 2 | 17 | 2 | 5 | 0 |
+| order_fill_sortbuf | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 | 1 | 0 | 0 |
+| outfile | 36 | 0 | 0 | 0 | 5 | 0 | 0 | 7 | 0 | 13 | 3 | 8 | 0 |
+| outfile_loaddata | 57 | 2 | 0 | 0 | 0 | 14 | 0 | 23 | 2 | 12 | 4 | 0 | 0 |
+| overflow | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| packet | 49 | 4 | 0 | 0 | 0 | 4 | 0 | 5 | 0 | 12 | 6 | 16 | 0 |
+| packet_big_test | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| parser | 1143 | 97 | 0 | 0 | 21 | 66 | 28 | 267 | 2 | 99 | 77 | 465 | 0 |
+| parser-big-64bit | 11 | 1 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 4 | 0 | 2 | 0 |
+| parser_57 | 14 | 0 | 4 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 1 | 0 |
+| parser_precedence | 137 | 127 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 6 | 0 |
+| perror | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| perror-win | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
+| point_select_hypergraph | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 4 | 1 | 0 |
+| populate_charsets | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 6 | 0 |
+| populate_collations_read_only | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| preload | 62 | 0 | 0 | 0 | 0 | 8 | 0 | 4 | 1 | 18 | 2 | 26 | 0 |
+| print_stacktrace | 3 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| qualify | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 5 | 0 |
+| qualify_hypergraph | 101 | 0 | 0 | 0 | 0 | 2 | 42 | 22 | 0 | 2 | 12 | 21 | 0 |
+| query_attributes | 17 | 0 | 0 | 0 | 9 | 0 | 0 | 0 | 0 | 6 | 0 | 2 | 0 |
+| query_expression | 632 | 126 | 0 | 0 | 0 | 17 | 8 | 110 | 4 | 110 | 44 | 205 | 0 |
+| query_expression-bugs | 62 | 2 | 0 | 0 | 0 | 1 | 0 | 24 | 0 | 1 | 25 | 1 | 0 |
+| range_all | 906 | 125 | 2 | 0 | 15 | 54 | 1 | 337 | 13 | 135 | 31 | 191 | 0 |
+| range_icp | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| range_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| range_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| range_mrr_cost | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| range_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| read_only | 176 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 0 | 35 | 7 | 105 | 0 |
+| read_only_ddl | 50 | 2 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 8 | 2 | 23 | 0 |
+| regular_expressions_func | 802 | 724 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 78 | 0 |
+| regular_expressions_func_icu_54 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| regular_expressions_utf-8 | 109 | 81 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 6 | 17 | 0 |
+| regular_expressions_utf-8_icu_58 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| regular_expressions_utf-8_icu_59 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| regular_expressions_utf-8_icu_67 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| removed_features | 33 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 27 | 0 |
+| rename | 206 | 7 | 0 | 0 | 3 | 8 | 2 | 31 | 1 | 34 | 21 | 97 | 0 |
+| rename_roles | 88 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 26 | 4 | 52 | 0 |
+| renamedb | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| repair | 56 | 0 | 0 | 0 | 0 | 0 | 0 | 21 | 0 | 7 | 8 | 20 | 0 |
+| replace | 23 | 0 | 0 | 0 | 0 | 1 | 0 | 8 | 0 | 8 | 2 | 4 | 0 |
+| revoke_if_exists | 162 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 153 | 0 |
+| roles | 570 | 0 | 0 | 0 | 12 | 2 | 1 | 13 | 0 | 162 | 43 | 261 | 0 |
+| roles-admin | 140 | 0 | 0 | 0 | 2 | 3 | 0 | 0 | 0 | 26 | 13 | 89 | 0 |
+| roles-ddl | 30 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 1 | 22 | 0 |
+| roles-view | 124 | 0 | 0 | 0 | 0 | 3 | 8 | 6 | 0 | 28 | 11 | 68 | 0 |
+| roles2 | 272 | 0 | 0 | 0 | 0 | 8 | 23 | 0 | 0 | 35 | 33 | 173 | 0 |
+| roles_bugs | 147 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 30 | 16 | 87 | 0 |
+| roles_bugs_wildcard | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 3 | 18 | 0 |
+| rollback | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 2 | 0 |
+| round | 133 | 1 | 0 | 0 | 0 | 9 | 0 | 30 | 8 | 83 | 2 | 0 | 0 |
+| row | 189 | 88 | 0 | 0 | 2 | 7 | 0 | 44 | 3 | 2 | 1 | 41 | 0 |
+| rpad | 25 | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| schema | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| schema_read_only_ci | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 | 0 |
+| schema_read_only_cs | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 | 0 |
+| sdi_utf8 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 0 | 0 |
+| select_all | 2201 | 104 | 0 | 0 | 13 | 196 | 0 | 382 | 14 | 1281 | 18 | 169 | 0 |
+| select_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| select_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| select_count | 74 | 8 | 0 | 0 | 1 | 0 | 0 | 15 | 0 | 6 | 3 | 40 | 0 |
+| select_for_update | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 0 | 2 | 0 |
+| select_found | 32 | 0 | 0 | 0 | 2 | 3 | 0 | 8 | 1 | 1 | 0 | 2 | 0 |
+| select_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| select_icp_mrr_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| select_icp_mrr_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| select_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| select_none_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| select_none_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| select_safe | 150 | 2 | 0 | 0 | 0 | 18 | 0 | 17 | 1 | 19 | 39 | 42 | 0 |
+| session_tracker | 217 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 13 | 127 | 24 | 0 |
+| session_tracker_trx_state | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| shm | 1450 | 0 | 0 | 0 | 0 | 118 | 0 | 15 | 4 | 1240 | 9 | 49 | 0 |
+| show_check_ci | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| show_check_cs | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| show_parse_tree | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 29 | 0 |
+| show_processlist_state | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| show_profile | 6 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 3 | 0 |
+| sigusr1 | 17 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 0 | 0 |
+| single_delete_update | 267 | 0 | 0 | 0 | 0 | 44 | 0 | 46 | 1 | 46 | 0 | 130 | 0 |
+| skip_grants | 49 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 13 | 2 | 27 | 0 |
+| skip_name_resolve | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 9 | 0 |
+| skip_records_in_range | 47 | 0 | 8 | 0 | 0 | 0 | 1 | 7 | 0 | 1 | 27 | 3 | 0 |
+| skip_scan | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| skip_scan_hypergraph | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| sort_buffer_size_functionality | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| sql_mode | 297 | 5 | 2 | 0 | 18 | 8 | 1 | 31 | 4 | 9 | 107 | 99 | 0 |
+| status | 36 | 3 | 0 | 0 | 0 | 0 | 0 | 11 | 0 | 2 | 4 | 12 | 0 |
+| status2 | 25 | 2 | 0 | 0 | 1 | 0 | 0 | 5 | 0 | 4 | 0 | 13 | 0 |
+| strict | 729 | 35 | 0 | 0 | 0 | 24 | 0 | 132 | 19 | 122 | 64 | 328 | 0 |
+| strict_autoinc_1myisam | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 | 0 |
+| strict_autoinc_2innodb | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 | 0 |
+| strict_autoinc_3heap | 13 | 0 | 0 | 0 | 0 | 0 | 3 | 2 | 0 | 1 | 5 | 2 | 0 |
+| subplan_tokens | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 4 | 6 | 0 |
+| subquery_all | 2246 | 412 | 4 | 0 | 69 | 217 | 4 | 939 | 22 | 146 | 52 | 357 | 0 |
+| subquery_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_antijoin | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 1 | 0 |
+| subquery_bugs | 442 | 13 | 0 | 0 | 3 | 6 | 4 | 283 | 7 | 13 | 53 | 59 | 0 |
+| subquery_exists | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 1 | 0 |
+| subquery_hypergraph | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 3 | 0 |
+| subquery_mat | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| subquery_mat_all | 451 | 21 | 0 | 0 | 1 | 44 | 0 | 187 | 9 | 55 | 19 | 113 | 0 |
+| subquery_mat_mixed_types | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 22 | 2 | 2 | 1 | 0 | 0 |
+| subquery_mat_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| subquery_nomat_nosj | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 |
+| subquery_nomat_nosj_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_nomat_nosj_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_none | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| subquery_none_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_none_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_scalar_to_derived | 108 | 6 | 0 | 0 | 0 | 0 | 0 | 61 | 0 | 4 | 10 | 27 | 0 |
+| subquery_scalar_to_derived_correlated | 201 | 6 | 0 | 0 | 2 | 5 | 0 | 128 | 0 | 17 | 15 | 28 | 0 |
+| subquery_sj_all | 82 | 4 | 0 | 0 | 0 | 11 | 0 | 28 | 0 | 9 | 8 | 22 | 0 |
+| subquery_sj_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_dupsweed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| subquery_sj_dupsweed_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_dupsweed_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_firstmatch | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| subquery_sj_firstmatch_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_firstmatch_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_loosescan | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| subquery_sj_loosescan_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_loosescan_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_mat | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| subquery_sj_mat_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_mat_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_mat_nosj | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| subquery_sj_none | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| subquery_sj_none_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_sj_none_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
+| subquery_table_to_derived | 99 | 12 | 2 | 0 | 1 | 0 | 0 | 24 | 0 | 2 | 20 | 33 | 0 |
+| subselect | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 0 |
+| sum_distinct | 30 | 1 | 0 | 0 | 0 | 12 | 0 | 8 | 2 | 6 | 1 | 0 | 0 |
+| sum_distinct-big | 31 | 0 | 0 | 0 | 0 | 8 | 0 | 6 | 0 | 15 | 1 | 1 | 0 |
+| symlink | 88 | 0 | 0 | 0 | 0 | 4 | 1 | 19 | 2 | 30 | 4 | 28 | 0 |
+| synchronization | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |
+| sysdate_is_now | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
+| table_definition_cache_functionality | 25 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 3 | 5 | 0 |
+| table_open_cache_functionality | 29 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 3 | 10 | 0 |
+| table_value_constructor | 238 | 55 | 0 | 0 | 2 | 47 | 0 | 38 | 0 | 66 | 2 | 23 | 0 |
+| table_value_constructor_hypergraph | 242 | 58 | 0 | 0 | 2 | 47 | 0 | 38 | 0 | 67 | 2 | 23 | 0 |
+| tablelock | 64 | 0 | 0 | 0 | 0 | 0 | 0 | 12 | 1 | 15 | 0 | 36 | 0 |
+| tablesample | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 2 | 3 | 0 |
+| temp_table | 196 | 1 | 0 | 0 | 1 | 24 | 1 | 47 | 1 | 85 | 1 | 35 | 0 |
+| temporal_literal | 178 | 81 | 0 | 0 | 0 | 3 | 0 | 36 | 3 | 15 | 7 | 33 | 0 |
+| test_mysql_thd_store_service | 4 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 3 | 0 |
+| test_security_context | 16 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 2 | 0 |
+| time_truncate_fractional | 288 | 35 | 1 | 0 | 0 | 21 | 0 | 190 | 4 | 30 | 5 | 2 | 0 |
+| time_truncate_fractional_strict | 288 | 35 | 1 | 0 | 0 | 21 | 0 | 186 | 4 | 30 | 5 | 6 | 0 |
+| time_zone | 264 | 60 | 0 | 0 | 0 | 39 | 0 | 44 | 19 | 29 | 34 | 39 | 0 |
+| time_zone2 | 137 | 33 | 1 | 0 | 2 | 9 | 0 | 28 | 4 | 20 | 19 | 13 | 0 |
+| time_zone3 | 15 | 1 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 5 | 0 | 0 | 0 |
+| time_zone4 | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| time_zone_dst | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 4 | 1 | 3 | 0 | 0 | 0 |
+| time_zone_with_dst | 27 | 0 | 0 | 0 | 0 | 8 | 0 | 9 | 8 | 0 | 2 | 0 | 0 |
+| timestamps_in_priv_tables | 16 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 7 | 0 | 8 | 0 |
+| tls_certificate_validation_ca_path | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
+| tls_certificate_validation_crl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| tmpdir | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| trans_read_only | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 2 | 4 | 1 | 0 |
+| truncate | 102 | 1 | 0 | 0 | 0 | 15 | 0 | 20 | 1 | 25 | 0 | 40 | 0 |
+| truncate_coverage | 26 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 7 | 11 | 0 |
+| truth_value_transform | 18 | 7 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 8 | 0 |
+| type_binary | 109 | 35 | 0 | 0 | 0 | 12 | 1 | 41 | 1 | 9 | 2 | 8 | 0 |
+| type_blob | 410 | 25 | 0 | 0 | 1 | 94 | 0 | 111 | 8 | 26 | 16 | 128 | 0 |
+| type_date | 88 | 19 | 0 | 0 | 0 | 5 | 0 | 54 | 1 | 7 | 2 | 0 | 0 |
+| type_datetime | 76 | 8 | 0 | 0 | 0 | 11 | 0 | 17 | 5 | 19 | 10 | 6 | 0 |
+| type_decimal | 370 | 34 | 0 | 0 | 4 | 21 | 0 | 238 | 15 | 38 | 11 | 9 | 0 |
+| type_enum | 151 | 6 | 0 | 0 | 6 | 12 | 0 | 74 | 7 | 12 | 10 | 23 | 0 |
+| type_float | 262 | 38 | 0 | 0 | 1 | 12 | 0 | 114 | 6 | 57 | 3 | 31 | 0 |
+| type_nchar | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 5 | 0 | 0 | 7 | 0 |
+| type_newdecimal | 349 | 184 | 0 | 0 | 3 | 10 | 0 | 91 | 9 | 16 | 11 | 25 | 0 |
+| type_newdecimal-big | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 |
+| type_ranges | 76 | 2 | 0 | 0 | 0 | 14 | 0 | 18 | 1 | 24 | 3 | 13 | 0 |
+| type_set | 44 | 4 | 1 | 0 | 0 | 2 | 0 | 23 | 2 | 4 | 3 | 5 | 0 |
+| type_string | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| type_temporal_fractional | 1195 | 158 | 0 | 0 | 0 | 91 | 0 | 627 | 10 | 184 | 34 | 77 | 0 |
+| type_time | 134 | 53 | 0 | 0 | 1 | 7 | 0 | 57 | 4 | 4 | 6 | 2 | 0 |
+| type_timestamp | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 0 | 3 | 0 | 0 |
+| type_timestamp_explicit | 71 | 0 | 0 | 0 | 0 | 4 | 0 | 15 | 4 | 22 | 6 | 20 | 0 |
+| type_uint | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 1 | 0 | 0 |
+| type_varchar | 39 | 4 | 0 | 0 | 0 | 0 | 0 | 31 | 0 | 1 | 0 | 3 | 0 |
+| type_year | 151 | 11 | 0 | 0 | 0 | 37 | 0 | 45 | 9 | 14 | 2 | 24 | 0 |
+| udf | 209 | 3 | 0 | 0 | 2 | 10 | 38 | 36 | 0 | 16 | 15 | 85 | 0 |
+| udf_services | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| udf_skip_grants | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| unary_query_term | 40 | 1 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 2 | 22 | 6 | 0 |
+| union | 931 | 74 | 0 | 0 | 13 | 52 | 0 | 306 | 15 | 163 | 32 | 201 | 0 |
+| unique_option_prefixes | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+| unix_wait_timeout | 6 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 | 0 |
+| upd_del_single_to_multi | 76 | 0 | 0 | 0 | 0 | 6 | 0 | 5 | 0 | 28 | 4 | 33 | 0 |
+| update | 329 | 9 | 1 | 0 | 0 | 21 | 0 | 119 | 6 | 96 | 16 | 59 | 0 |
+| use_database_fail | 13 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 3 | 4 | 0 |
+| user_comment | 89 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 18 | 4 | 45 | 0 |
+| user_if_exists | 92 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 13 | 0 | 52 | 0 |
+| user_limits | 58 | 5 | 0 | 0 | 0 | 8 | 0 | 3 | 0 | 7 | 2 | 29 | 0 |
+| user_var | 374 | 66 | 4 | 0 | 15 | 15 | 0 | 103 | 3 | 21 | 108 | 29 | 0 |
+| using_hypergraph_optimizer | 91 | 7 | 0 | 0 | 0 | 5 | 0 | 16 | 1 | 13 | 26 | 0 | 0 |
+| utf8_hugeid_ci | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| utility_warnings | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 1 | 2 | 0 |
+| varbinary | 159 | 59 | 0 | 0 | 1 | 25 | 0 | 16 | 3 | 10 | 19 | 18 | 0 |
+| version_token | 77 | 3 | 0 | 0 | 0 | 0 | 23 | 2 | 0 | 0 | 13 | 34 | 0 |
+| version_token_errors | 17 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 0 | 0 | 0 | 9 | 0 |
+| view | 2611 | 54 | 27 | 0 | 3 | 233 | 0 | 668 | 17 | 632 | 114 | 845 | 0 |
+| view_alias | 48 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 8 | 0 | 32 | 0 |
+| wait_for_disk_space | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 2 | 0 | 2 | 0 |
+| wait_timeout | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| warnings | 53 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 15 | 8 | 13 | 0 |
+| warnings_engine_disabled | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| window_bitwise_ops | 75 | 0 | 0 | 0 | 0 | 22 | 0 | 10 | 9 | 20 | 2 | 12 | 0 |
+| window_functions | 1821 | 483 | 0 | 0 | 32 | 199 | 1 | 598 | 14 | 87 | 124 | 256 | 0 |
+| window_functions_big | 35 | 0 | 0 | 0 | 0 | 2 | 0 | 5 | 3 | 11 | 13 | 0 | 0 |
+| window_functions_bugs | 217 | 43 | 0 | 0 | 7 | 6 | 0 | 110 | 2 | 5 | 16 | 28 | 0 |
+| window_functions_explain | 502 | 1 | 0 | 0 | 1 | 1 | 0 | 124 | 1 | 34 | 11 | 328 | 0 |
+| window_functions_in2exists | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 8 | 0 |
+| window_functions_in2exists_hypergraph | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 8 | 0 |
+| window_functions_interesting_orders | 31 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 6 | 0 | 19 | 0 |
+| window_jsonaggs | 93 | 14 | 1 | 0 | 31 | 2 | 0 | 38 | 0 | 2 | 0 | 5 | 0 |
+| window_min_max | 295 | 73 | 0 | 0 | 4 | 43 | 3 | 125 | 0 | 31 | 5 | 8 | 0 |
+| window_std_var | 277 | 68 | 0 | 0 | 4 | 26 | 2 | 125 | 0 | 27 | 6 | 16 | 0 |
+| window_std_var_optimized | 277 | 68 | 0 | 0 | 4 | 26 | 2 | 125 | 0 | 27 | 6 | 16 | 0 |
+| windows | 27 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 5 | 3 | 15 | 0 |
+| with_explain | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| with_non_recursive | 23 | 11 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 1 | 8 | 0 |
+| with_non_recursive_bugs | 113 | 6 | 0 | 0 | 2 | 6 | 0 | 53 | 3 | 17 | 2 | 21 | 0 |
+| with_recursive | 38 | 10 | 0 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 2 | 19 | 0 |
+| with_recursive_bugs | 32 | 8 | 0 | 0 | 2 | 0 | 0 | 18 | 0 | 0 | 2 | 2 | 0 |
+| with_recursive_closure | 19 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 | 3 | 7 | 3 | 0 |
+| with_recursive_solver | 8 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 4 | 0 |
+| wl14965 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 17 | 0 |
+| xml | 394 | 0 | 1 | 0 | 313 | 0 | 0 | 6 | 0 | 3 | 42 | 29 | 0 |
+| xml_report_invalid_chars | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 † the parser dropped trailing lines it could not delimit.
 
@@ -650,15 +650,14 @@ Column names are compared with rows. Row order is compared when the outer query 
 
 | Count | Message |
 |---:|---|
-| 630 | Error: unsupported expression: weight_string(_, _, _, X_) |
-| 540 | Error: unsupported expression: weight_string(CAST(_latin1 X_ AS CHAR), _, _, X_) |
-| 504 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR), _, _, X_) |
-| 457 | Error: sql parser error: Expected: ), found: as at Line: _, Column: _ |
-| 152 | Error: unsupported expression: weight_string(_) |
+| 829 | Error: query engine failed: binary value is not valid UTF-_ for numeric coercion |
+| 712 | Error: unsupported expression: WEIGHT_STRING(_latin1 X_): the collation of this expression |
+| 226 | Error: unsupported expression: WEIGHT_STRING(_): the collation of this connection is carri |
 | 144 | INSERT: Error: only literal values are supported in INSERT, got _ |
 | 125 | Error: unsupported expression: extractValue(@xml, _) |
-| 90 | Error: query engine failed: bound expression has an invalid physical type |
+| 91 | SESSION: Error: Unknown character set: _ |
 | 89 | INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied |
+| 80 | SESSION: Error: Unknown collation: _ |
 | 70 | Error: unsupported expression: AES_ENCRYPT(_, @KEY1, @IVA) |
 | 60 | PREPARED: Error: Unknown prepared statement handler (p_less) |
 | 60 | PREPARED: Error: Unknown prepared statement handler (p_less_eq) |
@@ -666,14 +665,15 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 60 | PREPARED: Error: Unknown prepared statement handler (p_gret_eq) |
 | 60 | PREPARED: Error: Unknown prepared statement handler (p_equal) |
 | 60 | PREPARED: Error: Unknown prepared statement handler (p_n_equal) |
+| 59 | PREPARED: Error: Pintail's query surfaces are read-only |
 | 59 | Error: unsupported expression: extractValue(_, _) |
-| 58 | PREPARED: Error: Pintail's query surfaces are read-only |
-| 58 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR)) |
-| 58 | Error: unsupported expression: weight_string(CAST(_latin1 X_ AS CHAR)) |
 | 53 | DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line |
+| 53 | Error: unsupported expression: WEIGHT_STRING: weights under latin2_general_ci are not impl |
+| 49 | Error: unsupported expression: WEIGHT_STRING: weights under latin1_swedish_ci are not impl |
 | 48 | PREPARED: Error: Unknown prepared statement handler (p_n_eq) |
-| 48 | Error: sql parser error: Expected: joined table, found: , at Line: _, Column: _ |
-| 47 | Error: numeric expression overflow |
 | 45 | INSERT: Error: Incorrect value _ for column _: expected a datetime |
+| 44 | Error: unsupported expression: ExtractValue(_, _) |
+| 43 | INSERT: Error: Column _ cannot be null |
+| 43 | DDL: Error: character set utf32 is not supported on a local table |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwfvlst2-660643/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwgbd9af-199849/diffs/` (not committed).
