@@ -1088,6 +1088,25 @@ pub(super) fn bind_scalar_function(
             },
         );
     }
+    // `CHAR` reads an unintroduced hex or bit literal as the number its
+    // bytes spell, not as text: `CHAR(0x41)` is `A`.
+    if scalar == ScalarFunction::Char {
+        let bound = std::mem::take(&mut args);
+        for (index, arg) in bound.into_iter().enumerate() {
+            let written = match arguments.args.get(index) {
+                Some(FunctionArg::Unnamed(FunctionArgExpr::Expr(written)))
+                    if super::unintroduced_bit_literal(written) =>
+                {
+                    Some(written)
+                }
+                _ => None,
+            };
+            args.push(match written {
+                Some(written) => super::numeric_bit_input(arg, written)?,
+                None => arg,
+            });
+        }
+    }
     let bound = bind_scalar(scalar, args)?;
     // RETURNING is a cast over the extracted member, which keeps JSON_VALUE
     // itself a single job and reuses the CAST target table wholesale.
