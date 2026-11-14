@@ -941,6 +941,8 @@ pub fn connection_projection(sql: &str) -> Option<Vec<(String, String)>> {
                     "CURRENT_USER",
                     "SESSION_USER()",
                     "SYSTEM_USER()",
+                    "CURRENT_ROLE()",
+                    "LAST_INSERT_ID()",
                 ]
                 .iter()
                 .any(|name| text.eq_ignore_ascii_case(name))

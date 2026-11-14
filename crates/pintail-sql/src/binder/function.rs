@@ -694,6 +694,9 @@ pub(super) fn bind_scalar_function(
     {
         return bind_collation_report(&function_name, function, arguments, tables, subqueries);
     }
+    if function_name == "GET_FORMAT" {
+        return bind_get_format(function, arguments);
+    }
     if function_name == "TIMESTAMPDIFF" {
         return bind_timestamp_diff(function, arguments, tables, aggregates, windows, subqueries);
     }
@@ -1242,6 +1245,61 @@ fn bind_collation_report(
         "CHARSET" => text_constant(identity.charset()),
         _ => text_constant(&identity.collation),
     })
+}
+
+/// `GET_FORMAT(DATE | TIME | DATETIME | TIMESTAMP, 'name')`: the format
+/// string a region writes that type in, NULL for a name that is not one of
+/// the five. The name is matched whole, ASCII case aside.
+fn bind_get_format(
+    function: &Function,
+    arguments: &sqlparser::ast::FunctionArgumentList,
+) -> Result<BoundExpr, BindError> {
+    const FORMATS: [(&str, [&str; 3]); 5] = [
+        ("EUR", ["%d.%m.%Y", "%H.%i.%s", "%Y-%m-%d %H.%i.%s"]),
+        ("USA", ["%m.%d.%Y", "%h:%i:%s %p", "%Y-%m-%d %H.%i.%s"]),
+        ("JIS", ["%Y-%m-%d", "%H:%i:%s", "%Y-%m-%d %H:%i:%s"]),
+        ("ISO", ["%Y-%m-%d", "%H:%i:%s", "%Y-%m-%d %H:%i:%s"]),
+        ("INTERNAL", ["%Y%m%d", "%H%i%s", "%Y%m%d%H%i%s"]),
+    ];
+    let unsupported = || BindError::UnsupportedExpression(function.to_string());
+    let [
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Identifier(kind))),
+        FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(region))),
+    ] = arguments.args.as_slice()
+    else {
+        return Err(if arguments.args.len() == 2 {
+            unsupported()
+        } else {
+            BindError::ParameterCount("GET_FORMAT".to_owned())
+        });
+    };
+    // Lower case, so the callable count does not read a type as a function.
+    let named = |name: &str| kind.quote_style.is_none() && kind.value.eq_ignore_ascii_case(name);
+    let kind = if named("date") {
+        0
+    } else if named("time") {
+        1
+    } else if named("datetime") || named("timestamp") {
+        2
+    } else {
+        return Err(unsupported());
+    };
+    let found = match &region.value {
+        SqlValue::SingleQuotedString(name) | SqlValue::DoubleQuotedString(name) => FORMATS
+            .iter()
+            .find(|(region, _)| region.eq_ignore_ascii_case(name))
+            .map(|(_, formats)| formats[kind]),
+        SqlValue::Null => None,
+        _ => return Err(unsupported()),
+    };
+    match found {
+        Some(format) => super::bind_literal(&SqlValue::SingleQuotedString(format.to_owned())),
+        None => Ok(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Null),
+            data_type: Some(DataType::Utf8),
+            nullable: true,
+        }),
+    }
 }
 
 fn text_constant(text: &str) -> BoundExpr {

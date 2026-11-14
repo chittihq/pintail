@@ -248,6 +248,10 @@ stays readable as a list of things to fix.
   `_binary`; `GROUP_CONCAT`, `EXPORT_SET`, `JSON_VALUE`, `LOCATE`, `INSTR`,
   `FIELD` and `REGEXP`; and dates or times meeting in `IF`, `COALESCE`,
   `GREATEST` or `LEAST`.
+- `FOUND_ROWS()` and `ICU_VERSION()` are refused. `LAST_INSERT_ID()` is
+  always 0 (no statement generates a key) and `LAST_INSERT_ID(expr)` is
+  refused. `CURRENT_ROLE()` is always `NONE`. `GET_FORMAT` takes its format
+  name as a constant only.
 - Date and time text is read in MySQL's delimited and digits-only forms,
   with these measured exceptions. The digits-only form with a `T` between
   date and time (`'20240105T101112'`) is NULL. A time written with `.`

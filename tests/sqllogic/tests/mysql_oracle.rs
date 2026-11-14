@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3983;
+const EXPECTED_CASES: usize = 3985;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6168,6 +6168,8 @@ fn collation_report_cases() -> Vec<OracleCase> {
         "SELECT id FROM events WHERE COLLATION(tag) = 'UTF8MB4_GENERAL_CI' AND COERCIBILITY(tag) = 2 ORDER BY id",
         "SELECT CONCAT(CHARSET(name), '/', COLLATION(name), '/', COERCIBILITY(name)) FROM users WHERE id = 1",
         "SELECT UPPER(COLLATION(u.name)), CHARSET(o.status) FROM users u JOIN orders o ON o.user_id = u.id WHERE o.id = 1",
+        "SELECT GET_FORMAT(DATE, 'EUR'), GET_FORMAT(DATE, 'USA'), GET_FORMAT(DATE, 'JIS'), GET_FORMAT(DATE, 'ISO'), GET_FORMAT(DATE, 'INTERNAL'), GET_FORMAT(TIME, 'EUR'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'JIS'), GET_FORMAT(TIME, 'ISO'), GET_FORMAT(TIME, 'INTERNAL'), GET_FORMAT(DATETIME, 'EUR'), GET_FORMAT(DATETIME, 'USA'), GET_FORMAT(DATETIME, 'JIS'), GET_FORMAT(DATETIME, 'ISO'), GET_FORMAT(DATETIME, 'INTERNAL'), GET_FORMAT(TIMESTAMP, 'EUR'), GET_FORMAT(TIMESTAMP, 'USA'), GET_FORMAT(TIMESTAMP, 'JIS'), GET_FORMAT(TIMESTAMP, 'ISO'), GET_FORMAT(TIMESTAMP, 'INTERNAL')",
+        "SELECT GET_FORMAT(DATE, 'usa'), GET_FORMAT(date, 'Usa'), GET_FORMAT(DATE, NULL), GET_FORMAT(DATE, 'xx'), GET_FORMAT(DATE, 'USA '), GET_FORMAT(DATE, ' USA'), GET_FORMAT(DATE, '\u{d9}SA'), GET_FORMAT(DATE, 'US'), GET_FORMAT(DATE, 'USAX'), DATE_FORMAT(placed_at, GET_FORMAT(DATETIME, 'EUR')), STR_TO_DATE('15.01.2024', GET_FORMAT(DATE, 'EUR')), COLLATION(GET_FORMAT(DATE, 'EUR')), COERCIBILITY(GET_FORMAT(TIME, 'ISO')) FROM orders ORDER BY id",
     ] {
         cases.push(OracleCase {
             sql_mode: "",
@@ -7668,6 +7670,18 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "SELECT COLLATION(CONCAT(name COLLATE utf8mb4_bin, tag COLLATE utf8mb4_general_ci)) FROM events",
             "explicit collations",
         ),
+        (
+            "reject get_format of a name that is not a constant",
+            "SELECT GET_FORMAT(DATE, name) FROM events",
+            "GET_FORMAT",
+        ),
+        (
+            "reject get_format of a type it does not take",
+            "SELECT GET_FORMAT(YEAR, 'USA')",
+            "GET_FORMAT",
+        ),
+        ("reject found_rows", "SELECT FOUND_ROWS()", "FOUND_ROWS"),
+        ("reject icu_version", "SELECT ICU_VERSION()", "ICU_VERSION"),
         (
             "reject unknown collate",
             "SELECT name FROM users ORDER BY name COLLATE big5_chinese_ci",

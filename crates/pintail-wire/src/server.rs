@@ -4458,7 +4458,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
 /// to the engine, without the parse and the text scans the answers need.
 /// The zero-argument functions that ask about the server or the connection,
 /// by lowercase name.
-const CONNECTION_FUNCTIONS: [&str; 8] = [
+const CONNECTION_FUNCTIONS: [&str; 11] = [
     "version",
     "database",
     "schema",
@@ -4467,6 +4467,9 @@ const CONNECTION_FUNCTIONS: [&str; 8] = [
     "current_user",
     "session_user",
     "system_user",
+    "current_role",
+    "row_count",
+    "last_insert_id",
 ];
 
 /// Whether `sql` could call one of [`CONNECTION_FUNCTIONS`]: one of their
@@ -4513,6 +4516,8 @@ fn may_answer_compatibly(sql: &str) -> bool {
         || starts("select current_user")
         || starts("select session_user()")
         || starts("select system_user()")
+        || starts("select current_role()")
+        || starts("select last_insert_id()")
 }
 
 fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
@@ -4617,6 +4622,14 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         ("@@tx_read_only", Value::UInt64(0))
     } else if normalized.starts_with("select row_count()") {
         ("ROW_COUNT()", Value::Int64(session.row_count))
+    } else if normalized.starts_with("select current_role()") {
+        // No role is ever granted or activated here.
+        ("CURRENT_ROLE()", Value::Utf8("NONE".to_owned()))
+    } else if normalized.starts_with("select last_insert_id()") {
+        // Nothing generates a key: a local table takes the value of an
+        // AUTO_INCREMENT column from the statement, and a mirrored one
+        // takes no writes at all.
+        ("LAST_INSERT_ID()", Value::UInt64(0))
     } else if normalized.starts_with("select version()") {
         ("VERSION()", Value::Utf8(mysql_compat_version()))
     } else if normalized.starts_with("select database()") {
@@ -6966,6 +6979,56 @@ mod result_ceiling_tests {
                 (ColumnType::MysqlTypeVarString, 31, 255),
                 (ColumnType::MysqlTypeMediumBlob, 31, 255),
             ]
+        );
+    }
+
+    #[test]
+    fn role_row_count_and_insert_id_answer_alone_and_inside_a_statement() {
+        use pintail_types::Value;
+        let session = super::Session {
+            row_count: -1,
+            ..super::Session::default()
+        };
+        let output = super::compatibility_query(
+            "SELECT CURRENT_ROLE(), last_insert_id(), ROW_COUNT() AS changed",
+            "analytics",
+            &session,
+        )
+        .expect("answered by the compatibility layer");
+        assert_eq!(
+            output
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["CURRENT_ROLE()", "last_insert_id()", "changed"]
+        );
+        assert_eq!(
+            output.rows[0],
+            vec![
+                Value::Utf8("NONE".to_owned()),
+                Value::UInt64(0),
+                Value::Int64(-1)
+            ]
+        );
+        let pinned = super::session_expression::variables(
+            "SELECT id FROM t WHERE ROW_COUNT() < 0 AND LAST_INSERT_ID() = 0 AND CURRENT_ROLE() = 'NONE'",
+            &session,
+        );
+        for (call, answer) in [
+            ("row_count()", "-1"),
+            ("last_insert_id()", "0"),
+            ("current_role()", "'NONE'"),
+        ] {
+            assert_eq!(
+                pinned.get(call).map(ToString::to_string).as_deref(),
+                Some(answer),
+                "{call}"
+            );
+        }
+        // The form that sets the value is not this function.
+        assert!(
+            super::compatibility_query("SELECT LAST_INSERT_ID(5)", "analytics", &session).is_none()
         );
     }
 
