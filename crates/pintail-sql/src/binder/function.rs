@@ -1090,6 +1090,24 @@ pub(super) fn bind_scalar_function(
             })
             .collect::<Result<Vec<_>, _>>()?;
     }
+    // A number converts as the DATETIME its digits spell.
+    if scalar == ScalarFunction::ConvertTz
+        && (super::exact_numeric_type(args[0].data_type)
+            || matches!(
+                args[0].data_type,
+                Some(DataType::Float32 | DataType::Float64)
+            ))
+    {
+        let fsp = temporal_argument_precision(&args[0]);
+        let number = args.remove(0);
+        args.insert(
+            0,
+            bind_scalar(
+                ScalarFunction::Cast(DataType::DateTime64 { fsp }),
+                vec![number],
+            )?,
+        );
+    }
     if scalar == ScalarFunction::NullIf && args.len() == 2 {
         let second = args.remove(1);
         let first = args.remove(0);
@@ -3431,10 +3449,17 @@ pub(super) fn bind_scalar(
         // Dynamic formats have a DATETIME(6) result, including time-only
         // inputs; a known format retains its narrower date/time shape.
         ScalarFunction::StrToDate => (Some(str_to_date_result_type(&args)), true),
+        // A DATETIME with the fraction digits of what it converts: a
+        // literal's own, a temporal or DECIMAL argument's, six for text.
+        ScalarFunction::ConvertTz => (
+            Some(DataType::DateTime64 {
+                fsp: temporal_argument_precision(&args[0]),
+            }),
+            true,
+        ),
         ScalarFunction::Sha2
         | ScalarFunction::InetNtoa
         | ScalarFunction::Inet6Ntoa
-        | ScalarFunction::ConvertTz
         | ScalarFunction::Elt
         | ScalarFunction::RegexpSubstr
         | ScalarFunction::JsonUnquote
