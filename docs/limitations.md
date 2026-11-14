@@ -248,6 +248,14 @@ stays readable as a list of things to fix.
   `_binary`; `GROUP_CONCAT`, `EXPORT_SET`, `JSON_VALUE`, `LOCATE`, `INSTR`,
   `FIELD` and `REGEXP`; and dates or times meeting in `IF`, `COALESCE`,
   `GREATEST` or `LEAST`.
+- `WEIGHT_STRING` returns MySQL's weight bytes for `utf8mb4_general_ci`,
+  `utf8mb4_unicode_ci`, `utf8mb4_bin` and byte strings. Under
+  `utf8mb4_0900_ai_ci` it answers ASCII text only and fails the statement on
+  a value holding any other character. It refuses every other collation
+  (`utf8mb4_0900_as_cs` and the single-byte ones included), an argument that
+  is not a string (a number, a date, JSON, an ENUM or SET column), a string
+  whose collation the previous item refuses, the four-argument form, and a
+  length above 1048576.
 - `FOUND_ROWS()` and `ICU_VERSION()` are refused. `LAST_INSERT_ID()` is
   always 0 (no statement generates a key) and `LAST_INSERT_ID(expr)` is
   refused. `CURRENT_ROLE()` is always `NONE`. `GET_FORMAT` takes its format

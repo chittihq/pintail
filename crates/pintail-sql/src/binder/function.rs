@@ -618,21 +618,6 @@ pub(super) fn bind_scalar_function(
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
     let function_name = name.to_ascii_uppercase();
-    // A weight string cut to a length is parsed under an internal name and
-    // refused under the one the statement wrote.
-    for (internal, written) in [
-        (crate::call_forms::WEIGHT_STRING_CHAR, "CHAR"),
-        (crate::call_forms::WEIGHT_STRING_BINARY, "BINARY"),
-    ] {
-        if function_name == internal
-            && let FunctionArguments::List(arguments) = &function.args
-            && let [value, length] = arguments.args.as_slice()
-        {
-            return Err(BindError::UnsupportedExpression(format!(
-                "WEIGHT_STRING({value} AS {written}({length}))"
-            )));
-        }
-    }
     // The SQL-standard clock names are written without parentheses as
     // often as with them; bare, they are the same zero-argument call.
     let no_arguments;
@@ -696,6 +681,12 @@ pub(super) fn bind_scalar_function(
     }
     if function_name == "GET_FORMAT" {
         return bind_get_format(function, arguments);
+    }
+    if function_name == "WEIGHT_STRING"
+        || function_name == crate::call_forms::WEIGHT_STRING_CHAR
+        || function_name == crate::call_forms::WEIGHT_STRING_BINARY
+    {
+        return bind_weight_string(&function_name, function, arguments, tables, subqueries);
     }
     if function_name == "TIMESTAMPDIFF" {
         return bind_timestamp_diff(function, arguments, tables, aggregates, windows, subqueries);
@@ -1245,6 +1236,107 @@ fn bind_collation_report(
         "CHARSET" => text_constant(identity.charset()),
         _ => text_constant(&identity.collation),
     })
+}
+
+/// `WEIGHT_STRING(str)`, `WEIGHT_STRING(str AS CHAR(N))` and
+/// `WEIGHT_STRING(str AS BINARY(N))`.
+///
+/// The weights belong to the collation the string resolves to, so the
+/// answer is given only where that collation is known and its weights are
+/// `MySQL`'s byte for byte; any other string is refused by collation name.
+fn bind_weight_string(
+    name: &str,
+    function: &Function,
+    arguments: &sqlparser::ast::FunctionArgumentList,
+    tables: &[BoundTable],
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
+    const SHOWN: &str = "WEIGHT_STRING";
+    // A refusal names the call as the statement wrote it, not the internal
+    // name its length clause is parsed under.
+    let written = match arguments.args.as_slice() {
+        [value, length] if name == crate::call_forms::WEIGHT_STRING_CHAR => {
+            format!("{SHOWN}({value} AS CHAR({length}))")
+        }
+        [value, length] if name == crate::call_forms::WEIGHT_STRING_BINARY => {
+            format!("{SHOWN}({value} AS BINARY({length}))")
+        }
+        _ => function.to_string(),
+    };
+    let refuse =
+        |reason: &str| BindError::UnsupportedExpression(format!("{SHOWN}: {reason} in {written}"));
+    let operands = arguments
+        .args
+        .iter()
+        .map(|argument| match argument {
+            FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) => Some(expression),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| BindError::UnsupportedExpression(written.clone()))?;
+    let (operand, length) = match (name, operands.as_slice()) {
+        (SHOWN, [operand]) => (*operand, None),
+        (SHOWN, [_, _, _, _]) => {
+            return Err(refuse("the four-argument form is not implemented"));
+        }
+        (SHOWN, _) => return Err(BindError::ParameterCount(SHOWN.to_owned())),
+        (_, [operand, Expr::Value(length)]) => {
+            let length = match &length.value {
+                SqlValue::Number(digits, _) => digits.parse::<u32>().ok(),
+                _ => None,
+            }
+            .filter(|length| (1..=1 << 20).contains(length))
+            .ok_or_else(|| refuse("a length outside 1 to 1048576"))?;
+            (*operand, Some(length))
+        }
+        _ => return Err(BindError::UnsupportedExpression(written.clone())),
+    };
+    let identity = super::collation_identity::identity(SHOWN, operand, tables, subqueries)?;
+    if identity.is_null() {
+        return bind_expr_inner(operand, tables, &mut None, &mut None, subqueries);
+    }
+    if !identity.is_string() {
+        return Err(refuse("the weights of a value that is not a string"));
+    }
+    if name == crate::call_forms::WEIGHT_STRING_BINARY {
+        // The string cast to that many bytes, which weigh themselves.
+        let cast = Expr::Cast {
+            kind: sqlparser::ast::CastKind::Cast,
+            expr: Box::new(operand.clone()),
+            data_type: SqlDataType::Binary(length.map(u64::from)),
+            array: false,
+            format: None,
+        };
+        return bind_expr_inner(&cast, tables, &mut None, &mut None, subqueries);
+    }
+    let bound = bind_expr_inner(operand, tables, &mut None, &mut None, subqueries)?;
+    // An ENUM or SET column weighs as the number it stores.
+    if let BoundExprKind::Column(column) = &bound.kind
+        && (column.enum_labels.is_some() || column.declared_set)
+    {
+        return Err(refuse("the weights of an ENUM or SET column"));
+    }
+    let collation = match (identity.collation.as_str(), bound.data_type) {
+        ("binary", Some(DataType::Binary)) => None,
+        (
+            "utf8mb4_0900_ai_ci" | "utf8mb4_general_ci" | "utf8mb4_unicode_ci" | "utf8mb4_bin",
+            Some(DataType::Utf8),
+        ) if crate::text_charset::character_set(&bound) == pintail_types::CharacterSet::Utf8Mb4 => {
+            crate::bound::NamedCollation::from_name(&identity.collation)
+        }
+        (collation, _) => {
+            return Err(refuse(&format!(
+                "weights under {collation} are not implemented"
+            )));
+        }
+    };
+    bind_scalar(
+        ScalarFunction::WeightString {
+            collation,
+            characters: length,
+        },
+        vec![bound],
+    )
 }
 
 /// `GET_FORMAT(DATE | TIME | DATETIME | TIMESTAMP, 'name')`: the format
@@ -3269,7 +3361,7 @@ pub(super) fn bind_scalar(
         // the declared precision - typing it Time64 cost the fraction, which
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
         ScalarFunction::Collate { .. } | ScalarFunction::BitNot | ScalarFunction::PlainText => (args[0].data_type, args[0].nullable),
-        ScalarFunction::EncodedCase { .. } | ScalarFunction::Utf8Prefix | ScalarFunction::BitBytes(_) | ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
+        ScalarFunction::EncodedCase { .. } | ScalarFunction::Utf8Prefix | ScalarFunction::BitBytes(_) | ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey | ScalarFunction::WeightString { .. } => (Some(DataType::Binary), args[0].nullable),
         // SHA2's width argument, an invalid IPv4 string, and an
         // out-of-range address number all answer NULL, so these stay
         // nullable regardless of their inputs.

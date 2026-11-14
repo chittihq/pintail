@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3987;
+const EXPECTED_CASES: usize = 4012;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5594,6 +5594,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
     .chain(written_form_cases())
     .chain(conversion_edge_cases())
     .chain(collation_report_cases())
+    .chain(weight_string_cases())
     .collect()
 }
 
@@ -6176,6 +6177,114 @@ fn collation_report_cases() -> Vec<OracleCase> {
         cases.push(OracleCase {
             sql_mode: "",
             family: "collation reports",
+            sql: sql.to_owned(),
+            ordered: true,
+        });
+    }
+    cases
+}
+
+/// `WEIGHT_STRING` under each collation whose weights are carried: ASCII,
+/// accents, an expansion, an ignorable mark, CJK, a supplementary character,
+/// trailing spaces, and both length clauses.
+#[allow(clippy::too_many_lines)]
+fn weight_string_cases() -> Vec<OracleCase> {
+    const TEXTS: &[&str] = &[
+        "'a'",
+        "'A'",
+        "'Ab '",
+        "''",
+        "'a b'",
+        "'abc xyz 019 !?-_'",
+        "'  x  '",
+        "'a\\t\\0-'",
+        "'~{|}[]^`@'",
+    ];
+    const WIDE: &[&str] = &[
+        "'\u{e9}\u{df}\u{4e00}\u{1f600}'",
+        "'\u{c4}rger \u{e6}ther'",
+        "'a\u{301}e\u{308}'",
+        "'\u{3b1}\u{3b2}\u{3b3} \u{416}\u{436}'",
+        "'\u{ac00}\u{3042}\u{ff21}'",
+        "'\u{a0}x\u{a0}'",
+    ];
+    let mut projections = Vec::new();
+    for text in TEXTS {
+        projections.push(format!("HEX(WEIGHT_STRING({text}))"));
+    }
+    for collation in ["utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_bin"] {
+        for text in TEXTS.iter().chain(WIDE) {
+            projections.push(format!("HEX(WEIGHT_STRING({text} COLLATE {collation}))"));
+        }
+        for (text, length) in [
+            ("'ab'", 4),
+            ("'abcdef'", 4),
+            ("'\u{df}bcdef'", 4),
+            ("'\u{df}'", 1),
+            ("''", 2),
+            ("'\u{e9}\u{1f600}'", 3),
+            ("'a '", 1),
+            ("'a'", 300),
+        ] {
+            projections.push(format!(
+                "HEX(WEIGHT_STRING({text} COLLATE {collation} AS CHAR({length})))"
+            ));
+            projections.push(format!(
+                "HEX(WEIGHT_STRING({text} COLLATE {collation} AS BINARY({length})))"
+            ));
+        }
+    }
+    for projection in [
+        "HEX(WEIGHT_STRING('ab' AS CHAR(4)))",
+        "HEX(WEIGHT_STRING('abcdef' AS CHAR(4)))",
+        "HEX(WEIGHT_STRING('ab' AS CHAR(1)))",
+        "HEX(WEIGHT_STRING('' AS CHAR(2)))",
+        "HEX(WEIGHT_STRING(NULL AS CHAR(2)))",
+        "HEX(WEIGHT_STRING(NULL))",
+        "HEX(WEIGHT_STRING(NULL AS BINARY(2)))",
+        "HEX(WEIGHT_STRING('ab' AS BINARY(4)))",
+        "HEX(WEIGHT_STRING('abcdef' AS BINARY(4)))",
+        "HEX(WEIGHT_STRING('\u{e9}' AS BINARY(4)))",
+        "HEX(WEIGHT_STRING(x'00FF41'))",
+        "HEX(WEIGHT_STRING(x'4142' AS CHAR(4)))",
+        "HEX(WEIGHT_STRING(x'4142' AS CHAR(1)))",
+        "HEX(WEIGHT_STRING(x'4142' AS BINARY(4)))",
+        "HEX(WEIGHT_STRING(_binary'Ab '))",
+        "HEX(WEIGHT_STRING(CAST('\u{e9}' AS BINARY)))",
+        "HEX(WEIGHT_STRING(UNHEX('00FF')))",
+        "LENGTH(WEIGHT_STRING(REPEAT('a', 5000)))",
+        "HEX(WEIGHT_STRING(UPPER('ab')))",
+        "HEX(WEIGHT_STRING(CONCAT('a', 1)))",
+        "HEX(WEIGHT_STRING(CAST(12 AS CHAR)))",
+        "HEX(WEIGHT_STRING(HEX('a')))",
+        "WEIGHT_STRING('a') = x'1C47'",
+        "WEIGHT_STRING('b') > WEIGHT_STRING('A')",
+    ] {
+        projections.push(projection.to_owned());
+    }
+    let mut cases = projections
+        .chunks(8)
+        .map(|chunk| OracleCase {
+            sql_mode: "",
+            family: "weight string",
+            sql: format!("SELECT {}", chunk.join(", ")),
+            ordered: true,
+        })
+        .collect::<Vec<_>>();
+    for sql in [
+        "SELECT id, HEX(WEIGHT_STRING(name)), HEX(WEIGHT_STRING(tag)), HEX(WEIGHT_STRING(label)) FROM events ORDER BY id",
+        "SELECT id, HEX(WEIGHT_STRING(note)), HEX(WEIGHT_STRING(note AS CHAR(3))), HEX(WEIGHT_STRING(note AS BINARY(7))) FROM events ORDER BY id",
+        "SELECT id, HEX(WEIGHT_STRING(tag AS CHAR(6))), HEX(WEIGHT_STRING(label AS CHAR(3))), HEX(WEIGHT_STRING(label AS BINARY(5))) FROM events ORDER BY id",
+        "SELECT id, HEX(WEIGHT_STRING(tag COLLATE utf8mb4_bin)), HEX(WEIGHT_STRING(CONCAT(tag, '-', id))), HEX(WEIGHT_STRING(UPPER(label))) FROM events ORDER BY id",
+        "SELECT id, HEX(WEIGHT_STRING(CAST(tag AS BINARY))), HEX(WEIGHT_STRING(CAST(name AS CHAR) COLLATE utf8mb4_general_ci)) FROM events ORDER BY id",
+        "SELECT id FROM events ORDER BY WEIGHT_STRING(label), id",
+        "SELECT HEX(MIN(WEIGHT_STRING(tag))), COUNT(*) FROM events GROUP BY WEIGHT_STRING(tag) ORDER BY 1",
+        "SELECT a.id, b.id FROM events a JOIN events b ON WEIGHT_STRING(a.tag) = WEIGHT_STRING(b.tag) AND a.id < b.id ORDER BY a.id, b.id",
+        "SELECT id, HEX(WEIGHT_STRING(name)) FROM users WHERE WEIGHT_STRING(name) > WEIGHT_STRING('USER-05') ORDER BY id",
+    ] {
+        cases.push(OracleCase {
+            sql_mode: "",
+            family: "weight string",
             sql: sql.to_owned(),
             ordered: true,
         });
@@ -7673,6 +7782,51 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "explicit collations",
         ),
         (
+            "reject weights beyond ascii under the default collation",
+            "SELECT WEIGHT_STRING('\u{e9}')",
+            "ASCII text only",
+        ),
+        (
+            "reject weights of a stored value beyond ascii under the default collation",
+            "SELECT WEIGHT_STRING(CONCAT(name, '\u{4e00}')) FROM events",
+            "ASCII text only",
+        ),
+        (
+            "reject weights under a collation that is not carried",
+            "SELECT WEIGHT_STRING('a' COLLATE utf8mb4_0900_as_cs)",
+            "utf8mb4_0900_as_cs are not implemented",
+        ),
+        (
+            "reject weights of a number",
+            "SELECT WEIGHT_STRING(score) FROM events",
+            "not a string",
+        ),
+        (
+            "reject weights of a date",
+            "SELECT WEIGHT_STRING(placed_at AS CHAR(4)) FROM orders",
+            "not a string in WEIGHT_STRING(placed_at AS CHAR(4))",
+        ),
+        (
+            "reject weights of an enum column",
+            "SELECT WEIGHT_STRING(status) FROM orders",
+            "ENUM or SET",
+        ),
+        (
+            "reject weights of two columns with no winner",
+            "SELECT WEIGHT_STRING(CONCAT(tag, label)) FROM events",
+            "NONE coercibility rung",
+        ),
+        (
+            "reject the four-argument weight string",
+            "SELECT WEIGHT_STRING('ab', 4, 4, 65)",
+            "four-argument",
+        ),
+        (
+            "reject a weight string level clause",
+            "SELECT WEIGHT_STRING('ab' LEVEL 1)",
+            "parse",
+        ),
+        (
             "reject get_format of a name that is not a constant",
             "SELECT GET_FORMAT(DATE, name) FROM events",
             "GET_FORMAT",
@@ -7699,18 +7853,6 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "reject update statement",
             "UPDATE orders SET total = 0 WHERE id = 1",
             "unsupported|update|statement|parse|bind",
-        ),
-        (
-            // A weight string cut to a length is refused by the name the
-            // statement wrote.
-            "reject weight string cut to a length",
-            "SELECT HEX(WEIGHT_STRING(name AS CHAR(3))) FROM events",
-            "unsupported expression: WEIGHT_STRING(name AS CHAR(3))",
-        ),
-        (
-            "reject weight string cut to a length",
-            "SELECT HEX(WEIGHT_STRING(CAST(name AS CHAR) AS BINARY(5))) FROM events",
-            "unsupported expression: WEIGHT_STRING(CAST(name AS CHAR) AS BINARY(5))",
         ),
         (
             "reject aliased parenthesized join group",

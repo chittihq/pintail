@@ -1313,6 +1313,13 @@ pub enum ScalarFunction {
     Upper,
     /// Original, unbounded phonetic key.
     Soundex,
+    /// The weights a collation compares a string by, as bytes. `None` is a
+    /// byte string, which weighs itself; `characters` is the `AS CHAR(N)`
+    /// length the value is cut and, under a padding collation, padded to.
+    WeightString {
+        collation: Option<NamedCollation>,
+        characters: Option<u32>,
+    },
     /// Trigonometric and angle conversion functions.
     Sin,
     Cos,

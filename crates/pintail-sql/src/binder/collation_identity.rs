@@ -83,6 +83,10 @@ impl Identity {
         matches!(self.class, Class::Text | Class::Bytes)
     }
 
+    /// Whether the value is the `NULL` literal.
+    pub(super) fn is_null(&self) -> bool {
+        self.class == Class::Null
+    }
 }
 
 fn charset_of(collation: &str) -> &str {
