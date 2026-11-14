@@ -70,6 +70,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   off (`9.999999999999999e29` as `1e30`), from the first copy and from
   change capture, and change capture wrote `4.35e15` as
   `4350000000000000.0`. A mirrored document now holds the source's text.
+  Rows stored by an earlier release keep what that release wrote until
+  the table is copied again: resync a table whose JSON documents hold
+  doubles from 1e15 up or doubles the source prints with an exponent
+  (`docs/limitations.md` says what still answers the same meanwhile).
 - `BOOLEAN` and `BOOL` columns of a local database were stored as text;
   they are the `TINYINT(1)` MySQL makes of them.
 - A TIME under one hour was false in `NOT`, `AND`, `OR`, `IF`, `CASE`,

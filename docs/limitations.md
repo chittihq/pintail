@@ -401,6 +401,17 @@ stays readable as a list of things to fix.
   or higher for some spellings: `CAST('[1.0e30]' AS JSON)` is
   `[9.999999999999999e29]` there and `[1e30]` here. A document a source
   stored is unaffected: its doubles are kept as stored.
+- A table copied by an earlier release keeps the JSON text that release
+  stored until it is copied again: a double from 1e15 up that arrived
+  through change capture is spelled positionally (`4350000000000000.0` for
+  `4.35e15`), and a double the source prints with an exponent may sit one
+  unit away from the source's. The first is the same number - it compares
+  equal to the new spelling and groups and deduplicates with it - but
+  `CAST(doc AS CHAR)`, `JSON_PRETTY` and a digest of the text show the
+  stored spelling; the second is a different number. Neither can be
+  repaired on read, because the positional text is also how a DECIMAL
+  member of that size is stored, so resync a table whose documents hold
+  such doubles.
 - `IF` and `CASE` over `BIT` values of different widths answer every value
   at the widest width (`0x0032` for a `BIT(8)` value beside a `BIT(16)`
   one), where MySQL answers each at its own. Grouped by, such an
