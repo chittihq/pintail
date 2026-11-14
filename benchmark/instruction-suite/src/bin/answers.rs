@@ -23,7 +23,7 @@ fn main() {
             .and_then(|value| value.parse().ok())
             .unwrap_or(0),
     );
-    for tables in [Tables::Commerce, Tables::Events] {
+    for tables in [Tables::Commerce, Tables::Events, Tables::Readings] {
         let cases: Vec<_> = CASES
             .iter()
             .filter(|case| case.tables == tables)

@@ -8,8 +8,8 @@ than noise.
 
 ## What it measures
 
-29 cases over an invented, generated dataset (400,000 orders with users
-and products, 400,000 events), each one statement through parse, bind,
+38 cases over an invented, generated dataset (400,000 orders with users
+and products, 400,000 events, 400,000 readings), each one statement through parse, bind,
 plan and execute over a real `TableStore`, in process: the timed
 benchmark's Q1-Q8 and N1-N4 shapes, a two-column text filter, a
 100,000-group aggregate, a star join, `COUNT(DISTINCT)`, `ORDER BY ...
@@ -17,7 +17,11 @@ LIMIT`, a correlated scalar subquery page, day and hour aggregates
 over a time window read as a `DATETIME` and as a `TIMESTAMP` in a session
 zone of fixed offset and of a named zone, and a `DATETIME` grouped and
 counted distinct directly and through a derived union, which has no
-column statistics and so runs the calendar copy check. The catalog gives
+column statistics and so runs the calendar copy check. Nine more read the
+readings table, whose rows fall into 150,000 groups of under three rows:
+`COUNT(DISTINCT)`, `SUM(DISTINCT)` and `GROUP_CONCAT` per group, several
+JSON readers of one document column, `TIME` functions, a window ordered by
+a text key, and a window under a memory ceiling low enough to spill. The catalog gives
 each table column statistics on first use, as the server's does.
 
 Each case runs in its own process under Valgrind's Callgrind, driven by

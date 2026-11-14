@@ -63,6 +63,7 @@ pub const CHANNELS: [&str; 5] = ["email", "kiosk", "phone", "store", "web"];
 pub enum Tables {
     Commerce,
     Events,
+    Readings,
 }
 
 /// One measured statement.
@@ -71,6 +72,9 @@ pub struct Case {
     pub tables: Tables,
     /// The session time zone the statement runs in, when not UTC.
     pub zone: Option<&'static str>,
+    /// The statement's memory ceiling, when a case wants one low enough to
+    /// spill.
+    pub memory: Option<usize>,
     pub sql: &'static str,
 }
 
@@ -79,6 +83,7 @@ const fn commerce(name: &'static str, sql: &'static str) -> Case {
         name,
         tables: Tables::Commerce,
         zone: None,
+        memory: None,
         sql,
     }
 }
@@ -88,6 +93,17 @@ const fn events(name: &'static str, zone: Option<&'static str>, sql: &'static st
         name,
         tables: Tables::Events,
         zone,
+        memory: None,
+        sql,
+    }
+}
+
+const fn readings(name: &'static str, memory: Option<usize>, sql: &'static str) -> Case {
+    Case {
+        name,
+        tables: Tables::Readings,
+        zone: None,
+        memory,
         sql,
     }
 }
@@ -260,6 +276,61 @@ pub const CASES: &[Case] = &[
         "SELECT HOUR(stamp) AS k, COUNT(*), SUM(price) FROM events \
          WHERE stamp BETWEEN '2024-02-01 00:00:00' AND '2024-03-02 00:00:00' \
          GROUP BY k ORDER BY k",
+    ),
+    readings(
+        "groups_count_distinct",
+        None,
+        "SELECT bucket, COUNT(DISTINCT qty) AS c FROM readings GROUP BY bucket \
+         ORDER BY c DESC, bucket LIMIT 20",
+    ),
+    readings(
+        "groups_sum_distinct",
+        None,
+        "SELECT bucket, SUM(DISTINCT amount) AS s, SUM(DISTINCT qty) AS q FROM readings \
+         GROUP BY bucket ORDER BY s DESC, bucket LIMIT 20",
+    ),
+    readings(
+        "groups_text_distinct",
+        None,
+        "SELECT bucket, COUNT(DISTINCT tag) AS c FROM readings GROUP BY bucket \
+         ORDER BY c DESC, bucket LIMIT 20",
+    ),
+    readings(
+        "groups_concat",
+        None,
+        "SELECT bucket, GROUP_CONCAT(tag ORDER BY id SEPARATOR '|') AS tags FROM readings \
+         GROUP BY bucket ORDER BY bucket LIMIT 20",
+    ),
+    readings(
+        "groups_concat_distinct",
+        None,
+        "SELECT bucket, GROUP_CONCAT(DISTINCT tag ORDER BY tag) AS tags FROM readings \
+         GROUP BY bucket ORDER BY bucket LIMIT 20",
+    ),
+    readings(
+        "json_extracts",
+        None,
+        "SELECT MAX(JSON_EXTRACT(payload, '$.n')), MAX(payload->>'$.meta.kind'), \
+         SUM(JSON_LENGTH(payload, '$.tags')), SUM(JSON_EXTRACT(payload, '$.meta.depth')) \
+         FROM readings",
+    ),
+    readings(
+        "time_functions",
+        None,
+        "SELECT SUM(TIME_TO_SEC(elapsed)), SUM(HOUR(elapsed)), SUM(MINUTE(elapsed)), \
+         MAX(ADDTIME(elapsed, '01:30:00')) FROM readings",
+    ),
+    readings(
+        "window_text_order",
+        None,
+        "SELECT SUM(r * (id % 7)) FROM (SELECT id, ROW_NUMBER() OVER (ORDER BY label, id) AS r \
+         FROM readings) x",
+    ),
+    readings(
+        "window_spilled",
+        Some(48 << 20),
+        "SELECT SUM(r * (id % 7)) FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY tag \
+         ORDER BY qty, id) AS r FROM readings) x",
     ),
 ];
 
@@ -442,6 +513,66 @@ fn event(id: u64) -> StoredRow {
     )
 }
 
+/// Mixed-case labels: two spellings of one word are one value under the
+/// default collation.
+pub const TAGS: [&str; 12] = [
+    "amber", "Amber", "birch", "BIRCH", "cedar", "dune", "Dune", "ember", "fjord", "glade",
+    "Glade", "heath",
+];
+pub const READINGS: u64 = 400_000;
+/// Groups the readings fall into: under three rows each.
+pub const BUCKETS: u64 = 150_000;
+
+fn readings_schema() -> TableSchema {
+    TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "bucket", DataType::UInt64, false),
+            Column::new(3, "qty", DataType::Int64, false),
+            Column::new(4, "amount", decimal(12), false),
+            Column::new(5, "tag", DataType::Utf8, false),
+            Column::new(6, "label", DataType::Utf8, false),
+            Column::new(7, "elapsed", DataType::Time64 { fsp: 0 }, false),
+            Column::new(8, "payload", DataType::Json, false),
+        ],
+    )
+    .expect("readings schema")
+}
+
+fn reading(id: u64) -> StoredRow {
+    let hash = mix(id);
+    // Negative and past a day, as a TIME may be.
+    let seconds = (hash >> 9) % 400_000;
+    let sign = if (hash >> 5) % 11 == 0 { "-" } else { "" };
+    let tag = pick(&TAGS, hash >> 41);
+    stored(
+        id,
+        vec![
+            Value::UInt64(id),
+            Value::UInt64(1 + (hash >> 13) % BUCKETS),
+            Value::Int64(i64::try_from((hash >> 20) % 9).expect("small") - 3),
+            text(&cents((hash >> 27) % 5_000)),
+            text(tag),
+            text(&format!("{tag} {:05}", (hash >> 17) % 60_000)),
+            text(&format!(
+                "{sign}{:02}:{:02}:{:02}",
+                seconds / 3600,
+                seconds / 60 % 60,
+                seconds % 60
+            )),
+            text(&format!(
+                "{{\"n\": {}, \"meta\": {{\"kind\": \"{tag}\", \"depth\": {}}}, \"tags\": [{}, {}, \"{}\"]}}",
+                hash % 1_000,
+                (hash >> 3) % 9,
+                id % 13,
+                id % 17,
+                pick(&CHANNELS, hash >> 33)
+            )),
+        ],
+    )
+}
+
 /// The stores of one fixture and the catalog that names them.
 pub struct Fixture {
     _directory: tempfile::TempDir,
@@ -502,6 +633,11 @@ impl Fixture {
                 "events",
                 events_schema(),
                 (0..event_rows()).map(event).collect(),
+            )],
+            Tables::Readings => vec![(
+                "readings",
+                readings_schema(),
+                (1..=READINGS).map(reading).collect(),
             )],
         };
         let mut stores = Vec::new();
@@ -567,8 +703,13 @@ impl Fixture {
             Collation::default(),
         )
         .expect("plan");
-        let mut execution =
-            Execution::start(plan, &provider, QUERY_BYTES, Collation::default()).expect("start");
+        let mut execution = Execution::start(
+            plan,
+            &provider,
+            case.memory.unwrap_or(QUERY_BYTES),
+            Collation::default(),
+        )
+        .expect("start");
         let mut rows = Vec::new();
         while let Some(batch) = execution.next_batch().expect("batch") {
             for row in batch.selection().selected_rows() {

@@ -44,6 +44,15 @@ use pintail_instruction_suite::{Fixture, case};
 #[bench::datetime_groups("datetime_groups")]
 #[bench::datetime_distinct_days("datetime_distinct_days")]
 #[bench::derived_datetime_groups("derived_datetime_groups")]
+#[bench::groups_count_distinct("groups_count_distinct")]
+#[bench::groups_sum_distinct("groups_sum_distinct")]
+#[bench::groups_text_distinct("groups_text_distinct")]
+#[bench::groups_concat("groups_concat")]
+#[bench::groups_concat_distinct("groups_concat_distinct")]
+#[bench::json_extracts("json_extracts")]
+#[bench::time_functions("time_functions")]
+#[bench::window_text_order("window_text_order")]
+#[bench::window_spilled("window_spilled")]
 fn shape(name: &str) -> usize {
     let case = case(name);
     let fixture = Fixture::build(case.tables);
