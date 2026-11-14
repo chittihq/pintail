@@ -407,6 +407,16 @@ const FRACTIONAL_POSITIONS_AND_COUNTS: &[&str] = &[
     r#"SELECT LEFT('abcdef', 18446744073709551616), LEFT('abcdef', 99999999999999999999.5), SUBSTRING('abcdef', 2, 99999999999999999999999), RIGHT('abcdef', 1e30), SUBSTRING('abcdef', -99999999999999999999)"#,
 ];
 
+const JSON_PATH_OPERANDS: &[&str] = &[
+    r#"SELECT id, 1 + meta->'$.score', meta->'$.score' + 1, 2 * meta->'$.items[0]' - 1, -meta->'$.score' FROM orders ORDER BY id"#,
+    r#"SELECT id, user_id = meta->'$.items[0]', meta->'$.score' >= meta->'$.items[0]', meta->'$.score' < meta->'$.items[0]', meta->>'$.score' = meta->'$.score', meta->>'$.tags[0]' = meta->'$.tags[0]', meta->'$.tags' = meta->'$.tags' FROM orders ORDER BY id"#,
+    r#"SELECT id, meta->>'$.tags[0]' LIKE 'p%', meta->>'$.tags[0]' NOT LIKE '%u%', meta->'$.missing' IS NULL, meta->'$.tags' IS NOT NULL, meta->'$.score' IS TRUE, meta->>'$.score' BETWEEN 1 AND 3, meta->>'$.tags[0]' IN ('premium', 'gift'), meta->'$.score' AND 1, NOT meta->'$.score' FROM orders ORDER BY id"#,
+    r#"SELECT id FROM orders WHERE meta->>'$.tags[0]' LIKE 'p%' AND 1 < meta->'$.score' ORDER BY id"#,
+    r#"SELECT o.id, u.name FROM orders o JOIN users u ON u.id = o.meta->'$.items[0]' ORDER BY o.id, u.id"#,
+    r#"SELECT o.id FROM orders o WHERE o.user_id + o.meta->'$.score' > 5 OR o.meta->>'$.tags[0]' REGEXP '^g' ORDER BY o.id"#,
+    r#"SELECT id, CONCAT(meta->>'$.tags[0]', '-', id), meta->'$.items[0]' DIV 2, meta->'$.items[0]' % 2 = 1, CASE meta->>'$.tags[0]' WHEN 'premium' THEN 1 ELSE 0 END, meta->'$.score' <=> 1.5 FROM orders ORDER BY id"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -425,6 +435,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("json path operands", JSON_PATH_OPERANDS),
         ("fractional positions and counts", FRACTIONAL_POSITIONS_AND_COUNTS),
         ("member of exact decimals", MEMBER_OF_EXACT_DECIMALS),
         ("truth of time values", TRUTH_OF_TIME_VALUES),

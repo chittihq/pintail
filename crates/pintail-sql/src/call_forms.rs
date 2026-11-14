@@ -14,6 +14,9 @@
 //! - `CAST(x AS SIGNED INT)` is `CAST(x AS SIGNED)`;
 //! - `TRIM(BOTH FROM x)` trims spaces;
 //! - `TABLE t` is `SELECT * FROM t`;
+//! - `column -> 'path'` and `column ->> 'path'` are one operand, so they are
+//!   wrapped in parentheses: the grammar reads the arrow looser than the
+//!   operators around it;
 //! - `WEIGHT_STRING(x AS CHAR(n))` becomes a call under an internal name,
 //!   which the binder answers for by the name the statement wrote.
 use std::collections::BTreeMap;
@@ -130,10 +133,11 @@ fn last_inside(
 pub(crate) fn rewrite(tokens: &mut Vec<TokenWithSpan>) {
     const TRIGGERS: [&str; 6] = ["CHAR", "NCHAR", "CAST", "CONVERT", "TRIM", "TABLE"];
     const WEIGHT: &str = "WEIGHT_STRING";
-    if !tokens
-        .iter()
-        .any(|token| is_any_word(&token.token, &TRIGGERS) || is_word(&token.token, WEIGHT))
-    {
+    if !tokens.iter().any(|token| {
+        is_any_word(&token.token, &TRIGGERS)
+            || is_word(&token.token, WEIGHT)
+            || matches!(token.token, Token::Arrow | Token::LongArrow)
+    }) {
         return;
     }
     // One form at a time: an edit moves every later position, and a cast
@@ -160,6 +164,10 @@ fn call_form(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: 
         table_statement(tokens, significant, at, edits);
         return;
     }
+    if matches!(head, Token::Arrow | Token::LongArrow) {
+        json_path(tokens, significant, at, edits);
+        return;
+    }
     if token(at + 1) != Some(&Token::LParen) {
         return;
     }
@@ -180,6 +188,33 @@ fn call_form(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: 
             significant[at + 3],
             [Token::SingleQuotedString(" ".to_owned())],
         );
+    }
+}
+
+/// `column -> 'path'` or `column ->> 'path'` at the arrow `at`: the column
+/// may be qualified and the path is a string literal, which is all `MySQL`
+/// accepts on either side. Already inside its own parentheses it is left
+/// alone, which is also what ends the rewriting.
+fn json_path(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: &mut Edits) {
+    let token = |position: usize| significant.get(position).map(|&index| &tokens[index].token);
+    let is_name = |position: usize| matches!(token(position), Some(Token::Word(_)));
+    if !matches!(
+        token(at + 1),
+        Some(Token::SingleQuotedString(_) | Token::DoubleQuotedString(_))
+    ) {
+        return;
+    }
+    let Some(mut start) = at.checked_sub(1).filter(|&name| is_name(name)) else {
+        return;
+    };
+    while start >= 2 && token(start - 1) == Some(&Token::Period) && is_name(start - 2) {
+        start -= 2;
+    }
+    let wrapped = start.checked_sub(1).and_then(token) == Some(&Token::LParen)
+        && token(at + 2) == Some(&Token::RParen);
+    if !wrapped {
+        edits.before(significant[start], [Token::LParen]);
+        edits.after(significant[at + 1], [Token::RParen]);
     }
 }
 
@@ -478,6 +513,21 @@ mod tests {
         parse_statement(sql)
             .unwrap_or_else(|error| panic!("{sql}: {error}"))
             .to_string()
+    }
+
+    #[test]
+    fn json_paths_mid_and_bare_clocks_are_respelled() {
+        for (sql, expected) in [
+            ("SELECT 1 + j->'$.a'", "SELECT 1 + (j -> '$.a')"),
+            (
+                "SELECT t.j->>'$.a' LIKE 'p%'",
+                "SELECT (t.j ->> '$.a') LIKE 'p%'",
+            ),
+            ("SELECT (j->'$.a') IS NULL", "SELECT (j -> '$.a') IS NULL"),
+            ("SELECT f(j->'$.a')", "SELECT f(j -> '$.a')"),
+        ] {
+            assert_eq!(respelled(sql), expected, "{sql}");
+        }
     }
 
     #[test]
