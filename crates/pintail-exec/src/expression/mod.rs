@@ -9488,12 +9488,12 @@ fn json_contains(
             }
             Ok(true)
         }
-        // Numbers are contained by value: 10 holds 10.0.
-        (serde_json::Value::Number(left), serde_json::Value::Number(right)) => Ok(left == right
-            || left
-                .as_f64()
-                .zip(right.as_f64())
-                .is_some_and(|(left, right)| left.total_cmp(&right).is_eq())),
+        // Numbers are contained by value: 10 holds 10.0. The comparison is
+        // exact, so two integers that round to one double stay different.
+        (serde_json::Value::Number(_), serde_json::Value::Number(_)) => {
+            Ok(crate::json_order::value_sort_key(target)
+                == crate::json_order::value_sort_key(candidate))
+        }
         (left, right) => Ok(left == right),
     }
 }
