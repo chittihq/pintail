@@ -158,8 +158,18 @@ fn subquery_row(subquery: &Query, width: usize) -> Result<Vec<Expr>, BindError> 
                 && matches!(&select.group_by,
                     sqlparser::ast::GroupByExpr::Expressions(keys, modifiers)
                         if keys.is_empty() && modifiers.is_empty()));
-    let aggregated =
-        independent && matches!(whole.body.as_ref(), SetExpr::Select(select) if aggregates(select));
+    // A select with no FROM is one row already, aggregate or not.
+    let one_row = if independent
+        && matches!(whole.body.as_ref(),
+            SetExpr::Select(select) if !select.from.is_empty() && aggregates(select))
+    {
+        Some(
+            crate::parse_expression("COUNT(*) IS NOT NULL")
+                .map_err(|error| BindError::UnsupportedSubquery(error.to_string()))?,
+        )
+    } else {
+        None
+    };
     (0..width)
         .map(|index| {
             if independent {
@@ -168,11 +178,8 @@ fn subquery_row(subquery: &Query, width: usize) -> Result<Vec<Expr>, BindError> 
                     unreachable!("an independent subquery is a SELECT");
                 };
                 select.projection = vec![select.projection.swap_remove(index)];
-                if aggregated {
-                    select.having = Some(
-                        crate::parse_expression("COUNT(*) IS NOT NULL")
-                            .map_err(|error| BindError::UnsupportedSubquery(error.to_string()))?,
-                    );
+                if one_row.is_some() {
+                    select.having.clone_from(&one_row);
                 }
                 return Ok(Expr::Subquery(Box::new(column)));
             }
