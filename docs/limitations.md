@@ -364,6 +364,32 @@ stays readable as a list of things to fix.
 - `max_allowed_packet` is always its 64 MiB default: `SET GLOBAL max_allowed_packet` is accepted and changes nothing, so string functions answer NULL with warning 1301 past 64 MiB even where a MySQL server whose limit was raised builds the value.
 - A JSON constructor or modifier (`JSON_ARRAY`, `JSON_OBJECT`, `JSON_SET` and the rest) whose text passes `max_allowed_packet` is NULL wherever it is used. MySQL applies the limit only when the document is read as text, so a JSON function reading it as a document (`JSON_LENGTH(JSON_ARRAY(...))`) still answers there.
 - `REGEXP_REPLACE` builds its result at any length. MySQL refuses a result with replacements whose UTF-16 form is longer than `max_allowed_packet` with error 3684, and cuts short some results just under that length.
+- A `JSON_TABLE` column is an integer type (`TINYINT` to `BIGINT`, signed
+  or unsigned, and `BOOLEAN`), `DECIMAL`/`NUMERIC`, `FLOAT`, `DOUBLE`/`REAL`,
+  `CHAR(n)`, `VARCHAR(n)`, one of the `TEXT` types, `JSON`, `DATE` or
+  `DATETIME(n)`. A `TIME`, `YEAR`, `TIMESTAMP`, `BIT`, `ENUM`, `SET`, binary
+  string, spatial or unsigned `DECIMAL`/`FLOAT`/`DOUBLE` column rejects, and
+  so does an `EXISTS PATH` column declared `JSON`, `DATE` or `DATETIME`. A
+  `DATE` or `DATETIME` column reads a string as `CAST` reads it.
+- A `JSON_TABLE` document reads columns of the relations written before it
+  in its own `FROM`. One that reads a column of an enclosing query - the
+  table function inside a correlated subquery, as in `SELECT (SELECT SUM(v)
+  FROM JSON_TABLE(t.doc, ...) AS jt) FROM t` - rejects; written beside `t`
+  in the outer `FROM`, it answers. The same holds inside a `LATERAL`
+  derived table: a table function there whose document reads a column to
+  the derived table's left rejects. Inside a parenthesized join group it
+  reads the relations of that group only, and a `LEFT JOIN JSON_TABLE(...)
+  ON` whose condition holds a correlated subquery rejects.
+- A failing `JSON_TABLE` reports MySQL's message for a missing value, a
+  value out of range, an array or object in a scalar column, a value that
+  does not cast and a default its column cannot hold, under error 1064
+  rather than MySQL's 3665, 3669, 3666, 3156 and 1067. A document or
+  `DEFAULT` that is not JSON is refused with this engine's parse reason
+  where MySQL quotes its own, also as 1064 rather than 3141; a missing
+  alias, a duplicate column name and a document of a non-string type are
+  1064 rather than 3667, 1060 and 3146. An invalid path is MySQL's 3143.
+- `JSON_TABLE` accepts `NESTED` without the `PATH` keyword, which MySQL 8.4
+  refuses as a syntax error.
 
 ### Planning and execution
 
@@ -455,6 +481,13 @@ stays readable as a list of things to fix.
   row when memoization is unavailable.
 - A cross join holds every input after the first in memory; only the first
   streams.
+- `JSON_TABLE` holds the rows of one input batch's documents in memory
+  until they are handed on, and a single document's rows all at once: they
+  are charged to the query's memory ceiling and never spill, so a document
+  whose expansion does not fit fails the query. The planner has no estimate
+  of how many rows a document yields and assumes one per input row, and a
+  predicate on the table function's own columns is applied after the rows
+  are produced.
 - Aggregation runs below a join only for a GROUP BY over inner joins whose
   `SUM`, `COUNT`, `MIN` and `MAX` all read one base table of at least 50,000
   rows, grouped and joined on integer or temporal columns. Outer joins, text
