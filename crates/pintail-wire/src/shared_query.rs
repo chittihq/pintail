@@ -92,6 +92,9 @@ pub(crate) struct SharedQueryKey {
     pub(crate) calendar_locale: &'static str,
     pub(crate) default_week_format: u8,
     pub(crate) collation: &'static str,
+    /// Whether that collation is the one the connection asked for by
+    /// name, which decides whether `COLLATION()` reports it or refuses.
+    pub(crate) collation_named: bool,
     pub(crate) group_concat_max_len: usize,
     pub(crate) window_high_precision: bool,
     pub(crate) cte_max_recursion_depth: u64,
@@ -122,6 +125,7 @@ impl SharedQueryKey {
             calendar_locale: pintail_exec::session_calendar_locale(),
             default_week_format: pintail_exec::session_default_week_format(),
             collation: pintail_sql::session_default_collation(),
+            collation_named: pintail_sql::session_collation_named(),
             group_concat_max_len: pintail_exec::session_group_concat_max_len(),
             window_high_precision: pintail_exec::session_window_high_precision(),
             cte_max_recursion_depth: pintail_exec::session_cte_max_recursion_depth(),
@@ -434,6 +438,7 @@ mod tests {
             calendar_locale: "en_US",
             default_week_format: 0,
             collation: "utf8mb4_0900_ai_ci",
+            collation_named: true,
             group_concat_max_len: 1024,
             window_high_precision: true,
             cte_max_recursion_depth: 1000,
@@ -531,6 +536,10 @@ mod tests {
             },
             SharedQueryKey {
                 binary_literals: true,
+                ..base.clone()
+            },
+            SharedQueryKey {
+                collation_named: false,
                 ..base.clone()
             },
             SharedQueryKey {

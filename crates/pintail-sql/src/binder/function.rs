@@ -690,6 +690,10 @@ pub(super) fn bind_scalar_function(
             function, arguments, subtracts, tables, aggregates, windows, subqueries,
         );
     }
+    if function_name == "COLLATION" || function_name == "CHARSET" || function_name == "COERCIBILITY"
+    {
+        return bind_collation_report(&function_name, function, arguments, tables, subqueries);
+    }
     if function_name == "TIMESTAMPDIFF" {
         return bind_timestamp_diff(function, arguments, tables, aggregates, windows, subqueries);
     }
@@ -1210,6 +1214,42 @@ fn json_boolean(truth: BoundExpr) -> Result<BoundExpr, BindError> {
         ScalarFunction::If,
         vec![truth, json(Value::Utf8("true".to_owned()), false), unknown],
     )
+}
+
+/// `COLLATION(x)`, `CHARSET(x)` and `COERCIBILITY(x)`: a constant read off
+/// the expression as written, never off its value.
+fn bind_collation_report(
+    name: &str,
+    function: &Function,
+    arguments: &sqlparser::ast::FunctionArgumentList,
+    tables: &[BoundTable],
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
+    let [FunctionArg::Unnamed(FunctionArgExpr::Expr(operand))] = arguments.args.as_slice() else {
+        return Err(if arguments.args.len() == 1 {
+            BindError::UnsupportedExpression(function.to_string())
+        } else {
+            BindError::ParameterCount(name.to_owned())
+        });
+    };
+    let identity = super::collation_identity::identity(name, operand, tables, subqueries)?;
+    Ok(match name {
+        "COERCIBILITY" => BoundExpr {
+            kind: BoundExprKind::Literal(Value::Int64(i64::from(identity.coercibility))),
+            data_type: Some(DataType::Int64),
+            nullable: false,
+        },
+        "CHARSET" => text_constant(identity.charset()),
+        _ => text_constant(&identity.collation),
+    })
+}
+
+fn text_constant(text: &str) -> BoundExpr {
+    BoundExpr {
+        kind: BoundExprKind::Literal(Value::Utf8(text.to_owned())),
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+    }
 }
 
 /// `TIMESTAMPADD(unit, amount, datetime)` is `DATE_ADD` with reordered
@@ -2702,7 +2742,7 @@ fn declared_characters(data_type: &SqlDataType) -> Option<u32> {
     }
 }
 
-fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
+pub(super) fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
     // CAST AS DECIMAL is exact: the executor coerces onto scaled i128
     // units with MySQL's half-away-from-zero rounding.
     if let SqlDataType::Decimal(info) | SqlDataType::Numeric(info) | SqlDataType::Dec(info) =

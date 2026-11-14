@@ -10,6 +10,20 @@ thread_local! {
     static BINARY_LITERALS: Cell<bool> = const { Cell::new(false) };
     static CLIENT: Cell<CharacterSet> = const { Cell::new(CharacterSet::Utf8Mb4) };
     static CONNECTION: Cell<CharacterSet> = const { Cell::new(CharacterSet::Utf8Mb4) };
+    static COLLATION_NAMED: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Whether the connection's collation is the one `MySQL` would name for
+/// this connection. It is not when the connection asked for a character
+/// set or collation that is carried under another's name.
+#[must_use]
+pub fn session_collation_named() -> bool {
+    COLLATION_NAMED.get()
+}
+
+/// Install whether the connection's collation can be reported by name.
+pub fn set_session_collation_named(named: bool) {
+    COLLATION_NAMED.set(named);
 }
 
 /// Whether unintroduced string literals retain client bytes as binary strings.

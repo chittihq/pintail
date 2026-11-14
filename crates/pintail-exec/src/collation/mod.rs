@@ -20,6 +20,7 @@ mod general_ci_table;
 mod thai;
 mod unicode_ci_table;
 
+
 use case_table::{
     CaseRun, LOWER_LATIN1, LOWER_UNICODE_900, LOWER_UNICODE_BASIC, UPPER_LATIN1, UPPER_UNICODE_900,
     UPPER_UNICODE_BASIC,

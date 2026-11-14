@@ -1332,6 +1332,18 @@ impl SessionInstalls {
             &session.charset_connection,
         ));
         pintail_sql::set_session_default_collation(Some(session.collation_connection));
+        // A connection character set carried under another's collation
+        // has no name to report. utf8mb3 is carried under utf8mb4's and
+        // keeps one: the same collation of the narrower set.
+        pintail_sql::set_session_collation_named(
+            session.charset_connection == "binary"
+                || session
+                    .collation_connection
+                    .strip_prefix(session.charset_connection.as_str())
+                    .is_some_and(|rest| rest.starts_with('_'))
+                || (matches!(session.charset_connection.as_str(), "utf8" | "utf8mb3")
+                    && session.collation_connection.starts_with("utf8mb4_")),
+        );
         pintail_sql::set_session_div_precision_increment(Some(session.div_precision_increment));
         pintail_sql::set_session_select_limit(session.sql_select_limit);
         pintail_exec::set_session_window_high_precision(Some(session.window_high_precision));
@@ -1349,6 +1361,7 @@ impl Drop for SessionInstalls {
         pintail_exec::set_session_max_allowed_packet(None);
         pintail_exec::set_session_cte_max_recursion_depth(None);
         pintail_sql::set_session_default_collation(None);
+        pintail_sql::set_session_collation_named(true);
         pintail_sql::set_session_binary_literals(false);
         pintail_sql::set_session_character_set(None);
         pintail_sql::set_session_client_character_set(None);

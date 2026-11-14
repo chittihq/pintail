@@ -1,5 +1,6 @@
 mod branch_filter;
 mod calendar_copy;
+mod collation_identity;
 pub use calendar_copy::COPY_CHECK as CALENDAR_COPY_CHECK;
 mod dependency;
 mod function;

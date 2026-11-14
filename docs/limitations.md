@@ -236,6 +236,18 @@ stays readable as a list of things to fix.
 - Locale-specific collation profiles remain unsupported, and so do the `NONE`
   and `SYSCONST` coercibility rungs: an expression mixing collations carries
   its resolved one rather than `NONE` (#10).
+- `COLLATION`, `CHARSET` and `COERCIBILITY` answer only for expressions whose
+  rule is modelled, and refuse the rest by name rather than report the
+  collation Pintail compares under. Refused: an expression on the `NONE`
+  rung (two columns of different non-binary collations meeting in `CONCAT`,
+  `IF`, `COALESCE` and the like); anything on the `SYSCONST` rung (`USER()`,
+  `DATABASE()`, `VERSION()`, a system variable); a user variable; an
+  aggregate, a window function or a subquery; a column of a derived table;
+  strings of two different character sets other than `binary`; a `COLLATE`
+  written with a legacy name; an introducer other than `_utf8mb4` and
+  `_binary`; `GROUP_CONCAT`, `EXPORT_SET`, `JSON_VALUE`, `LOCATE`, `INSTR`,
+  `FIELD` and `REGEXP`; and dates or times meeting in `IF`, `COALESCE`,
+  `GREATEST` or `LEAST`.
 - Date and time text is read in MySQL's delimited and digits-only forms,
   with these measured exceptions. The digits-only form with a `T` between
   date and time (`'20240105T101112'`) is NULL. A time written with `.`

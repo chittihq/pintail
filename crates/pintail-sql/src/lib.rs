@@ -6,7 +6,8 @@ mod hints;
 mod text_charset;
 pub use text_charset::{
     session_binary_literals, session_character_set, session_client_character_set,
-    set_session_binary_literals, set_session_character_set, set_session_client_character_set,
+    session_collation_named, set_session_binary_literals, set_session_character_set,
+    set_session_client_character_set, set_session_collation_named,
 };
 mod call_forms;
 mod interval;
