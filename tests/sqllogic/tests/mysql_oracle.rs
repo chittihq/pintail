@@ -15,6 +15,8 @@ mod oracle_boundaries;
 mod oracle_calendar;
 #[path = "support/oracle_candidates.rs"]
 mod oracle_candidates;
+#[path = "support/oracle_json_table.rs"]
+mod oracle_json_table;
 #[path = "support/oracle_lateral.rs"]
 mod oracle_lateral;
 #[path = "support/oracle_ledger.rs"]
@@ -48,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3477;
+const EXPECTED_CASES: usize = 3598;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1469,6 +1471,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     cases.extend(oracle_boundaries::cases());
     cases.extend(oracle_calendar::cases());
     cases.extend(oracle_lateral::cases());
+    cases.extend(oracle_json_table::cases());
     for corpus in [
         include_str!("support/oracle_reviewed_cases.json"),
         include_str!("support/oracle_seed_cases.json"),
@@ -6971,6 +6974,7 @@ fn documented_rejects_stay_explicit() {
 
 /// Shapes that must fail closed (explicit error), never return a plausible
 /// wrong result. Needles are matched case-insensitively on the error string.
+#[allow(clippy::too_many_lines)] // one table of shapes
 fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
         (
@@ -6999,6 +7003,11 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
         (
             "reject json table reading an enclosing query",
             "SELECT o.id, (SELECT SUM(v) FROM JSON_TABLE(o.meta, '$.items[*]' COLUMNS (v INT PATH '$')) AS jt) FROM orders o",
+            "json_table",
+        ),
+        (
+            "reject json table inside a lateral table reading its left",
+            "SELECT o.id, d.s FROM orders o, LATERAL (SELECT SUM(v) AS s FROM JSON_TABLE(o.meta, '$.items[*]' COLUMNS (v INT PATH '$')) AS jt) AS d",
             "json_table",
         ),
         (
