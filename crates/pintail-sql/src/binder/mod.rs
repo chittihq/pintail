@@ -4463,7 +4463,11 @@ fn bind_expr_inner(
                 bind_expr_inner(&member.value, tables, aggregates, windows, subqueries)?;
             // A string value is the JSON string "x", not a document; the
             // JSON_QUOTE wrap encodes that, as in the modification family.
-            function::wrap_json_scalar(&mut value);
+            // An exact decimal is a JSON number, which its text already
+            // spells; quoted it would be a string and match nothing.
+            if !matches!(value.data_type, Some(DataType::Decimal { .. })) {
+                function::wrap_json_scalar(&mut value);
+            }
             let array = bind_expr_inner(&member.array, tables, aggregates, windows, subqueries)?;
             function::bind_scalar(ScalarFunction::JsonMemberOf, vec![value, array])
         }

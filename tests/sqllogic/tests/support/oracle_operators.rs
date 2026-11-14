@@ -392,6 +392,12 @@ const TRUTH_OF_TIME_VALUES: &[&str] = &[
     r#"SELECT id, SEC_TO_TIME(id * 30) IS TRUE, NOT SEC_TO_TIME(id - 3), IF(TIMEDIFF('10:00:00', '09:59:30'), 1, 0), NOT MAKETIME(0, 0, id - 1), NOT CAST('00:00:30' AS TIME) FROM users ORDER BY id"#,
 ];
 
+const MEMBER_OF_EXACT_DECIMALS: &[&str] = &[
+    r#"SELECT 1.5 MEMBER OF('[1.5]'), 1.0 MEMBER OF('[1]'), 1.50 MEMBER OF('[1.5]'), 2.5 MEMBER OF('[1.5]'), 1.5 MEMBER OF('["1.5"]'), CAST(2 AS DECIMAL(5,2)) MEMBER OF('[2]'), -0.0 MEMBER OF('[0]'), 0.1 MEMBER OF('[0.1]'), 1.5 MEMBER OF('1.5'), 1.5 MEMBER OF(NULL), 99999999999999999999.5 MEMBER OF('[1]')"#,
+    r#"SELECT id, total MEMBER OF(meta->'$.items'), total MEMBER OF('[10.5, 50, 100.00, 7]'), 9.9 MEMBER OF(meta->'$.score'), (total * 2) MEMBER OF('[21, 100]') FROM orders ORDER BY id"#,
+    r#"SELECT id, frac MEMBER OF('[0, 1.5, 2.5, -0.005]'), whole MEMBER OF('[0, 1, 2, 3, -1]') FROM bounds ORDER BY id"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -410,6 +416,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("member of exact decimals", MEMBER_OF_EXACT_DECIMALS),
         ("truth of time values", TRUTH_OF_TIME_VALUES),
     ] {
         cases.extend(statements.iter().map(|sql| OracleCase {
