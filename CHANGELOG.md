@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security
+
+- `rustls` 0.23.46 and, in the dashboard, `nuxt` 4.6.2 with the
+  `vue-router` 5 it requires, for the advisories published against the
+  versions before them.
+
+### Fixed
+
+- The nightly replay of MySQL's and MariaDB's suites runs against the
+  MySQL patch its baselines were banked on; `mysql:8.4` had moved to a
+  newer patch and every job stopped at its start.
+- The equivalence checks no longer expect a query ordered by an ENUM
+  column to keep its order inside a `UNION ALL`: MySQL orders the column
+  by its declaration and the union's result by its labels.
+
 ## [0.1.8-rc4] - 2026-11-14
 
 The metadata schema stays at version 26, so this release and 0.1.8-rc3
