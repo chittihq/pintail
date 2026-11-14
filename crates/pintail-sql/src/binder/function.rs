@@ -4088,6 +4088,21 @@ fn conditional_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindE
             },
         ));
     }
+    // A temporal branch beside a number is text as well: the date as it
+    // prints or the number as it prints, never the date read as a number.
+    let is_temporal = |kind: &DataType| {
+        matches!(
+            kind,
+            DataType::Date32 | DataType::Time64 { .. } | DataType::DateTime64 { .. }
+        )
+    };
+    if types.iter().any(is_temporal)
+        && types
+            .iter()
+            .all(|kind| is_temporal(kind) || is_mysql_scalar(Some(*kind)))
+    {
+        return Ok(Some(DataType::Utf8));
+    }
     // A JSON branch beside a branch of any other type makes the result text:
     // each row answers with the text of the branch it took, the document as
     // written for the JSON one and the number or the date as printed for
