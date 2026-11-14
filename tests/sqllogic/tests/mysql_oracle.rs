@@ -48,7 +48,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3463;
+const EXPECTED_CASES: usize = 3476;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6273,6 +6273,69 @@ fn relational_edge_cases() -> Vec<OracleCase> {
         ..ordered(family, sql)
     };
     vec![
+        // EXTRACT keeps a negative time's sign on the microsecond field;
+        // the MICROSECOND function does not.
+        ordered(
+            "negative time microseconds",
+            "SELECT EXTRACT(MICROSECOND FROM -111213.5), EXTRACT(MICROSECOND FROM TIME '-00:00:00.5'), MICROSECOND(TIME '-00:00:00.5'), EXTRACT(MICROSECOND FROM '-11:12:13.000001'), EXTRACT(MICROSECOND FROM '-0:0:0.0'), EXTRACT(MICROSECOND FROM -0.5), EXTRACT(MICROSECOND FROM '2001-01-01 00:00:00.5')",
+        ),
+        ordered(
+            "negative time microseconds",
+            "SELECT EXTRACT(MICROSECOND FROM '-11:12:13.000001'), EXTRACT(SECOND FROM '-11:12:13'), EXTRACT(HOUR_SECOND FROM TIME '-11:12:13'), EXTRACT(DAY_MICROSECOND FROM '-11:12:13.5')",
+        ),
+        // A duration's text keeps six fraction digits and rounds on the
+        // last digit written, not the seventh; a date and time rounds on
+        // the seventh.
+        ordered(
+            "duration text fraction rounding",
+            "SELECT TIME '1:0:0.2323049640' a, CAST('1:0:0.2323049640' AS TIME(6)) b, TIME('1:0:0.2323049640') c, ADDTIME('1:0:0.2323049640', '0') d, MICROSECOND('1:0:0.2323049640') e, TIME '1:0:0.23230449' f, CAST('1:0:0.23230449' AS TIME(6)) g, MICROSECOND('1:0:0.23230449') h",
+        ),
+        ordered(
+            "duration text fraction rounding",
+            "SELECT TIME '1:0:0.23230450' a, TIME '1:0:0.23230405' b, TIME '1:0:0.232304999994' c, TIME '1:0:0.2323044' d, TIME '10000.23230405' e, TIME '1 1:0:0.23230405' f, CAST('1:0:0.23230449' AS TIME(3)) g, CAST('1:0:0.23250009' AS TIME(3)) h, CAST('1:0:0.23250009' AS TIME) i, TIME '1:0:0.99999905' j",
+        ),
+        ordered(
+            "duration text fraction rounding",
+            "SELECT TIMESTAMP '2001-01-01 1:0:0.23230449' a, TIMESTAMP '2001-01-01 1:0:0.2323049640' b, CAST('2001-01-01 1:0:0.23230405' AS DATETIME(6)) c, TIME('2001-01-01 1:0:0.23230405') d, CAST('2001-01-01 1:0:0.23230405' AS TIME(6)) e",
+        ),
+        ordered(
+            "duration text fraction rounding",
+            "SELECT CAST(101.23230405 AS TIME(6)) a, CAST('101.23230405' AS TIME(6)) b, SEC_TO_TIME('1.23230405') c, TIMEDIFF('1:0:0.23230405', '0:0:0') d, TIME_TO_SEC('1:0:0.99999905') e, HOUR('1:59:59.99999905') f",
+        ),
+        ordered(
+            "duration text fraction rounding",
+            "SELECT CAST('1:0:0.2324995' AS TIME(3)) a, CAST('1:0:0.23249950' AS TIME(3)) b, CAST('1:0:0.23249905' AS TIME(3)) c, CAST('1:0:0.2324995' AS TIME) d, CAST('1:0:0.49999995' AS TIME) e, CAST('1:0:0.4999995' AS TIME(1)) f, TIME '1:59:59.99999995' i, TIME '-1:59:59.99999995' j",
+        ),
+        // A clock with a fraction and text after a space is a duration,
+        // not a date whose year, month and day are its fields.
+        ordered(
+            "duration text with trailing text",
+            "SELECT ADDTIME('-01:01:01.01 GGG', '-23:59:59.1') a, ADDTIME('01:01:01.01 GGG', '23:59:59.1') b, SUBTIME('-01:01:01.01 GGG', '23:59:59.1') c, TIMEDIFF('-01:01:01.01 GGG', '23:59:59.1') d, ADDTIME('2001-01-01 01:01:01.01 GGG', '23:59:59.1') e, TIME('01:01:01.01 GGG') f, TIME('01:01:01 01:01:01') g",
+        ),
+        // A DECIMAL in a bit operator is read as a signed integer.
+        ordered(
+            "decimal bit operands",
+            "SELECT 9999999999999999999999999999999999999999999 | 0, 99999999999999999999 | 0, 9999999999999999999999999999999999999999999 ^ 0, ~9999999999999999999999999999999999999999999, 9999999999999999999999999999999999999999999 << 0, BIT_COUNT(9999999999999999999999999999999999999999999), -9999999999999999999999999999999999999999999 | 0, 18446744073709551615.0 | 0, 9223372036854775808.0 | 0",
+        ),
+        ordered(
+            "decimal bit operands",
+            "SELECT 1.5 | 0, 2.5 | 0, -1.5 | 0, 1.5 ^ 1, ~1.5, 1.5 << 1, 1 << 1.5, BIT_COUNT(7.5), BIT_COUNT(99999999999999999999.5), 9223372036854775807.4 | 0, 9223372036854775807.5 | 0, -9223372036854775808.5 | 0, (1.5 + 99999999999999999999) | 0, 99999999999999999999 >> 1, 1 | 99999999999999999999, 99999999999999999999 & 99999999999999999999",
+        ),
+        // A decimal literal holds nine groups of nine digits: past them the
+        // whole part is the largest DECIMAL and the fraction is cut.
+        ordered(
+            "decimal literal capacity",
+            "SELECT 1234567890123456789012345678901234567890123456789012345678901234567890123456789012 AS x, -1234567890123456789012345678901234567890123456789012345678901234567890123456789012 AS y, 123456789012345678901234567890123456789012345678901234567890123456789012345678901 AS z",
+        ),
+        ordered(
+            "decimal literal capacity",
+            "SELECT 0.1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890 AS a, 1234567890.1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890 AS b, 12345678901234567890123456789012345678901234567890.12345678901234567890123456789012345678901234567890 AS c, 1234567890123456789012345678901234567890123456789012345678901234567890123.5 AS d",
+        ),
+        // CHAR reads an unintroduced hex or bit literal as a number.
+        ordered(
+            "char of hex and bit literals",
+            "SELECT HEX(CHAR(0x41)), HEX(CHAR(0x41, 0x4243)), HEX(CHAR(0x41, 66, '67', 0x00)), HEX(CHAR(0xff,0x8f)), HEX(CHAR(b'1000001')), HEX(CHAR(x'41')), HEX(CHAR(_binary 0x41)), HEX(CHAR(0x4142434445464748)), HEX(CHAR(x'4142'))",
+        ),
         // Two text keys: a group shows the spellings of its own first row,
         // not the first spelling met of each key's collation class.
         ordered(

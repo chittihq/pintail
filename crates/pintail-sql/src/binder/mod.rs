@@ -11107,6 +11107,8 @@ mod tests {
             ),
             ("SELECT 'a'  regexp 'A'", vec!["'a'  regexp 'A'"]),
             ("SELECT 1 # tail", vec!["1"]),
+            ("SELECT 1 | 0b1011\nLIMIT 1", vec!["1 | 0b1011"]),
+            ("SELECT 0b1011 | 0b1011 \n", vec!["0b1011 | 0b1011"]),
             (
                 "SELECT 1 + /*!00000 2 */ + 3 /*!99999 noise*/ + 4",
                 vec!["1 +  2  + 3  + 4"],
