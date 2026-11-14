@@ -18,10 +18,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its first words (`/* step 4 */ ALTER TABLE ...`, `alter /* tool */ table
   ...`) was not read as a schema change at all: the source's table moved
   and the mirror's did not follow.
-- An `ALTER TABLE` that changed a column and an index in one statement
-  (`ADD COLUMN c INT, ADD INDEX (c)`, a column with its foreign key, `DROP
-  COLUMN` with `DROP INDEX`) recopied the table. It is read by its column
-  change; `RENAME INDEX` and `ALTER INDEX` are index-only changes.
+- An `ALTER TABLE` that added a column and a plain index in one statement
+  (`ADD COLUMN c INT, ADD INDEX (c)`) recopied the table. It is read by its
+  column change. A unique key, a foreign key or a dropped index beside a
+  column change still recopies, since either can change what identifies a
+  row. `RENAME INDEX` and `ALTER INDEX` are index-only changes.
 - `ALTER TABLE t` with no clause quarantined the table as unreadable.
 - A text column added by a statement the source had already moved past -
   a second `ALTER` landing before the first was read - recopied the table.

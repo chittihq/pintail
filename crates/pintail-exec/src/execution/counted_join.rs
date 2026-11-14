@@ -663,10 +663,11 @@ pub(super) fn plan(
                 if kind == BoundJoinKind::Inner {
                     continue 'rows;
                 }
-                if unpaired.is_none() {
-                    unpaired = Some(unpaired_counts()?);
-                }
-                counts.clone_from(unpaired.as_ref().expect("just worked out"));
+                let worked_out = match &unpaired {
+                    Some(counts) => counts,
+                    None => unpaired.insert(unpaired_counts()?),
+                };
+                counts.clone_from(worked_out);
             }
             if grouped {
                 let mut values = batch_row(&batch, row)?;
