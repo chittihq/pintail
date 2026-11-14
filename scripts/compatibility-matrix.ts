@@ -65,10 +65,26 @@ const PINTAIL_KEYWORDS = new Set(
    COUNT SUM AVG MIN MAX ANY_VALUE SEPARATOR
    TABLE VALUES DUAL DEFAULT ESCAPE COLLATE CHARACTER SET
    HIGH_PRIORITY SQL_BUFFER_RESULT CUME_DIST PERCENT_RANK NTH_VALUE
+   LATERAL JSON_TABLE NESTED ORDINALITY PATH COLUMNS EMPTY ERROR GROUPING
+   MOD DIV SOUNDS MEMBER OF
+   CURRENT_DATE CURRENT_TIME CURRENT_TIMESTAMP LOCALTIME LOCALTIMESTAMP
+   UTC_DATE UTC_TIME UTC_TIMESTAMP
    TRUE FALSE ELSEIF`
     .split(/\s+/)
     .filter(Boolean),
 )
+
+/// Names MySQL's catalogue lists as functions that Pintail resolves through
+/// dedicated grammar, the window binder or the session rather than through
+/// a name arm, so the surface script cannot see them. Curated, like the
+/// keywords, and each one is compared with MySQL in the fixed oracle or,
+/// for the three session functions, on a live pair.
+const DEDICATED_SYNTAX = `CAST CONVERT EXTRACT POSITION INTERVAL GROUPING JSON_TABLE
+   NTH_VALUE FIRST_VALUE LAST_VALUE LAG LEAD NTILE
+   AND OR XOR IN DIV EXISTS
+   DATABASE USER VERSION`
+  .split(/\s+/)
+  .filter(Boolean)
 
 function lines(file: string): string[] {
   return readFileSync(join(inventory, file), 'utf8')
@@ -84,7 +100,7 @@ function lines(file: string): string[] {
 /// proved it by reporting DATE_ADD, DATE_SUB and TIMESTAMPADD as
 /// unsupported when that script already resolved two of them.
 function pintailFunctions(): Set<string> {
-  return new Set(surface().keys())
+  return new Set([...surface().keys(), ...DEDICATED_SYNTAX])
 }
 
 const mysqlKeywords = lines('mysql-keywords.tsv').map((line) => {
@@ -151,7 +167,7 @@ const section = [
   '| MySQL keywords | `information_schema.KEYWORDS` on MySQL 8.4 |',
   '| MySQL functions | `mysql.help_topic` joined to its Function/Operator categories — MySQL\'s own documentation catalogue |',
   '| ClickHouse | `system.functions` and `system.keywords` on `clickhouse/clickhouse-server:26.8`, matched case-insensitively so its MySQL-compatible aliases count |',
-  '| Pintail functions | the binder\'s own match arms, the same source `scripts/function-surface.ts` reads |',
+  '| Pintail functions | the binder\'s own match arms, the same source `scripts/function-surface.ts` reads, plus a curated list of the names resolved by dedicated syntax (`CAST`, `EXTRACT`, the window functions and the like) |',
   '| Pintail keywords | **curated, not machine-read** — the binder has no keyword table, it either binds a construct or rejects it |',
   '',
   'There is no MySQL support column: this is MySQL\'s own keyword and function',

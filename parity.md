@@ -20,11 +20,17 @@ banked in `tests/sqllogic/fuzz-results.md` with the reproduction recipe in
 |---|---|
 | Callable functions | 218 — `bun run scripts/function-surface.ts` reads them from the binder, and a unit test holds this number to what it prints |
 | Aggregates | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, `ANY_VALUE`, `STDDEV`/`STD`/`STDDEV_POP`/`STDDEV_SAMP`, `VARIANCE`/`VAR_POP`/`VAR_SAMP`, `BIT_AND`/`BIT_OR`/`BIT_XOR` |
-| Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE` |
+| Window functions | `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `CUME_DIST`, `PERCENT_RANK`, `COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, `LAG`, `LEAD`, `NTILE`, `FIRST_VALUE`, `LAST_VALUE`, `NTH_VALUE` |
 | Window frames | explicit `ROWS BETWEEN` with all bound forms and the `ROWS n PRECEDING` shorthand; value-based `RANGE` bounds over numeric keys (including exact fractional DECIMAL offsets) and simple temporal `INTERVAL` offsets; `GROUPS` and DISTINCT window aggregates reject as MySQL 8.4 requires |
 | Named windows | `WINDOW w AS (…)` referenced as `OVER w`; chained earlier definitions and legal additive inheritance without clause redefinition; forward/cyclic references and parenthesized inheritance from a framed base reject as MySQL requires |
 | Joins | Inner, left, right (two-table), semi, anti; multi-key hash on `AND` of equalities; parenthesized root and bushy right-side INNER/CROSS/LEFT groups; bounded nested-loop evaluation for subqueries in `ON` |
 | Subqueries | Uncorrelated scalar/`IN`; canonical correlated `EXISTS`/`IN`, scalar aggregates, and unique-key lookups decorrelated to joins; bounded dependent execution for wider and nested correlations in projection, filtering, HAVING, join `ON`, CTEs, and derived tables |
+| Grouping | `GROUP BY ... WITH ROLLUP` with subtotal and grand-total rows, and `GROUPING()` in the select list and `HAVING` to tell a subtotal's NULL from a stored one |
+| Derived tables | Derived tables and `LATERAL` derived tables, which may read the columns of the tables to their left; `JSON_TABLE` as a table factor with `FOR ORDINALITY`, `NESTED PATH`, `EXISTS PATH`, `ON EMPTY` and `ON ERROR` |
+| Statements | `SELECT`; `TABLE t` with `ORDER BY` and `LIMIT`, as a statement, a derived table, a CTE body and a set-operation branch; `VALUES ROW(...), ...` as a statement, a derived table, a CTE body and an `IN` subquery |
+| Operators | Comparison including `<=>`, logical including `XOR`, arithmetic with `DIV`, `%` and `MOD`, bit operators, `IS [NOT] TRUE/FALSE/UNKNOWN`, `BETWEEN`, `IN`, `LIKE ... ESCAPE`, `REGEXP`/`RLIKE`, `SOUNDS LIKE`, `MEMBER OF`, and the JSON path operators `->` and `->>`, which bind tighter than every other operator |
+| Collation and character-set functions | `COLLATION`, `CHARSET` and `COERCIBILITY` for expressions whose rule is modelled; `WEIGHT_STRING` with MySQL's weight bytes for the four replicated collations, its `AS CHAR(n)`, `AS BINARY(n)` and four-argument forms |
+| Session functions | `DATABASE()`, `VERSION()` and `USER()` alone or inside expressions; `CURRENT_ROLE()`, `LAST_INSERT_ID()`, `ROW_COUNT()`; `GET_FORMAT`; the clock functions with or without parentheses |
 | Set operations | `UNION [ALL\|DISTINCT]`, `INTERSECT [ALL]`, `EXCEPT [ALL]` with exact `ALL` multiset counts, MySQL precedence, parenthesized operands, and branch-local `ORDER BY`/`LIMIT` |
 | CTEs | Non-recursive; `WITH RECURSIVE` in the canonical `anchor UNION [ALL] member` form, with duplicate-eliminating fixpoints, query-memory accounting, and session `cte_max_recursion_depth` |
 | JSON | Build: `JSON_OBJECT`, `JSON_ARRAY`, `JSON_ARRAYAGG`, `JSON_OBJECTAGG`, with JSON-vs-VARCHAR identity retained through execution and `MYSQL_TYPE_JSON` results. Read: single- and multi-path `JSON_EXTRACT`, `JSON_VALUE` (with `RETURNING`), `JSON_UNQUOTE`, `->`, `->>`. Inspect: `JSON_VALID`, `JSON_TYPE`, `JSON_LENGTH`, `JSON_KEYS`. Search: `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_SEARCH`. Expand: `JSON_TABLE(document, path COLUMNS (...)) AS alias` over a constant document or one read from a column of an earlier relation in the same `FROM` (comma, `JOIN` and `LEFT JOIN ... ON` forms), with `FOR ORDINALITY`, typed `PATH` columns, `EXISTS PATH`, `NESTED PATH` including sibling lists, and `NULL`/`DEFAULT`/`ERROR` for `ON EMPTY` and `ON ERROR`. Unsupported JSON key semantics reject explicitly |
@@ -136,7 +142,7 @@ compatibility matrix is the artifact people migrate on:
 | MySQL keywords | `information_schema.KEYWORDS` on MySQL 8.4 |
 | MySQL functions | `mysql.help_topic` joined to its Function/Operator categories — MySQL's own documentation catalogue |
 | ClickHouse | `system.functions` and `system.keywords` on `clickhouse/clickhouse-server:26.8`, matched case-insensitively so its MySQL-compatible aliases count |
-| Pintail functions | the binder's own match arms, the same source `scripts/function-surface.ts` reads |
+| Pintail functions | the binder's own match arms, the same source `scripts/function-surface.ts` reads, plus a curated list of the names resolved by dedicated syntax (`CAST`, `EXTRACT`, the window functions and the like) |
 | Pintail keywords | **curated, not machine-read** — the binder has no keyword table, it either binds a construct or rejects it |
 
 There is no MySQL support column: this is MySQL's own keyword and function
@@ -165,9 +171,9 @@ design — DDL, DML writes, replication and administration. Those are out of
 scope rather than missing, and counting them as gaps would make this table
 read as far worse than the engine is.
 
-**Functions:** 393 MySQL functions — Pintail 163, ClickHouse 161.
+**Functions:** 393 MySQL functions — Pintail 230, ClickHouse 162.
 
-**Keywords:** 734 MySQL keywords — Pintail 96 supported and 123 out of scope, ClickHouse 225.
+**Keywords:** 734 MySQL keywords — Pintail 123 supported and 123 out of scope, ClickHouse 225.
 
 ### Functions
 
@@ -179,7 +185,7 @@ read as far worse than the engine is.
 | `ADDTIME` | ✅ | ❌ |
 | `AES_DECRYPT` | ❌ | ❌ |
 | `AES_ENCRYPT` | ❌ | ❌ |
-| `AND` | ❌ | ✅ |
+| `AND` | ✅ | ✅ |
 | `ANY_VALUE` | ✅ | ✅ |
 | `ASCII` | ✅ | ✅ |
 | `ASIN` | ✅ | ✅ |
@@ -194,7 +200,7 @@ read as far worse than the engine is.
 | `BIN` | ✅ | ✅ |
 | `BIN_TO_UUID` | ✅ | ❌ |
 | `BIT_AND` | ✅ | ✅ |
-| `BIT_COUNT` | ❌ | ❌ |
+| `BIT_COUNT` | ✅ | ❌ |
 | `BIT_LENGTH` | ✅ | ❌ |
 | `BIT_OR` | ✅ | ✅ |
 | `BIT_XOR` | ✅ | ✅ |
@@ -203,21 +209,21 @@ read as far worse than the engine is.
 | `CAN_ACCESS_TABLE` | ❌ | ❌ |
 | `CAN_ACCESS_USER` | ❌ | ❌ |
 | `CAN_ACCESS_VIEW` | ❌ | ❌ |
-| `CAST` | ❌ | ✅ |
+| `CAST` | ✅ | ✅ |
 | `CEIL` | ✅ | ✅ |
 | `CEILING` | ✅ | ✅ |
 | `CHARACTER_LENGTH` | ✅ | ✅ |
-| `CHARSET` | ❌ | ❌ |
+| `CHARSET` | ✅ | ❌ |
 | `CHAR_LENGTH` | ✅ | ✅ |
 | `COALESCE` | ✅ | ✅ |
-| `COERCIBILITY` | ❌ | ❌ |
-| `COLLATION` | ❌ | ❌ |
+| `COERCIBILITY` | ✅ | ❌ |
+| `COLLATION` | ✅ | ❌ |
 | `COMPRESS` | ❌ | ❌ |
 | `CONCAT` | ✅ | ✅ |
 | `CONCAT_WS` | ✅ | ✅ |
 | `CONNECTION_ID` | ❌ | ✅ |
 | `CONV` | ✅ | ✅ |
-| `CONVERT` | ❌ | ❌ |
+| `CONVERT` | ✅ | ❌ |
 | `CONVERT_TZ` | ✅ | ❌ |
 | `COS` | ✅ | ✅ |
 | `COT` | ✅ | ❌ |
@@ -228,13 +234,13 @@ read as far worse than the engine is.
 | `CREATE_DIGEST` | ❌ | ❌ |
 | `CUME_DIST` | ✅ | ✅ |
 | `CURDATE` | ✅ | ✅ |
-| `CURRENT_DATE` | ❌ | ✅ |
+| `CURRENT_DATE` | ✅ | ✅ |
 | `CURRENT_ROLE` | ❌ | ❌ |
 | `CURRENT_TIME` | ✅ | ❌ |
-| `CURRENT_TIMESTAMP` | ❌ | ✅ |
+| `CURRENT_TIMESTAMP` | ✅ | ✅ |
 | `CURRENT_USER` | ❌ | ✅ |
 | `CURTIME` | ✅ | ❌ |
-| `DATABASE` | ❌ | ✅ |
+| `DATABASE` | ✅ | ✅ |
 | `DATEDIFF` | ✅ | ✅ |
 | `DATE_ADD` | ✅ | ❌ |
 | `DATE_FORMAT` | ✅ | ✅ |
@@ -247,15 +253,15 @@ read as far worse than the engine is.
 | `DEFAULT` | ❌ | ❌ |
 | `DEGREES` | ✅ | ✅ |
 | `DENSE_RANK` | ✅ | ✅ |
-| `DIV` | ❌ | ❌ |
+| `DIV` | ✅ | ❌ |
 | `ELT` | ✅ | ❌ |
-| `EXISTS` | ❌ | ❌ |
+| `EXISTS` | ✅ | ❌ |
 | `EXP` | ✅ | ✅ |
-| `EXPORT_SET` | ❌ | ❌ |
-| `EXTRACT` | ❌ | ✅ |
+| `EXPORT_SET` | ✅ | ❌ |
+| `EXTRACT` | ✅ | ✅ |
 | `FIELD` | ✅ | ❌ |
 | `FIND_IN_SET` | ✅ | ❌ |
-| `FIRST_VALUE` | ❌ | ✅ |
+| `FIRST_VALUE` | ✅ | ✅ |
 | `FLOOR` | ✅ | ✅ |
 | `FORMAT` | ✅ | ✅ |
 | `FORMAT_BYTES` | ❌ | ✅ |
@@ -267,18 +273,18 @@ read as far worse than the engine is.
 | `GET_DD_COLUMN_PRIVILEGES` | ❌ | ❌ |
 | `GET_DD_CREATE_OPTIONS` | ❌ | ❌ |
 | `GET_DD_INDEX_SUB_PART_LENGTH` | ❌ | ❌ |
-| `GET_FORMAT` | ❌ | ❌ |
+| `GET_FORMAT` | ✅ | ❌ |
 | `GET_LOCK` | ❌ | ❌ |
 | `GREATEST` | ✅ | ✅ |
-| `GROUPING` | ❌ | ❌ |
+| `GROUPING` | ✅ | ❌ |
 | `GROUP_CONCAT` | ✅ | ✅ |
 | `HEX` | ✅ | ✅ |
 | `HOUR` | ✅ | ✅ |
 | `ICU_VERSION` | ❌ | ❌ |
 | `IFNULL` | ✅ | ✅ |
-| `IN` | ❌ | ✅ |
-| `INET6_ATON` | ❌ | ✅ |
-| `INET6_NTOA` | ❌ | ✅ |
+| `IN` | ✅ | ✅ |
+| `INET6_ATON` | ✅ | ✅ |
+| `INET6_NTOA` | ✅ | ✅ |
 | `INET_ATON` | ✅ | ✅ |
 | `INET_NTOA` | ✅ | ✅ |
 | `INSTR` | ✅ | ✅ |
@@ -302,14 +308,14 @@ read as far worse than the engine is.
 | `INTERNAL_MAX_DATA_LENGTH` | ❌ | ❌ |
 | `INTERNAL_TABLE_ROWS` | ❌ | ❌ |
 | `INTERNAL_UPDATE_TIME` | ❌ | ❌ |
-| `INTERVAL` | ❌ | ❌ |
+| `INTERVAL` | ✅ | ❌ |
 | `IS` | ❌ | ❌ |
 | `ISNULL` | ✅ | ✅ |
 | `IS_FREE_LOCK` | ❌ | ❌ |
-| `IS_IPV4` | ❌ | ❌ |
-| `IS_IPV4_COMPAT` | ❌ | ❌ |
-| `IS_IPV4_MAPPED` | ❌ | ❌ |
-| `IS_IPV6` | ❌ | ❌ |
+| `IS_IPV4` | ✅ | ❌ |
+| `IS_IPV4_COMPAT` | ✅ | ❌ |
+| `IS_IPV4_MAPPED` | ✅ | ❌ |
+| `IS_IPV6` | ✅ | ❌ |
 | `IS_USED_LOCK` | ❌ | ❌ |
 | `IS_UUID` | ✅ | ❌ |
 | `IS_VISIBLE_DD_OBJECT` | ❌ | ❌ |
@@ -339,25 +345,25 @@ read as far worse than the engine is.
 | `JSON_SET` | ✅ | ❌ |
 | `JSON_STORAGE_FREE` | ❌ | ❌ |
 | `JSON_STORAGE_SIZE` | ❌ | ❌ |
-| `JSON_TABLE` | ❌ | ❌ |
+| `JSON_TABLE` | ✅ | ❌ |
 | `JSON_TYPE` | ✅ | ❌ |
 | `JSON_UNQUOTE` | ✅ | ❌ |
 | `JSON_VALID` | ✅ | ❌ |
 | `JSON_VALUE` | ✅ | ✅ |
-| `LAG` | ❌ | ✅ |
+| `LAG` | ✅ | ✅ |
 | `LAST_DAY` | ✅ | ✅ |
 | `LAST_INSERT_ID` | ❌ | ❌ |
-| `LAST_VALUE` | ❌ | ✅ |
+| `LAST_VALUE` | ✅ | ✅ |
 | `LCASE` | ✅ | ✅ |
-| `LEAD` | ❌ | ✅ |
+| `LEAD` | ✅ | ✅ |
 | `LEAST` | ✅ | ✅ |
 | `LEFT` | ✅ | ✅ |
 | `LENGTH` | ✅ | ✅ |
 | `LIKE` | ❌ | ✅ |
 | `LN` | ✅ | ✅ |
 | `LOAD_FILE` | ❌ | ❌ |
-| `LOCALTIME` | ❌ | ✅ |
-| `LOCALTIMESTAMP` | ❌ | ✅ |
+| `LOCALTIME` | ✅ | ✅ |
+| `LOCALTIMESTAMP` | ✅ | ✅ |
 | `LOCATE` | ✅ | ✅ |
 | `LOG` | ✅ | ✅ |
 | `LOG10` | ✅ | ✅ |
@@ -367,7 +373,7 @@ read as far worse than the engine is.
 | `LTRIM` | ✅ | ✅ |
 | `MAKEDATE` | ✅ | ✅ |
 | `MAKETIME` | ✅ | ❌ |
-| `MAKE_SET` | ❌ | ❌ |
+| `MAKE_SET` | ✅ | ❌ |
 | `MAX` | ✅ | ✅ |
 | `MBRCONTAINS` | ❌ | ❌ |
 | `MBRCOVEREDBY` | ❌ | ❌ |
@@ -389,11 +395,11 @@ read as far worse than the engine is.
 | `NAME_CONST` | ❌ | ❌ |
 | `NOW` | ✅ | ✅ |
 | `NTH_VALUE` | ✅ | ✅ |
-| `NTILE` | ❌ | ✅ |
+| `NTILE` | ✅ | ✅ |
 | `NULLIF` | ✅ | ✅ |
 | `OCT` | ✅ | ❌ |
 | `OCTET_LENGTH` | ✅ | ✅ |
-| `OR` | ❌ | ✅ |
+| `OR` | ✅ | ✅ |
 | `ORD` | ✅ | ❌ |
 | `PERCENT_RANK` | ✅ | ✅ |
 | `PERIOD_ADD` | ✅ | ❌ |
@@ -405,7 +411,7 @@ read as far worse than the engine is.
 | `PS_CURRENT_THREAD_ID` | ❌ | ❌ |
 | `PS_THREAD_ID` | ❌ | ❌ |
 | `QUARTER` | ✅ | ✅ |
-| `QUOTE` | ❌ | ❌ |
+| `QUOTE` | ✅ | ❌ |
 | `RADIANS` | ✅ | ✅ |
 | `RAND` | ✅ | ✅ |
 | `RANDOM_BYTES` | ❌ | ❌ |
@@ -527,7 +533,7 @@ read as far worse than the engine is.
 | `SUBSTRING_INDEX` | ✅ | ✅ |
 | `SUBTIME` | ✅ | ❌ |
 | `SUM` | ✅ | ✅ |
-| `SYSDATE` | ❌ | ❌ |
+| `SYSDATE` | ✅ | ❌ |
 | `SYSTEM_USER` | ❌ | ❌ |
 | `TAN` | ✅ | ✅ |
 | `TIMEDIFF` | ✅ | ✅ |
@@ -546,10 +552,10 @@ read as far worse than the engine is.
 | `UNHEX` | ✅ | ✅ |
 | `UNIX_TIMESTAMP` | ✅ | ❌ |
 | `UPPER` | ✅ | ✅ |
-| `USER` | ❌ | ✅ |
-| `UTC_DATE` | ❌ | ❌ |
-| `UTC_TIME` | ❌ | ❌ |
-| `UTC_TIMESTAMP` | ❌ | ✅ |
+| `USER` | ✅ | ✅ |
+| `UTC_DATE` | ✅ | ❌ |
+| `UTC_TIME` | ✅ | ❌ |
+| `UTC_TIMESTAMP` | ✅ | ✅ |
 | `UUID` | ✅ | ❌ |
 | `UUID_SHORT` | ✅ | ❌ |
 | `UUID_TO_BIN` | ✅ | ❌ |
@@ -558,12 +564,12 @@ read as far worse than the engine is.
 | `VARIANCE` | ✅ | ❌ |
 | `VAR_POP` | ✅ | ✅ |
 | `VAR_SAMP` | ✅ | ✅ |
-| `VERSION` | ❌ | ✅ |
+| `VERSION` | ✅ | ✅ |
 | `WEEK` | ✅ | ✅ |
 | `WEEKDAY` | ✅ | ❌ |
 | `WEEKOFYEAR` | ✅ | ❌ |
-| `WEIGHT_STRING` | ❌ | ❌ |
-| `XOR` | ❌ | ✅ |
+| `WEIGHT_STRING` | ✅ | ❌ |
+| `XOR` | ✅ | ✅ |
 | `YEAR` | ✅ | ✅ |
 | `YEARWEEK` | ✅ | ✅ |
 
@@ -648,7 +654,7 @@ read as far worse than the engine is.
 | `COLUMN` | ✅ | ❌ | ✅ |
 | `COLUMN_FORMAT` |  | ❌ | ❌ |
 | `COLUMN_NAME` |  | ❌ | ❌ |
-| `COLUMNS` |  | ❌ | ✅ |
+| `COLUMNS` |  | ✅ | ✅ |
 | `COMMENT` |  | ❌ | ✅ |
 | `COMMIT` |  | ➖ | ✅ |
 | `COMMITTED` |  | ❌ | ❌ |
@@ -675,9 +681,9 @@ read as far worse than the engine is.
 | `CUBE` | ✅ | ❌ | ✅ |
 | `CUME_DIST` | ✅ | ✅ | ❌ |
 | `CURRENT` |  | ✅ | ✅ |
-| `CURRENT_DATE` | ✅ | ❌ | ❌ |
-| `CURRENT_TIME` | ✅ | ❌ | ❌ |
-| `CURRENT_TIMESTAMP` | ✅ | ❌ | ❌ |
+| `CURRENT_DATE` | ✅ | ✅ | ❌ |
+| `CURRENT_TIME` | ✅ | ✅ | ❌ |
+| `CURRENT_TIMESTAMP` | ✅ | ✅ | ❌ |
 | `CURRENT_USER` | ✅ | ❌ | ✅ |
 | `CURSOR` | ✅ | ➖ | ✅ |
 | `CURSOR_NAME` |  | ❌ | ❌ |
@@ -715,7 +721,7 @@ read as far worse than the engine is.
 | `DISK` |  | ❌ | ✅ |
 | `DISTINCT` | ✅ | ✅ | ✅ |
 | `DISTINCTROW` | ✅ | ✅ | ❌ |
-| `DIV` | ✅ | ❌ | ✅ |
+| `DIV` | ✅ | ✅ | ✅ |
 | `DO` |  | ❌ | ❌ |
 | `DOUBLE` | ✅ | ❌ | ❌ |
 | `DROP` | ✅ | ➖ | ✅ |
@@ -726,7 +732,7 @@ read as far worse than the engine is.
 | `EACH` | ✅ | ❌ | ❌ |
 | `ELSE` | ✅ | ✅ | ✅ |
 | `ELSEIF` | ✅ | ✅ | ❌ |
-| `EMPTY` | ✅ | ❌ | ✅ |
+| `EMPTY` | ✅ | ✅ | ✅ |
 | `ENABLE` |  | ❌ | ❌ |
 | `ENCLOSED` | ✅ | ❌ | ❌ |
 | `ENCRYPTION` |  | ❌ | ❌ |
@@ -737,7 +743,7 @@ read as far worse than the engine is.
 | `ENGINE_ATTRIBUTE` |  | ➖ | ❌ |
 | `ENGINES` |  | ➖ | ❌ |
 | `ENUM` |  | ❌ | ❌ |
-| `ERROR` |  | ❌ | ❌ |
+| `ERROR` |  | ✅ | ❌ |
 | `ERRORS` |  | ❌ | ❌ |
 | `ESCAPE` |  | ✅ | ✅ |
 | `ESCAPED` | ✅ | ❌ | ❌ |
@@ -799,7 +805,7 @@ read as far worse than the engine is.
 | `GRANTS` |  | ❌ | ❌ |
 | `GROUP` | ✅ | ✅ | ❌ |
 | `GROUP_REPLICATION` |  | ❌ | ❌ |
-| `GROUPING` | ✅ | ❌ | ❌ |
+| `GROUPING` | ✅ | ✅ | ❌ |
 | `GROUPS` | ✅ | ✅ | ✅ |
 | `GTID_ONLY` |  | ➖ | ❌ |
 | `GTIDS` |  | ➖ | ❌ |
@@ -859,7 +865,7 @@ read as far worse than the engine is.
 | `ITERATE` | ✅ | ❌ | ❌ |
 | `JOIN` | ✅ | ✅ | ✅ |
 | `JSON` |  | ✅ | ❌ |
-| `JSON_TABLE` | ✅ | ❌ | ❌ |
+| `JSON_TABLE` | ✅ | ✅ | ❌ |
 | `JSON_VALUE` |  | ❌ | ❌ |
 | `KEY` | ✅ | ❌ | ✅ |
 | `KEY_BLOCK_SIZE` |  | ❌ | ❌ |
@@ -870,7 +876,7 @@ read as far worse than the engine is.
 | `LANGUAGE` |  | ❌ | ✅ |
 | `LAST` |  | ❌ | ✅ |
 | `LAST_VALUE` | ✅ | ❌ | ❌ |
-| `LATERAL` | ✅ | ❌ | ❌ |
+| `LATERAL` | ✅ | ✅ | ❌ |
 | `LEAD` | ✅ | ❌ | ❌ |
 | `LEADING` | ✅ | ❌ | ✅ |
 | `LEAVE` | ✅ | ❌ | ❌ |
@@ -886,8 +892,8 @@ read as far worse than the engine is.
 | `LIST` |  | ❌ | ✅ |
 | `LOAD` | ✅ | ❌ | ❌ |
 | `LOCAL` |  | ❌ | ✅ |
-| `LOCALTIME` | ✅ | ❌ | ❌ |
-| `LOCALTIMESTAMP` | ✅ | ❌ | ❌ |
+| `LOCALTIME` | ✅ | ✅ | ❌ |
+| `LOCALTIMESTAMP` | ✅ | ✅ | ❌ |
 | `LOCK` | ✅ | ➖ | ❌ |
 | `LOCKED` |  | ❌ | ❌ |
 | `LOCKS` |  | ❌ | ❌ |
@@ -913,7 +919,7 @@ read as far worse than the engine is.
 | `MEDIUMBLOB` | ✅ | ❌ | ❌ |
 | `MEDIUMINT` | ✅ | ❌ | ❌ |
 | `MEDIUMTEXT` | ✅ | ❌ | ❌ |
-| `MEMBER` |  | ❌ | ❌ |
+| `MEMBER` |  | ✅ | ❌ |
 | `MEMORY` |  | ❌ | ✅ |
 | `MERGE` |  | ➖ | ❌ |
 | `MESSAGE_TEXT` |  | ❌ | ❌ |
@@ -924,7 +930,7 @@ read as far worse than the engine is.
 | `MINUTE` |  | ✅ | ✅ |
 | `MINUTE_MICROSECOND` | ✅ | ❌ | ❌ |
 | `MINUTE_SECOND` | ✅ | ❌ | ❌ |
-| `MOD` | ✅ | ❌ | ✅ |
+| `MOD` | ✅ | ✅ | ✅ |
 | `MODE` |  | ❌ | ❌ |
 | `MODIFIES` | ✅ | ❌ | ❌ |
 | `MODIFY` |  | ❌ | ✅ |
@@ -941,7 +947,7 @@ read as far worse than the engine is.
 | `NCHAR` |  | ✅ | ❌ |
 | `NDB` |  | ❌ | ❌ |
 | `NDBCLUSTER` |  | ❌ | ❌ |
-| `NESTED` |  | ❌ | ❌ |
+| `NESTED` |  | ✅ | ❌ |
 | `NETWORK_NAMESPACE` |  | ❌ | ❌ |
 | `NEVER` |  | ❌ | ❌ |
 | `NEW` |  | ❌ | ❌ |
@@ -960,7 +966,7 @@ read as far worse than the engine is.
 | `NUMBER` |  | ❌ | ❌ |
 | `NUMERIC` | ✅ | ❌ | ❌ |
 | `NVARCHAR` |  | ❌ | ❌ |
-| `OF` | ✅ | ❌ | ❌ |
+| `OF` | ✅ | ✅ | ❌ |
 | `OFF` |  | ❌ | ❌ |
 | `OFFSET` |  | ✅ | ✅ |
 | `OJ` |  | ❌ | ❌ |
@@ -977,7 +983,7 @@ read as far worse than the engine is.
 | `OPTIONS` |  | ❌ | ❌ |
 | `OR` | ✅ | ✅ | ✅ |
 | `ORDER` | ✅ | ✅ | ❌ |
-| `ORDINALITY` |  | ❌ | ❌ |
+| `ORDINALITY` |  | ✅ | ❌ |
 | `ORGANIZATION` |  | ❌ | ❌ |
 | `OTHERS` |  | ❌ | ❌ |
 | `OUT` | ✅ | ❌ | ❌ |
@@ -996,7 +1002,7 @@ read as far worse than the engine is.
 | `PARTITIONS` |  | ➖ | ✅ |
 | `PASSWORD` |  | ➖ | ❌ |
 | `PASSWORD_LOCK_TIME` |  | ❌ | ❌ |
-| `PATH` |  | ❌ | ✅ |
+| `PATH` |  | ✅ | ✅ |
 | `PERCENT_RANK` | ✅ | ✅ | ❌ |
 | `PERSIST` |  | ❌ | ❌ |
 | `PERSIST_ONLY` |  | ❌ | ❌ |
@@ -1136,7 +1142,7 @@ read as far worse than the engine is.
 | `SOCKET` |  | ❌ | ❌ |
 | `SOME` |  | ❌ | ✅ |
 | `SONAME` |  | ➖ | ❌ |
-| `SOUNDS` |  | ❌ | ❌ |
+| `SOUNDS` |  | ✅ | ❌ |
 | `SOURCE` |  | ➖ | ✅ |
 | `SOURCE_AUTO_POSITION` |  | ➖ | ❌ |
 | `SOURCE_BIND` |  | ➖ | ❌ |
@@ -1268,9 +1274,9 @@ read as far worse than the engine is.
 | `USER` |  | ➖ | ❌ |
 | `USER_RESOURCES` |  | ❌ | ❌ |
 | `USING` | ✅ | ✅ | ✅ |
-| `UTC_DATE` | ✅ | ❌ | ❌ |
-| `UTC_TIME` | ✅ | ❌ | ❌ |
-| `UTC_TIMESTAMP` | ✅ | ❌ | ❌ |
+| `UTC_DATE` | ✅ | ✅ | ❌ |
+| `UTC_TIME` | ✅ | ✅ | ❌ |
+| `UTC_TIMESTAMP` | ✅ | ✅ | ❌ |
 | `VALIDATION` |  | ❌ | ❌ |
 | `VALUE` |  | ❌ | ❌ |
 | `VALUES` | ✅ | ✅ | ✅ |
