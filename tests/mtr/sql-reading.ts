@@ -87,3 +87,58 @@ export function hasOuterOrderBy(sql: string): boolean {
   }
   return false
 }
+
+/// System variables whose session value changes what a SELECT answers.
+/// One the two sides disagree on that is not here (an optimizer switch, a
+/// buffer size, a lock timeout) leaves every answer comparable.
+const ANSWER_STATE = new Set([
+  'sql_mode', 'time_zone', 'timestamp', 'lc_time_names', 'group_concat_max_len', 'div_precision_increment',
+  'max_sort_length', 'default_week_format', 'sql_select_limit', 'windowing_use_high_precision',
+  'cte_max_recursion_depth', 'block_encryption_mode',
+])
+
+/// The answer-changing session state a session statement sets, as keys:
+/// `names` for the connection character sets, `use` for the default
+/// database, one of the system variables above, or `@name` for a user
+/// variable.
+export function sessionKeys(sql: string): string[] {
+  if (/^\s*use\s/i.test(sql)) return ['use']
+  if (/^\s*set\s+(?:names|character\s+set|charset)\b/i.test(sql)) return ['names']
+  const assignments = /^\s*set\s+([\s\S]*)$/i.exec(sql)?.[1]
+  if (assignments === undefined) return []
+  const keys = new Set<string>()
+  // Commas inside a call or a string separate nothing.
+  for (const part of assignments.replace(/'(?:\\.|''|[^'\\])*'|"(?:\\.|""|[^"\\])*"/g, "''").split(/,(?![^()]*\))/)) {
+    const name = /^\s*(?:(?:session|local)\s+|@@(?:session\.|local\.)?)?(@?[\w$.]+)\s*:?=/i.exec(part)?.[1]?.toLowerCase()
+    if (name === undefined) continue
+    if (/^(?:character_set_(?:client|connection|results)|collation_connection)$/.test(name)) keys.add('names')
+    else if (name.startsWith('@') || ANSWER_STATE.has(name)) keys.add(name)
+  }
+  return [...keys]
+}
+
+/// Session state the two sides no longer share. A session statement one
+/// side refused and the other ran leaves the state it sets different on the
+/// two; the next statement both sides run for the same state brings it back
+/// together. Until then a SELECT is compared as before - one that still
+/// matches was never touched by the difference - and one both sides answer
+/// differently is counted as `session-diverged`, not as a mismatch of its
+/// own. A user variable only reaches the statements that name it.
+export class SessionDrift {
+  private apart = new Set<string>()
+
+  note(sql: string, mysqlRan: boolean, pintailRan: boolean) {
+    for (const key of sessionKeys(sql)) {
+      if (mysqlRan !== pintailRan) this.apart.add(key)
+      else if (mysqlRan) this.apart.delete(key)
+    }
+  }
+
+  reaches(sql: string): string | undefined {
+    for (const key of this.apart) {
+      if (!key.startsWith('@')) return key
+      if (new RegExp(`${key.replace(/[$.]/g, '\\$&')}(?![\\w$.])`, 'i').test(sql)) return key
+    }
+    return undefined
+  }
+}

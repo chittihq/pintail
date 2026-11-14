@@ -46,7 +46,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
-import { hasOuterOrderBy, unorderedLimit } from './sql-reading.ts'
+import { hasOuterOrderBy, SessionDrift, unorderedLimit } from './sql-reading.ts'
 import mysql from 'mysql2/promise'
 import { captureOracleState } from './oracle-state'
 
@@ -185,6 +185,11 @@ type Kind =
   | 'setup-rejected'
   | 'unsupported-setup'
   | 'session'
+  /// A SELECT both sides answered, differently, after one side refused a
+  /// session statement the other accepted: the two sessions differ, so the
+  /// difference says nothing about the SELECT. The refusal itself is an
+  /// error class, and a SELECT Pintail could not run stays a Pintail error.
+  | 'session-diverged'
   | 'skipped'
   | 'volatile'
   /// Replica mode: the mirror did not reach the source in time.
@@ -733,7 +738,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
   const counts: Record<Kind, number> = {
     exact: 0, mismatch: 0, 'name-mismatch': 0, 'pintail-error': 0, 'mysql-error': 0, tainted: 0,
     setup: 0, 'setup-rejected': 0, 'unsupported-setup': 0, session: 0, skipped: 0, volatile: 0,
-    'replica-lag': 0, 'replica-unsettled': 0,
+    'replica-lag': 0, 'replica-unsettled': 0, 'session-diverged': 0,
   }
   const exactIds: string[] = []
   const refusedIds: string[] = []
@@ -759,6 +764,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
     textConnection({ host: '127.0.0.1', port: pintailWirePort, user: schema, password: key.secret, database: schema }),
   )
   const epochs = new Epochs()
+  const drift = new SessionDrift()
   let inTransaction = false
   // MySQL's global sql_mode once this file changed it (see GLOBAL_SQL_MODE).
   let globalSqlMode: string | undefined
@@ -788,8 +794,18 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
         // every later query reading @x then compared two NULLs and banked
         // the agreement as an exact match.
         const session = epochs.rewrite(sql)
-        await my.query(session).catch(() => {})
-        await pt.query(globalSqlMode !== undefined && SESSION_SQL_MODE_DEFAULT.test(sql) ? `SET sql_mode = '${globalSqlMode}'` : session).catch(() => {})
+        const mysqlRan = await my.query(session).then(() => true, () => false)
+        const pintailRan = await pt
+          .query(globalSqlMode !== undefined && SESSION_SQL_MODE_DEFAULT.test(sql) ? `SET sql_mode = '${globalSqlMode}'` : session)
+          .then(() => true, (error) => {
+            if (mysqlRan) {
+              const cls = `SESSION: ${errorClass(String(error))}`
+              errorClasses[cls] = (errorClasses[cls] ?? 0) + 1
+              errorLines.push(`## line ${statement.line}: ${cls}\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
+            }
+            return false
+          })
+        drift.note(sql, mysqlRan, pintailRan)
         continue
       }
       // Named prepared statements can mutate fixture tables. Replay their
@@ -858,6 +874,9 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
         if (rowsMatch && namesMatch) {
           counts.exact += 1
           exactIds.push(id)
+        } else if (drift.reaches(sql) !== undefined) {
+          counts['session-diverged'] += 1
+          diffLines.push(`## line ${statement.line} (${id}): not compared, the sessions differ in ${drift.reaches(sql)}\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
         } else if (rowsMatch) {
           counts['name-mismatch'] += 1
           diffLines.push(`## line ${statement.line} (${id}): column names\n\n\`\`\`sql\n${sql}\n\`\`\`\nmysql:   ${expected.names.join(' | ')}\npintail: ${actual.names.join(' | ')}\n`)
@@ -991,7 +1010,7 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
   const counts = {
     exact: 0, mismatch: 0, 'name-mismatch': 0, 'pintail-error': 0, 'mysql-error': 0, tainted: 0,
     setup: 0, 'setup-rejected': 0, 'unsupported-setup': 0, session: 0, skipped: 0, volatile: 0,
-    'replica-lag': 0, 'replica-unsettled': 0,
+    'replica-lag': 0, 'replica-unsettled': 0, 'session-diverged': 0,
   } satisfies Record<Kind, number>
   const exactIds: string[] = []
   const refusedIds: string[] = []
@@ -1080,6 +1099,7 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
   // Session-local state the binlog never carries: temporary tables and an
   // open transaction. Queries reading either are not comparable.
   const temporary = new Epochs()
+  const drift = new SessionDrift()
   let inTransaction = false
   let marker = 0
   let dirty = false
@@ -1230,6 +1250,9 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
         if (rowsMatch && namesMatch) {
           counts.exact += 1
           exactIds.push(id)
+        } else if (drift.reaches(sql) !== undefined) {
+          counts['session-diverged'] += 1
+          diffLines.push(`## line ${statement.line} (${id}): not compared, the sessions differ in ${drift.reaches(sql)}\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
         } else if (rowsMatch) {
           counts['name-mismatch'] += 1
           diffLines.push(`## line ${statement.line} (${id}): column names\n\n\`\`\`sql\n${sql}\n\`\`\`\nmysql:   ${expected.names.join(' | ')}\npintail: ${actual.names.join(' | ')}\n`)
@@ -1246,8 +1269,15 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
       }
       if (isSession(sql)) {
         counts.session += 1
-        await my.query(sql).catch(() => {})
-        await pt.query(sql).catch(() => {})
+        const mysqlRan = await my.query(sql).then(() => true, () => false)
+        const pintailRan = await pt.query(sql).then(() => true, (error) => {
+          if (mysqlRan) {
+            bump(`SESSION: ${errorClass(String(error))}`)
+            errorLines.push(`## line ${statement.line}: session statement refused\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
+          }
+          return false
+        })
+        drift.note(sql, mysqlRan, pintailRan)
         continue
       }
       const temp = /^\s*create\s+temporary\s+table\s+(?:if\s+not\s+exists\s+)?\x60?(\w+)/i.exec(sql)?.[1]
@@ -1344,8 +1374,8 @@ function publish(results: FileResult[], mysqlVersion: string) {
   // follow, MySQL itself refused it, or it reads the clock or the session.
   const notCompared =
     total('pintail-error') + total('tainted') + total('mysql-error') + total('volatile') +
-    total('replica-lag') + total('replica-unsettled')
-  const queries = compared + total('pintail-error') + total('tainted')
+    total('replica-lag') + total('replica-unsettled') + total('session-diverged')
+  const queries = compared + total('pintail-error') + total('tainted') + total('session-diverged')
   const classes: Record<string, number> = {}
   for (const r of results) for (const [cls, n] of Object.entries(r.errorClasses)) classes[cls] = (classes[cls] ?? 0) + n
   const topClasses = Object.entries(classes).sort((a, b) => b[1] - a[1]).slice(0, 25)
@@ -1368,15 +1398,16 @@ function publish(results: FileResult[], mysqlVersion: string) {
       `${total('pintail-error').toLocaleString()} SELECTs Pintail could not run, ${total('tainted').toLocaleString()} were not compared because their tables were changed by statements a local database cannot follow, ` +
       `${total('mysql-error').toLocaleString()} failed on MySQL itself, ${total('volatile').toLocaleString()} depend on the clock, session or server and were not compared. ` +
       `${total('replica-lag').toLocaleString()} waited past the replication deadline, ${total('replica-unsettled').toLocaleString()} read unsettled replica tables. ` +
+      `${total('session-diverged').toLocaleString()} did not match after Pintail and MySQL disagreed on a session statement, and say nothing while the sessions differ. ` +
       `Fixtures: ${total('setup').toLocaleString()} accepted, ${total('setup-rejected').toLocaleString()} rejected by Pintail, ${total('unsupported-setup').toLocaleString()} outside the replayed subset.`,
     '',
     'Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.',
     '',
-    '| File | Statements | Exact | Mismatch | Names | Pintail error | Tainted | MySQL error | Setup ok | Setup rejected | Unsupported | Session | Skipped |',
-    '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
+    '| File | Statements | Exact | Mismatch | Names | Pintail error | Tainted | MySQL error | Setup ok | Setup rejected | Unsupported | Session | Skipped | Session diverged |',
+    '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
     ...results.map(
       (r) =>
-        `| ${r.file}${r.parserNote ? ' †' : ''} | ${r.statements} | ${r.counts.exact} | ${r.counts.mismatch} | ${r.counts['name-mismatch']} | ${r.counts['pintail-error']} | ${r.counts.tainted} | ${r.counts['mysql-error']} | ${r.counts.setup} | ${r.counts['setup-rejected']} | ${r.counts['unsupported-setup']} | ${r.counts.session} | ${r.counts.skipped} |`,
+        `| ${r.file}${r.parserNote ? ' †' : ''} | ${r.statements} | ${r.counts.exact} | ${r.counts.mismatch} | ${r.counts['name-mismatch']} | ${r.counts['pintail-error']} | ${r.counts.tainted} | ${r.counts['mysql-error']} | ${r.counts.setup} | ${r.counts['setup-rejected']} | ${r.counts['unsupported-setup']} | ${r.counts.session} | ${r.counts.skipped} | ${r.counts['session-diverged']} |`,
     ),
     '',
     '† the parser dropped trailing lines it could not delimit.',
@@ -1654,7 +1685,7 @@ async function main() {
     }
     const c = result.counts
     log(
-      `${name}: ${c.exact} exact, ${c.mismatch} mismatch, ${c['name-mismatch']} names, ${c['pintail-error']} pintail-error, ${c.tainted} tainted ` +
+      `${name}: ${c.exact} exact, ${c.mismatch} mismatch, ${c['name-mismatch']} names, ${c['pintail-error']} pintail-error, ${c.tainted} tainted, ${c['session-diverged']} session-diverged ` +
         `(${c.setup} setup ok, ${c['setup-rejected']} rejected) in ${((performance.now() - started) / 1000).toFixed(1)}s`,
     )
     return result
@@ -1725,7 +1756,8 @@ async function main() {
   if (BANK) bank(results, mysqlVersion)
   if (STRICT) {
     const short = (r: FileResult) =>
-      r.counts.mismatch + r.counts['name-mismatch'] + r.counts['pintail-error'] + r.counts['replica-lag'] + r.counts['replica-unsettled']
+      r.counts.mismatch + r.counts['name-mismatch'] + r.counts['pintail-error'] + r.counts['replica-lag'] + r.counts['replica-unsettled'] +
+      r.counts['session-diverged']
     const failing = results.filter((r) => short(r) > 0)
     for (const r of failing) log(`STRICT: ${r.file}: ${short(r)} statements not exact`)
     if (failing.length || compared === 0) {
