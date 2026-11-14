@@ -598,6 +598,17 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['counters'],
   },
   {
+    name: 'json: a stored document reads back as the text the source stores',
+    sql:
+      // The two texts ride in a JSON array: what is checked here is what
+      // they say, and a bare CAST(json AS CHAR) is a LONGTEXT on the wire.
+      "SELECT id, note, body, JSON_ARRAY(CAST(body AS CHAR), CONCAT(body, '')) AS written, SHA(body) AS digest, " +
+      "LENGTH(body) AS bytes, JSON_EXTRACT(body, '$.k') AS k, body ->> '$.k' AS k_text, body -> '$.n' AS n, " +
+      "body -> '$[6]' AS wide " +
+      'FROM documents ORDER BY id',
+    tables: ['documents'],
+  },
+  {
     name: 'derived table',
     sql:
       'SELECT bucket_day, COUNT(*) AS orders_that_day FROM (' +

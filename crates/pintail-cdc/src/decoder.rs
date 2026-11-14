@@ -398,7 +398,9 @@ fn jsonb_text(document: jsonb::Value<'_>, out: &mut String) -> std::io::Result<(
         jsonb::Value::U32(value) => out.push_str(&value.to_string()),
         jsonb::Value::I64(value) => out.push_str(&value.to_string()),
         jsonb::Value::U64(value) => out.push_str(&value.to_string()),
-        jsonb::Value::F64(value) => out.push_str(&serde_json::Value::from(value).to_string()),
+        // As the source prints the double: `4.35e15`, not the positional
+        // `4350000000000000.0` another printer would write.
+        jsonb::Value::F64(value) => out.push_str(&pintail_types::mysql_json_double_text(value)),
         jsonb::Value::String(text) => json_quoted(text.str_raw(), out)?,
         jsonb::Value::SmallArray(array) => {
             out.push('[');
@@ -1010,6 +1012,29 @@ mod tests {
             adapt_binlog_value(&int_column, MysqlValue::UInt(3_000_000_000)).expect("full"),
             MysqlValue::UInt(3_000_000_000)
         );
+    }
+
+    /// A double in a binary JSON document prints as the source prints it:
+    /// an exponent from 1e15, `.0` on a whole number, and every digit that
+    /// tells it from its neighbour.
+    #[test]
+    fn json_doubles_print_as_mysql_prints_them() {
+        use mysql_async::binlog::jsonb::Value as Jsonb;
+        for (value, expected) in [
+            (4.35e15, "4.35e15"),
+            (1e15, "1e15"),
+            (999_999_999_999_999.0, "999999999999999.0"),
+            (100.0, "100.0"),
+            (-0.0, "-0.0"),
+            (0.0015, "0.0015"),
+            (1e30, "1e30"),
+            (9.999_999_999_999_999e29, "9.999999999999999e29"),
+            (123_456_789.123_456_8, "123456789.1234568"),
+        ] {
+            let mut text = String::new();
+            super::jsonb_text(Jsonb::F64(value), &mut text).expect("prints");
+            assert_eq!(text, expected);
+        }
     }
 
     /// Opaque members of a binary JSON document print as `MySQL` prints

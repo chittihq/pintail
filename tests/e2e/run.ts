@@ -653,6 +653,11 @@ async function phaseSeed() {
     u64 BIGINT UNSIGNED NOT NULL,
     s64 BIGINT NOT NULL
   )`)
+  // JSON written the awkward way: members out of order, a repeated key,
+  // stray whitespace, doubles spelled 1.0, 1e2 and 1.0e30. The source
+  // stores each document normalised, and the mirror has to read back that
+  // same text from the first copy and from change capture alike.
+  await sql(`CREATE TABLE documents (id INT PRIMARY KEY, body JSON NULL, note VARCHAR(24) NOT NULL)`)
   // An empty ENUM member is legal and a REAL member (ordinal 1 here),
   // distinct from the error value (ordinal 0). Declaration order ('',
   // zz, aa) disagrees with alphabetical order (aa before zz), so a path
@@ -770,7 +775,21 @@ async function phaseSeed() {
     `INSERT INTO counters VALUES (1, 200, 65535, 3000000000, 18446744073709551615, -9223372036854775808), ` +
       `(2, 0, 0, 0, 0, 9223372036854775807)`,
   )
+  await sql(`INSERT INTO documents VALUES ${awkwardDocuments(1, 'copied')}`)
   await seedStorefrontSales()
+}
+
+/// Five rows of JSON no client would write tidily, numbered from `first`.
+function awkwardDocuments(first: number, note: string): string {
+  return [
+    `'{"b":1,"a":[1,2,{"z":null,"y":true}],"c":"x y","d":1.50,"n":1e2,"f":1.0,"k":"v"}'`,
+    `'  { "tags" : [ "p" , "q" ] ,   "score":2.0, "items":[ ], "k":"v" }  '`,
+    `'{"k":1,"k":2,"aa":1,"b":2,"A":3}'`,
+    'NULL',
+    `'[1.0, 1e2, 100, -0.0, 1.5e-3, 12345678901234567890, 1.0e30, 4.35e15, true, null, {"k": "é"}]'`,
+  ]
+    .map((body, index) => `(${first + index}, ${body}, '${note}')`)
+    .join(', ')
 }
 
 /// A storefront marketplace, shaped for one report: flash sales joined
@@ -986,6 +1005,8 @@ async function phaseTypeEdges() {
       `('nulls', NULL, 'free', '', 0.00, NULL, NULL, NULL)`,
   )
   await sql(`UPDATE counters SET u8 = 255, u16 = 65534, u32 = 4294967295, u64 = 9223372036854775808 WHERE id = 2`)
+  await sql(`INSERT INTO documents VALUES ${awkwardDocuments(11, 'captured')}`)
+  await sql(`UPDATE documents SET body = '{"zz":1,"y":[3,2,1],"k":"changed","n":10.0}' WHERE id IN (3, 13)`)
   await sql(
     `INSERT INTO orders (customer_id, status, total, placed_on, updated_at) VALUES ` +
       `(1, 'pending', 0.01, '2020-02-29', '2038-01-19 03:14:07.499999'), ` +
@@ -1000,6 +1021,8 @@ async function phaseDdl() {
   await sql(
     `INSERT INTO orders (customer_id, status, total, placed_on, coupon) VALUES (7, 'shipped', 77.77, '2025-07-07', 'NEW7')`,
   )
+  await sql(`ALTER TABLE documents ADD COLUMN revision INT NULL`)
+  await sql(`UPDATE documents SET body = '{"q":2.50,"p":{"b":1e3,"a":2}}', revision = 2 WHERE id IN (2, 12)`)
   await sql(`ALTER TABLE customers DROP COLUMN latin_note`)
   await sql(`UPDATE customers SET balance = balance + 1 WHERE id = 1`)
   // A VIRTUAL generated column added to a live table cannot evolve in
