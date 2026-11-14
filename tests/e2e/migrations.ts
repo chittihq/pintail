@@ -649,6 +649,18 @@ const addedCases: AddedCase[] = [
     inPlace: true,
   },
   {
+    // The second statement lands before the stream has read the first, so
+    // the first is read against a table that has moved on: its text column
+    // takes its character set from what the source still shows for it.
+    name: 'two text columns added back to back',
+    alters: [
+      'ADD COLUMN first_note VARCHAR(255) NULL AFTER d',
+      'ADD COLUMN second_note VARCHAR(255) NULL AFTER first_note, ADD COLUMN third_note TEXT NULL',
+    ],
+    projection: 'id, d, first_note, second_note, third_note',
+    inPlace: true,
+  },
+  {
     name: 'a column and its index in one statement',
     alters: [
       "ADD COLUMN `owner_id` BIGINT NULL COMMENT 'ref' AFTER `d`, " +

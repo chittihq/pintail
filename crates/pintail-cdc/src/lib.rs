@@ -2883,7 +2883,7 @@ fn apply_column_change(
         added,
         dropped,
         every_column_tracked,
-        moved_past,
+        moved_past.then_some(&source),
     ) {
         Ok(as_of) if as_of.columns == targets[index].source.columns => {
             // A replay of a statement already applied: a process that died
@@ -3051,7 +3051,7 @@ fn schema_as_of_statement(
         added,
         dropped,
         every_column_tracked,
-        false,
+        None,
     )
 }
 
@@ -3065,14 +3065,21 @@ fn schema_as_of_statement(
 /// type whose catalogue entry depends on defaults the statement lacks - or,
 /// while the source has not moved past the statement, a default or
 /// `NOT NULL`, which its catalogue describes better.
+///
+/// `moved_on` is the table as the source shows it now, given when the
+/// source has moved past the statement. It settles one thing the statement
+/// cannot: the character set and collation of a text column, which come
+/// from the table's defaults. They are taken from it only for a column it
+/// still shows under the very type the statement declared.
 fn schema_as_of(
     tracked: &SourceTable,
     statement: &str,
     added: &[String],
     dropped: &[String],
     every_column_tracked: bool,
-    moved_past: bool,
+    moved_on: Option<&SourceTable>,
 ) -> Result<SourceTable, String> {
+    let moved_past = moved_on.is_some();
     // The tracked table's own column count and ordinals are no evidence
     // here: they come from the last probe, which is exactly what has moved
     // on. Whether the mirror holds every source column is a property of the
@@ -3131,23 +3138,41 @@ fn schema_as_of(
         {
             continue;
         }
-        let terms = ddl::declared_terms(&declaration.declared_type).ok_or_else(|| {
-            format!(
-                "the type of column {name} ({}) is not decided by the statement alone",
-                declaration.declared_type
-            )
-        })?;
-        let column = pintail_probe::declared_column(&pintail_probe::DeclaredColumn {
-            ordinal: 0,
-            name: &declaration.name,
-            data_type: &terms.data_type,
-            column_type: &terms.column_type,
-            numeric_precision: terms.precision,
-            numeric_scale: terms.scale,
-            datetime_precision: terms.fraction,
-            nullable: declaration.nullable,
-            collation: None,
-        })
+        let column = match ddl::declared_terms(&declaration.declared_type) {
+            Some(terms) => pintail_probe::declared_column(&pintail_probe::DeclaredColumn {
+                ordinal: 0,
+                name: &declaration.name,
+                data_type: &terms.data_type,
+                column_type: &terms.column_type,
+                numeric_precision: terms.precision,
+                numeric_scale: terms.scale,
+                datetime_precision: terms.fraction,
+                nullable: declaration.nullable,
+                collation: None,
+            }),
+            None => {
+                let shown = moved_on
+                    .and_then(|table| still_shown_as_declared(table, declaration))
+                    .ok_or_else(|| {
+                        format!(
+                            "the type of column {name} ({}) is not decided by the statement \
+                             alone",
+                            declaration.declared_type
+                        )
+                    })?;
+                pintail_probe::declared_column(&pintail_probe::DeclaredColumn {
+                    ordinal: 0,
+                    name: &declaration.name,
+                    data_type: &shown.mysql_data_type,
+                    column_type: &shown.mysql_column_type,
+                    numeric_precision: None,
+                    numeric_scale: None,
+                    datetime_precision: None,
+                    nullable: declaration.nullable,
+                    collation: shown.collation.as_deref(),
+                })
+            }
+        }
         .map_err(|error| error.to_string())?;
         if let Some(existing) = as_of
             .columns
@@ -3179,6 +3204,27 @@ fn schema_as_of(
     }
     place_columns_in_order(&mut as_of)?;
     Ok(as_of)
+}
+
+/// The text column `table` still shows under the name and the very type
+/// `declaration` gave it: a later statement that retyped or replaced the
+/// column leaves a type that no longer reads the same.
+fn still_shown_as_declared<'table>(
+    table: &'table SourceTable,
+    declaration: &ddl::AddedColumn,
+) -> Option<&'table pintail_probe::SourceColumn> {
+    let spaceless = |text: &str| {
+        text.chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
+    table.columns.iter().find(|column| {
+        column.name.eq_ignore_ascii_case(&declaration.name)
+            && column.collation.is_some()
+            && !column.generated_stored
+            && spaceless(&column.mysql_column_type) == spaceless(&declaration.declared_type)
+    })
 }
 
 /// Numbers a table's columns as a row image of exactly these columns, in
