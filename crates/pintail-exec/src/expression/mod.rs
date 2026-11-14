@@ -9846,7 +9846,7 @@ fn json_path_lookup<'a>(
     let mut current = document;
     for step in json_path_steps(path)? {
         if step.multi() {
-            return Err(ExecError::InvalidExpressionType);
+            return Err(ExecError::JsonPathWildcard);
         }
         let next = match step {
             JsonStep::Member(key) => current.get(&key),
@@ -12516,6 +12516,65 @@ mod tests {
         }
         assert!(super::json_path_steps("$.a[0].b").is_ok());
         assert!(super::json_path_steps("$**.b").is_ok());
+    }
+
+    #[test]
+    fn a_path_of_several_targets_and_a_bad_replacement_name_mysqls_errors() {
+        use crate::execution::RegexError;
+        use pintail_sql::ScalarFunction;
+        use pintail_types::Value;
+        let text = |value: &str| Value::Utf8(value.to_owned());
+        // 3149 where one target is taken; a NULL document is NULL first.
+        for (function, document, path) in [
+            (ScalarFunction::JsonKeys, r#"{"a":{"b":1}}"#, "$.*"),
+            (ScalarFunction::JsonKeys, r#"[{"a":1}]"#, "$[0 to 1]"),
+            (ScalarFunction::JsonKeys, r#"{"a":{"b":1}}"#, "$**.a"),
+        ] {
+            assert_eq!(
+                super::evaluate_eager_scalar(function, &[text(document), text(path)], None),
+                Err(super::ExecError::JsonPathWildcard),
+                "{document} {path}"
+            );
+        }
+        for path in ["$.*", "$[*]", "$[0 to 1]", "$**.a"] {
+            assert_eq!(
+                super::evaluate_eager_scalar(
+                    ScalarFunction::JsonContains,
+                    &[text(r#"{"a":[1,2]}"#), text("1"), text(path)],
+                    None
+                ),
+                Err(super::ExecError::JsonPathWildcard),
+                "{path}"
+            );
+        }
+        // 3686 for a numbered group the pattern lacks, 3887 for a `$` that
+        // names no group; with nothing to replace neither is reached.
+        let replace = |subject: &str, pattern: &str, replacement: &str| {
+            super::evaluate_eager_scalar(
+                ScalarFunction::RegexpReplace,
+                &[text(subject), text(pattern), text(replacement)],
+                None,
+            )
+        };
+        for (pattern, replacement, error) in [
+            ("b", "$1", RegexError::IndexOutOfBounds),
+            ("(b)", "$2", RegexError::IndexOutOfBounds),
+            ("b", "$", RegexError::InvalidCaptureGroupName),
+            ("b", "$x", RegexError::InvalidCaptureGroupName),
+            ("(b)", "$1$", RegexError::InvalidCaptureGroupName),
+            ("(b)", "${1}", RegexError::InvalidCaptureGroupName),
+            ("(?<n>b)", "${m}", RegexError::InvalidCaptureGroupName),
+            ("(b)", "${", RegexError::InvalidCaptureGroupName),
+        ] {
+            assert_eq!(
+                replace("abc", pattern, replacement),
+                Err(super::ExecError::Regex(error)),
+                "{pattern} {replacement}"
+            );
+        }
+        assert!(replace("abc", "x", "$").is_ok());
+        assert!(replace("abc", "(b)", "[$1]").is_ok());
+        assert!(replace("abc", "(b)", "$10").is_ok());
     }
 
     #[test]

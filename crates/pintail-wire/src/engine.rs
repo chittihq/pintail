@@ -213,6 +213,9 @@ pub enum SqlRejection {
     SubqueryRows,
     /// 3143: a JSON path expression does not parse.
     InvalidJsonPath,
+    /// 3149: a path that can select several values where one target is
+    /// taken.
+    JsonPathWildcard,
     /// 1582: a built-in function was called with the wrong number of
     /// arguments.
     ParameterCount,
@@ -2541,6 +2544,10 @@ fn query_execution_error(error: ExecError) -> QueryError {
         },
         ExecError::InvalidJsonPath { .. } => QueryError::Rejected {
             rejection: SqlRejection::InvalidJsonPath,
+            message: error.to_string(),
+        },
+        ExecError::JsonPathWildcard => QueryError::Rejected {
+            rejection: SqlRejection::JsonPathWildcard,
             message: error.to_string(),
         },
         ExecError::Spatial { kind, message } => QueryError::Rejected {

@@ -42,6 +42,11 @@ pub enum RegexError {
     StackOverflow,
     /// 3699: the match took more steps than a match may.
     Timeout,
+    /// 3686: a replacement names a numbered group the pattern does not have.
+    IndexOutOfBounds,
+    /// 3887: a replacement's `$` starts no group reference, or names a
+    /// group the pattern does not have.
+    InvalidCaptureGroupName,
 }
 
 impl RegexError {
@@ -56,6 +61,8 @@ impl RegexError {
             }
             Self::StackOverflow => "Overflow in the regular expression backtrack stack.",
             Self::Timeout => "Timeout exceeded in regular expression match.",
+            Self::IndexOutOfBounds => "Index out of bounds in regular expression search.",
+            Self::InvalidCaptureGroupName => "A capture group has an invalid name.",
         }
     }
 }
@@ -95,6 +102,9 @@ pub enum ExecError {
     BinaryBitwiseLength,
     /// Aggregate bitwise arguments exceed the supported 511-byte width.
     BinaryBitwiseAggregateWidth,
+    /// A path that can select several values, given to a function that
+    /// takes one target (3149).
+    JsonPathWildcard,
     /// A JSON path expression does not parse; `position` is where `MySQL`'s
     /// parser stood when it stopped.
     InvalidJsonPath {
@@ -218,6 +228,9 @@ impl fmt::Display for ExecError {
             Self::Regex(kind) => formatter.write_str(kind.message()),
             Self::BinaryBitwiseLength => formatter.write_str("Binary operands of bitwise operators must be of equal length"),
             Self::BinaryBitwiseAggregateWidth => formatter.write_str("Aggregate bitwise functions cannot accept arguments longer than 511 bytes; consider using the SUBSTRING() function"),
+            Self::JsonPathWildcard => formatter.write_str(
+                "In this situation, path expressions may not contain the * and ** tokens or an array range.",
+            ),
             Self::InvalidJsonPath { position } => write!(
                 formatter,
                 "Invalid JSON path expression. The error is around character position {position}."

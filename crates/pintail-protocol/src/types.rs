@@ -301,6 +301,8 @@ pub enum ErrorKind {
     ErSubqueryNo1Row = 1242,
     /// 3143: a JSON path expression does not parse.
     ErInvalidJsonPath = 3143,
+    /// 3149: a path with a wildcard or a range where one target is taken.
+    ErInvalidJsonPathWildcard = 3149,
     /// 3513: binary bitwise operands have unequal lengths.
     ErInvalidBitwiseOperandsSize = 3513,
     /// 3514: aggregate binary arguments exceed 511 bytes.
@@ -339,6 +341,10 @@ pub enum ErrorKind {
     ErRegexpStackOverflow = 3698,
     /// 3699: a regular expression match ran out of steps.
     ErRegexpTimeOut = 3699,
+    /// 3686: a replacement names a numbered group the pattern lacks.
+    ErRegexpIndexOutofboundsError = 3686,
+    /// 3887: a replacement names no group, or one the pattern lacks.
+    ErRegexpInvalidCaptureGroupName = 3887,
 }
 
 impl ErrorKind {
@@ -362,6 +368,7 @@ impl ErrorKind {
             | Self::ErWrongFieldWithGroup
             | Self::ErMaxPreparedStmtCountReached
             | Self::ErInvalidJsonPath
+            | Self::ErInvalidJsonPathWildcard
             | Self::ErNotSupportedYet
             | Self::ErTooManyRows => b"42000",
             Self::ErGisInvalidData => b"22023",
@@ -395,6 +402,8 @@ impl ErrorKind {
             | Self::ErRegexpLookBehindLimit
             | Self::ErRegexpStackOverflow
             | Self::ErRegexpTimeOut
+            | Self::ErRegexpIndexOutofboundsError
+            | Self::ErRegexpInvalidCaptureGroupName
             | Self::ErCannotConvertString => b"HY000",
         }
     }
@@ -459,6 +468,14 @@ mod tests {
         assert_eq!(ErrorKind::ErSubqueryNo1Row.code(), 1242);
         assert_eq!(ErrorKind::ErSubqueryNo1Row.sql_state(), b"21000");
         assert_eq!(ErrorKind::ErInvalidJsonPath.code(), 3143);
+        assert_eq!(ErrorKind::ErInvalidJsonPathWildcard.code(), 3149);
+        assert_eq!(ErrorKind::ErInvalidJsonPathWildcard.sql_state(), b"42000");
+        assert_eq!(ErrorKind::ErRegexpIndexOutofboundsError.code(), 3686);
+        assert_eq!(ErrorKind::ErRegexpInvalidCaptureGroupName.code(), 3887);
+        assert_eq!(
+            ErrorKind::ErRegexpInvalidCaptureGroupName.sql_state(),
+            b"HY000"
+        );
         assert_eq!(ErrorKind::ErInvalidJsonPath.sql_state(), b"42000");
     }
 }

@@ -9,7 +9,7 @@ use regex_automata::util::{
 };
 
 use super::{ExecError, MAX_COMPILED_REGEX_BYTES};
-use crate::execution::InterruptCounter;
+use crate::execution::{InterruptCounter, RegexError};
 
 pub(super) const WORKSPACE_LIMIT: usize = 4 << 20;
 
@@ -349,7 +349,7 @@ impl Program {
                             chars.next();
                         }
                         if group >= groups {
-                            return Err(ExecError::InvalidExpressionType);
+                            return Err(ExecError::Regex(RegexError::IndexOutOfBounds));
                         }
                         push_group(group, out);
                     }
@@ -360,7 +360,11 @@ impl Program {
                             match chars.next() {
                                 Some('}') => break,
                                 Some(letter) => name.push(letter),
-                                None => return Err(ExecError::InvalidExpressionType),
+                                None => {
+                                    return Err(ExecError::Regex(
+                                        RegexError::InvalidCaptureGroupName,
+                                    ));
+                                }
                             }
                         }
                         let named = !name.is_empty()
@@ -369,10 +373,10 @@ impl Program {
                         let group = named
                             .then(|| self.group_index(&name))
                             .flatten()
-                            .ok_or(ExecError::InvalidExpressionType)?;
+                            .ok_or(ExecError::Regex(RegexError::InvalidCaptureGroupName))?;
                         push_group(group, out);
                     }
-                    _ => return Err(ExecError::InvalidExpressionType),
+                    _ => return Err(ExecError::Regex(RegexError::InvalidCaptureGroupName)),
                 },
                 other => out.push(other),
             }
