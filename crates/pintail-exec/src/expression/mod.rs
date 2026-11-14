@@ -4,6 +4,7 @@ pub(crate) use json_table::JsonTableRows;
 mod selection;
 pub(crate) use selection::{SignedUnits, pair_column_ranges, signed_slice_range_mask};
 mod spatial;
+mod sql_backtrack;
 mod sql_regex;
 mod str_to_date;
 mod temporal;
@@ -12012,10 +12013,16 @@ mod tests {
             super::compiled_regex(&oversized),
             Err(super::ExecError::InvalidExpressionType)
         ));
-        assert!(super::compiled_regex("(?=a)").is_err(), "lookahead rejects");
+        // What the automaton cannot write compiles for the other matcher;
+        // what neither reads is refused.
+        assert!(super::compiled_regex("(?=a)").is_ok(), "lookahead compiles");
         assert!(
-            super::compiled_regex(r"(a)\1").is_err(),
-            "backreferences reject"
+            super::compiled_regex(r"(a)\1").is_ok(),
+            "backreferences compile"
+        );
+        assert!(
+            super::compiled_regex(r"(?=a)\X").is_err(),
+            "a grapheme cluster rejects"
         );
     }
 

@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4315;
+const EXPECTED_CASES: usize = 4329;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5785,6 +5785,90 @@ fn engine_error_cases() -> Vec<OracleCase> {
                     JSON_VALUE(JSON_OBJECT('a', JSON_OBJECT('n', id)), '$**.n') \
              FROM orders ORDER BY id",
         ),
+        // Patterns whose match depends on an earlier capture or on text
+        // they do not consume run on the backtracking matcher.
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_LIKE('abcabc','(abc)\\\\1'), \
+                    REGEXP_LIKE('x','(a)|\\\\1'), \
+                    REGEXP_LIKE('aaaaaaaaaa','^(a\\\\1?){4}$')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_LIKE('aaaaaaaaa','^(a\\\\1?){4}$'), \
+                    REGEXP_LIKE('abad','a(?!b).'), \
+                    REGEXP_LIKE('cb','(?<=a)b')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_LIKE('dbcb','(?<![cd])b'), \
+                    REGEXP_LIKE('aaab','(?>a+)b'), \
+                    REGEXP_LIKE('abc','a(?>bc|b)c')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_LIKE('aaac','^a(?#three){3}c'), \
+                    REGEXP_LIKE('aaa','a++a'), \
+                    REGEXP_LIKE('aaXbX','\\\\GX.*X')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_LIKE('a0-za','^a[\\\\d-z]+$'), \
+                    REGEXP_LIKE('aa','(a)\\\\g1'), \
+                    REGEXP_LIKE('Oo','(?i)^(o)(?!.*\\\\1)')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_LIKE('abc', 'a(?=b)(?!c)')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_REPLACE('a5b ab a5b','(?<=a)5*(?=b)','x'), \
+                    REGEXP_REPLACE('aaaa','(?<=.)a(?=.)','b'), \
+                    REGEXP_INSTR('aaaa','(?<=a)a')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_INSTR('a_kollision', 'o([lm])\\\\1'), \
+                    REGEXP_SUBSTR('xx abab yy', '(ab)\\\\1'), \
+                    REGEXP_REPLACE('aXbXc', '(?<=X)(.)', '[$1]')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_REPLACE('abcabc', '(b)(?=c)', '<$1>', 1, 2), \
+                    REGEXP_INSTR('one two two three', '\\\\b(\\\\w+) \\\\1\\\\b', 1, 1, 1), \
+                    REGEXP_SUBSTR('foo.bar.baz', '(?<=\\\\.)[a-z]+(?=\\\\.)')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_REPLACE('2024-01-05', '(\\\\d+)-(\\\\d+)-(\\\\d+)(?!\\\\d)', '$3/$2/$1'), \
+                    REGEXP_SUBSTR('aaa bbb', '(.)\\\\1\\\\1', 2), \
+                    REGEXP_LIKE('a\\nxb\\n','(?m)(?!\\\\A)x')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT REGEXP_SUBSTR('a\\nb', '(?<=\\\\n)b$')",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT id, \
+                    REGEXP_REPLACE(name, '(?<=-)0(?=\\\\d)', ''), \
+                    REGEXP_LIKE(tag, '(?i)^(.).*\\\\1$') \
+            FROM events ORDER BY id",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT id, \
+                    REGEXP_SUBSTR(name, '(e)v\\\\1'), \
+                    REGEXP_INSTR(name, '(\\\\d)(?!\\\\1)\\\\d') \
+            FROM events ORDER BY id",
+        ),
+        ordered(
+            "regex back-references, assertions and atomic groups",
+            "SELECT id, \
+                    REGEXP_REPLACE(label, '(?<!^)(?=[A-Z])', '_') \
+            FROM events ORDER BY id",
+        ),
     ]
 }
 
@@ -8076,6 +8160,29 @@ fn documented_rejects_stay_explicit() {
 #[allow(clippy::too_many_lines)] // one table of shapes
 fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
+        (
+            // A look-behind has to know how far back it may read.
+            "reject unbounded regex look-behind",
+            "SELECT REGEXP_LIKE(name, '(?<=e*)v') FROM events",
+            "look-behind assertion exceeds the limit",
+        ),
+        (
+            // Backtracking that does not end stops at the matcher's limit.
+            "reject runaway regex backtracking",
+            "SELECT REGEXP_LIKE(REPEAT('a', 40), '(a+)+\\\\1b')",
+            "timeout exceeded in regular expression",
+        ),
+        (
+            "reject regex back-reference to a missing group",
+            "SELECT REGEXP_LIKE(name, '(e)\\\\2') FROM events",
+            "invalid back-reference",
+        ),
+        (
+            // A grapheme cluster is not read by either matcher.
+            "reject regex grapheme cluster escape",
+            "SELECT REGEXP_LIKE(name, '(?=e)\\\\X') FROM events",
+            "illegal argument to a regular expression",
+        ),
         (
             // Answered a batch at a time, a scalar subquery of two rows is
             // still the error of the row that asked.

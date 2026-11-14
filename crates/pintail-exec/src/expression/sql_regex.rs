@@ -32,6 +32,8 @@ fn single_line(text: &str) -> bool {
 pub(super) enum Program {
     Fast(regex::Regex),
     Boundary(BoundaryProgram),
+    /// A pattern no automaton expresses (see [`super::sql_backtrack`]).
+    Backtrack(super::sql_backtrack::Program),
 }
 
 pub(super) struct Match<'a> {
@@ -53,7 +55,35 @@ impl<'a> Match<'a> {
 }
 
 impl Program {
+    /// Compiles `pattern` for the automaton, or for the backtracking
+    /// machine when it uses what no automaton expresses.
     pub(super) fn new(
+        pattern: &str,
+        case: bool,
+        multiline: bool,
+        dotall: bool,
+        line_endings: LineEndings,
+    ) -> Result<Self, ExecError> {
+        let backtrack = || {
+            super::sql_backtrack::Program::new(pattern, case, multiline, dotall, line_endings)
+                .map(Self::Backtrack)
+        };
+        if possessive(pattern) {
+            return backtrack();
+        }
+        // Only a pattern the automaton's syntax cannot write goes to the
+        // other machine: one it can write and refuses for its size stays
+        // refused.
+        if regex_syntax::ast::parse::Parser::new()
+            .parse(pattern)
+            .is_err()
+        {
+            return backtrack();
+        }
+        Self::automaton(pattern, case, multiline, dotall, line_endings)
+    }
+
+    fn automaton(
         pattern: &str,
         case: bool,
         multiline: bool,
@@ -121,6 +151,7 @@ impl Program {
         match self {
             Self::Fast(_) => 0,
             Self::Boundary(program) => program.workspace,
+            Self::Backtrack(_) => super::sql_backtrack::WORKSPACE,
         }
     }
 
@@ -141,6 +172,7 @@ impl Program {
                 Ok(program.fast.is_match(text))
             }
             Self::Boundary(program) => Ok(program.captures_at(text, 0, steps)?.is_some()),
+            Self::Backtrack(program) => Ok(program.captures_at(text, 0, steps)?.is_some()),
         }
     }
 
@@ -156,6 +188,7 @@ impl Program {
             Self::Fast(program) => program,
             Self::Boundary(program) if single_line(text) => &program.fast,
             Self::Boundary(program) => return program.captures_at(text, from, steps),
+            Self::Backtrack(program) => return program.captures_at(text, from, steps),
         };
         let Some(captures) = fast.captures_at(text, from) else {
             steps.steps(text.len() - from)?;
@@ -360,8 +393,38 @@ impl Program {
                 .capture_names()
                 .position(|group| group == Some(name)),
             Self::Boundary(program) => program.nfa.group_info().to_index(PatternID::ZERO, name),
+            Self::Backtrack(program) => program.group_index(name),
         }
     }
+}
+
+/// Whether `pattern` holds a possessive quantifier: a `+` written straight
+/// after another quantifier. The automaton's syntax reads that as a
+/// repetition of a repetition, which matches more than the possessive does.
+fn possessive(pattern: &str) -> bool {
+    use regex_syntax::ast::{Ast, RepetitionKind};
+    let Ok(ast) = regex_syntax::ast::parse::Parser::new().parse(pattern) else {
+        return false;
+    };
+    let mut pending = vec![&ast];
+    while let Some(node) = pending.pop() {
+        match node {
+            Ast::Repetition(repetition) => {
+                if matches!(repetition.op.kind, RepetitionKind::OneOrMore)
+                    && repetition.greedy
+                    && matches!(*repetition.ast, Ast::Repetition(_))
+                {
+                    return true;
+                }
+                pending.push(&repetition.ast);
+            }
+            Ast::Group(group) => pending.push(&group.ast),
+            Ast::Alternation(alternation) => pending.extend(alternation.asts.iter()),
+            Ast::Concat(concat) => pending.extend(concat.asts.iter()),
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Normalize spelling without changing byte spans or escaped backslashes.
@@ -935,6 +998,26 @@ mod tests {
                 Err(ExecError::QueryTimedOut)
             ));
         });
+    }
+
+    #[test]
+    fn a_pattern_the_automaton_cannot_write_runs_on_the_backtracking_machine() {
+        for (pattern, backtracks) in [
+            (r"(a)\1", true),
+            ("a(?=b)", true),
+            ("(?>a+)b", true),
+            ("a++b", true),
+            ("(a)b+$", false),
+            ("a|b", false),
+        ] {
+            let program = Program::new(pattern, false, false, false, LineEndings::Unicode)
+                .unwrap_or_else(|error| panic!("{pattern} compiles: {error}"));
+            assert_eq!(
+                matches!(program, Program::Backtrack(_)),
+                backtracks,
+                "{pattern}"
+            );
+        }
     }
 
     #[test]

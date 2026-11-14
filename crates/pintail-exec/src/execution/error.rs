@@ -56,6 +56,9 @@ pub enum ExecError {
     /// A function was called with arguments it has no answer for; the
     /// function's name as `MySQL` reports it.
     WrongArguments(&'static str),
+    /// A regular expression that cannot be compiled, or whose match was
+    /// stopped at a limit; the message as `MySQL` words it.
+    Regex(&'static str),
     /// Binary bitwise arguments differ in byte length.
     BinaryBitwiseLength,
     /// Aggregate bitwise arguments exceed the supported 511-byte width.
@@ -180,6 +183,7 @@ impl fmt::Display for ExecError {
                 formatter.write_str("bound expression has an invalid physical type")
             }
             Self::WrongArguments(name) => write!(formatter, "Incorrect arguments to {name}"),
+            Self::Regex(message) => formatter.write_str(message),
             Self::BinaryBitwiseLength => formatter.write_str("Binary operands of bitwise operators must be of equal length"),
             Self::BinaryBitwiseAggregateWidth => formatter.write_str("Aggregate bitwise functions cannot accept arguments longer than 511 bytes; consider using the SUBSTRING() function"),
             Self::InvalidJsonPath { position } => write!(
