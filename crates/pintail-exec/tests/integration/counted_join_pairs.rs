@@ -458,3 +458,51 @@ fn an_unpaired_left_row_counts_what_its_null_side_gives() {
         "{sql}"
     );
 }
+
+/// The pairs of `b.id < a.id` whose left row is one of the first `left`.
+fn pairs_below(left: u64) -> u64 {
+    (0..left).sum()
+}
+
+#[test]
+fn a_volatile_expression_keeps_the_join() {
+    // A grouping key that answers anew on every evaluation puts each pair
+    // in a group of its own. Counted, it would be evaluated once per left
+    // row and gather that row's pairs into one group.
+    let pairs = pairs_below(40);
+    let (answer, counters) = run("SELECT COUNT(*) FROM readings a JOIN readings b \
+         ON b.id < a.id AND a.pair < 20 GROUP BY UUID_SHORT()");
+    assert_eq!(answer.len() as u64, pairs);
+    assert!(answer.iter().all(|row| row == &[Value::UInt64(1)]));
+    assert_eq!(counters.join_pairs_counted, 0);
+
+    // The same of a counted expression, evaluated once per pair.
+    let (answer, counters) = run(
+        "SELECT COUNT(IF(RAND() < 2, b.id, NULL)) FROM readings a JOIN readings b \
+         ON b.id < a.id AND a.pair < 20",
+    );
+    assert_eq!(answer, vec![vec![Value::UInt64(pairs)]]);
+    assert_eq!(counters.join_pairs_counted, 0);
+
+    // Without the volatile call the same join is counted.
+    let (answer, counters) = run("SELECT COUNT(b.id) FROM readings a JOIN readings b \
+         ON b.id < a.id AND a.pair < 20");
+    assert_eq!(answer, vec![vec![Value::UInt64(pairs)]]);
+    assert_eq!(counters.join_pairs_counted, pairs);
+}
+
+#[test]
+fn a_counted_expression_that_fails_on_an_unpaired_row_keeps_the_join() {
+    // Every zone is text that is not a JSON document, and reading it as one
+    // fails; rows with no zone read as NULL. Only the first two rows are on
+    // the left, so the one pair is row 1 with row 0, which has no zone. The
+    // join as written evaluates the expression for that pair alone and
+    // counts nothing; counting it over every right row would fail on rows
+    // no left row pairs with.
+    let (answer, counters) = run(
+        "SELECT COUNT(*), COUNT(JSON_EXTRACT(b.zone, '$')) FROM readings a JOIN readings b \
+         ON b.id < a.id AND a.pair = 0",
+    );
+    assert_eq!(answer, vec![vec![Value::UInt64(1), Value::UInt64(0)]]);
+    assert_eq!(counters.join_pairs_counted, 0);
+}

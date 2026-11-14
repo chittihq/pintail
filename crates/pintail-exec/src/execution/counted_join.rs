@@ -37,6 +37,11 @@
 //! - **No rows.** With no GROUP BY the answer is one row whatever the
 //!   input, zero included, so the counts are added here and handed on as
 //!   one row.
+//! - **What is evaluated, and how often.** The join as written evaluates
+//!   a counted expression and a grouping key once per pair. A volatile one
+//!   (`RAND()`, `UUID_SHORT()`, a user variable) leaves the join as it was,
+//!   and so does a counted expression that fails on any right row: the
+//!   failing row may pair with nothing.
 //! - **Anything else** - another condition, a value outside the ordered
 //!   domain, more rows than are worth holding - leaves the join as it was.
 
@@ -438,6 +443,22 @@ pub(super) fn plan(
     {
         return Ok(None);
     }
+    // A volatile expression answers anew each time it is evaluated, and
+    // the join as written evaluates it once per pair: a grouping key here
+    // would be evaluated once per left row, an argument once per right row.
+    if group_by
+        .iter()
+        .chain(
+            aggregates
+                .iter()
+                .filter_map(|aggregate| aggregate.expr.as_ref()),
+        )
+        .chain(condition)
+        .chain(equal.iter().flat_map(|(left, right, _)| [*left, *right]))
+        .any(super::memo::expr_is_volatile)
+    {
+        return Ok(None);
+    }
     let (mut left, left_columns) = build_operator((**left).clone(), provider, memory, collation)?;
     let (mut right, right_columns) =
         build_operator((**right).clone(), provider, memory, collation)?;
@@ -612,10 +633,17 @@ pub(super) fn plan(
                 }
             }
             for (pairing, argument) in pairings.iter_mut().zip(&arguments) {
-                if let Some(argument) = argument
-                    && matches!(argument.evaluate(&batch, row)?, Value::Null)
-                {
-                    continue;
+                if let Some(argument) = argument {
+                    // The join as written evaluates an argument over the
+                    // pairs alone. One that fails on a right row may fail
+                    // on a row no left row pairs with, so the join is left
+                    // to answer, and to fail only where a pair does.
+                    let Ok(value) = argument.evaluate(&batch, row) else {
+                        return Ok(None);
+                    };
+                    if matches!(value, Value::Null) {
+                        continue;
+                    }
                 }
                 let Some(bytes) = pairing.push(&batch, row)? else {
                     return Ok(None);

@@ -473,7 +473,7 @@ fn table_is_volatile(table: &pintail_sql::BoundTable) -> bool {
 
 /// The optimizer's notion of volatility, extended through nested
 /// subqueries: a subquery is as volatile as its body.
-fn expr_is_volatile(expression: &BoundExpr) -> bool {
+pub(super) fn expr_is_volatile(expression: &BoundExpr) -> bool {
     match &expression.kind {
         BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
             query_is_volatile(query)
