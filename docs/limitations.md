@@ -567,6 +567,21 @@ stays readable as a list of things to fix.
 - Progress row estimates use `information_schema.TABLES.TABLE_ROWS`, which is
   approximate for InnoDB.
 
+- `INTERSECT ALL` answers the multiset intersection. MySQL 8.4's answer can
+  be smaller for an input with duplicate rows that outgrows
+  `set_operations_buffer_size`: its hashed set operation loses copies there,
+  and with `hash_set_operations=off` it answers as Pintail does.
+- `LEAST` over a DATE or DATETIME and a number or text no date can be read
+  from answers NULL. MySQL raises a warning and answers the unreadable
+  argument as written (`LEAST('1', d)` is `1`). `GREATEST` is not affected:
+  the unreadable argument never wins.
+- `ABS` of a DATETIME with fraction digits keeps them exactly
+  (`20010101102030.999`). MySQL computes it through a DOUBLE and can answer
+  the value rounded in its last fraction digits (`20010101102031.000`).
+- Negative zero and zero in a DOUBLE or FLOAT column form two groups under
+  `GROUP BY`, `DISTINCT` and `COUNT(DISTINCT ...)`; MySQL groups them as one
+  value.
+
 ## CDC engine
 
 - A source whose table names are case-sensitive can hold two tables whose
