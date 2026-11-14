@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4329;
+const EXPECTED_CASES: usize = 4331;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5763,6 +5763,25 @@ fn engine_error_cases() -> Vec<OracleCase> {
                     TRUNCATE(1.5e300, -309), TRUNCATE(1.5e300, -31), TRUNCATE(123.456e0, 400), \
                     TRUNCATE(-98765.4321e0, -3), TRUNCATE(1e22, 31), TRUNCATE(5e-324, 320), \
                     TRUNCATE(2.5e15, -15), TRUNCATE(9.87e20, -19)",
+        ),
+        // Bytes cast to an integer read as the text they spell, past the
+        // 64-bit range included.
+        ordered(
+            "cast binary strings to integers past the 64-bit range",
+            "SELECT CAST(_binary '18446744073709551615' AS SIGNED), \
+                    CAST(_binary '9223372036854775808' AS SIGNED), \
+                    CAST(_binary '-9223372036854775809' AS SIGNED), \
+                    CAST(_binary '99999999999999999999999' AS UNSIGNED), \
+                    CAST(_binary '-1' AS UNSIGNED), CAST(_binary '12345678901234567890.7' AS SIGNED), \
+                    CAST(_binary ' 12x' AS SIGNED), CAST(_binary '-12.7' AS SIGNED), \
+                    CAST(_binary '3.9' AS UNSIGNED), CAST(BINARY '77' AS SIGNED)",
+        ),
+        ordered(
+            "cast binary strings to integers past the 64-bit range",
+            "SELECT id, CAST(CAST(CONCAT(REPEAT('9', 18), id) AS BINARY) AS SIGNED), \
+                    CAST(CAST(CONCAT('-', id) AS BINARY) AS UNSIGNED), \
+                    CAST(CAST(CONCAT(id, '.9') AS BINARY) AS UNSIGNED) \
+             FROM events ORDER BY id",
         ),
         // JSON_VALUE over a path that can reach several values answers the
         // one it reaches, and NULL when it reaches none or more than one.

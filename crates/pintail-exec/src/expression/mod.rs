@@ -6672,6 +6672,13 @@ fn numeric_cast_operand<'a>(
             | DataType::Float32
             | DataType::Float64
     );
+    // Bytes cast to an integer spell it as characters do, so they take the
+    // text's path whole: its integer prefix, its sign, its saturation.
+    if matches!(target, DataType::Int64 | DataType::UInt64)
+        && let Value::Binary(bytes) = value
+    {
+        return std::borrow::Cow::Owned(Value::Utf8(numeric_bytes_text(bytes).to_owned()));
+    }
     // A JSON scalar converts as the value it holds: a string as its text, a
     // boolean as 1 or 0. A JSON null, an array and an object are 0.
     if numeric
@@ -7002,9 +7009,14 @@ fn saturated_integer_cast(
                     | DataType::UInt64
             )
         );
+    // Bytes spell a number as characters do.
+    let spelled = |value: &'_ Value| match value {
+        Value::Binary(bytes) => Some(numeric_bytes_text(bytes).to_owned()),
+        other => other.text().map(str::to_owned),
+    };
     let negative = match value {
         Value::Float64(number) => number.get() < 0.0,
-        other => other.text()?.trim_start().starts_with('-'),
+        other => spelled(other)?.trim_start().starts_with('-'),
     };
     if negative {
         return Some(if unsigned {
@@ -7020,8 +7032,7 @@ fn saturated_integer_cast(
             i64::MAX.cast_unsigned()
         }
     } else {
-        let digits = value
-            .text()?
+        let digits = spelled(value)?
             .trim_start()
             .trim_start_matches('+')
             .bytes()
