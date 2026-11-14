@@ -121,8 +121,10 @@ fn a_budget_too_small_for_the_index_runs_the_join() {
     let (_, counted, roomy) = count_unequal_pairs(FEW_ROWS, 1 << 30).expect("runs");
     assert_eq!(counted, pairs, "counted with room");
     let mut ran_as_written = false;
-    for eighths in (1..8).rev() {
-        let limit = roomy / 8 * eighths;
+    // The scans hold the table twice over whatever the join does; the
+    // budgets step down from one with room for the index beside them.
+    for step in (2..=10).rev() {
+        let limit = roomy * step / 2;
         match count_unequal_pairs(FEW_ROWS, limit) {
             Ok((answer, counted, peak)) => {
                 assert_eq!(answer, vec![Value::UInt64(pairs)], "under {limit} bytes");
