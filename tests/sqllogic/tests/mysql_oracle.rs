@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4312;
+const EXPECTED_CASES: usize = 4313;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5752,6 +5752,17 @@ fn engine_error_cases() -> Vec<OracleCase> {
             "SELECT id, CAST(CONCAT(score, 'e-3') AS DECIMAL(12,4)), \
                     CAST(CONCAT('-', score, '.5E', id) AS DECIMAL(20,1)) \
              FROM events ORDER BY id",
+        ),
+        // A double truncated left of the point divides by the power of ten
+        // and multiplies it back, so the last digit is the double's own.
+        ordered(
+            "truncate doubles at the ends of their range",
+            "SELECT TRUNCATE(1.7e308, -12), TRUNCATE(1.79e308, -12), TRUNCATE(1.797e308, -12), \
+                    TRUNCATE(1.7976931348623157E+308, -1), TRUNCATE(1.7976931348623157E+308, -300), \
+                    TRUNCATE(1.7976931348623157E+308, 2), TRUNCATE(1.5e300, -308), \
+                    TRUNCATE(1.5e300, -309), TRUNCATE(1.5e300, -31), TRUNCATE(123.456e0, 400), \
+                    TRUNCATE(-98765.4321e0, -3), TRUNCATE(1e22, 31), TRUNCATE(5e-324, 320), \
+                    TRUNCATE(2.5e15, -15), TRUNCATE(9.87e20, -19)",
         ),
     ]
 }

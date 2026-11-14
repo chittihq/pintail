@@ -3742,9 +3742,25 @@ fn evaluate_eager_scalar_inner(
                 return rendered_decimal(units, render_scale, data_type);
             }
             let value = mysql_f64(&values[0])?;
-            let digits = mysql_i64(&values[1])?.clamp(-30, 30);
-            let factor = 10_f64.powi(i32::try_from(digits).expect("clamped to i32 range"));
-            let truncated = (value * factor).trunc() / factor;
+            let digits = mysql_i64(&values[1])?;
+            // The power of ten as the double nearest it, infinite past the
+            // double range in either direction of `digits`.
+            let factor = format!("1e{}", digits.unsigned_abs().min(400))
+                .parse::<f64>()
+                .unwrap_or(f64::INFINITY);
+            let truncated = if digits < 0 {
+                // Every digit left of the point cut: nothing remains.
+                if factor.is_infinite() {
+                    0.0
+                } else {
+                    (value / factor).trunc() * factor
+                }
+            } else if factor.is_infinite() || (value * factor).is_infinite() {
+                // More decimals than the double has.
+                value
+            } else {
+                (value * factor).trunc() / factor
+            };
             if truncated.is_finite() {
                 Ok(Value::float64(truncated))
             } else {
