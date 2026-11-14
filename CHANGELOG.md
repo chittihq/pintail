@@ -50,6 +50,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   for a JSON path with a wildcard or range where one target is taken, and
   3686 and 3887 for a `REGEXP_REPLACE` replacement that names a group the
   pattern does not have.
+- A join with no equality key searches its sorted right side for DECIMAL,
+  date-time (any precision, computed bounds included) and text
+  inequalities, and narrows by a second right column
+  (`a.x BETWEEN b.lo AND b.hi`): seconds become milliseconds at 3,000 rows
+  a side (`benchmark/evidence/inequality-join-search.md`).
+- A join condition that holds a subquery and no equality is bounded by its
+  inequalities instead of testing every pair.
+- A `DISTINCT` correlated subquery whose value is a whole number, decimal,
+  date or date-time, and one correlated only inside its own join's `ON`,
+  is answered for all outer rows in one execution
+  (`benchmark/evidence/dependent-subquery-plan-share.md`).
 
 ### Fixed
 
@@ -142,20 +153,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A row compared with a subquery that aggregates without `GROUP BY` beside
   a plain value, `(a, b) = (SELECT COUNT(*), 7 FROM t)`, failed as
   returning more than one row, or read no row over an empty table.
-
-### Changed
-
-- A join with no equality key searches its sorted right side for DECIMAL,
-  date-time (any precision, computed bounds included) and text
-  inequalities, and narrows by a second right column
-  (`a.x BETWEEN b.lo AND b.hi`): seconds become milliseconds at 3,000 rows
-  a side (`benchmark/evidence/inequality-join-search.md`).
-- A join condition that holds a subquery and no equality is bounded by its
-  inequalities instead of testing every pair.
-- A `DISTINCT` correlated subquery whose value is a whole number, decimal,
-  date or date-time, and one correlated only inside its own join's `ON`,
-  is answered for all outer rows in one execution
-  (`benchmark/evidence/dependent-subquery-plan-share.md`).
 
 ## [0.1.8-rc3] - 2026-10-27
 

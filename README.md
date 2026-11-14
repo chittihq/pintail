@@ -48,7 +48,7 @@ including the queries where ClickHouse still wins.
 
 ## MySQL compatibility
 
-![oracle](https://img.shields.io/badge/oracle-4%2C371%20of%204%2C371%20byte--exact-2ea44f) ![upstream suite](https://img.shields.io/badge/upstream%20suite-633%20files%20replayed-2ea44f) ![replication e2e](https://img.shields.io/badge/replication%20e2e-7%2C830%20checks-2ea44f) ![MySQL](https://img.shields.io/badge/MySQL-8.4%20and%208.0-0969da) ![crash recovery](https://img.shields.io/badge/crash%20recovery-38%20scenarios-2ea44f) ![generated SQL](https://img.shields.io/badge/generated%20SQL-100k%2B-6e7781)
+![oracle](https://img.shields.io/badge/oracle-4%2C419%20of%204%2C419%20byte--exact-2ea44f) ![upstream suite](https://img.shields.io/badge/upstream%20suite-633%20files%20replayed-2ea44f) ![replication e2e](https://img.shields.io/badge/replication%20e2e-7%2C830%20checks-2ea44f) ![MySQL](https://img.shields.io/badge/MySQL-8.4%20and%208.0-0969da) ![crash recovery](https://img.shields.io/badge/crash%20recovery-38%20scenarios-2ea44f) ![generated SQL](https://img.shields.io/badge/generated%20SQL-100k%2B-6e7781)
 
 Pintail answers queries meant for MySQL, so an answer that differs from
 MySQL's is a bug. Every change to `dev` passes these gates against real
@@ -56,7 +56,7 @@ MySQL 8.4 and 8.0 servers before it merges.
 
 | Gate | What it compares | Size | Last result |
 |---|---|---:|---|
-| Differential oracle | Each query's typed result on Pintail and on MySQL, byte for byte | 4,371 queries | 4,371 match; the [known-failure ledger](tests/sqllogic/tests/support/oracle_known_failures.json) is empty |
+| Differential oracle | Each query's typed result on Pintail and on MySQL, byte for byte | 4,419 queries | 4,419 match; the [known-failure ledger](tests/sqllogic/tests/support/oracle_known_failures.json) is empty |
 | Generated queries | Seeded, randomly composed queries, same comparison | 400 per run; 100,000+ in [banked sweeps](tests/sqllogic/fuzz-results.md) | no mismatch |
 | MySQL's own regression suite | `mysql-test` from [mysql/mysql-server](https://github.com/mysql/mysql-server/tree/trunk/mysql-test/t), replayed statement by statement against Pintail and a live MySQL 8.4 | 633 files, 23,119 SELECTs replayed | [10,573 of 10,665 compared match](tests/mtr/results.md); MariaDB's suite is replayed beside it |
 | Storage layouts | The same answers from memtable, flushed, mixed, compacted and reopened data, and under forced spill | 5 layouts | match |
