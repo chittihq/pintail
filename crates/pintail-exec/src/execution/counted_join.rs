@@ -164,17 +164,17 @@ fn equal_key(
 }
 
 /// Counts one more right row under `key`: the bytes a key seen for the
-/// first time holds.
+/// first time holds outside the map's own slots.
 fn count_key(by_key: &mut HashMap<JoinHashKey, u64>, key: JoinHashKey) -> usize {
-    let bytes = size_of::<(JoinHashKey, u64)>() + 1 + key.heap_bytes();
+    let bytes = key.heap_bytes();
     let count = by_key.entry(key).or_default();
     *count += 1;
     if *count == 1 { bytes } else { 0 }
 }
 
 impl Pairing {
-    /// Takes one right row: the bytes it adds to what is held, or `None`
-    /// when no count here answers for it.
+    /// Takes one right row: the bytes it adds outside the index's own
+    /// slots, or `None` when no count here answers for it.
     fn push(&mut self, batch: &RecordBatch, row: usize) -> Result<Option<usize>, ExecError> {
         match self {
             Self::Range(counter) => counter.push(batch, row),
@@ -210,6 +210,18 @@ impl Pairing {
         match self {
             Self::Range(counter) => counter.len(),
             Self::Unequal { by_key, .. } | Self::Equal { by_key, .. } => by_key.len(),
+        }
+    }
+
+    /// The bytes the index's slots take, spare ones included: a map keeps
+    /// a control byte beside each slot and grows by doubling, as a sorted
+    /// run does.
+    fn slot_bytes(&self) -> usize {
+        match self {
+            Self::Range(counter) => counter.slot_bytes(),
+            Self::Unequal { by_key, .. } | Self::Equal { by_key, .. } => by_key
+                .capacity()
+                .saturating_mul(size_of::<(JoinHashKey, u64)>() + 1),
         }
     }
 
@@ -313,6 +325,22 @@ impl PairingPlan<'_> {
 struct Held<'a> {
     memory: &'a MemoryTracker,
     bytes: usize,
+}
+
+impl Held<'_> {
+    /// Takes what the indexes hold beyond what is already taken. `false`
+    /// when the budget cannot hold it.
+    fn grow_to(&mut self, bytes: usize) -> bool {
+        let more = bytes.saturating_sub(self.bytes);
+        if more == 0 {
+            return true;
+        }
+        if self.memory.reserve(more).is_err() {
+            return false;
+        }
+        self.bytes = self.bytes.saturating_add(more);
+        true
+    }
 }
 
 impl Drop for Held<'_> {
@@ -556,6 +584,8 @@ pub(super) fn plan(
         Vec::new()
     };
     let mut held = Held { memory, bytes: 0 };
+    // What the keys and values hold outside the indexes' own slots.
+    let mut outside = 0_usize;
     while let Some(batch) = right.next_batch(memory)? {
         memory.check_interruption()?;
         'rows: for row in batch.selection().selected_rows() {
@@ -573,15 +603,17 @@ pub(super) fn plan(
                 let Some(bytes) = pairing.push(&batch, row)? else {
                     return Ok(None);
                 };
-                // An index the budget cannot hold leaves the join to its
-                // own path, which can spill.
-                if bytes > 0 {
-                    if memory.reserve(bytes).is_err() {
-                        return Ok(None);
-                    }
-                    held.bytes = held.bytes.saturating_add(bytes);
-                }
+                outside = outside.saturating_add(bytes);
             }
+        }
+        // Taken once a batch, by what the indexes have grown to. An index
+        // the budget cannot hold leaves the join to its own path, which
+        // can spill.
+        let slots = pairings
+            .iter()
+            .fold(0_usize, |bytes, pairing| bytes.saturating_add(pairing.slot_bytes()));
+        if !held.grow_to(outside.saturating_add(slots)) {
+            return Ok(None);
         }
         if pairings.iter().any(|pairing| pairing.len() > MAX_SIDE_ROWS) {
             return Ok(None);

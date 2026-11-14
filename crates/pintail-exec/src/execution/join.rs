@@ -5022,9 +5022,9 @@ impl RangeCounter {
         )
     }
 
-    /// Takes one right row: the bytes it adds to what is held, or `None`
-    /// when its value is not one the domain reads, which no count here
-    /// answers for.
+    /// Takes one right row: the bytes its value holds outside the sorted
+    /// run's own slots, or `None` when its value is not one the domain
+    /// reads, which no count here answers for.
     pub(super) fn push(
         &mut self,
         batch: &RecordBatch,
@@ -5036,11 +5036,10 @@ impl RangeCounter {
             .value(self.index.right.evaluate(batch, row)?)
         {
             Ok(Some(value)) => {
-                let bytes = size_of::<(RangeValue, usize)>()
-                    + match &value {
-                        RangeValue::Text(text) => text.capacity(),
-                        RangeValue::Integer(_) | RangeValue::Float(_) => 0,
-                    };
+                let bytes = match &value {
+                    RangeValue::Text(text) => text.capacity(),
+                    RangeValue::Integer(_) | RangeValue::Float(_) => 0,
+                };
                 self.index.sorted.push((value, 0));
                 Ok(Some(bytes))
             }
@@ -5060,6 +5059,14 @@ impl RangeCounter {
     /// Right rows taken so far.
     pub(super) fn len(&self) -> usize {
         self.index.sorted.len()
+    }
+
+    /// The bytes the sorted run's slots take, spare ones included.
+    pub(super) fn slot_bytes(&self) -> usize {
+        self.index
+            .sorted
+            .capacity()
+            .saturating_mul(size_of::<(RangeValue, usize)>())
     }
 
     /// The right rows the left row's bounds reach, or `None` when a bound
