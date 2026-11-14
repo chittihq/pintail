@@ -65,6 +65,7 @@ mod join_key_value_cost;
 mod join_order;
 mod join_probe_rounds;
 mod json_bin_collation;
+mod json_table;
 mod key_lookup_join;
 mod key_order_scan;
 mod late_materialization_cost;
