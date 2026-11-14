@@ -238,6 +238,8 @@ const cases: Case[] = [
       "UPDATE {t} SET v = X'DEADBEEF' WHERE id = 2",
     ],
     rewrites: false,
+    // Stored bytes stay, but the mirror keeps another type for them.
+    recopies: true,
   },
   {
     name: 'latin1 becomes utf8mb4',
@@ -284,6 +286,8 @@ const cases: Case[] = [
       "UPDATE {t} SET v = '2050-01-01 00:00:00' WHERE id = 2",
     ],
     rewrites: false,
+    // Stored bytes stay, but the mirror keeps another type for them.
+    recopies: true,
   },
   {
     name: 'datetime loses fractional seconds',

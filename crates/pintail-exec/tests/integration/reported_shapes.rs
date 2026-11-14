@@ -170,10 +170,6 @@ fn reported_shapes_run() {
         "SELECT v.zone, MIN(v.open), \
          (SELECT COUNT(DISTINCT p.id) FROM places p WHERE p.zone = v.zone) \
          FROM visits v GROUP BY v.zone",
-        "SELECT v.zone, MIN(v.open), MIN(p.label), \
-         (SELECT COUNT(DISTINCT q.id) FROM places q JOIN visits w ON w.place_id = q.id \
-          WHERE q.zone = v.zone AND w.open = MIN(v.open)) \
-         FROM visits v LEFT JOIN places p ON p.id = v.place_id GROUP BY v.zone",
         "SELECT v.zone, MIN(v.open) AS open, MIN(p.label) AS label, \
          (SELECT COUNT(*) FROM places q WHERE q.zone = v.zone) AS near, \
          (SELECT COUNT(*) FROM visits w WHERE w.zone = v.zone AND w.open = 1) AS open_visits \

@@ -5643,9 +5643,9 @@ mod tests {
         use super::statement_names_table;
         let create = "CREATE TABLE \"LedgerTemplate\" (\"id\" INT)";
         assert!(statement_names_table(create, "LedgerTemplate"));
-        assert!(statement_names_table(create, "certificatetemplate"));
+        assert!(statement_names_table(create, "ledgertemplate"));
         // A different table of similar spelling is not named.
-        assert!(!statement_names_table(create, "Certificate"));
+        assert!(!statement_names_table(create, "Ledger"));
         assert!(!statement_names_table(create, "TemplateVersion"));
         // Backticks, qualifiers and trailing punctuation still delimit it.
         assert!(statement_names_table(

@@ -3848,7 +3848,11 @@ function relayPintail(stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStre
 /// A table that converges after a recopy reads exactly like one that never
 /// left, so convergence alone passes a migration that cost a large table
 /// minutes of refused queries. Any quarantine not named here fails its phase.
-const expectedQuarantines: Record<string, string[]> = {}
+const expectedQuarantines: Record<string, string[]> = {
+  // A VIRTUAL generated column is computed by the source for every row and
+  // sent for none: the table is copied again to hold it.
+  ddl: ['customers'],
+}
 
 let quarantinesSeen = 0
 
