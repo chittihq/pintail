@@ -8205,6 +8205,13 @@ fn lenient_i64(
         Value::Enum { index, .. } => return Ok(unsigned(*index)),
         Value::Float64(number) => {
             let rounded = number.get().round_ties_even();
+            // A FLOAT column past the range reads as the lowest integer
+            // whatever its sign, where a DOUBLE stops at the end it passed.
+            if matches!(argument_type, Some(DataType::Float32))
+                && !(-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&rounded)
+            {
+                return Ok(i64::MIN);
+            }
             // The cast saturates, and reads a NaN as zero.
             #[allow(clippy::cast_possible_truncation)]
             return Ok(rounded as i64);
@@ -11948,6 +11955,45 @@ mod tests {
         )
         .expect("JSON_OBJECT evaluates");
         assert_eq!(text, Value::Utf8(r#"{"d": "10.50"}"#.to_owned()));
+    }
+
+    #[test]
+    fn a_float_column_past_the_integer_range_reads_as_the_lowest_integer() {
+        use pintail_types::{DataType, Value};
+
+        // Measured against MySQL 8.4 over a FLOAT and a DOUBLE column
+        // holding 1e30 and -1e30: the FLOAT is the lowest hour either way.
+        let hours = |value: f64, column: DataType| {
+            super::evaluate_eager_scalar_typed(
+                ScalarFunction::MakeTime,
+                &[Value::float64(value), Value::Int64(0), Value::Int64(0)],
+                &[Some(column), Some(DataType::Int64), Some(DataType::Int64)],
+                None,
+                Some(DataType::Time64 { fsp: 0 }),
+                Collation::default(),
+            )
+            .expect("MAKETIME evaluates")
+        };
+        assert_eq!(
+            hours(1e30, DataType::Float32),
+            Value::Utf8("-838:59:59".into())
+        );
+        assert_eq!(
+            hours(-1e30, DataType::Float32),
+            Value::Utf8("-838:59:59".into())
+        );
+        assert_eq!(
+            hours(1e30, DataType::Float64),
+            Value::Utf8("838:59:59".into())
+        );
+        assert_eq!(
+            hours(-1e30, DataType::Float64),
+            Value::Utf8("-838:59:59".into())
+        );
+        assert_eq!(
+            hours(2.5, DataType::Float32),
+            Value::Utf8("02:00:00".into())
+        );
     }
 
     #[test]
