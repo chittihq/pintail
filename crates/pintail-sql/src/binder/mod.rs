@@ -5515,6 +5515,8 @@ fn parse_number(value: &str) -> Result<(Value, Option<DataType>), BindError> {
         {
             return Err(BindError::InvalidNumericLiteral(value.to_owned()));
         }
+        let sign = &integer[..integer.len() - digits.len()];
+        let (digits, fraction) = decimal_literal_digits(digits, fraction);
         let scale = u8::try_from(fraction.len())
             .map_err(|_| BindError::InvalidNumericLiteral(value.to_owned()))?
             .min(MAX_DECIMAL_SCALE);
@@ -5523,9 +5525,9 @@ fn parse_number(value: &str) -> Result<(Value, Option<DataType>), BindError> {
             .clamp(scale.max(1), MAX_DECIMAL_PRECISION);
         return Ok((
             Value::Utf8(if fraction.is_empty() {
-                integer.to_owned()
+                format!("{sign}{digits}")
             } else {
-                value.to_owned()
+                format!("{sign}{digits}.{fraction}")
             }),
             Some(DataType::Decimal { precision, scale }),
         ));
@@ -5541,16 +5543,40 @@ fn parse_number(value: &str) -> Result<(Value, Option<DataType>), BindError> {
     if digits.is_empty() || !digits.chars().all(|character| character.is_ascii_digit()) {
         return Err(BindError::InvalidNumericLiteral(value.to_owned()));
     }
+    let sign = &value[..value.len() - digits.len()];
+    let (digits, _) = decimal_literal_digits(digits, "");
     let precision = u8::try_from(digits.len())
         .unwrap_or(MAX_DECIMAL_PRECISION)
         .clamp(1, MAX_DECIMAL_PRECISION);
     Ok((
-        Value::Utf8(value.to_owned()),
+        Value::Utf8(format!("{sign}{digits}")),
         Some(DataType::Decimal {
             precision,
             scale: 0,
         }),
     ))
+}
+
+/// The digits a decimal literal keeps. `MySQL` reads one into nine groups
+/// of nine digits, the whole part and the fraction each rounded up to whole
+/// groups. A whole part that needs more than nine groups (past 81 digits)
+/// is the largest DECIMAL, sixty-five nines; otherwise the fraction is cut,
+/// not rounded, to the groups the whole part leaves.
+fn decimal_literal_digits<'a>(
+    digits: &'a str,
+    fraction: &'a str,
+) -> (std::borrow::Cow<'a, str>, &'a str) {
+    const GROUPS: usize = 9;
+    const GROUP_DIGITS: usize = 9;
+    let whole_groups = digits.len().div_ceil(GROUP_DIGITS);
+    if whole_groups > GROUPS {
+        return (
+            std::borrow::Cow::Owned("9".repeat(usize::from(MAX_DECIMAL_PRECISION))),
+            "",
+        );
+    }
+    let kept = ((GROUPS - whole_groups) * GROUP_DIGITS).min(fraction.len());
+    (std::borrow::Cow::Borrowed(digits), &fraction[..kept])
 }
 
 fn bind_unary(
