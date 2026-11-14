@@ -1040,7 +1040,10 @@ pub(super) fn bind_scalar_function(
         "HOUR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Hour),
         "MINUTE" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Minute),
         "SECOND" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Second),
-        "MICROSECOND" if args.len() == 1 => ScalarFunction::ExtractMicros { leading: None },
+        "MICROSECOND" if args.len() == 1 => ScalarFunction::ExtractMicros {
+            leading: None,
+            signed: false,
+        },
         "DATE_FORMAT" if args.len() == 2 => ScalarFunction::DateFormat,
         "TIME_FORMAT" if args.len() == 2 => ScalarFunction::TimeFormat,
         "DATEDIFF" if args.len() == 2 => ScalarFunction::DateDiff,

@@ -4486,6 +4486,7 @@ fn bind_expr_inner(
                         bind_scalar(
                             ScalarFunction::ExtractMicros {
                                 leading: Some(parts[0]),
+                                signed: true,
                             },
                             vec![operand],
                         )?
@@ -4516,7 +4517,10 @@ fn bind_expr_inner(
                 }
                 DateTimeField::Microsecond => {
                     return bind_scalar(
-                        ScalarFunction::ExtractMicros { leading: None },
+                        ScalarFunction::ExtractMicros {
+                            leading: None,
+                            signed: true,
+                        },
                         vec![bind_expr_inner(
                             inner, tables, aggregates, windows, subqueries,
                         )?],

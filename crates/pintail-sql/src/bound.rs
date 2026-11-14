@@ -1576,6 +1576,9 @@ pub enum ScalarFunction {
     ExtractMicros {
         /// First clock component, or none for MICROSECOND alone.
         leading: Option<DatePart>,
+        /// `EXTRACT(MICROSECOND FROM ...)` carries the sign of a negative
+        /// time; the `MICROSECOND` function does not.
+        signed: bool,
     },
     /// Concatenated decimal date/time components with their display width.
     PackedDateParts {

@@ -3024,17 +3024,29 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::ExtractTime { leading, trailing } => {
             temporal::extract_time(&values[0], leading, trailing).map(Value::Int64)
         }
-        ScalarFunction::ExtractMicros { leading } => {
+        ScalarFunction::ExtractMicros { leading, signed } => {
             // The microseconds of text are those of the TIME it reads as.
             if leading.is_none()
                 && let Value::Utf8(text) = &values[0]
                 && written_text(argument_types, 0)
             {
                 return Ok(cast_text_time(text, 6)
-                    .and_then(|time| time.rsplit_once('.')?.1.parse::<i64>().ok())
+                    .and_then(|time| {
+                        let micros = time.rsplit_once('.')?.1.parse::<i64>().ok()?;
+                        // EXTRACT keeps a negative time's sign on the field.
+                        Some(if signed && time.starts_with('-') {
+                            -micros
+                        } else {
+                            micros
+                        })
+                    })
                     .map_or(Value::Null, Value::Int64));
             }
-            temporal::extract_micros(&values[0], leading).map(Value::Int64)
+            let micros = temporal::extract_micros(&values[0], leading)?;
+            let negative = signed
+                && leading.is_none()
+                && scalar_string(&values[0])?.trim_start().starts_with('-');
+            Ok(Value::Int64(if negative { -micros } else { micros }))
         }
         ScalarFunction::Spatial(function) => spatial::evaluate(function, values),
         ScalarFunction::Collate { .. } | ScalarFunction::PackedDateParts { .. } => {
