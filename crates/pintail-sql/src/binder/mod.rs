@@ -180,6 +180,83 @@ impl<'catalog> Binder<'catalog> {
         Ok(bound)
     }
 
+    /// `SELECT * ... GROUP BY ... WITH ROLLUP` over one base table, with the
+    /// `*` written out as its columns. The rollup rewrite turns a rolled-up
+    /// key into NULL wherever the select list names it, and a `*` names
+    /// nothing: the subtotal rows showed a group's value in the key column.
+    fn rollup_wildcard_expanded(&self, query: &Query, outer_ctes: &[BoundCte]) -> Option<Query> {
+        let SetExpr::Select(select) = query.body.as_ref() else {
+            return None;
+        };
+        let GroupByExpr::Expressions(_, modifiers) = &select.group_by else {
+            return None;
+        };
+        if modifiers.is_empty()
+            || query.with.is_some()
+            || !select.projection.iter().any(|item| {
+                matches!(
+                    item,
+                    SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(..)
+                )
+            })
+        {
+            return None;
+        }
+        let [
+            TableWithJoins {
+                relation:
+                    TableFactor::Table {
+                        name, args: None, ..
+                    },
+                joins,
+            },
+        ] = select.from.as_slice()
+        else {
+            return None;
+        };
+        if !joins.is_empty() {
+            return None;
+        }
+        if let Ok([single]) = object_name_parts(name).as_deref()
+            && outer_ctes
+                .iter()
+                .any(|cte| cte.name.eq_ignore_ascii_case(single))
+        {
+            return None;
+        }
+        let (_, table) = self.resolve_table(name).ok()?;
+        let columns = table
+            .schema()
+            .columns()
+            .iter()
+            .map(|column| {
+                let name = column.name();
+                let plain = name
+                    .chars()
+                    .all(|letter| letter.is_ascii_alphanumeric() || letter == '_')
+                    && !name.starts_with(|first: char| first.is_ascii_digit());
+                SelectItem::UnnamedExpr(Expr::Identifier(if plain {
+                    Ident::new(name)
+                } else {
+                    Ident::with_quote('`', name)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let mut expanded = query.clone();
+        let SetExpr::Select(select) = expanded.body.as_mut() else {
+            return None;
+        };
+        select.projection = std::mem::take(&mut select.projection)
+            .into_iter()
+            .flat_map(|item| match item {
+                // One table is read, so a qualified `*` can only be its own.
+                SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(..) => columns.clone(),
+                other => vec![other],
+            })
+            .collect();
+        Some(expanded)
+    }
+
     /// Binds the grouped branches a `WITH ROLLUP` query was rewritten into.
     fn bind_rollup(
         &self,
@@ -235,6 +312,8 @@ impl<'catalog> Binder<'catalog> {
         {
             return Err(BindError::UnsupportedQueryClause(query.to_string()));
         }
+        let expanded = self.rollup_wildcard_expanded(query, outer_ctes);
+        let query = expanded.as_ref().unwrap_or(query);
         if let Some(rollup) = rollup::rewrite(query, self.source)? {
             return self.bind_rollup(query, &rollup, outer_ctes);
         }
