@@ -3579,6 +3579,56 @@ fn chooses_declared(expression: &BoundExpr) -> bool {
     }
 }
 
+/// An ENUM or SET column as its position or member mask.
+pub(super) fn declared_as_number(column: &BoundExpr) -> BoundExpr {
+    BoundExpr {
+        data_type: Some(DataType::Float64),
+        nullable: column.nullable,
+        kind: BoundExprKind::Binary {
+            op: BinaryOp::Add,
+            left: Box::new(column.clone()),
+            right: Box::new(BoundExpr {
+                data_type: Some(DataType::Int64),
+                nullable: false,
+                kind: BoundExprKind::Literal(Value::Int64(0)),
+            }),
+        },
+    }
+}
+
+/// The number a date, a time or the bytes of a BIT value stands for, as a
+/// DOUBLE; `None` for any other branch.
+fn own_number(branch: &BoundExpr) -> Option<BoundExpr> {
+    if let BoundExprKind::Scalar {
+        function: ScalarFunction::BitBytes(_),
+        args,
+    } = &branch.kind
+    {
+        return args
+            .first()
+            .map(|bits| cast_to(bits.clone(), DataType::Float64));
+    }
+    matches!(
+        branch.data_type,
+        Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. })
+    )
+    .then(|| cast_to(temporal_as_number(branch.clone()), DataType::Float64))
+}
+
+/// Whether `expression` is an IF, CASE or NULLIF that can hand on a value
+/// [`own_number`] reads.
+fn chooses_own_number(expression: &BoundExpr) -> bool {
+    let BoundExprKind::Scalar { function, args } = &expression.kind else {
+        return false;
+    };
+    let hands_on = |branch: &BoundExpr| own_number(branch).is_some() || chooses_own_number(branch);
+    match function {
+        ScalarFunction::If => args[1..].iter().any(hands_on),
+        ScalarFunction::NullIf => hands_on(&args[0]),
+        _ => false,
+    }
+}
+
 /// The subject of an `IN` or `BETWEEN` whose other operands are all numbers,
 /// read as a number where it is a choice among ENUM or SET columns.
 pub(super) fn choice_among_numbers(mut args: Vec<BoundExpr>) -> Vec<BoundExpr> {
@@ -3604,7 +3654,14 @@ pub(super) fn choice_among_numbers(mut args: Vec<BoundExpr>) -> Vec<BoundExpr> {
 /// each ENUM or SET branch is therefore read as a number where it stands.
 /// Anything else is returned as it came.
 pub(super) fn choice_as_number(expression: BoundExpr) -> BoundExpr {
-    if !chooses_declared(&expression) {
+    // A choice that answers text may also hand on a date, a time or the
+    // bytes of a BIT value, and each of those is likewise asked for its
+    // own number: HHMMSS for a TIME, not the hours its text starts with.
+    let text = matches!(
+        expression.data_type,
+        Some(DataType::Utf8 | DataType::Binary)
+    );
+    if !(chooses_declared(&expression) || (text && chooses_own_number(&expression))) {
         return expression;
     }
     let BoundExprKind::Scalar { function, args } = &expression.kind else {
@@ -3612,19 +3669,9 @@ pub(super) fn choice_as_number(expression: BoundExpr) -> BoundExpr {
     };
     let number = |branch: &BoundExpr| {
         if is_declared_column(branch) {
-            BoundExpr {
-                data_type: Some(DataType::Float64),
-                nullable: branch.nullable,
-                kind: BoundExprKind::Binary {
-                    op: BinaryOp::Add,
-                    left: Box::new(branch.clone()),
-                    right: Box::new(BoundExpr {
-                        data_type: Some(DataType::Int64),
-                        nullable: false,
-                        kind: BoundExprKind::Literal(Value::Int64(0)),
-                    }),
-                },
-            }
+            declared_as_number(branch)
+        } else if text && let Some(number) = own_number(branch) {
+            number
         } else {
             choice_as_number(branch.clone())
         }
@@ -4094,7 +4141,7 @@ fn bind_projection(
                 )?;
                 projection.push(BoundProjection {
                     name: projection_name(expr, source, SourceClause::Projection),
-                    expr: bound,
+                    expr: function::bit_choice_as_printed(bound),
                 });
             }
             SelectItem::ExprWithAlias { expr, alias } => {
@@ -4107,7 +4154,7 @@ fn bind_projection(
                 )?;
                 projection.push(BoundProjection {
                     name: alias.value.clone(),
-                    expr: bound,
+                    expr: function::bit_choice_as_printed(bound),
                 });
             }
             SelectItem::Wildcard(options) => {
@@ -7454,6 +7501,28 @@ fn bind_aggregate(
     }
     let expr = if aggregate_function == AggregateFunction::GroupConcat {
         expr.map(function::float_string_argument)
+    } else if distinct
+        && matches!(
+            aggregate_function,
+            AggregateFunction::Sum | AggregateFunction::Average
+        )
+        && expr.as_ref().is_some_and(chooses_as_text)
+    {
+        // Duplicates are removed from the values the choice ANSWERS, and
+        // it answers text: an ENUM or SET branch is its label there and a
+        // TIME its `hh:mm:ss`, each then read as the number that text
+        // starts with. Without DISTINCT the branch itself is asked for
+        // its number, which is what `numeric_aggregate_input` arranges.
+        expr.map(|value| match value.data_type {
+            Some(DataType::Utf8) => cast_to(plain_text(value), DataType::Float64),
+            // Bytes are read as the number they spell.
+            Some(DataType::Binary) => cast_to(value, DataType::Float64),
+            // A date or a time: the whole number its text starts with.
+            _ => cast_to(
+                cast_to(cast_to(value, DataType::Utf8), DataType::Float64),
+                DataType::Int64,
+            ),
+        })
     } else {
         numeric_aggregate_input(aggregate_function, expr)
     };
@@ -7732,6 +7801,22 @@ fn bit_aggregate_input(
         });
     }
     expr.map(choice_as_number)
+}
+
+/// Whether `expression` is an IF, CASE or NULLIF answering text, bytes, a
+/// date or a time, some branch of which reads as another number than its
+/// text does: an ENUM or SET column, a date, a time or a BIT value.
+fn chooses_as_text(expression: &BoundExpr) -> bool {
+    matches!(
+        expression.data_type,
+        Some(
+            DataType::Utf8
+                | DataType::Binary
+                | DataType::Date32
+                | DataType::DateTime64 { .. }
+                | DataType::Time64 { .. }
+        )
+    ) && (chooses_declared(expression) || chooses_own_number(expression))
 }
 
 fn numeric_aggregate_input(

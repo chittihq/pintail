@@ -423,6 +423,11 @@ stays readable as a list of things to fix.
   at the widest width (`0x0032` for a `BIT(8)` value beside a `BIT(16)`
   one), where MySQL answers each at its own. Grouped by, such an
   expression shows its bytes, where MySQL shows the number.
+- `IF` and `CASE` choosing between a `BIT` value and a number are a
+  number wherever they are computed with, and the select item prints the
+  BIT branch as its bytes, as MySQL does. A string function over such a
+  choice (`CONCAT(IF(c, n, b), '')`) reads the BIT branch as the digits
+  of its number, where MySQL reads its bytes.
 - `GROUP BY ... WITH ROLLUP` is refused beside `SELECT DISTINCT` and
   beside a window function. `GROUPING()` is accepted in the select list and
   in `HAVING` and refused in `ORDER BY`; name the select item

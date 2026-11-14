@@ -2794,6 +2794,76 @@ pub(super) fn bind_case(
     Ok(result)
 }
 
+/// Whether `value` is typed as a number.
+fn is_number(value: &BoundExpr) -> bool {
+    matches!(
+        value.data_type,
+        Some(
+            DataType::Boolean
+                | DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Year
+                | DataType::Float32
+                | DataType::Float64
+                | DataType::Decimal { .. }
+        )
+    )
+}
+
+/// Replaces each BIT branch of an IF's arguments by the bytes it holds.
+fn bit_branches_as_bytes(args: &mut [BoundExpr]) {
+    for value in args.iter_mut().skip(1) {
+        if let Some(width) = value.bit_width() {
+            *value = crate::text_charset::wrap(
+                value.clone(),
+                ScalarFunction::BitBytes(width.div_ceil(8)),
+                DataType::Binary,
+            );
+        }
+    }
+}
+
+/// A select item that chooses between a BIT value and a number, as it is
+/// printed. The choice is a number to everything that computes with it,
+/// but printed, its BIT branch is the bytes the value holds and not the
+/// digits of the number - except beside an unsigned integer, where it
+/// stays the number.
+pub(super) fn bit_choice_as_printed(expr: BoundExpr) -> BoundExpr {
+    let BoundExprKind::Scalar {
+        function: ScalarFunction::If,
+        args,
+    } = &expr.kind
+    else {
+        return expr;
+    };
+    let bits = |value: &BoundExpr| value.bit_width().is_some();
+    let typed = |value: &&BoundExpr| value.data_type.is_some();
+    let unsigned = |value: &BoundExpr| {
+        matches!(
+            value.data_type,
+            Some(DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64)
+        )
+    };
+    if !(args.iter().skip(1).filter(typed).any(bits)
+        && args
+            .iter()
+            .skip(1)
+            .filter(typed)
+            .any(|value| !bits(value) && !unsigned(value)))
+    {
+        return expr;
+    }
+    let mut args = args.clone();
+    bit_branches_as_bytes(&mut args);
+    bind_scalar(ScalarFunction::If, args).unwrap_or(expr)
+}
+
 pub(super) fn bind_cast(
     expr: &Expr,
     data_type: &SqlDataType,
@@ -2902,12 +2972,7 @@ pub(super) fn bind_cast(
     }
     // A DECIMAL or DOUBLE cast asks for the number; an integer cast reads
     // the text.
-    if matches!(
-        target,
-        DataType::Float32 | DataType::Float64 | DataType::Decimal { .. }
-    ) {
-        operand = super::choice_as_number(operand);
-    }
+    let operand = cast_operand_as_number(operand, target);
     bind_scalar(
         ScalarFunction::DeclaredCast {
             target,
@@ -3017,15 +3082,33 @@ pub(super) fn bind_convert(
             ));
         }
     };
+    let operand = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
     bind_scalar(
         ScalarFunction::DeclaredCast {
             target,
             characters: data_type.as_ref().and_then(declared_characters),
         },
-        vec![bind_expr_inner(
-            expr, tables, aggregates, windows, subqueries,
-        )?],
+        vec![cast_operand_as_number(operand, target)],
     )
+}
+
+/// The operand of a cast to DOUBLE or DECIMAL, which asks for the number:
+/// the chosen branch's own number through an IF, CASE or NULLIF, and an
+/// ENUM or SET column's position or member mask - not the digits of its
+/// label - when the target is DECIMAL, as it already is for DOUBLE.
+fn cast_operand_as_number(operand: BoundExpr, target: DataType) -> BoundExpr {
+    if !matches!(
+        target,
+        DataType::Float32 | DataType::Float64 | DataType::Decimal { .. }
+    ) {
+        return operand;
+    }
+    let operand = super::choice_as_number(operand);
+    if matches!(target, DataType::Decimal { .. }) && super::is_declared_column(&operand) {
+        super::declared_as_number(&operand)
+    } else {
+        operand
+    }
 }
 
 fn declared_characters(data_type: &SqlDataType) -> Option<u32> {
@@ -3285,34 +3368,23 @@ pub(super) fn bind_scalar(
                 condition.clone(),
             )));
         }
-        // Beside a value of another type a BIT value is chosen as its
+        // Beside a string, a date or a time a BIT value is chosen as its
         // bytes: the result is a string, and the BIT's part of it is the
-        // bytes it holds, not the digits of its number. An unsigned
-        // integer is the one companion a BIT stays a number beside.
+        // bytes it holds, not the digits of its number. Beside a number
+        // the result is a number and the BIT value is the integer it
+        // holds - what arithmetic, a cast and an aggregate over the choice
+        // read. (A select item prints such a choice; see
+        // `bit_choice_as_printed`.)
         let bits = |value: &BoundExpr| value.bit_width().is_some();
         let typed = |value: &&BoundExpr| value.data_type.is_some();
-        let unsigned = |value: &BoundExpr| {
-            matches!(
-                value.data_type,
-                Some(DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64)
-            )
-        };
         if args.iter().skip(1).filter(typed).any(bits)
             && args
                 .iter()
                 .skip(1)
                 .filter(typed)
-                .any(|value| !bits(value) && !unsigned(value))
+                .any(|value| !bits(value) && !is_number(value))
         {
-            for value in args.iter_mut().skip(1) {
-                if let Some(width) = value.bit_width() {
-                    *value = crate::text_charset::wrap(
-                        value.clone(),
-                        ScalarFunction::BitBytes(width.div_ceil(8)),
-                        DataType::Binary,
-                    );
-                }
-            }
+            bit_branches_as_bytes(&mut args);
         }
         args
     } else {

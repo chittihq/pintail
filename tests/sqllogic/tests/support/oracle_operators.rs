@@ -535,6 +535,18 @@ const NEAREST_SCOPE: &[&str] = &[
     "SELECT id, (SELECT SUM(d.x) FROM orders users, LATERAL (SELECT users.user_id AS x) d) AS s FROM users ORDER BY id",
 ];
 
+const CONDITIONAL_NUMBERS: &[&str] = &[
+    "SELECT SUM(IF(id = 1, total, status)), SUM(DISTINCT IF(id = 1, total, status)), AVG(IF(id = 1, total, status)), AVG(DISTINCT IF(id = 1, total, status)) FROM orders",
+    "SELECT SUM(IF(id = 1, total, placed_at)), SUM(DISTINCT IF(id = 1, total, placed_at)), AVG(DISTINCT IF(id = 1, total, placed_at)) FROM orders",
+    "SELECT SUM(IF(id = 1, total, TIME(placed_at))), SUM(DISTINCT IF(id = 1, total, TIME(placed_at))) FROM orders",
+    "SELECT SUM(IF(id = 1, total, DATE(placed_at))), SUM(DISTINCT IF(id = 1, total, DATE(placed_at))) FROM orders",
+    "SELECT id, IF(id = 1, total, TIME(placed_at)) + 0, CAST(IF(id = 1, total, placed_at) AS DECIMAL(20,2)) FROM orders ORDER BY id",
+    "SELECT id, CAST(status AS DECIMAL(10,2)), CONVERT(status, DECIMAL(4,1)) FROM orders ORDER BY id",
+    "SELECT SUM(CAST(status AS DECIMAL(10,2))), SUM(DISTINCT CAST(status AS DECIMAL(10,2))), AVG(CAST(status AS DECIMAL(10,2))), MIN(CAST(status AS DECIMAL(10,2))), MAX(CAST(status AS DECIMAL(10,2))) FROM orders",
+    "SELECT user_id, SUM(DISTINCT CASE WHEN id = 1 THEN total ELSE status END), SUM(CASE WHEN id = 1 THEN total ELSE status END), SUM(DISTINCT CAST(status AS DECIMAL(10,2))) FROM orders GROUP BY user_id ORDER BY user_id",
+    "SELECT SUM(DISTINCT NULLIF(status, 'x')), SUM(NULLIF(status, 'x')), SUM(DISTINCT IF(id = 1, status, status)), SUM(IF(id > 1, TIME(placed_at), TIME(placed_at))), SUM(DISTINCT IF(id > 1, TIME(placed_at), TIME(placed_at))) FROM orders",
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -553,6 +565,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("conditional numbers", CONDITIONAL_NUMBERS),
         ("nearest scope", NEAREST_SCOPE),
         ("json exact integers", JSON_EXACT_INTEGERS),
         ("time read from short text", TIME_READ_FROM_SHORT_TEXT),
