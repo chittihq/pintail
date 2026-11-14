@@ -74,8 +74,8 @@ pub fn spawn(
         // 'created', 'probed' or 'snapshotting', none of which the
         // supervisor schedules, so nothing would ever run its cycles, reach
         // the automatic table repair, or copy the tables it never got to.
-        // A production instance sat that way for over a day with 108 tables
-        // quarantined and 134 never copied. The copy is re-armed here, on
+        // A production instance sat that way for over a day with most of its
+        // tables quarantined or never copied. The copy is re-armed here, on
         // the same job slot an operator's click would take.
         let mut resume: std::collections::BTreeMap<String, bool> =
             std::collections::BTreeMap::new();

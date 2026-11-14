@@ -2940,7 +2940,7 @@ The stranding phase went red before its fix and green after.
   was left in `created`, `probed` or `snapshotting`, none of which the
   supervisor schedules, so nothing ever ran its cycles, reached the automatic
   table repair, or copied the tables it had not got to. A production instance
-  sat that way for over a day with 108 tables quarantined and 134 never
+  sat that way for over a day with most of its tables quarantined or never
   copied. The copy now resumes at boot on the same job slot an operator's
   click would take - forced if the interrupted copy was a forced one - and
   says so in the activity feed, or says why it could not. Pinned by a new
