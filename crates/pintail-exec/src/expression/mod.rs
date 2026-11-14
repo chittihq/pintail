@@ -5487,18 +5487,30 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::JsonLength => {
             let parsed = parse_json_argument(&values[0])?;
-            let found = match values.get(1) {
-                None => Some(&parsed),
-                Some(path) => json_path_lookup(&parsed, &scalar_string(path)?)?,
+            // A scalar has length 1; only containers count members.
+            let length = |value: &serde_json::Value| match value {
+                serde_json::Value::Array(items) => items.len() as u64,
+                serde_json::Value::Object(members) => members.len() as u64,
+                _ => 1,
             };
-            Ok(found.map_or(Value::Null, |value| {
-                // A scalar has length 1; only containers count members.
-                Value::UInt64(match value {
-                    serde_json::Value::Array(items) => items.len() as u64,
-                    serde_json::Value::Object(members) => members.len() as u64,
-                    _ => 1,
-                })
-            }))
+            let measured = match values.get(1) {
+                None => Some(length(&parsed)),
+                Some(path) => {
+                    let path = scalar_string(path)?;
+                    let steps = json_path_steps(&path)?;
+                    if steps.iter().any(JsonStep::multi) {
+                        // A path that can select several targets is measured
+                        // as the array its matches make: their count, or
+                        // NULL when it selects nothing.
+                        let mut matches = Vec::new();
+                        collect_json_matches(&parsed, &steps, &mut matches);
+                        (!matches.is_empty()).then_some(matches.len() as u64)
+                    } else {
+                        json_path_lookup(&parsed, &path)?.map(length)
+                    }
+                }
+            };
+            Ok(measured.map_or(Value::Null, Value::UInt64))
         }
         ScalarFunction::JsonKeys => {
             let parsed = parse_json_argument(&values[0])?;

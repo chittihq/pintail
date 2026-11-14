@@ -467,6 +467,12 @@ const FRACTIONAL_DIGIT_COUNTS: &[&str] = &[
     "SELECT id, ROUND(frac, 1.5), ROUND(approx, 0.5), TRUNCATE(frac, id / 3), ROUND(frac, approx), ROUND(whole, -1.5) FROM bounds ORDER BY id",
 ];
 
+const JSON_LENGTH_OF_MANY_TARGETS: &[&str] = &[
+    r#"SELECT JSON_LENGTH('[]', '$[0 to 1]'), JSON_LENGTH('[1,2,3]', '$[0 to 1]'), JSON_LENGTH('[1,2,3]', '$[*]'), JSON_LENGTH('{"a":[1,2]}', '$.a'), JSON_LENGTH('{"a":[1,2]}', '$.*'), JSON_LENGTH('[[1,2],[3]]', '$[0 to 1]'), JSON_LENGTH('[[1,2],[3]]', '$[0]'), JSON_LENGTH('[1]', '$[last]'), JSON_LENGTH('[[1,2]]', '$[0 to 0]'), JSON_LENGTH('{"a":{"b":[1,2,3]}}', '$**.b'), JSON_LENGTH('{"a":1}', '$.*.x'), JSON_LENGTH('[1,2]', '$[5 to 6]'), JSON_LENGTH(NULL, '$[*]'), JSON_LENGTH('5', '$[0 to 1]')"#,
+    "SELECT id, JSON_LENGTH(meta, '$.items[0 to 1]'), JSON_LENGTH(meta, '$.*'), JSON_LENGTH(meta, '$.tags[*]'), JSON_LENGTH(meta, '$.items'), JSON_LENGTH(meta, '$**.score') FROM orders ORDER BY id",
+    r#"SELECT JSON_CONTAINS_PATH('[]', 'one', '$[0 to 1]'), JSON_CONTAINS_PATH('[1,2,3]', 'one', '$[0 to 1]'), JSON_CONTAINS_PATH('[1,2,3]', 'all', '$[5 to 6]', '$[0]'), JSON_CONTAINS_PATH('{"a":[1]}', 'one', '$.a[*]'), JSON_CONTAINS_PATH('{"a":[1]}', 'one', '$**.a')"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -485,6 +491,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("json length of many targets", JSON_LENGTH_OF_MANY_TARGETS),
         ("fractional digit counts", FRACTIONAL_DIGIT_COUNTS),
         ("stored json as text", STORED_JSON_AS_TEXT),
         ("exists over several columns", EXISTS_OVER_SEVERAL_COLUMNS),
