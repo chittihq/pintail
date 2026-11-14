@@ -379,6 +379,155 @@ fn normalize_end_spelling(pattern: &str) -> String {
     normalized
 }
 
+/// The characters whose case folding is more than one character, with that
+/// folding: `ß` folds to `ss`, the ligature `ﬁ` to `fi`. Read off the
+/// case mappings rather than tabulated: a character folds this way when it
+/// lowers to several characters, or when its capital form is several.
+fn full_folds() -> &'static [(char, String)] {
+    static FOLDS: std::sync::OnceLock<Vec<(char, String)>> = std::sync::OnceLock::new();
+    FOLDS.get_or_init(|| {
+        let lowered = |text: &str| {
+            text.chars()
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+        };
+        ('\u{80}'..='\u{ffff}')
+            .filter_map(|character| {
+                let lower = character.to_lowercase().collect::<String>();
+                if lower.chars().count() > 1 {
+                    return Some((character, lower));
+                }
+                let upper = lower
+                    .chars()
+                    .flat_map(char::to_uppercase)
+                    .collect::<String>();
+                (upper.chars().count() > 1).then(|| (character, lowered(&upper)))
+            })
+            .collect()
+    })
+}
+
+/// What one run of literal characters matches, from `at` on: each
+/// character as written, or a character whose folding the run spells.
+fn spelled(run: &[char], at: usize, folds: &[(char, String)], budget: &mut usize) -> String {
+    let Some(&character) = run.get(at) else {
+        return String::new();
+    };
+    let mut written = String::new();
+    written.push(character);
+    let mut options = Vec::new();
+    if let Ok(index) = folds.binary_search_by_key(&character, |(folded, _)| *folded) {
+        options.push(regex_syntax::escape(&folds[index].1));
+    }
+    let mut branches = vec![(regex_syntax::escape(&written), at + 1)];
+    for (folded, spelling) in folds {
+        let length = spelling.chars().count();
+        let spells = run.get(at..at + length).is_some_and(|slice| {
+            slice
+                .iter()
+                .flat_map(|character| character.to_lowercase())
+                .eq(spelling.chars())
+        });
+        if spells {
+            let mut folded_text = String::new();
+            folded_text.push(*folded);
+            branches.push((regex_syntax::escape(&folded_text), at + length));
+        }
+    }
+    if branches.len() == 1 && options.is_empty() {
+        return format!("{}{}", branches[0].0, spelled(run, at + 1, folds, budget));
+    }
+    *budget = budget.saturating_sub(branches.len() + options.len());
+    if *budget == 0 {
+        return run[at..].iter().fold(String::new(), |mut text, character| {
+            let mut one = String::new();
+            one.push(*character);
+            text.push_str(&regex_syntax::escape(&one));
+            text
+        });
+    }
+    let mut alternatives = branches
+        .into_iter()
+        .map(|(head, next)| format!("{head}{}", spelled(run, next, folds, budget)))
+        .collect::<Vec<_>>();
+    let rest = spelled(run, at + 1, folds, budget);
+    alternatives.extend(options.into_iter().map(|option| format!("{option}{rest}")));
+    format!("(?:{})", alternatives.join("|"))
+}
+
+/// A case-insensitive pattern in which a literal matches across a folding
+/// of more than one character, as the reference engine's literals do:
+/// `ss` written out also matches `ß`, and `ß` written out also matches
+/// `ss`. Only what is written as a run of literal characters does: `s{2}`,
+/// `[s]s` and `s.` still do not match `ß`, and `[ß]` does not match `ss`.
+///
+/// The pattern comes back unchanged when it has no such literal, when it
+/// does not parse here, or when it sets flags of its own.
+pub(super) fn with_full_case_folds(pattern: &str) -> std::borrow::Cow<'_, str> {
+    use regex_syntax::ast::Ast;
+    use std::borrow::Cow;
+    if pattern.contains("(?") {
+        return Cow::Borrowed(pattern);
+    }
+    let Ok(ast) = regex_syntax::ast::parse::Parser::new().parse(pattern) else {
+        return Cow::Borrowed(pattern);
+    };
+    let folds = full_folds();
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    let mut budget = 256_usize;
+    let mut pending = vec![&ast];
+    let mut run_of = |literals: &[&regex_syntax::ast::Literal], edits: &mut Vec<_>| {
+        let run = literals.iter().map(|literal| literal.c).collect::<Vec<_>>();
+        let replaced = spelled(&run, 0, folds, &mut budget);
+        if replaced.contains("(?:") {
+            edits.push((
+                literals[0].span.start.offset,
+                literals[literals.len() - 1].span.end.offset,
+                replaced,
+            ));
+        }
+    };
+    while let Some(node) = pending.pop() {
+        match node {
+            Ast::Literal(literal) => run_of(&[literal.as_ref()], &mut edits),
+            Ast::Concat(concat) => {
+                let mut run: Vec<&regex_syntax::ast::Literal> = Vec::new();
+                for part in &concat.asts {
+                    if let Ast::Literal(literal) = part {
+                        run.push(literal.as_ref());
+                    } else {
+                        if !run.is_empty() {
+                            run_of(&run, &mut edits);
+                            run.clear();
+                        }
+                        pending.push(part);
+                    }
+                }
+                if !run.is_empty() {
+                    run_of(&run, &mut edits);
+                }
+            }
+            Ast::Repetition(repetition) => pending.push(&repetition.ast),
+            Ast::Group(group) => pending.push(&group.ast),
+            Ast::Alternation(alternation) => pending.extend(alternation.asts.iter()),
+            _ => {}
+        }
+    }
+    if edits.is_empty() {
+        return Cow::Borrowed(pattern);
+    }
+    edits.sort_unstable_by_key(|(start, _, _)| *start);
+    let mut result = String::with_capacity(pattern.len() * 2);
+    let mut copied = 0;
+    for (start, end, replacement) in edits {
+        result.push_str(&pattern[copied..start]);
+        result.push_str(&replacement);
+        copied = end;
+    }
+    result.push_str(&pattern[copied..]);
+    Cow::Owned(result)
+}
+
 /// Keep strict end-of-input separate from the dollar assertion in the NFA.
 /// Capturing-group indexes are unchanged because the marker is non-capturing.
 fn strict_end_markers(pattern: &str) -> Result<String, ExecError> {
@@ -628,6 +777,44 @@ impl BoundaryProgram {
 #[cfg(test)]
 mod tests {
     use super::{ExecError, InterruptCounter, LineEndings, Program};
+
+    #[test]
+    fn a_literal_matches_across_a_folding_of_several_characters() {
+        let matches = |pattern: &str, text: &str| {
+            let folded = super::with_full_case_folds(pattern);
+            let program = Program::new(&folded, true, false, false, LineEndings::Unicode).unwrap();
+            is_match(&program, text)
+        };
+        for (pattern, text, expected) in [
+            ("ss", "stra\u{df}e", true),
+            ("SS", "stra\u{df}e", true),
+            ("\u{df}", "STRASSE", true),
+            ("a\u{df}b", "assb", true),
+            ("assb", "a\u{df}b", true),
+            ("^ss$", "\u{df}", true),
+            ("ss|x", "\u{df}", true),
+            ("a[\u{df}]", "ass", false),
+            ("sss?", "\u{df}", true),
+            ("ss?", "\u{df}", false),
+            ("fi", "\u{fb01}", true),
+            ("ffi", "\u{fb03}", true),
+            ("ss", "\u{1e9e}", true),
+            ("^s", "\u{df}", false),
+            ("s{2}", "\u{df}", false),
+            ("[s]s", "\u{df}", false),
+            ("s.", "\u{df}", false),
+            ("(s)(s)", "\u{df}", false),
+            ("s+", "\u{df}", false),
+            ("as", "a\u{df}b", false),
+            ("i", "\u{130}", false),
+        ] {
+            assert_eq!(matches(pattern, text), expected, "{pattern} against {text}");
+        }
+        assert!(matches!(
+            super::with_full_case_folds("abc[d-f]+"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
 
     #[test]
     fn boundary_matching_preserves_greediness_and_capture_expansion() {

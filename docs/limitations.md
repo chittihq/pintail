@@ -256,6 +256,13 @@ stays readable as a list of things to fix.
   is not a string (a number, a date, JSON, an ENUM or SET column), a string
   whose collation the previous item refuses, the four-argument form, and a
   length above 1048576.
+- A case-insensitive regular expression matches a character whose case
+  folding is several characters (`ß` and `ss`, a ligature and its letters)
+  only where the pattern writes plain literal text or lists the character
+  in a bracketed set. MySQL also matches in a few shapes this does not
+  cover: a literal directly followed by a quantifier (`'ß' REGEXP 'ss?'` is
+  1 in MySQL and 0 here), a range or negated set that contains such a
+  character, and a pattern that sets its own flags with `(?...)`.
 - `FOUND_ROWS()` and `ICU_VERSION()` are refused. `LAST_INSERT_ID()` is
   always 0 (no statement generates a key) and `LAST_INSERT_ID(expr)` is
   refused. `CURRENT_ROLE()` is always `NONE`. `GET_FORMAT` takes its format

@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4087;
+const EXPECTED_CASES: usize = 4100;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5595,6 +5595,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
     .chain(conversion_edge_cases())
     .chain(collation_report_cases())
     .chain(weight_string_cases())
+    .chain(regex_fold_cases())
     .collect()
 }
 
@@ -6230,6 +6231,35 @@ fn collation_report_cases() -> Vec<OracleCase> {
         });
     }
     cases
+}
+
+/// A case-insensitive pattern's literal text matches across a case folding
+/// of more than one character, in both directions, and nothing but literal
+/// text does.
+fn regex_fold_cases() -> Vec<OracleCase> {
+    [
+        "SELECT id, label REGEXP 'ss', label REGEXP '\u{df}', label REGEXP 'SS', label REGEXP '^stra(ss|x)e$', REGEXP_LIKE(label, 'ss', 'c') FROM events ORDER BY id",
+        "SELECT id, label REGEXP 's{2}', label REGEXP '[s]s', label REGEXP 'a[\u{df}]', REGEXP_REPLACE(label, 'ss', 'X'), REGEXP_INSTR(label, 'ss'), REGEXP_SUBSTR(label, 'ss') FROM events ORDER BY id",
+        "SELECT id, label FROM events WHERE label REGEXP 'ss' ORDER BY id",
+        "SELECT 'stra\u{df}e' REGEXP 'ss', 'stra\u{df}e' COLLATE utf8mb4_unicode_ci REGEXP 'ss', 'stra\u{df}e' COLLATE utf8mb4_general_ci REGEXP 'ss', 'stra\u{df}e' COLLATE utf8mb4_bin REGEXP 'ss', 'stra\u{df}e' COLLATE utf8mb4_0900_as_cs REGEXP 'ss'",
+        "SELECT REGEXP_LIKE('stra\u{df}e', 'ss', 'c'), REGEXP_LIKE('stra\u{df}e' COLLATE utf8mb4_bin, 'ss', 'i'), 'STRASSE' REGEXP '\u{df}', 'strasse' REGEXP '\u{df}', 'stra\u{df}e' REGEXP 'sS'",
+        "SELECT '\u{df}' REGEXP '^ss$', '\u{df}' REGEXP '^s', '\u{df}' REGEXP 's$', '\u{df}' REGEXP 's{2}', '\u{df}' REGEXP '[s]s'",
+        "SELECT '\u{df}' REGEXP 's.', '\u{df}' REGEXP '(s)(s)', '\u{df}' REGEXP 's+', 'a\u{df}b' REGEXP 'assb', 'assb' REGEXP 'a\u{df}b'",
+        "SELECT 'ass' REGEXP 'a[\u{df}]', '\u{df}' REGEXP 'ss|x', '\u{df}' REGEXP '^(ss)$', '\u{fb01}' REGEXP 'fi', 'fi' REGEXP '\u{fb01}'",
+        "SELECT '\u{fb03}' REGEXP 'ffi', '\u{130}' REGEXP 'i', '\u{149}' REGEXP '\u{2bc}n', '\u{1e9e}' REGEXP 'ss', '\u{1e9e}' REGEXP '\u{df}'",
+        "SELECT '\u{df}' REGEXP '\u{1e9e}', '\u{17f}' REGEXP 's', '\u{212a}' REGEXP 'k', '\u{e9}' REGEXP 'e', '\u{c9}' REGEXP '\u{e9}'",
+        "SELECT REGEXP_REPLACE('stra\u{df}e', 'ss', 'X'), REGEXP_INSTR('stra\u{df}e', 'ss'), REGEXP_SUBSTR('stra\u{df}e', 'ss'), REGEXP_REPLACE('stra\u{df}e', 's', 'X'), REGEXP_INSTR('a\u{df}b', 'sb')",
+        "SELECT REGEXP_SUBSTR('a\u{df}b', 'as'), REGEXP_REPLACE('STRASSE', '\u{df}', 'x'), REGEXP_SUBSTR('a\u{df}b', 'a.b'), REGEXP_SUBSTR('a\u{df}b', 'a..b'), REGEXP_SUBSTR('assb', 'a.b')",
+        "SELECT REGEXP_REPLACE('\u{df}\u{df}', 'ss', 'X'), REGEXP_REPLACE('\u{df}\u{df}', 'sss', 'X'), REGEXP_INSTR('\u{df}', 'ss', 1, 1, 1)",
+    ]
+    .into_iter()
+    .map(|sql| OracleCase {
+        sql_mode: "",
+        family: "regex case folds",
+        sql: sql.to_owned(),
+        ordered: true,
+    })
+    .collect()
 }
 
 /// `WEIGHT_STRING` under each collation whose weights are carried: ASCII,
