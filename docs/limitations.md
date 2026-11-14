@@ -22,10 +22,9 @@ stays readable as a list of things to fix.
   classifies them, and reject otherwise. On that path the inner query is
   planned and executed once per DISTINCT outer tuple - a statement-local
   memo shares the answer across outer rows that substitute the same values
-  - but each execution still plans the inner query from scratch, so a
-  correlated `IN` whose inner side holds a join pays roughly 20× the
-  per-execution cost of a scalar or `EXISTS` shape
-  (`benchmark/evidence/dependent-subquery-memo.md`). An inner query using
+  - and the cost is the executions: planning is 3 to 9 percent of one that
+  reads its table
+  (`benchmark/evidence/dependent-subquery-plan-share.md`). An inner query using
   `RAND()` or `UUID()` is never memoized. A correlated `NOT IN` over
   nullable columns decorrelates as a `WHERE` conjunct only; elsewhere both
   membership sides must be provably non-nullable, because with a possible
@@ -37,7 +36,9 @@ stays readable as a list of things to fix.
   subquery resolves once per distinct correlation value and each candidate
   pair is tested row by row. The ON condition's plain equalities bucket the
   candidates, so the cost follows the pairs those keys reach; with no such
-  equality every pair is tested. `NOT IN`, `NOT EXISTS`, inequality
+  equality the condition's plain inequalities bound them; with neither
+  every pair is tested. Each candidate pair costs 1.4 to 2.5 microseconds
+  (`benchmark/evidence/inequality-join-search.md`). `NOT IN`, `NOT EXISTS`, inequality
   correlations and subqueries with their own joins or grouping answer
   there, slower than a hash join.
 - MySQL 8.4 with its default optimizer switches answers a correlated `IN`
@@ -60,10 +61,13 @@ stays readable as a list of things to fix.
   subquery reads string constants through a derived table (`3 < ANY (SELECT v
   FROM (SELECT '2' AS v UNION ALL SELECT '10') t)` is 0 there), and Pintail
   does not reproduce that form.
-- A join with no hashable equality key searches a sorted right input only
-  for an inequality between plain integer, double, date or same-precision
-  date-time columns. Any other theta condition, or a right input that
-  spills, tests every row pair, so over large inputs it runs until the
+- A join with no hashable equality key searches a sorted right input for
+  its inequalities between integers, doubles, exact decimals, dates and
+  date-times, and text under one collation; a second right-side expression
+  narrows further, a third does not. A condition with no such inequality,
+  a value outside its type's canonical form, a DECIMAL past 38 digits at
+  the comparison's scale, or a right input that spills or has no room for
+  its sorted run, tests every row pair, so over large inputs it runs until the
   memory ceiling or `max_execution_time` stops it.
 - A window `RANGE` frame measures a DATE or DATETIME key in whole `YEAR`,
   `MONTH`, `DAY`, `HOUR`, `MINUTE` or `SECOND` intervals or a compound of
