@@ -5805,15 +5805,26 @@ fn bind_unary(
     let (expr, negated_type) = match expr.data_type {
         _ if operator != UnaryOperator::Minus => (expr, None),
         // An unsigned constant negates exactly, past the signed range: -~1
-        // is -18446744073709551614. A column's negation stays a BIGINT,
-        // and out of range where it does not fit.
-        Some(DataType::UInt64) if is_constant_number(&expr) => (
-            expr,
-            Some(DataType::Decimal {
-                precision: 20,
-                scale: 0,
-            }),
-        ),
+        // is -18446744073709551614, a DECIMAL. One that fits a BIGINT
+        // negates as a BIGINT, as a column's negation always does (out of
+        // range where it does not fit). A constant whose value cannot be
+        // read here keeps the DECIMAL, which holds any of them.
+        Some(DataType::UInt64) if is_constant_number(&expr) => {
+            let negated = match constant_unsigned(&expr) {
+                Some(value) if i64::try_from(value).is_ok() => DataType::Int64,
+                _ => DataType::Decimal {
+                    // A written number has twenty digits at most; MySQL
+                    // allows a computed one a digit more.
+                    precision: if matches!(expr.kind, BoundExprKind::Literal(_)) {
+                        20
+                    } else {
+                        21
+                    },
+                    scale: 0,
+                },
+            };
+            (expr, Some(negated))
+        }
         Some(DataType::Binary) if unintroduced_bit_literal(written) => {
             (numeric_bit_input(expr, written)?, Some(DataType::Float64))
         }
@@ -5886,6 +5897,63 @@ fn is_time_literal(text: &str) -> bool {
 
 /// Whether `expr` is built from literals alone by operators and casts, so
 /// that `MySQL` knows its value when it types what is computed from it.
+/// The value of an unsigned constant built from whole-number literals,
+/// casts between integers and the bit and arithmetic operators, where it
+/// can be read without running anything; `None` for every other shape and
+/// for arithmetic that leaves the unsigned range.
+fn constant_unsigned(expr: &BoundExpr) -> Option<u64> {
+    let whole = |data_type: Option<DataType>| {
+        matches!(
+            data_type.map(DataType::storage_type),
+            Some(DataType::Int64 | DataType::UInt64 | DataType::Boolean)
+        )
+    };
+    match &expr.kind {
+        BoundExprKind::Literal(Value::UInt64(value)) => Some(*value),
+        BoundExprKind::Literal(Value::Int64(value)) => u64::try_from(*value).ok(),
+        BoundExprKind::Literal(Value::Boolean(value)) => Some(u64::from(*value)),
+        BoundExprKind::Unary {
+            op: UnaryOp::Plus,
+            expr,
+        } => constant_unsigned(expr),
+        BoundExprKind::Binary { op, left, right }
+            if whole(left.data_type) && whole(right.data_type) =>
+        {
+            let (left, right) = (constant_unsigned(left)?, constant_unsigned(right)?);
+            match op {
+                BinaryOp::Add => left.checked_add(right),
+                BinaryOp::Subtract => left.checked_sub(right),
+                BinaryOp::Multiply => left.checked_mul(right),
+                BinaryOp::BitAnd => Some(left & right),
+                BinaryOp::BitOr => Some(left | right),
+                BinaryOp::BitXor => Some(left ^ right),
+                // A shift of sixty-four bits or more leaves nothing.
+                BinaryOp::ShiftLeft => {
+                    Some(u32::try_from(right).map_or(0, |by| left.checked_shl(by).unwrap_or(0)))
+                }
+                BinaryOp::ShiftRight => {
+                    Some(u32::try_from(right).map_or(0, |by| left.checked_shr(by).unwrap_or(0)))
+                }
+                _ => None,
+            }
+        }
+        BoundExprKind::Scalar { function, args } if args.len() == 1 && whole(args[0].data_type) => {
+            let value = constant_unsigned(&args[0])?;
+            match function {
+                ScalarFunction::BitNot => Some(!value),
+                ScalarFunction::BitCount => Some(u64::from(value.count_ones())),
+                ScalarFunction::Cast(target) | ScalarFunction::DeclaredCast { target, .. }
+                    if whole(Some(*target)) =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 fn is_constant_number(expr: &BoundExpr) -> bool {
     match &expr.kind {
         BoundExprKind::Literal(_) => true,
@@ -11641,6 +11709,38 @@ mod tests {
             &[Int16, Int64],
         ] {
             assert!(!super::float_stays_single(types), "{types:?}");
+        }
+    }
+
+    /// A negated unsigned constant is a BIGINT where its value fits one
+    /// and a DECIMAL only past the signed range, as `MySQL` types it.
+    #[test]
+    fn a_negated_unsigned_constant_is_typed_by_its_value() {
+        let wide = |precision| {
+            Some(DataType::Decimal {
+                precision,
+                scale: 0,
+            })
+        };
+        for (expression, expected) in [
+            ("-CAST(5 AS UNSIGNED)", Some(DataType::Int64)),
+            ("-CAST(0 AS UNSIGNED)", Some(DataType::Int64)),
+            ("-BIT_COUNT(7)", Some(DataType::Int64)),
+            ("-(5 | 2)", Some(DataType::Int64)),
+            ("-(1 << 3)", Some(DataType::Int64)),
+            ("-(~0 >> 1)", Some(DataType::Int64)),
+            (
+                "-CAST(9223372036854775807 AS UNSIGNED)",
+                Some(DataType::Int64),
+            ),
+            ("-~1", wide(21)),
+            ("-(1 << 63)", wide(21)),
+            ("-((~0 >> 1) + 1)", wide(21)),
+            ("-CAST(9223372036854775808 AS UNSIGNED)", wide(21)),
+            ("-18446744073709551615", wide(20)),
+        ] {
+            let query = bind(&format!("SELECT {expression} FROM Events")).expect(expression);
+            assert_eq!(query.projection[0].expr.data_type, expected, "{expression}");
         }
     }
 
