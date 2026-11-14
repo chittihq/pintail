@@ -107,6 +107,7 @@ mod packed_lane_folds;
 mod packed_predicate_kernels;
 mod pairs_fixture;
 mod partition_rewrites;
+mod per_row_lanes;
 mod pinned_join_order;
 mod point_scan_memo;
 mod pre_aggregated_join;

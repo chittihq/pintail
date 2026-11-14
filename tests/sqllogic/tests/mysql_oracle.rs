@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4419;
+const EXPECTED_CASES: usize = 4428;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -4615,6 +4615,62 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT e.id, COUNT(*) OVER (PARTITION BY e.tag), \
              RANK() OVER (ORDER BY e.tag, u.name COLLATE utf8mb4_bin) \
              FROM events e JOIN users u ON u.id = e.id ORDER BY e.id",
+        ),
+        // DISTINCT sums key decimals by their units, a concatenation holds
+        // each row once, TIME parts read packed units, several JSON readers
+        // share one parse, and a window orders text by its weights.
+        ordered(
+            "distinct totals and concatenations",
+            "SELECT id > 4 AS k, SUM(DISTINCT frac), AVG(DISTINCT frac), COUNT(DISTINCT frac), \
+             SUM(DISTINCT whole), SUM(DISTINCT n) FROM bounds GROUP BY id > 4 ORDER BY k",
+        ),
+        ordered(
+            "distinct totals and concatenations",
+            "SELECT user_id, SUM(DISTINCT total), COUNT(DISTINCT total), AVG(DISTINCT total), \
+             GROUP_CONCAT(DISTINCT total ORDER BY total DESC SEPARATOR ';'), \
+             GROUP_CONCAT(status ORDER BY id) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "distinct totals and concatenations",
+            "SELECT active, GROUP_CONCAT(DISTINCT LOWER(tag) ORDER BY LOWER(tag)), \
+             GROUP_CONCAT(score ORDER BY score DESC, id SEPARATOR ''), \
+             GROUP_CONCAT(note ORDER BY id), GROUP_CONCAT(DISTINCT score ORDER BY score) \
+             FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "distinct totals and concatenations",
+            "SELECT SUM(DISTINCT total), AVG(DISTINCT total), GROUP_CONCAT(total), \
+             GROUP_CONCAT(DISTINCT total ORDER BY total), COUNT(DISTINCT total) \
+             FROM orders WHERE id > 1000000",
+        ),
+        ordered(
+            "time parts and second counts",
+            "SELECT id, HOUR(clock), MINUTE(clock), SECOND(clock), TIME_TO_SEC(clock), \
+             MICROSECOND(clock) FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "time parts and second counts",
+            "SELECT SUM(TIME_TO_SEC(clock)), SUM(HOUR(clock)), MAX(MINUTE(clock)), \
+             MIN(SECOND(clock)), COUNT(TIME_TO_SEC(clock)) FROM bounds",
+        ),
+        ordered(
+            "json readers of one document",
+            "SELECT id, JSON_EXTRACT(meta, '$.a'), JSON_LENGTH(meta), JSON_TYPE(meta), \
+             JSON_KEYS(meta), JSON_DEPTH(meta), JSON_EXTRACT(meta, '$.*') \
+             FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json readers of one document",
+            "SELECT id, JSON_VALID(note), JSON_VALID(name), \
+             JSON_EXTRACT(IF(JSON_VALID(note), note, '{\"k\": [1, 2]}'), '$.k'), \
+             JSON_LENGTH(IF(JSON_VALID(note), note, '{\"k\": [1, 2]}')) \
+             FROM events ORDER BY id",
+        ),
+        ordered(
+            "window key collations",
+            "SELECT id, ROW_NUMBER() OVER (PARTITION BY tag ORDER BY label, id), \
+             DENSE_RANK() OVER (ORDER BY tag), RANK() OVER (ORDER BY label DESC), \
+             COUNT(*) OVER (PARTITION BY label ORDER BY tag) FROM events ORDER BY id",
         ),
         // SUM and AVG read a temporal value as its number and a JSON
         // value as the float its scalar converts to.
