@@ -1247,7 +1247,16 @@ fn datetime_clock(body: &str) -> DatetimeText {
             return DatetimeText::Duration;
         };
         let separators = date.bytes().filter(u8::is_ascii_punctuation).count();
-        if separators < 2 || !date.starts_with(|character: char| character.is_ascii_digit()) {
+        // Year, month and day and no more: a fourth field before the space
+        // (`01:01:01.01 x`) is a clock with a fraction, read as a duration.
+        let fields = date
+            .split(|character: char| character.is_ascii_punctuation())
+            .filter(|field| !field.is_empty())
+            .count();
+        if separators < 2
+            || fields != 3
+            || !date.starts_with(|character: char| character.is_ascii_digit())
+        {
             return DatetimeText::Duration;
         }
     }
