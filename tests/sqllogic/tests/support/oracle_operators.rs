@@ -473,6 +473,20 @@ const JSON_LENGTH_OF_MANY_TARGETS: &[&str] = &[
     r#"SELECT JSON_CONTAINS_PATH('[]', 'one', '$[0 to 1]'), JSON_CONTAINS_PATH('[1,2,3]', 'one', '$[0 to 1]'), JSON_CONTAINS_PATH('[1,2,3]', 'all', '$[5 to 6]', '$[0]'), JSON_CONTAINS_PATH('{"a":[1]}', 'one', '$.a[*]'), JSON_CONTAINS_PATH('{"a":[1]}', 'one', '$**.a')"#,
 ];
 
+const OUTER_AGGREGATE_SUBQUERIES: &[&str] = &[
+    "SELECT (SELECT SUM(score)) FROM events",
+    "SELECT (SELECT SUM(score)), (SELECT COUNT(*)), (SELECT MAX(name)) FROM events",
+    "SELECT active, (SELECT SUM(score)) FROM events GROUP BY active ORDER BY active",
+    "SELECT (SELECT SUM(total) + 1), (SELECT AVG(total) FROM DUAL) FROM orders",
+    "SELECT status, (SELECT COUNT(meta)) AS c FROM orders GROUP BY status HAVING (SELECT SUM(total)) > 50 ORDER BY (SELECT MAX(id)) DESC",
+    "SELECT (SELECT SUM(score) + id) FROM events GROUP BY id ORDER BY id",
+    "SELECT (SELECT COUNT(DISTINCT note)), (SELECT GROUP_CONCAT(tag ORDER BY id)) FROM events",
+    "SELECT (SELECT SUM(1)) FROM users",
+    "SELECT (SELECT SUM(e.score)) FROM events e WHERE id > 100",
+    "SELECT (SELECT (SELECT SUM(score))) FROM events",
+    "SELECT u.id, (SELECT SUM(o.total)) FROM users u LEFT JOIN orders o ON o.user_id = u.id GROUP BY u.id ORDER BY u.id",
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -491,6 +505,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("outer aggregate subqueries", OUTER_AGGREGATE_SUBQUERIES),
         ("json length of many targets", JSON_LENGTH_OF_MANY_TARGETS),
         ("fractional digit counts", FRACTIONAL_DIGIT_COUNTS),
         ("stored json as text", STORED_JSON_AS_TEXT),
@@ -611,6 +626,18 @@ pub const REFUSED: &[(&str, &str, &str)] = &[
         "reject grouping of an expression that is not grouped",
         "SELECT active, GROUPING(score) FROM events GROUP BY active WITH ROLLUP",
         "not in GROUP BY",
+    ),
+    (
+        // WHERE cannot aggregate, so MySQL computes this one over the
+        // subquery's single row; it stays refused here.
+        "reject outer-column aggregate in a subquery under where",
+        "SELECT id FROM users WHERE id = (SELECT MIN(id))",
+        "invalid use of group function",
+    ),
+    (
+        "reject subquery mixing an outer aggregate with its own",
+        "SELECT active, (SELECT SUM(score) + COUNT(*)) FROM events GROUP BY active",
+        "invalid use of group function",
     ),
     (
         "reject connection function beside another item",

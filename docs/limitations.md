@@ -357,6 +357,12 @@ stays readable as a list of things to fix.
   no table; inside an expression or beside a column they are refused.
 - `UUID()` returns a random (version 4) identifier where MySQL returns a
   time-based (version 1) one; length, layout and `IS_UUID` agree.
+- A FROM-less subquery whose aggregate reads an outer column
+  (`SELECT (SELECT SUM(c)) FROM t`) is the outer query's aggregate in the
+  select list, HAVING and ORDER BY. Two forms MySQL answers are refused with
+  error 1111: the same subquery in WHERE (`WHERE c = (SELECT MIN(c))`), and
+  one that mixes such an aggregate with one reading no column
+  (`(SELECT SUM(c) + COUNT(*))`).
 - `COUNT(DISTINCT x)` over an expression that reads no column and differs
   from row to row (`UUID()`, `UUID_SHORT()`, `RAND()`) counts every row.
   MySQL's answer depends on its plan: 1 in an ungrouped query, every row

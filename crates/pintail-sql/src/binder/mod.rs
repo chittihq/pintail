@@ -4951,7 +4951,14 @@ fn bind_expr_inner(
         ),
         Expr::Subquery(query) => match single_row_expression(query) {
             Some(inner) => bind_expr_inner(inner, tables, aggregates, windows, subqueries),
-            None => bind_scalar_subquery(query, subqueries),
+            None => match aggregates
+                .is_some()
+                .then(|| outer_aggregate_expression(query))
+                .flatten()
+            {
+                Some(inner) => bind_expr_inner(inner, tables, aggregates, windows, subqueries),
+                None => bind_scalar_subquery(query, subqueries),
+            },
         },
         Expr::Exists { subquery, negated } => {
             let resolver =
@@ -9670,6 +9677,82 @@ fn single_row_expression(query: &Query) -> Option<&Expr> {
     plain.then_some(expr)
 }
 
+/// The one item of a FROM-less `(SELECT ...)` whose aggregates all read a
+/// column, when it can be read in place.
+///
+/// With no FROM of its own the subquery has no column to offer, so a column
+/// inside one of its aggregates belongs to the query outside, and that makes
+/// the aggregate the outer query's: `SELECT (SELECT SUM(c)) FROM t` is
+/// `SELECT SUM(c) FROM t`. The caller asks only where the outer query can
+/// aggregate - its select list, HAVING and ORDER BY. An aggregate that reads
+/// no column (`COUNT(*)`) is the subquery's own, over its one row, and keeps
+/// the subquery; so does anything nested or windowed.
+fn outer_aggregate_expression(query: &Query) -> Option<&Expr> {
+    if query.with.is_some()
+        || query.order_by.is_some()
+        || query.limit_clause.is_some()
+        || query.fetch.is_some()
+        || !query.locks.is_empty()
+    {
+        return None;
+    }
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return None;
+    };
+    let grouped = !matches!(
+        &select.group_by,
+        GroupByExpr::Expressions(expressions, modifiers) if expressions.is_empty() && modifiers.is_empty()
+    );
+    // `FROM DUAL` is no table either.
+    let from_nothing = match select.from.as_slice() {
+        [] => true,
+        [only] => {
+            only.joins.is_empty()
+                && matches!(&only.relation, TableFactor::Table { name, alias: None, args: None, .. }
+                    if name.to_string().eq_ignore_ascii_case("DUAL"))
+        }
+        _ => false,
+    };
+    if !from_nothing
+        || select.selection.is_some()
+        || grouped
+        || select.having.is_some()
+        || select.distinct.is_some()
+        || select.into.is_some()
+    {
+        return None;
+    }
+    let [SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. }] =
+        select.projection.as_slice()
+    else {
+        return None;
+    };
+    // A subquery that is nothing but another one is that one.
+    let mut item = expr;
+    while let Expr::Nested(inner) = item {
+        item = inner;
+    }
+    if let Expr::Subquery(inner) = item {
+        return outer_aggregate_expression(inner);
+    }
+    let mut aggregates = 0_usize;
+    let mut in_place = true;
+    let flow: std::ops::ControlFlow<()> = sqlparser::ast::visit_expressions(expr, |node| {
+        match node {
+            Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. } => in_place = false,
+            Expr::Function(function) if function.over.is_some() => in_place = false,
+            Expr::Function(function) if aggregate_function_name(function).is_some() => {
+                aggregates += 1;
+                in_place &= names_a_column(node);
+            }
+            _ => {}
+        }
+        std::ops::ControlFlow::Continue(())
+    });
+    debug_assert!(flow.is_continue());
+    (in_place && aggregates > 0).then_some(expr)
+}
+
 /// An introducer labels literal bytes; it does not transcode connection text.
 fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindError> {
     let charset = prefix
@@ -12410,6 +12493,55 @@ mod tests {
             &query.projection[0].expr.kind,
             BoundExprKind::Column(_)
         ));
+    }
+
+    #[test]
+    fn an_aggregate_in_a_from_less_subquery_is_the_outer_querys() {
+        // The subquery has no table, so the column - and with it the
+        // aggregate - is the outer query's.
+        for (written, direct) in [
+            (
+                "SELECT (SELECT SUM(id)) FROM Events",
+                "SELECT SUM(id) FROM Events",
+            ),
+            (
+                "SELECT (SELECT MAX(id) + 1 FROM DUAL) FROM Events",
+                "SELECT MAX(id) + 1 FROM Events",
+            ),
+            (
+                "SELECT (SELECT (SELECT SUM(id))) FROM Events",
+                "SELECT SUM(id) FROM Events",
+            ),
+            (
+                "SELECT active, (SELECT COUNT(id)) FROM Events GROUP BY active HAVING (SELECT MIN(id)) > 0",
+                "SELECT active, COUNT(id) FROM Events GROUP BY active HAVING MIN(id) > 0",
+            ),
+        ] {
+            let (written, direct) = (bind(written).expect(written), bind(direct).expect(direct));
+            assert_eq!(written.aggregates, direct.aggregates);
+            assert_eq!(written.having, direct.having);
+            assert_eq!(
+                written
+                    .projection
+                    .iter()
+                    .map(|item| &item.expr)
+                    .collect::<Vec<_>>(),
+                direct
+                    .projection
+                    .iter()
+                    .map(|item| &item.expr)
+                    .collect::<Vec<_>>()
+            );
+        }
+        // An aggregate that reads no column counts the subquery's one row.
+        let own = bind("SELECT (SELECT COUNT(*)) FROM Events").expect("own aggregate");
+        assert!(own.aggregates.is_empty(), "{:?}", own.aggregates);
+        // WHERE cannot aggregate, so there the misuse stays an error.
+        let error = bind("SELECT id FROM Events WHERE id = (SELECT MIN(id))").unwrap_err();
+        assert!(
+            matches!(error, BindError::GroupFunctionMisplaced(_)),
+            "{error:?}"
+        );
     }
 
     #[test]
