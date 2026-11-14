@@ -357,6 +357,13 @@ stays readable as a list of things to fix.
   no table; inside an expression or beside a column they are refused.
 - `UUID()` returns a random (version 4) identifier where MySQL returns a
   time-based (version 1) one; length, layout and `IS_UUID` agree.
+- `COUNT(DISTINCT x)` over an expression that reads no column and differs
+  from row to row (`UUID()`, `UUID_SHORT()`, `RAND()`) counts every row.
+  MySQL's answer depends on its plan: 1 in an ungrouped query, every row
+  under `GROUP BY`.
+- The clock functions take no fractional-seconds argument: `NOW(6)`,
+  `SYSDATE(3)`, `CURRENT_TIMESTAMP(6)`, `UTC_TIMESTAMP(3)` and the rest are
+  refused.
 - A DATE or DATETIME looked up in a subquery that selects a number column
   (`d IN (SELECT n FROM t)`) is compared with the numbers as text and
   matches none, where MySQL reads them as dates. Compared with `=`, or
