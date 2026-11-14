@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.8-rc4] - 2026-11-14
+
+The metadata schema stays at version 26, so this release and 0.1.8-rc3
+open each other's directories. Tables whose JSON documents hold doubles
+from 1e15 up, or doubles the source prints with an exponent, keep the
+text an earlier release stored until they are resynced (see Fixed).
+
 ### Added
 
 - `DATABASE()` and `SCHEMA()` are answered inside a query that reads a
@@ -93,7 +100,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   past the fifteenth digit.
 - A DISTINCT aggregate over a DECIMAL of more than nineteen digits no
   longer panics when its groups merge or spill.
-
 - A schema change that opened with a comment or broke the line between
   its first words (`/* step 4 */ ALTER TABLE ...`, `alter /* tool */ table
   ...`) was not read as a schema change at all: the source's table moved
