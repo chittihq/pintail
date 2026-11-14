@@ -388,6 +388,12 @@ stays readable as a list of things to fix.
 - `ROUND` or `TRUNCATE` of a DOUBLE whose result is past the double range
   (`TRUNCATE(1.7976931348623157E+308, -12)`) is refused as out of range.
   MySQL holds an infinity there, which it prints as `0`.
+- A computed DOUBLE past the BIGINT range read as an integer (`-1e30`,
+  `x * 1e300`) is refused with error 1690 where a function argument or a
+  `CAST(... AS SIGNED)` reads it, as in MySQL. Read by a bit operator
+  (`-1e30 | 0`) it answers the end of the range, where MySQL refuses it
+  too. The error names a DOUBLE literal by its shortest spelling
+  (`-(8.381922e307)`), where MySQL repeats it as written.
 - The negation of an unsigned constant is typed DECIMAL whatever its
   value, where MySQL types it BIGINT when the value fits one
   (`-CAST(5 AS UNSIGNED)`); the answer is the same number.

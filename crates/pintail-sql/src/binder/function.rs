@@ -3148,6 +3148,78 @@ fn temporal_function_number(expr: BoundExpr, function: ScalarFunction) -> BoundE
     }
 }
 
+/// Marks the arguments `function` reads as integers that are computed
+/// doubles. `MySQL` reads a stored or literal double past the BIGINT range
+/// as the end of the range, and refuses one that arithmetic produced:
+/// `MAKETIME(1e30, 0, 0)` clamps and `MAKETIME(-1e30, 0, 0)`, a negation,
+/// is out of range.
+fn integer_reads(function: ScalarFunction, args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    let reads_integer = |index: usize| match function {
+        ScalarFunction::MakeTime => index < 2,
+        ScalarFunction::MakeDate
+        | ScalarFunction::Cast(DataType::Int64 | DataType::UInt64)
+        | ScalarFunction::DeclaredCast {
+            target: DataType::Int64 | DataType::UInt64,
+            ..
+        } => true,
+        ScalarFunction::Repeat
+        | ScalarFunction::Lpad
+        | ScalarFunction::Rpad
+        | ScalarFunction::Left
+        | ScalarFunction::Right => index == 1,
+        ScalarFunction::Space | ScalarFunction::Elt => index == 0,
+        ScalarFunction::Substring | ScalarFunction::Insert => matches!(index, 1 | 2),
+        ScalarFunction::DateInterval { unit, .. } => {
+            index == 1 && unit != crate::bound::IntervalUnit::Second
+        }
+        _ => false,
+    };
+    args.into_iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            // A week or quarter count the binder scaled is its own
+            // product, over an integer already read.
+            let scaled = matches!(
+                &argument.kind,
+                BoundExprKind::Binary { left, .. } if matches!(
+                    left.kind,
+                    BoundExprKind::Scalar {
+                        function: ScalarFunction::Cast(DataType::Int64),
+                        ..
+                    }
+                )
+            );
+            let computed = argument.data_type == Some(DataType::Float64)
+                && !scaled
+                && matches!(
+                    &argument.kind,
+                    BoundExprKind::Unary {
+                        op: crate::bound::UnaryOp::Minus,
+                        ..
+                    } | BoundExprKind::Binary {
+                        op: BinaryOp::Add
+                            | BinaryOp::Subtract
+                            | BinaryOp::Multiply
+                            | BinaryOp::Divide,
+                        ..
+                    }
+                );
+            if computed && reads_integer(index) {
+                BoundExpr {
+                    nullable: argument.nullable,
+                    data_type: argument.data_type,
+                    kind: BoundExprKind::Unary {
+                        op: crate::bound::UnaryOp::IntegerRead,
+                        expr: Box::new(argument),
+                    },
+                }
+            } else {
+                argument
+            }
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_lines)] // a flat type-dispatch table reads best unsplit
 pub(super) fn bind_scalar(
     function: ScalarFunction,
@@ -3212,6 +3284,7 @@ pub(super) fn bind_scalar(
     } else {
         args
     };
+    let args = integer_reads(function, args);
     let mut args = float_string_arguments(function, args);
     // A position or a count is an integer, and an exact decimal becomes one
     // by rounding. Its carrier is text, which the evaluator reads the way

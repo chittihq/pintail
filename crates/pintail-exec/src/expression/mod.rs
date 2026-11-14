@@ -1517,7 +1517,9 @@ impl CompiledExpr {
                     (UnaryOp::Minus, DecimalChainValue::Exact(exact)) => {
                         Ok(Some(DecimalChainValue::Exact(exact.negated()?)))
                     }
-                    (UnaryOp::Not, _) => unreachable!("guard excludes logical negation"),
+                    (UnaryOp::Not | UnaryOp::IntegerRead, _) => {
+                        unreachable!("guard admits the sign operators only")
+                    }
                 }
             }
             Self::Binary {
@@ -10427,6 +10429,15 @@ pub(crate) fn evaluate_unary(
     match op {
         UnaryOp::Not => Ok(mysql_truth(value)?.map_or(Value::Null, |value| Value::Boolean(!value))),
         UnaryOp::Plus => cast_numeric(value, data_type),
+        // The double itself, unless no BIGINT holds what it rounds to.
+        UnaryOp::IntegerRead => {
+            let number = mysql_f64(value)?;
+            if (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&number) {
+                Ok(value.clone())
+            } else {
+                Err(ExecError::NumericOverflow)
+            }
+        }
         // A decimal travels on the canonical-text carrier, so the storage
         // collapse below would send it to the Utf8 arm and reject it.
         // Negating the text keeps the value exact, which is the whole point

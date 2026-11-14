@@ -735,6 +735,18 @@ impl BoundExpr {
     /// and shape are ones `MySQL`'s wording is known for.
     #[must_use]
     pub fn out_of_range_message(&self) -> Option<String> {
+        // The integer read names the range it reads into and the
+        // computation it read.
+        if let BoundExprKind::Unary {
+            op: UnaryOp::IntegerRead,
+            expr,
+        } = &self.kind
+        {
+            return Some(format!(
+                "BIGINT value is out of range in '{}'",
+                expr.diagnostic_text()?
+            ));
+        }
         let value_type = match self.data_type? {
             DataType::UInt64 => "BIGINT UNSIGNED",
             DataType::Int64 => "BIGINT",
@@ -769,6 +781,11 @@ impl BoundExpr {
                             .map_or((false, text.clone()), |digits| (true, digits.to_owned()))
                     }
                     Value::Null => return Some("NULL".to_owned()),
+                    // As written where it was written with an exponent.
+                    Value::Float64(number) => {
+                        let magnitude = number.get().abs();
+                        (number.get() < 0.0, format!("{magnitude:e}"))
+                    }
                     _ => return None,
                 };
                 // A negative literal is a minus applied to a number.
@@ -2058,6 +2075,10 @@ pub enum UnaryOp {
     Minus,
     /// `MySQL` truth-value negation.
     Not,
+    /// A computed double where an integer is read: the value passes
+    /// unchanged, and one past the BIGINT range is out of range rather than
+    /// the end of the range a stored or literal double reads as.
+    IntegerRead,
 }
 
 /// Supported binary scalar operations.

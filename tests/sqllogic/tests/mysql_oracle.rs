@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4340;
+const EXPECTED_CASES: usize = 4342;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5946,6 +5946,20 @@ fn engine_error_cases() -> Vec<OracleCase> {
                     TIME '838:59:58.9999995', TIME '837:59:59.9999995', TIME '34 22:59:59', \
                     TIME '8385959', TIME '-838:59:59.000000'",
         ),
+        // A stored or literal double read as an integer stops at the end of
+        // the range; a computed one inside the range reads as it rounds.
+        ordered(
+            "computed doubles read as integers",
+            "SELECT MAKETIME(1e30, 0, 0), MAKETIME(-9.2e18, 0, 0), MAKETIME(-(1e18), 0, 0), \
+                    RPAD('a', -(2.5e0), 'x'), REPEAT('a', -1e10), LPAD('abc', 2e0 + 3e0, 'x'), \
+                    CAST(-1.5e0 AS SIGNED), CAST(2.5e0 * 3 AS SIGNED), LEFT('abcdef', 1.5e0 * 2), \
+                    SEC_TO_TIME(-1e30), CAST(1e30 AS SIGNED)",
+        ),
+        ordered(
+            "computed doubles read as integers",
+            "SELECT id, MAKETIME(-approx, 0, 0), LEFT('abcdefgh', approx * 2), \
+                    CAST(-approx AS SIGNED) FROM bounds WHERE ABS(approx) < 100 ORDER BY id",
+        ),
     ]
 }
 
@@ -8252,6 +8266,22 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "reject time literal that is not a time",
             "SELECT TIME '10:00:00x'",
             "incorrect time value",
+        ),
+        (
+            // A negation is a computation, and its double has no BIGINT.
+            "reject computed double past the integer range",
+            "SELECT MAKETIME(-1e30, 0, 0)",
+            "bigint value is out of range in '-(1e30)'",
+        ),
+        (
+            "reject computed double past the integer range",
+            "SELECT CAST(0 - 1e30 AS SIGNED)",
+            "bigint value is out of range",
+        ),
+        (
+            "reject computed double past the integer range",
+            "SELECT id, LEFT(name, score * 1e300) FROM events",
+            "bigint value is out of range",
         ),
         (
             // A column's negation is a BIGINT, and 2^64 - 1 has none.
