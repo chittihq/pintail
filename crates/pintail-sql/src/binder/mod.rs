@@ -8928,6 +8928,9 @@ pub(super) fn json_as_number(expr: BoundExpr) -> BoundExpr {
 /// string and an empty array among them. The condition of `IF` and `CASE`
 /// reads the value as a number instead (see [`json_as_number`]).
 pub(super) fn json_truth(expr: BoundExpr) -> BoundExpr {
+    // A TIME is true when it is not zero. Its text is no guide: read as a
+    // number, `00:30:00` and `00:00:00.5` both start with a zero.
+    let expr = time_as_number(expr);
     if expr.data_type != Some(DataType::Json) {
         return expr;
     }
@@ -9047,7 +9050,7 @@ fn temporal_as_number(expr: BoundExpr) -> BoundExpr {
     }
 }
 
-fn time_as_number(expr: BoundExpr) -> BoundExpr {
+pub(super) fn time_as_number(expr: BoundExpr) -> BoundExpr {
     match expr.data_type {
         Some(DataType::Time64 { fsp: 0 }) => cast_to(expr, DataType::Int64),
         Some(DataType::Time64 { fsp }) => cast_to(

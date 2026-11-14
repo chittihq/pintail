@@ -382,6 +382,16 @@ const REGEX: &[(&str, &[&str])] = &[
     ),
 ];
 
+const TRUTH_OF_TIME_VALUES: &[&str] = &[
+    r#"SELECT id, NOT clock, clock OR 0, clock AND 1, clock XOR 0, clock IS TRUE, clock IS FALSE, clock IS NOT TRUE, IF(clock, 'y', 'n'), CASE WHEN clock THEN 'y' ELSE 'n' END FROM bounds ORDER BY id"#,
+    r#"SELECT id FROM bounds WHERE clock ORDER BY id"#,
+    r#"SELECT id FROM bounds WHERE NOT clock ORDER BY id"#,
+    r#"SELECT TIME'00:00:00.5' IS TRUE, NOT TIME'00:00:00.500000', TIME'00:00:00.5' AND 1, IF(TIME'00:00:00.5', 'y', 'n'), TIME'00:30:00' IS TRUE, NOT TIME'00:00:01', IF(TIME'00:00:00', 'y', 'n'), TIME'-00:00:01' OR 0, CASE WHEN TIME'00:00:59' THEN 1 ELSE 0 END"#,
+    r#"SELECT COUNT(*), SUM(clock IS TRUE), SUM(NOT clock) FROM bounds HAVING MAX(clock)"#,
+    r#"SELECT b.id, c.id FROM bounds b JOIN bounds c ON c.clock AND b.id = c.id ORDER BY b.id"#,
+    r#"SELECT id, SEC_TO_TIME(id * 30) IS TRUE, NOT SEC_TO_TIME(id - 3), IF(TIMEDIFF('10:00:00', '09:59:30'), 1, 0), NOT MAKETIME(0, 0, id - 1), NOT CAST('00:00:30' AS TIME) FROM users ORDER BY id"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -400,6 +410,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("truth of time values", TRUTH_OF_TIME_VALUES),
     ] {
         cases.extend(statements.iter().map(|sql| OracleCase {
             sql_mode: "",

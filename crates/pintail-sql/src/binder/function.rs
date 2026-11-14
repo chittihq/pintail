@@ -2647,7 +2647,7 @@ pub(super) fn bind_case(
                     actual: condition.data_type,
                 });
             }
-            condition
+            super::time_as_number(condition)
         };
         let value = bind_expr_inner(&clause.result, tables, aggregates, windows, subqueries)?;
         result = bind_scalar(ScalarFunction::If, vec![condition, value, result])?;
@@ -3013,7 +3013,9 @@ pub(super) fn bind_scalar(
         // The condition is a truth value, which is a number.
         let mut args = args;
         if let Some(condition) = args.first_mut() {
-            *condition = super::json_as_number(super::choice_as_number(condition.clone()));
+            *condition = super::json_as_number(super::time_as_number(
+                super::choice_as_number(condition.clone()),
+            ));
         }
         args
     } else {
