@@ -3138,42 +3138,7 @@ fn schema_as_of(
         {
             continue;
         }
-        let column = match ddl::declared_terms(&declaration.declared_type) {
-            Some(terms) => pintail_probe::declared_column(&pintail_probe::DeclaredColumn {
-                ordinal: 0,
-                name: &declaration.name,
-                data_type: &terms.data_type,
-                column_type: &terms.column_type,
-                numeric_precision: terms.precision,
-                numeric_scale: terms.scale,
-                datetime_precision: terms.fraction,
-                nullable: declaration.nullable,
-                collation: None,
-            }),
-            None => {
-                let shown = moved_on
-                    .and_then(|table| still_shown_as_declared(table, declaration))
-                    .ok_or_else(|| {
-                        format!(
-                            "the type of column {name} ({}) is not decided by the statement \
-                             alone",
-                            declaration.declared_type
-                        )
-                    })?;
-                pintail_probe::declared_column(&pintail_probe::DeclaredColumn {
-                    ordinal: 0,
-                    name: &declaration.name,
-                    data_type: &shown.mysql_data_type,
-                    column_type: &shown.mysql_column_type,
-                    numeric_precision: None,
-                    numeric_scale: None,
-                    datetime_precision: None,
-                    nullable: declaration.nullable,
-                    collation: shown.collation.as_deref(),
-                })
-            }
-        }
-        .map_err(|error| error.to_string())?;
+        let column = added_column(name, declaration, moved_on)?;
         if let Some(existing) = as_of
             .columns
             .iter()
@@ -3204,6 +3169,49 @@ fn schema_as_of(
     }
     place_columns_in_order(&mut as_of)?;
     Ok(as_of)
+}
+
+/// The column `declaration` adds, described from its declared type, or for
+/// a text type from what the source still shows for it.
+fn added_column(
+    name: &str,
+    declaration: &ddl::AddedColumn,
+    moved_on: Option<&SourceTable>,
+) -> Result<pintail_probe::SourceColumn, String> {
+    let described = if let Some(terms) = ddl::declared_terms(&declaration.declared_type) {
+        pintail_probe::declared_column(&pintail_probe::DeclaredColumn {
+            ordinal: 0,
+            name: &declaration.name,
+            data_type: &terms.data_type,
+            column_type: &terms.column_type,
+            numeric_precision: terms.precision,
+            numeric_scale: terms.scale,
+            datetime_precision: terms.fraction,
+            nullable: declaration.nullable,
+            collation: None,
+        })
+    } else {
+        let shown = moved_on
+            .and_then(|table| still_shown_as_declared(table, declaration))
+            .ok_or_else(|| {
+                format!(
+                    "the type of column {name} ({}) is not decided by the statement alone",
+                    declaration.declared_type
+                )
+            })?;
+        pintail_probe::declared_column(&pintail_probe::DeclaredColumn {
+            ordinal: 0,
+            name: &declaration.name,
+            data_type: &shown.mysql_data_type,
+            column_type: &shown.mysql_column_type,
+            numeric_precision: None,
+            numeric_scale: None,
+            datetime_precision: None,
+            nullable: declaration.nullable,
+            collation: shown.collation.as_deref(),
+        })
+    };
+    described.map_err(|error| error.to_string())
 }
 
 /// The text column `table` still shows under the name and the very type
