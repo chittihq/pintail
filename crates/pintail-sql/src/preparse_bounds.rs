@@ -3,7 +3,7 @@
 //!
 //! Those passes run ahead of the grammar, so its depth limit does not
 //! protect them: each test here feeds a shape that once made one of them
-//! recurse per parenthesis or read on to the statement's end time after time.
+//! recurse per parenthesis, reread the statement per form, or stop partway.
 //! Work is counted in tokens looked at, never timed.
 
 use sqlparser::parser::ParserError;
@@ -54,7 +54,10 @@ fn a_hundred_thousand_nested_parentheses_are_refused_in_every_position() {
         ),
         (
             "joined table",
-            format!("SELECT * FROM a JOIN {} ON 1", nested("(", DEPTH, "b, c", ")")),
+            format!(
+                "SELECT * FROM a JOIN {} ON 1",
+                nested("(", DEPTH, "b, c", ")")
+            ),
         ),
         (
             "derived table",
@@ -70,7 +73,10 @@ fn a_hundred_thousand_nested_parentheses_are_refused_in_every_position() {
         ),
         (
             "cast argument",
-            format!("SELECT CAST({} AS SIGNED INT)", nested("(", DEPTH, "1", ")")),
+            format!(
+                "SELECT CAST({} AS SIGNED INT)",
+                nested("(", DEPTH, "1", ")")
+            ),
         ),
         (
             "nested casts",
@@ -97,9 +103,14 @@ fn a_hundred_thousand_nested_parentheses_are_refused_in_every_position() {
 #[test]
 fn the_nesting_bound_sits_above_the_grammars_own() {
     let accepted = (1..=MAX_PAREN_DEPTH)
-        .take_while(|&depth| parse_statement(&format!("SELECT {}", nested("(", depth, "1", ")"))).is_ok())
+        .take_while(|&depth| {
+            parse_statement(&format!("SELECT {}", nested("(", depth, "1", ")"))).is_ok()
+        })
         .count();
-    assert!(accepted > 8, "the grammar reads ordinary nesting: {accepted}");
+    assert!(
+        accepted > 8,
+        "the grammar reads ordinary nesting: {accepted}"
+    );
     assert!(
         accepted < MAX_PAREN_DEPTH / 2,
         "the grammar gives up at {accepted}, well inside the bound of {MAX_PAREN_DEPTH}"
@@ -108,7 +119,9 @@ fn the_nesting_bound_sits_above_the_grammars_own() {
     // them, up to the bound.
     let wrapped = format!("SELECT * FROM {}", nested("(", MAX_PAREN_DEPTH, "t", ")"));
     assert_eq!(
-        parse_statement(&wrapped).map(|statement| statement.to_string()).ok(),
+        parse_statement(&wrapped)
+            .map(|statement| statement.to_string())
+            .ok(),
         Some("SELECT * FROM t".to_owned())
     );
 }
@@ -122,7 +135,10 @@ fn respelling_work_is_proportional_to_the_statement() {
     for (shape, sql) in [
         (
             "deep table groups, many times",
-            format!("SELECT * FROM {}", repeat(&nested("(", deep, "t", ")"), 300)),
+            format!(
+                "SELECT * FROM {}",
+                repeat(&nested("(", deep, "t", ")"), 300)
+            ),
         ),
         (
             "deep derived tables, many times",
@@ -144,7 +160,14 @@ fn respelling_work_is_proportional_to_the_statement() {
         ),
         (
             "deep call parentheses, many times",
-            format!("SELECT {}", repeat(&format!("ABS{}", nested("(", deep, "1", ")")), 300)),
+            format!(
+                "SELECT {}",
+                repeat(&format!("ABS{}", nested("(", deep, "1", ")")), 300)
+            ),
+        ),
+        (
+            "many cast forms",
+            format!("SELECT {}", repeat("CAST(a AS SIGNED INT)", 20_000)),
         ),
         (
             "many intervals with no qualifier",
@@ -159,12 +182,43 @@ fn respelling_work_is_proportional_to_the_statement() {
             format!("SELECT * FROM a {}", "LEFT JOIN b ".repeat(20_000)),
         ),
     ] {
-        let tokens = u64::try_from(sql.split_whitespace().count() + sql.matches(['(', ')', ',']).count())
-            .expect("a count fits");
+        let tokens =
+            u64::try_from(sql.split_whitespace().count() + sql.matches(['(', ')', ',']).count())
+                .expect("a count fits");
         let (_, work) = parsed(&sql);
         assert!(
             work <= tokens * WORK_PER_TOKEN,
             "{shape}: looked at {work} tokens for a statement of about {tokens}"
         );
     }
+}
+
+/// Every form in a statement is respelled, however many there are: none
+/// is left as written past some count.
+#[test]
+fn every_call_form_in_a_long_statement_is_respelled() {
+    const FORMS: usize = 3_000;
+    let sql = format!("SELECT {}", vec!["CAST(a AS SIGNED INT)"; FORMS].join(", "));
+    let respelled = parse_statement(&sql).expect("every form reads").to_string();
+    assert_eq!(respelled.matches("CAST(a AS SIGNED)").count(), FORMS);
+
+    // Forms inside forms take one more reading each, not a reading per form.
+    let inner = "CAST(CAST(CAST(a AS SIGNED INT) AS SIGNED INT) AS SIGNED INT)";
+    let sql = format!("SELECT {}", vec![inner; 1_000].join(", "));
+    take_preparse_work();
+    let respelled = parse_statement(&sql)
+        .expect("nested forms read")
+        .to_string();
+    assert_eq!(respelled.matches("AS SIGNED)").count(), 3_000);
+    let tokens = u64::try_from(sql.len() / 3).expect("a count fits");
+    assert!(take_preparse_work() <= tokens * WORK_PER_TOKEN);
+
+    // Many introduced, adjacent string literals are joined in one pass.
+    let sql = format!("SELECT {}", vec!["_utf8mb4 'a' 'b' 'c'"; 20_000].join(", "));
+    assert_eq!(
+        parse_statements(&sql)
+            .map(|statements| statements.len())
+            .ok(),
+        Some(1)
+    );
 }

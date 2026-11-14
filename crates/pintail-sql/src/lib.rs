@@ -285,7 +285,7 @@ pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
     combine_prefixed_strings(&mut tokens, dialect.1);
     read_bit_literals(&mut tokens);
     interval::rewrite(&mut tokens);
-    call_forms::rewrite(&mut tokens);
+    call_forms::rewrite(&mut tokens)?;
     join_groups::rewrite(&mut tokens);
     let mut statements = Parser::new(&dialect)
         .with_tokens_with_locations(tokens)

@@ -25,6 +25,7 @@
 //!   which the binder answers for by the name the statement wrote.
 use std::collections::BTreeMap;
 
+use sqlparser::parser::ParserError;
 use sqlparser::tokenizer::{Token, TokenWithSpan};
 
 use crate::interval::{significant, word_token};
@@ -61,6 +62,25 @@ impl Edits {
 
     pub(crate) fn remove(&mut self, at: usize) {
         self.replace.insert(at, Vec::new());
+    }
+
+    /// Whether `other` changes a token position these edits already change.
+    fn meets(&self, other: &Self) -> bool {
+        let taken = |at: &usize| {
+            self.before.contains_key(at)
+                || self.replace.contains_key(at)
+                || self.after.contains_key(at)
+        };
+        other.before.keys().any(taken)
+            || other.replace.keys().any(taken)
+            || other.after.keys().any(taken)
+    }
+
+    /// Adds `other`, which must not [`meet`](Self::meets) these edits.
+    fn absorb(&mut self, other: Self) {
+        self.before.extend(other.before);
+        self.replace.extend(other.replace);
+        self.after.extend(other.after);
     }
 
     /// Every added token takes the span of the token it was placed at.
@@ -137,7 +157,7 @@ fn last_inside(
     found
 }
 
-pub(crate) fn rewrite(tokens: &mut Vec<TokenWithSpan>) {
+pub(crate) fn rewrite(tokens: &mut Vec<TokenWithSpan>) -> Result<(), ParserError> {
     const TRIGGERS: [&str; 6] = ["CHAR", "NCHAR", "CAST", "CONVERT", "TRIM", "TABLE"];
     const WEIGHT: &str = "WEIGHT_STRING";
     if !tokens.iter().any(|token| {
@@ -148,21 +168,36 @@ pub(crate) fn rewrite(tokens: &mut Vec<TokenWithSpan>) {
             || is_any_word(&token.token, &["REGEXP", "RLIKE"])
             || matches!(token.token, Token::Arrow | Token::LongArrow)
     }) {
-        return;
+        return Ok(());
     }
-    // One form at a time: an edit moves every later position, and a cast
-    // may sit inside another.
-    for _ in 0..256 {
+    // Every form found in one reading of the statement is respelled at
+    // once, against the positions that reading saw. A form whose edits
+    // would land on a token another form of the same reading changes - an
+    // argument that is itself a form - waits for the next reading, as
+    // does a form an edit creates. Each reading that goes on respells at
+    // least one form, and a statement has no more forms to respell than
+    // it has tokens, so the readings end; one that would not is refused
+    // whole rather than left half respelled.
+    let readings = tokens.len().saturating_mul(2).saturating_add(16);
+    for _ in 0..readings {
         let significant = significant(tokens);
-        let Some(edits) = (0..significant.len()).find_map(|at| {
-            let mut edits = Edits::default();
-            call_form(tokens, &significant, at, &mut edits);
-            (!edits.is_empty()).then_some(edits)
-        }) else {
-            return;
-        };
+        crate::count_preparse_work(significant.len());
+        let mut edits = Edits::default();
+        for at in 0..significant.len() {
+            let mut form = Edits::default();
+            call_form(tokens, &significant, at, &mut form);
+            if !form.is_empty() && !edits.meets(&form) {
+                edits.absorb(form);
+            }
+        }
+        if edits.is_empty() {
+            return Ok(());
+        }
         edits.apply(tokens);
     }
+    Err(ParserError::ParserError(
+        "the statement's call forms could not be respelled".to_owned(),
+    ))
 }
 
 fn call_form(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: &mut Edits) {
