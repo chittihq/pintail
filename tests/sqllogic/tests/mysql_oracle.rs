@@ -19,6 +19,8 @@ mod oracle_candidates;
 mod oracle_lateral;
 #[path = "support/oracle_ledger.rs"]
 mod oracle_ledger;
+#[path = "support/oracle_operators.rs"]
+mod oracle_operators;
 #[path = "support/oracle_physical.rs"]
 mod oracle_physical;
 #[path = "support/oracle_transport.rs"]
@@ -46,7 +48,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3196;
+const EXPECTED_CASES: usize = 3463;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1493,6 +1495,7 @@ fn oracle_cases() -> Vec<OracleCase> {
             });
         }
     }
+    cases.extend(oracle_operators::cases());
     cases
 }
 
