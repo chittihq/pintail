@@ -39,6 +39,7 @@ mod dependent_text_scalar_index;
 mod dictionary_text;
 mod distinct_grouping;
 mod distinct_unit_keys;
+mod distinct_units_spill;
 mod enum_empty_member;
 mod enum_ordinal;
 mod fanout_join_aggregates;
