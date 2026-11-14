@@ -80,6 +80,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A join counted rather than run evaluated a counted expression on right
+  rows no left row pairs with, and a volatile grouping key once per left
+  row: a `COUNT` of an expression that fails on such a row raised an
+  error, and grouping by `UUID_SHORT()` merged a left row's pairs into one
+  group. Both shapes now run the join as written.
 - When two expressions of a select list fail on different rows, the
   statement raises the earlier row's error, as MySQL does; it raised the
   leftmost expression's.
