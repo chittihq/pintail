@@ -8487,10 +8487,17 @@ fn rewrite_group_references(
         BoundExprKind::Column(column) if column.relation_name.starts_with(SCALAR_TABLE_PREFIX) => {
             Err(BindError::UngroupedSubquery)
         }
-        BoundExprKind::Column(column) => Err(BindError::UngroupedColumn(format!(
-            "{}.{}",
-            column.relation_name, column.name
-        ))),
+        // Without a GROUP BY the statement mixes an aggregate with a bare
+        // column, which is its own error (1140); with one, the column is
+        // missing from the grouping (1055).
+        BoundExprKind::Column(column) => {
+            let name = format!("{}.{}", column.relation_name, column.name);
+            Err(if group_by.is_empty() {
+                BindError::UngroupedWithoutGroupBy(name)
+            } else {
+                BindError::UngroupedColumn(name)
+            })
+        }
         BoundExprKind::PreparedIn { expr, .. }
         | BoundExprKind::Unary { expr, .. }
         | BoundExprKind::IsNull { expr, .. }
@@ -11408,6 +11415,9 @@ pub enum BindError {
     UngroupedSubquery,
     /// A selected column is neither grouped nor aggregated.
     UngroupedColumn(String),
+    /// A selected column beside an aggregate in a query that has no
+    /// `GROUP BY` at all.
+    UngroupedWithoutGroupBy(String),
     /// A group function appeared where no aggregation scope exists
     /// (WHERE, JOIN ON, or inside another aggregate's arguments).
     GroupFunctionMisplaced(String),
@@ -11529,7 +11539,7 @@ impl fmt::Display for BindError {
                 formatter,
                 "Incorrect parameter count in the call to native function '{name}'"
             ),
-            Self::UngroupedColumn(column) => {
+            Self::UngroupedColumn(column) | Self::UngroupedWithoutGroupBy(column) => {
                 write!(
                     formatter,
                     "column {column} is neither grouped nor aggregated"
@@ -13662,6 +13672,11 @@ mod tests {
 
         assert!(matches!(
             bind("SELECT Name, COUNT(*) FROM Events"),
+            Err(BindError::UngroupedWithoutGroupBy(_))
+        ));
+        // With a GROUP BY the column is missing from the grouping instead.
+        assert!(matches!(
+            bind("SELECT Name, COUNT(*) FROM Events GROUP BY active"),
             Err(BindError::UngroupedColumn(_))
         ));
         assert!(matches!(

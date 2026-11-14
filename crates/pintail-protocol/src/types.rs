@@ -280,6 +280,9 @@ pub enum ErrorKind {
     /// 1055: a selected column is neither grouped nor aggregated
     /// (`ONLY_FULL_GROUP_BY`).
     ErWrongFieldWithGroup = 1055,
+    /// 1140: an aggregate beside a bare column in a query without
+    /// `GROUP BY`.
+    ErMixOfGroupFuncAndFields = 1140,
     /// 1690: numeric evaluation left the declared result type's range.
     ErDataOutOfRange = 1690,
     /// 1582: a built-in function was called with the wrong number of
@@ -368,6 +371,7 @@ impl ErrorKind {
             | Self::ErSyntaxError
             | Self::ErOptionPreventsStatement
             | Self::ErWrongFieldWithGroup
+            | Self::ErMixOfGroupFuncAndFields
             | Self::ErMaxPreparedStmtCountReached
             | Self::ErInvalidJsonPath
             | Self::ErInvalidJsonPathWildcard
