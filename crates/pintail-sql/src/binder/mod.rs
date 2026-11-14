@@ -11257,6 +11257,82 @@ mod tests {
 
     /// `MySQL` names an unaliased output column by the text the user typed:
     /// case, spacing and all. A string literal is named by its value.
+    /// `MySQL` names an unaliased NULL literal `NULL` whatever its case.
+    #[test]
+    fn an_unaliased_null_literal_is_named_in_capitals() {
+        let sql = "SELECT null, Null, NULL, null AS n";
+        let catalog = catalog();
+        let statement = parse_statement(sql).expect("parse");
+        let query = Binder::new(&catalog, Some("analytics"))
+            .with_source(sql)
+            .bind(&statement)
+            .expect("binds");
+        let names = query
+            .projection
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["NULL", "NULL", "NULL", "n"]);
+    }
+
+    /// A constant beside a YEAR column is the year the column would store.
+    #[test]
+    fn a_constant_compared_with_a_year_column_is_read_as_a_year() {
+        let vintages = TableEntry::new(
+            TableId::new(21),
+            "vintages",
+            TableSchema::new(
+                1,
+                vec![
+                    Column::new(1, "id", DataType::UInt64, false),
+                    Column::new(2, "y", DataType::Year, true),
+                ],
+            )
+            .expect("schema"),
+            TableStatistics::default(),
+        )
+        .expect("table");
+        let database =
+            DatabaseEntry::new(DatabaseId::new(8), "cellar", [vintages]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let filter = |condition: &str| {
+            let sql = format!("SELECT id FROM vintages WHERE {condition}");
+            let statement = parse_statement(&sql).expect("parse");
+            let query = Binder::new(&catalog, Some("cellar"))
+                .bind(&statement)
+                .expect("binds");
+            format!("{:?}", query.filter.expect("filter"))
+        };
+        for (condition, year) in [
+            ("y = 10", "UInt64(2010)"),
+            ("y = 69", "UInt64(2069)"),
+            ("y = 70", "UInt64(1970)"),
+            ("99 = y", "UInt64(1999)"),
+            ("y < 10.5", "UInt64(2011)"),
+            ("y <=> 10.4", "UInt64(2010)"),
+            ("y = '11'", "UInt64(2011)"),
+            ("y = '0'", "UInt64(2000)"),
+            ("y = '0000'", "UInt64(0)"),
+            ("y = 0", "UInt64(0)"),
+            ("y BETWEEN 10 AND 2011", "UInt64(2010)"),
+            ("NULLIF(10.1, y) IS NULL", "UInt64(2010)"),
+        ] {
+            let bound = filter(condition);
+            assert!(bound.contains(year), "{condition}: {bound}");
+        }
+        // No year is 100 or 2156, an IN list compares as written, and only
+        // the column itself converts its comparand.
+        for (condition, raw) in [
+            ("y < 100", "UInt64(20"),
+            ("y = 2156", "UInt64(20"),
+            ("y IN (10, 11)", "UInt64(20"),
+            ("y + 0 = 10", "UInt64(20"),
+        ] {
+            let bound = filter(condition);
+            assert!(!bound.contains(raw), "{condition}: {bound}");
+        }
+    }
+
     #[test]
     fn unaliased_output_columns_are_named_by_their_source_text() {
         let sql = "SELECT floor(5.5), round(5.64,1), 'abc', 1 +  1, CONCAT('a', 'b') AS joined, _utf8mb4'12', N'xyz', null, (Null), -null";

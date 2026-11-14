@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3598;
+const EXPECTED_CASES: usize = 3626;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5592,7 +5592,135 @@ fn hand_written_cases() -> Vec<OracleCase> {
     .chain(relational_edge_cases())
     .chain(format_locale_cases())
     .chain(written_form_cases())
+    .chain(conversion_edge_cases())
     .collect()
+}
+
+/// Conversions an operator applies to an operand before it works: a
+/// fraction entering a bit operation, a TIME beside a DATE, a replacement
+/// string's escapes, and the JSON functions' reading of NULL and numbers.
+#[allow(clippy::too_many_lines)]
+fn conversion_edge_cases() -> Vec<OracleCase> {
+    let ordered = |family, sql: &str| OracleCase {
+        sql_mode: "",
+        family,
+        sql: sql.to_owned(),
+        ordered: true,
+    };
+    vec![
+        ordered(
+            "fractional bit operands",
+            "SELECT 18446744073709551615.0 ^ 1, 18446744073709551615 & 18446744073709551615.0, 0 | 18446744073709551615.0, ~18446744073709551615.0, BIT_COUNT(18446744073709551615.0)",
+        ),
+        ordered(
+            "fractional bit operands",
+            "SELECT CAST(CAST(18446744073709551615 AS UNSIGNED) AS DECIMAL(32)) << 0, 1.5 | 0, 2.5 | 0, -1.5 | 0, -9999999999999999999999.0 | 0, 3.7 >> 1, 1 << 2.5, BIT_COUNT(-1.0), ~1.5",
+        ),
+        ordered(
+            "fractional bit operands",
+            "SELECT 1.8446744073709552e19 | 0, 1e30 | 0, ~1e30, 2.5e0 | 0, 3.5e0 | 0, -2.5e0 | 0, '18446744073709551615' | 0",
+        ),
+        ordered(
+            "fractional bit operands",
+            "SELECT id, whole | 0, whole & 255, whole ^ 1, ~whole, frac | 0, frac << 1, BIT_COUNT(frac), approx | 0, ~approx, BIT_COUNT(approx) FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "fractional bit operands",
+            "SELECT id FROM bounds WHERE whole | 0 = 9223372036854775807 OR frac & 3 = 2 ORDER BY id",
+        ),
+        ordered(
+            "regexp replacement escapes",
+            r"SELECT REGEXP_REPLACE('Ada Byron', '(.*) (.*)', '\\2, \\1 \\2'), REGEXP_REPLACE('abc', 'b', '\\\\'), REGEXP_REPLACE('abc', '(b)', '[$1]'), REGEXP_REPLACE('abc', '(b)', '\\$1')",
+        ),
+        ordered(
+            "regexp replacement escapes",
+            r"SELECT REGEXP_REPLACE('abc', '(b)', '[$10]'), REGEXP_REPLACE('abc', '(?<n>b)', '[${n}]'), REGEXP_REPLACE('abc', '(b)(c)?', '[$2]'), REGEXP_REPLACE('abc', '(b)', '\\u0041\\n'), REGEXP_REPLACE('abc', '(b)', 'x\\'), REGEXP_REPLACE('abc', 'x', '$'), REGEXP_REPLACE('abc', '(b)', '[$0]')",
+        ),
+        ordered(
+            "regexp replacement escapes",
+            r"SELECT id, REGEXP_REPLACE(name, '^(.)(.*)$', '\\2-$1'), REGEXP_REPLACE(name, '(?<head>.)', '${head}\\.', 1, 1) FROM users ORDER BY id",
+        ),
+        ordered(
+            "json null and numbers",
+            r#"SELECT JSON_VALUE('{"n": null}', '$.n'), 1 + JSON_VALUE('{"n": null}', '$.n'), JSON_VALUE('{"n": null}', '$.n') IS NULL, JSON_VALUE('{"n": "null"}', '$.n'), JSON_VALUE('{"n": [null]}', '$.n')"#,
+        ),
+        ordered(
+            "json null and numbers",
+            r#"SELECT JSON_MERGE_PATCH(NULL, '[1,2,3]'), JSON_MERGE_PATCH('{"a":"b"}', NULL, '[1,2,3]', '{"c":null,"d":"e"}'), JSON_MERGE_PATCH(NULL, '{"a":1}'), JSON_MERGE_PATCH('{"a":1}', NULL), JSON_MERGE_PATCH(NULL, '[1]', '{"a":1}'), JSON_MERGE_PATCH(NULL, NULL), JSON_MERGE_PATCH('1', NULL, '2')"#,
+        ),
+        ordered(
+            "json null and numbers",
+            "SELECT id, JSON_MERGE_PATCH(meta, NULL, '[1]'), JSON_MERGE_PATCH(NULL, meta), JSON_MERGE_PATCH(NULL, '7', meta) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json null and numbers",
+            r#"SELECT JSON_SEARCH('{"c":["hand","foot"]}', 'all', 'foot'), JSON_SEARCH('{"c":["foot","foot"]}', 'all', 'foot'), JSON_SEARCH('{"": "a"}', 'one', 'a'), JSON_SEARCH('{"a b": "a"}', 'one', 'a'), JSON_SEARCH('{"c":["hand","foot"]}', 'all', 'f%'), JSON_SEARCH('{"c":["hand","foot"]}', 'all', 'x')"#,
+        ),
+        ordered(
+            "json null and numbers",
+            r#"SELECT JSON_CONTAINS('10.0', '10', '$'), JSON_CONTAINS('[10.0]', '10'), JSON_CONTAINS('10', '10.0'), JSON_CONTAINS('{"a":1.0}', '{"a":1}'), JSON_CONTAINS('[1, 2.5]', '2.50'), JSON_CONTAINS('1', '"1"'), JSON_CONTAINS('[1, 2]', '3.0')"#,
+        ),
+        ordered(
+            "json null and numbers",
+            "SELECT JSON_ARRAY(1, 'text', FALSE, NULL, TRUE), JSON_OBJECT('k', TRUE, 'f', FALSE), JSON_OBJECT('k', COALESCE(TRUE, FALSE)), JSON_ARRAY(1 = 1, NOT TRUE, TRUE AND FALSE)",
+        ),
+        ordered(
+            "json null and numbers",
+            "SELECT JSON_ARRAY(1 = 1, 1 <=> 1, 1 IN (1), 1 BETWEEN 0 AND 2, 'a' LIKE 'a', 1 IS NULL, NOT 1, 1 AND 1, 1 OR 0, 1 XOR 1, IF(1, TRUE, FALSE), 1 = NULL, IFNULL(TRUE, 1), CASE WHEN 1 THEN TRUE END, COALESCE(1 = 1), TRUE + 0)",
+        ),
+        ordered(
+            "json null and numbers",
+            "SELECT id, JSON_ARRAY(score > 10, note IS NULL, score IN (1, 2)), JSON_OBJECT('big', score > 10, 'none', note IS NULL) FROM events ORDER BY id",
+        ),
+        ordered(
+            "json null and numbers",
+            r#"SELECT JSON_EXTRACT('[1]', '$**[0]'), JSON_EXTRACT('[1]', '$**[0][0]'), JSON_EXTRACT('[[1]]', '$**[0]'), JSON_EXTRACT('{"a":[1,2]}', '$**[0]'), JSON_EXTRACT('[1]', '$[0]', '$[0]'), JSON_EXTRACT('{"a":{"b":1}}', '$**.b', '$**.b')"#,
+        ),
+        ordered(
+            "json null and numbers",
+            r#"SELECT JSON_EXTRACT('{"":7}', '$.""'), JSON_EXTRACT('{"a b":1}', '$."a b"'), JSON_EXTRACT('{"a":{"":{"b":2}}}', '$.a."".b')"#,
+        ),
+        ordered(
+            "rollup over every column",
+            "SELECT * FROM (SELECT * FROM users GROUP BY id, name WITH ROLLUP) x ORDER BY id, name",
+        ),
+        ordered(
+            "rollup over every column",
+            "SELECT (SELECT COUNT(*) FROM (SELECT users.* FROM users GROUP BY id, name WITH ROLLUP) x WHERE x.name IS NULL), (SELECT COUNT(*) FROM (SELECT *, COUNT(*) AS c FROM users u GROUP BY id, name WITH ROLLUP) y WHERE y.id IS NULL)",
+        ),
+        ordered(
+            "time beside a date",
+            "SELECT id, clock = TIMESTAMP'2001-01-01 00:00:00', clock < TIMESTAMP'2001-01-01 00:00:01', clock <=> DATE'2001-01-01', clock IN (TIMESTAMP'2001-01-01 00:00:00'), clock IN (TIMESTAMP'2001-01-01 00:00:00', TIMESTAMP'2001-01-01 00:00:00'), clock BETWEEN TIMESTAMP'2001-01-01 00:00:00' AND TIMESTAMP'2001-01-01 00:00:01' FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "time beside a date",
+            "SELECT TIME'10:20:30' IN (102030, TIME'10:20:31', TIMESTAMP'2001-01-01 10:20:32'), TIME'10:20:30' IN (TIME'10:20:31', TIMESTAMP'2001-01-01 10:20:30')",
+        ),
+        ordered(
+            "time beside a date",
+            "SELECT TIME'10:20:30' < TIMESTAMP'2001-01-01 00:00:00', TIME'10:20:30' > DATE'2001-01-01', TIME'10:20:30' < TIMESTAMP'9999-01-01 00:00:00', TIME'10:20:30' = DATE'2001-01-01', TIME'10:20:30' <=> DATE'2001-01-01'",
+        ),
+        ordered(
+            "time beside a date",
+            "SELECT id, clock < day, clock >= dt0, clock <=> dt6, day <> clock, clock < stamp FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "time beside a date",
+            "SELECT id FROM bounds WHERE dt0 > TIME'00:00:00' ORDER BY id",
+        ),
+        ordered(
+            "time beside a date",
+            "SELECT id FROM bounds WHERE TIME'10:20:30' BETWEEN dt0 AND day OR TIME'10:20:30' BETWEEN day AND dt3 ORDER BY id",
+        ),
+        ordered(
+            "time beside a date",
+            "SELECT id FROM bounds WHERE COALESCE(clock) > DATE'2001-01-01' AND day IN (TIME'10:20:30', DATE'2024-02-29', DATE'2038-01-19') ORDER BY id",
+        ),
+        ordered(
+            "time beside a date",
+            "SELECT a.id, b.id FROM bounds a JOIN bounds b ON a.clock > b.dt0 AND b.id < 4 WHERE a.id > 5 ORDER BY a.id, b.id",
+        ),
+    ]
 }
 
 /// `FORMAT(number, decimals, locale)` for every locale `MySQL` knows, then
