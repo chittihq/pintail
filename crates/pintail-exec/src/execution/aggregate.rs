@@ -37,7 +37,7 @@ use super::{
     ExecError, FoldedRound, HASH_ENTRY_OVERHEAD, JoinKeyMode, MaterializedRows, MemoryTracker,
     OneShotStream, PullOperator, SESSION_GROUP_CONCAT_MAX_LEN, SESSION_GROUP_CONCAT_WARNINGS,
     compare_sort_values, estimated_row_payload_bytes, reserve_hash_map_entries,
-    reserve_hash_set_entries, reserve_vec_elements, scalar_string_memory_upper_bound,
+    reserve_hash_set_entries, reserve_vec_elements,
 };
 use crate::{
     ColumnVector, RecordBatch,
@@ -244,6 +244,16 @@ struct BitmapSeen {
 /// temporal column's packed units and stand for the canonical text those
 /// units format to.
 enum DistinctSeen {
+    /// The first few integer keys, each fitting 64 bits, held in the state
+    /// itself and compared one by one. A statement of many groups has few
+    /// rows in most of them, and a boxed hash table per group and per
+    /// DISTINCT aggregate was two allocations and a table of buckets for
+    /// two or three keys. The set every state starts as; it moves to
+    /// `Ints` with the key that does not fit.
+    Few {
+        len: u8,
+        keys: [i64; FEW_KEYS],
+    },
     Ints(Box<IntsSeen>),
     /// Exact membership over `min..min + bits.len() * 64`.
     Bitmap(Box<BitmapSeen>),
@@ -253,6 +263,10 @@ enum DistinctSeen {
     /// Normalized key to the value first met under it.
     Spelled(HashMap<Value, Value>),
 }
+
+/// Keys a DISTINCT set holds in place before it becomes a hash table: as
+/// many as leave the set no larger than its widest other form.
+const FEW_KEYS: usize = 4;
 
 /// How a DISTINCT set reads its keys: the collation text compares under,
 /// and what integer keys stand for.
@@ -420,11 +434,18 @@ fn int_distinct_key(value: &Value) -> Option<i128> {
     }
 }
 
-/// The packed units a `COUNT(DISTINCT column)` keys by, when the column is
-/// a DECIMAL, DATE or DATETIME. Only COUNT: every other DISTINCT aggregate
-/// reads a merged key back as the value it adds.
+/// The packed units a `COUNT`, `SUM` or `AVG` of a DISTINCT column keys by,
+/// when the column is a DECIMAL, DATE or DATETIME. A SUM or an AVG reads a
+/// merged key back as the value it adds: the canonical text the key stands
+/// for (see [`AggregateState::absorb_distinct`]). Every other DISTINCT
+/// aggregate keeps the value it was given.
 fn distinct_unit_kind(aggregate: &CompiledAggregate) -> Option<UnitKind> {
-    if !aggregate.distinct || aggregate.function != AggregateFunction::Count {
+    if !aggregate.distinct
+        || !matches!(
+            aggregate.function,
+            AggregateFunction::Count | AggregateFunction::Sum | AggregateFunction::Average
+        )
+    {
         return None;
     }
     aggregate.expr.as_ref()?.column_index()?;
@@ -525,10 +546,7 @@ impl DistinctSeen {
         memory: &MemoryTracker,
         collation: Collation,
     ) -> Result<Option<bool>, ExecError> {
-        if let Self::Ints(ints) = self {
-            if !ints.set.is_empty() {
-                return Ok(None);
-            }
+        if self.holds_no_integers() {
             *self = Self::Texts(Box::new(TextKeys::new(collation)));
         }
         match self {
@@ -547,6 +565,7 @@ impl DistinctSeen {
     ) -> Result<bool, ExecError> {
         if !matches!(self, Self::Spelled(_)) {
             let held: Vec<Value> = match std::mem::replace(self, Self::Spelled(HashMap::new())) {
+                few @ Self::Few { .. } => few.few().map(int_key_value).collect(),
                 Self::Ints(ints) => ints.set.into_iter().map(int_key_value).collect(),
                 Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits)
                     .map(int_key_value)
@@ -587,6 +606,88 @@ impl DistinctSeen {
         Ok(true)
     }
 
+    /// A set that has taken no key yet.
+    const fn empty() -> Self {
+        Self::Few {
+            len: 0,
+            keys: [0; FEW_KEYS],
+        }
+    }
+
+    /// Whether this is an integer-keyed set with no key in it, which may
+    /// still become a set of text keys.
+    fn holds_no_integers(&self) -> bool {
+        match self {
+            Self::Few { len, .. } => *len == 0,
+            Self::Ints(ints) => ints.set.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Moves the keys held in place into a hash table with room for one
+    /// more.
+    fn spread_few(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
+        let Self::Few { len, keys } = self else {
+            return Ok(());
+        };
+        let held = &keys[..usize::from(*len)];
+        let mut ints = IntsSeen {
+            set: HashSet::default(),
+            min: i128::MAX,
+            max: i128::MIN,
+        };
+        reserve_hash_set_entries(
+            &mut ints.set,
+            held.len() + 1,
+            size_of::<i128>().saturating_add(HASH_ENTRY_OVERHEAD),
+            0,
+            memory,
+        )?;
+        for key in held {
+            let key = i128::from(*key);
+            ints.set.insert(key);
+            ints.min = ints.min.min(key);
+            ints.max = ints.max.max(key);
+        }
+        *self = Self::Ints(Box::new(ints));
+        Ok(())
+    }
+
+    /// [`Self::insert_int`] for a set that holds its keys in place. Kept
+    /// out of line: inlined, it widened the loop a large set inserts in.
+    #[inline(never)]
+    fn insert_few(
+        &mut self,
+        key: i128,
+        memory: &MemoryTracker,
+        domain: KeyDomain,
+    ) -> Result<bool, ExecError> {
+        if let Self::Few { len, keys } = self {
+            let held = usize::from(*len);
+            if let Ok(small) = i64::try_from(key) {
+                if keys[..held].contains(&small) {
+                    return Ok(false);
+                }
+                if held < FEW_KEYS {
+                    keys[held] = small;
+                    *len += 1;
+                    return Ok(true);
+                }
+            }
+            self.spread_few(memory)?;
+        }
+        self.insert_int(key, memory, domain)
+    }
+
+    /// The keys held in place, empty for every other form.
+    fn few(&self) -> impl Iterator<Item = i128> + '_ {
+        let held: &[i64] = match self {
+            Self::Few { len, keys } => &keys[..usize::from(*len)],
+            _ => &[],
+        };
+        held.iter().map(|key| i128::from(*key))
+    }
+
     /// Inserts an already normalized key into a set of values.
     fn insert_normalized(&mut self, key: Value, memory: &MemoryTracker) -> Result<bool, ExecError> {
         let Self::Values(set) = self else {
@@ -616,6 +717,7 @@ impl DistinctSeen {
         domain: KeyDomain,
     ) -> Result<bool, ExecError> {
         match self {
+            Self::Few { .. } => self.insert_few(key, memory, domain),
             Self::Ints(ints) => {
                 let IntsSeen { set, min, max } = ints.as_mut();
                 reserve_hash_set_entries(
@@ -807,6 +909,14 @@ impl DistinctSeen {
         if matches!(self, Self::Spelled(_)) {
             return self.insert_spelled(&key, memory, domain);
         }
+        // A unit key no 64-bit integer holds travels as the canonical text
+        // it stands for (see [`Self::drain_values`]).
+        if let Some(kind) = domain.units
+            && let Value::Utf8(text) = &key
+            && let Some(units) = kind.key_of_text(text)
+        {
+            return self.insert_int(units, memory, domain);
+        }
         self.migrate_to_values(memory, domain)?;
         self.insert_normalized(key, memory)
     }
@@ -820,6 +930,10 @@ impl DistinctSeen {
         domain: KeyDomain,
     ) -> Result<(), ExecError> {
         let keys: Vec<Value> = match self {
+            Self::Few { .. } => self
+                .few()
+                .map(|key| domain.normalized_int(key))
+                .collect::<Result<_, _>>()?,
             Self::Ints(ints) => std::mem::take(&mut ints.set)
                 .into_iter()
                 .map(|key| domain.normalized_int(key))
@@ -860,12 +974,12 @@ impl DistinctSeen {
         // Two sets of text keys union key by key, and an empty set takes
         // the other whole.
         if let Self::Texts(theirs) = other {
+            if self.holds_no_integers() {
+                let added = theirs.len() as u64;
+                *self = Self::Texts(theirs);
+                return Ok(Ok(added));
+            }
             return match self {
-                Self::Ints(ints) if ints.set.is_empty() => {
-                    let added = theirs.len() as u64;
-                    *self = Self::Texts(theirs);
-                    Ok(Ok(added))
-                }
                 Self::Texts(mine) => mine.union(*theirs, domain.collation, memory).map(Ok),
                 _ => Ok(Err(Self::Texts(theirs))),
             };
@@ -909,6 +1023,7 @@ impl DistinctSeen {
             }
         }
         let members: Box<dyn Iterator<Item = i128> + '_> = match &other {
+            Self::Few { .. } => Box::new(other.few()),
             Self::Ints(ints) => Box::new(ints.set.iter().copied()),
             Self::Bitmap(bitmap) => Box::new(bitmap_members(bitmap.min, &bitmap.bits)),
             Self::Values(_) | Self::Texts(_) | Self::Spelled(_) => unreachable!("checked above"),
@@ -923,13 +1038,26 @@ impl DistinctSeen {
     }
 
     /// Every key as [`Self::absorb`] takes it back: integers and unit keys
-    /// as integers, everything else normalized.
-    fn drain_values(self, collation: Collation) -> Vec<Value> {
+    /// as integers, everything else normalized. A unit key outside 64 bits,
+    /// as a DECIMAL of more than nineteen digits has, leaves as the
+    /// canonical text it stands for, which `absorb` keys back to the same
+    /// units.
+    fn drain_values(self, domain: KeyDomain) -> Vec<Value> {
+        let key_value = |key: i128| match domain.units {
+            Some(kind) if i64::try_from(key).is_err() && u64::try_from(key).is_err() => {
+                Value::Utf8(kind.text_of_key(key).unwrap_or_default())
+            }
+            _ => int_key_value(key),
+        };
         match self {
-            Self::Texts(keys) => keys.into_normalized(collation).map(Value::Utf8).collect(),
-            Self::Ints(ints) => ints.set.into_iter().map(int_key_value).collect(),
+            Self::Texts(keys) => keys
+                .into_normalized(domain.collation)
+                .map(Value::Utf8)
+                .collect(),
+            Self::Few { .. } => self.few().map(key_value).collect(),
+            Self::Ints(ints) => ints.set.into_iter().map(key_value).collect(),
             Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits)
-                .map(int_key_value)
+                .map(key_value)
                 .collect(),
             Self::Values(set) => set.into_iter().collect(),
             Self::Spelled(map) => map.into_values().collect(),
@@ -1218,9 +1346,8 @@ enum AggregateValue {
         identity: u8,
     },
     GroupConcat {
-        /// Collected `(order keys, rendered value, original value)` rows.
-        /// The original value preserves DISTINCT identity when runs merge.
-        items: Vec<(Vec<Value>, String, Value)>,
+        /// The collected rows, in arrival order.
+        items: Vec<ConcatItem>,
         /// Join separator resolved at state creation.
         separator: String,
         /// Per-key `(ascending, value kind)` sort spec.
@@ -1230,6 +1357,96 @@ enum AggregateValue {
         /// Pre-rendered JSON fragments in input order (NULLs included).
         items: Vec<String>,
     },
+}
+
+/// The ORDER BY keys `GROUP_CONCAT` evaluated for one row. One key, the
+/// usual count, is held in place: a vector per row was an allocation per
+/// row for a single value.
+#[derive(Clone)]
+pub(super) enum ConcatKeys {
+    None,
+    One(Value),
+    Many(Vec<Value>),
+}
+
+impl ConcatKeys {
+    pub(super) fn from_values(mut keys: Vec<Value>) -> Self {
+        match keys.len() {
+            0 => Self::None,
+            1 => Self::One(keys.pop().expect("one key")),
+            _ => Self::Many(keys),
+        }
+    }
+
+    fn get(&self, position: usize) -> &Value {
+        match (self, position) {
+            (Self::One(key), 0) => key,
+            (Self::Many(keys), _) => keys.get(position).unwrap_or(&Value::Null),
+            _ => &Value::Null,
+        }
+    }
+
+    fn into_values(self) -> Vec<Value> {
+        match self {
+            Self::None => Vec::new(),
+            Self::One(key) => vec![key],
+            Self::Many(keys) => keys,
+        }
+    }
+
+    /// Bytes the keys hold outside the item they sit in.
+    fn held_bytes(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::One(key) => key.heap_bytes(),
+            Self::Many(keys) => estimated_row_payload_bytes(keys),
+        }
+    }
+}
+
+/// One row a `GROUP_CONCAT` collected. The value is kept as it arrived,
+/// which is what DISTINCT compares when two runs of a group merge; a text
+/// value joins as itself, so only a number or a binary string carries a
+/// rendering beside it. Holding every row's text twice, and reserving room
+/// for sixty-four rows in every group, made a statement of many small
+/// groups spill under a ceiling thousands of times its answer.
+#[derive(Clone)]
+struct ConcatItem {
+    keys: ConcatKeys,
+    value: Value,
+    rendered: Option<Box<str>>,
+}
+
+impl ConcatItem {
+    fn new(value: Value, keys: ConcatKeys) -> Result<Self, ExecError> {
+        let rendered = match &value {
+            Value::Utf8(_) | Value::Enum { .. } | Value::DecimalAverage(_) => None,
+            other => Some(aggregate_string(other)?.into_boxed_str()),
+        };
+        Ok(Self {
+            keys,
+            value,
+            rendered,
+        })
+    }
+
+    /// The text the row joins as.
+    fn text(&self) -> &str {
+        match (&self.rendered, &self.value) {
+            (Some(rendered), _) => rendered,
+            (None, Value::Utf8(text) | Value::Enum { label: text, .. }) => text,
+            (None, Value::DecimalAverage(average)) => &average.label,
+            (None, _) => "",
+        }
+    }
+
+    /// Bytes the item holds outside the vector it sits in.
+    fn held_bytes(&self) -> usize {
+        self.keys
+            .held_bytes()
+            .saturating_add(self.value.heap_bytes())
+            .saturating_add(self.rendered.as_ref().map_or(0, |text| text.len()))
+    }
 }
 
 impl AggregateState {
@@ -1301,13 +1518,7 @@ impl AggregateState {
             collation: aggregate.collation,
             units: distinct_unit_kind(aggregate),
             value,
-            seen: aggregate.distinct.then(|| {
-                DistinctSeen::Ints(Box::new(IntsSeen {
-                    set: HashSet::default(),
-                    min: i128::MAX,
-                    max: i128::MIN,
-                }))
-            }),
+            seen: aggregate.distinct.then(DistinctSeen::empty),
             extreme_number: None,
             extreme_units: None,
             decimal_total: decimal_integer_total(aggregate),
@@ -1339,8 +1550,9 @@ impl AggregateState {
             return self.update(aggregate, key, memory);
         };
         // A replayed key is the value itself, and takes the same path a
-        // row's value does.
-        if replays_keys(aggregate) {
+        // row's value does. A unit key is not the value, and is spelled
+        // below.
+        if self.units.is_none() && replays_keys(aggregate) {
             return self.update(aggregate, key, memory);
         }
         let domain = KeyDomain {
@@ -1351,6 +1563,17 @@ impl AggregateState {
         if !seen.absorb(key.clone(), memory, domain)? {
             return Ok(());
         }
+        // A unit key is not the value: a SUM or an AVG adds the canonical
+        // text the key stands for, as it adds a row that arrives as text.
+        let spelled = match (self.units, int_distinct_key(key)) {
+            (Some(kind), Some(units)) if aggregate.function != AggregateFunction::Count => {
+                Some(Value::Utf8(kind.text_of_key(units).ok_or(
+                    ExecError::InvalidBatch("a distinct unit key outside its column's type"),
+                )?))
+            }
+            _ => None,
+        };
+        let key = spelled.as_ref().unwrap_or(key);
         let seen = self.seen.take();
         let result = self.update(aggregate, key, memory);
         self.seen = seen;
@@ -1413,7 +1636,9 @@ impl AggregateState {
                 KeyDomain {
                     collation: self.collation,
                     units: self.units,
-                    replays: replays_keys(aggregate),
+                    // A set keyed by units reads each key back as the
+                    // text it stands for, so it never keeps spellings.
+                    replays: self.units.is_none() && replays_keys(aggregate),
                 },
             )?
         {
@@ -1623,10 +1848,10 @@ impl AggregateState {
                 }
             }
             AggregateValue::GroupConcat { items, .. } => {
-                let value_bytes = scalar_string_memory_upper_bound(value);
-                reserve_vec_elements(items, 1, 64, memory)?;
-                memory.reserve(value_bytes.saturating_add(value.heap_bytes()))?;
-                items.push((Vec::new(), aggregate_string(value)?, value.clone()));
+                let item = ConcatItem::new(value.clone(), ConcatKeys::None)?;
+                reserve_vec_elements(items, 1, 0, memory)?;
+                memory.reserve(item.held_bytes())?;
+                items.push(item);
             }
             // Handled by the intercept above the NULL skip.
             AggregateValue::JsonArrayAgg { .. } => {
@@ -1650,8 +1875,8 @@ impl AggregateState {
         self.extreme_number = None;
         self.extreme_units = None;
         if let AggregateValue::GroupConcat { items, .. } = other.value {
-            for (keys, _, value) in items {
-                self.update_group_concat(&value, keys, memory)?;
+            for item in items {
+                self.update_group_concat(item.value, item.keys, memory)?;
             }
             return Ok(());
         }
@@ -1675,7 +1900,12 @@ impl AggregateState {
                         Err(returned) => seen = returned,
                     }
                 }
-                for key in seen.drain_values(self.collation) {
+                let domain = KeyDomain {
+                    collation: self.collation,
+                    units: self.units,
+                    replays: false,
+                };
+                for key in seen.drain_values(domain) {
                     self.absorb_distinct(aggregate, &key, memory)?;
                 }
             }
@@ -2189,8 +2419,8 @@ impl AggregateState {
     /// evaluated for this row.
     pub(super) fn update_group_concat(
         &mut self,
-        value: &Value,
-        keys: Vec<Value>,
+        value: Value,
+        keys: ConcatKeys,
         memory: &MemoryTracker,
     ) -> Result<(), ExecError> {
         if matches!(value, Value::Null) {
@@ -2198,7 +2428,7 @@ impl AggregateState {
         }
         if let Some(seen) = &mut self.seen
             && !seen.insert_value(
-                value,
+                &value,
                 memory,
                 KeyDomain {
                     collation: self.collation,
@@ -2214,10 +2444,10 @@ impl AggregateState {
                 "group-concat update applied to an incompatible aggregate state",
             ));
         };
-        let key_bytes = estimated_row_payload_bytes(&keys).saturating_add(value.heap_bytes());
-        reserve_vec_elements(items, 1, 64, memory)?;
-        memory.reserve(scalar_string_memory_upper_bound(value).saturating_add(key_bytes))?;
-        items.push((keys, aggregate_string(value)?, value.clone()));
+        let item = ConcatItem::new(value, keys)?;
+        reserve_vec_elements(items, 1, 0, memory)?;
+        memory.reserve(item.held_bytes())?;
+        items.push(item);
         Ok(())
     }
 
@@ -2342,6 +2572,45 @@ impl AggregateState {
         }
     }
 
+    /// Inserts a packed-unit key into this state's distinct set, answering
+    /// whether it is new: the caller then adds the value the key stands
+    /// for, which the set never reads.
+    pub(super) fn insert_distinct_unit_key(
+        &mut self,
+        key: i128,
+        memory: &MemoryTracker,
+    ) -> Result<bool, ExecError> {
+        let domain = KeyDomain {
+            collation: self.collation,
+            units: self.units,
+            replays: false,
+        };
+        let Some(seen) = &mut self.seen else {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "distinct update on a non-distinct aggregate state",
+            ));
+        };
+        seen.insert_int(key, memory, domain)
+    }
+
+    /// SUM(DISTINCT) of a decimal's packed `units` under `key`: added when
+    /// the set has not held the key.
+    fn sum_distinct_units(
+        &mut self,
+        key: i128,
+        units: i128,
+        scale: u8,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if self.insert_distinct_unit_key(key, memory)? {
+            self.update_decimal_sum_units(units, scale, false)?;
+        }
+        crate::counters::count(|counters| {
+            counters.distinct_units_summed = counters.distinct_units_summed.saturating_add(1);
+        });
+        Ok(())
+    }
+
     /// COUNT(DISTINCT) over a batch of raw integer keys, which come back
     /// reordered: each new key counts once, as inserting them one at a
     /// time through [`Self::update_distinct_count_int`] would count them.
@@ -2376,10 +2645,7 @@ impl AggregateState {
         let (Some(seen), AggregateValue::Count(count)) = (&mut self.seen, &mut self.value) else {
             return None;
         };
-        if let DistinctSeen::Ints(ints) = seen {
-            if !ints.set.is_empty() {
-                return None;
-            }
+        if seen.holds_no_integers() {
             *seen = DistinctSeen::Texts(Box::new(TextKeys::new(self.collation)));
         }
         let DistinctSeen::Texts(keys) = seen else {
@@ -2642,8 +2908,8 @@ impl AggregateState {
                     items.sort_by(|left, right| {
                         for (position, (ascending, kind)) in order.iter().enumerate() {
                             let ordering = compare_sort_values(
-                                left.0.get(position).unwrap_or(&Value::Null),
-                                right.0.get(position).unwrap_or(&Value::Null),
+                                left.keys.get(position),
+                                right.keys.get(position),
                                 BoundOrderKey {
                                     value_kind: *kind,
                                     index: 0,
@@ -2661,7 +2927,7 @@ impl AggregateState {
                         Ordering::Equal
                     });
                 }
-                let joined_bytes = items.iter().map(|(_, text, _)| text.len()).fold(
+                let joined_bytes = items.iter().map(|item| item.text().len()).fold(
                     items
                         .len()
                         .saturating_sub(1)
@@ -2671,7 +2937,7 @@ impl AggregateState {
                 memory.reserve(joined_bytes)?;
                 let mut joined = items
                     .iter()
-                    .map(|(_, text, _)| text.as_str())
+                    .map(ConcatItem::text)
                     .collect::<Vec<_>>()
                     .join(&separator);
                 // MySQL truncates at the session's byte ceiling and raises
@@ -5744,6 +6010,7 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
         value,
         seen,
         collation,
+        units,
         ..
     } = state;
     let value = match value {
@@ -5805,7 +6072,7 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
         AggregateValue::GroupConcat { items, .. } => SpilledAggregateValue::GroupConcat(
             items
                 .into_iter()
-                .map(|(keys, _, value)| (keys, value))
+                .map(|item| (item.keys.into_values(), item.value))
                 .collect(),
         ),
         AggregateValue::JsonArrayAgg { items } => SpilledAggregateValue::JsonArrayAgg(items),
@@ -5817,7 +6084,13 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
     };
     Ok(SpilledAggregateState {
         value,
-        seen: seen.map(|seen| seen.drain_values(collation)),
+        seen: seen.map(|seen| {
+            seen.drain_values(KeyDomain {
+                collation,
+                units,
+                replays: false,
+            })
+        }),
     })
 }
 
@@ -5845,7 +6118,7 @@ fn revive_aggregate_state(
     let mut state = AggregateState::new(aggregate);
     if let SpilledAggregateValue::GroupConcat(items) = spilled.value {
         for (keys, value) in items {
-            state.update_group_concat(&value, keys, memory)?;
+            state.update_group_concat(value, ConcatKeys::from_values(keys), memory)?;
         }
         return Ok(state);
     }
@@ -8154,8 +8427,24 @@ pub(super) fn update_state_from_typed_column(
             && typed.unit_kind() == Some(kind)
             && let Some(units) = typed.units_at(row)
         {
-            state.update_distinct_count_int(kind.key_of_units(units), memory)?;
-            return Ok(true);
+            let key = kind.key_of_units(units);
+            if aggregate.function == AggregateFunction::Count {
+                state.update_distinct_count_int(key, memory)?;
+                return Ok(true);
+            }
+            // SUM(DISTINCT decimal column): the units are the key and, for
+            // a key the set has not held, the amount. The row path spelled
+            // every value as text, keyed that text by its collation weight
+            // and parsed it back to add it.
+            if aggregate.function == AggregateFunction::Sum
+                && !aggregate_uses_float(aggregate)
+                && aggregate.sum_carrier.is_none()
+                && let Some(scale) = typed.decimal_scale()
+                && matches!(aggregate.data_type, Some(DataType::Decimal { scale: own, .. }) if own == scale)
+            {
+                state.sum_distinct_units(key, units, scale, memory)?;
+                return Ok(true);
+            }
         }
         return Ok(false);
     }
@@ -8268,20 +8557,21 @@ pub(super) fn update_aggregate_states(
         // GROUP_CONCAT with an aggregate-local ORDER BY evaluates its key
         // expressions alongside the argument so finish can sort.
         if aggregate.function == AggregateFunction::GroupConcat
-            && !aggregate.order_within.is_empty()
+            && let Some(expression) = &aggregate.expr
         {
-            let Some(expression) = &aggregate.expr else {
-                return Err(ExecError::InvalidPhysicalPlan(
-                    "group-concat requires an argument expression",
-                ));
-            };
+            // The value goes to the state as it was evaluated: lent, the
+            // state copied it and this one was dropped, row after row.
             let value = expression.evaluate(batch, row)?;
-            let keys = aggregate
-                .order_within
-                .iter()
-                .map(|(key, _, _)| key.evaluate(batch, row))
-                .collect::<Result<Vec<_>, _>>()?;
-            state.update_group_concat(&value, keys, memory)?;
+            let keys = match aggregate.order_within.as_slice() {
+                [] => ConcatKeys::None,
+                [(key, _, _)] => ConcatKeys::One(key.evaluate(batch, row)?),
+                keys => ConcatKeys::Many(
+                    keys.iter()
+                        .map(|(key, _, _)| key.evaluate(batch, row))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+            };
+            state.update_group_concat(value, keys, memory)?;
             continue;
         }
         match &aggregate.expr {
@@ -8668,7 +8958,7 @@ mod distinct_bitmap_tests {
             }
             assert!(matches!(seen, DistinctSeen::Ints(_)), "stays hashed");
             let drained: HashSet<i128> = seen
-                .drain_values(Collation::default())
+                .drain_values(PLAIN)
                 .iter()
                 .map(|value| super::int_distinct_key(value).expect("integer keys"))
                 .collect();
@@ -8700,7 +8990,7 @@ mod distinct_bitmap_tests {
         }
         assert!(matches!(seen, DistinctSeen::Bitmap(_)), "dense by now");
         let drained: HashSet<i128> = seen
-            .drain_values(Collation::default())
+            .drain_values(PLAIN)
             .iter()
             .map(|value| super::int_distinct_key(value).expect("integer keys"))
             .collect();
@@ -8737,7 +9027,7 @@ mod distinct_bitmap_tests {
         // drain_values must recover exactly the distinct set, not the
         // insertion count or anything bitmap-shaped.
         let mut drained: Vec<i128> = seen
-            .drain_values(Collation::default())
+            .drain_values(PLAIN)
             .into_iter()
             .map(|value| match value {
                 Value::Int64(value) => i128::from(value),
@@ -8794,7 +9084,7 @@ mod distinct_bitmap_tests {
             "outgrowing the bitmap's window demotes back to the general set"
         );
         let mut drained: Vec<i128> = seen
-            .drain_values(Collation::default())
+            .drain_values(PLAIN)
             .into_iter()
             .map(|value| match value {
                 Value::Int64(value) => i128::from(value),
@@ -8861,7 +9151,7 @@ mod distinct_bitmap_tests {
                 .expect("union")
                 .unwrap_or_else(|_| panic!("integer sets union in place"));
             assert_eq!(added, expected as u64);
-            let mut drained: Vec<Value> = mine.drain_values(Collation::default());
+            let mut drained: Vec<Value> = mine.drain_values(PLAIN);
             drained.sort_by_key(|value| match value {
                 Value::Int64(value) => i128::from(*value),
                 Value::UInt64(value) => i128::from(*value),
@@ -8913,6 +9203,131 @@ mod binary_fold_tests {
         let bytes = encoder.finish();
         let state = decode_aggregate_state(&mut spill::Decoder::new(&bytes)).unwrap();
         revive_aggregate_state(state, aggregate, memory).unwrap()
+    }
+
+    fn concat(distinct: bool) -> CompiledAggregate {
+        CompiledAggregate {
+            input_type: Some(DataType::Utf8),
+            binary_width: None,
+            distinct,
+            data_type: Some(DataType::Utf8),
+            separator: "|".to_owned(),
+            ..aggregate(AggregateFunction::GroupConcat)
+        }
+    }
+
+    /// A group of one short row reserves a few items' room, not sixty-four
+    /// rows' and its text twice; values a collation holds equal are one
+    /// DISTINCT value across a spill, numbers join as their text, and the
+    /// order keys travel with each row.
+    #[test]
+    fn group_concat_holds_a_small_group_in_little_and_survives_a_spill() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let plain = concat(false);
+        let mut state = AggregateState::new(&plain);
+        state
+            .update_group_concat(Value::Utf8("amber".to_owned()), ConcatKeys::None, &memory)
+            .unwrap();
+        assert!(
+            memory.used() <= 4 * size_of::<ConcatItem>() + 16,
+            "one row reserved {} bytes",
+            memory.used()
+        );
+        let distinct = concat(true);
+        let mut left = AggregateState::new(&distinct);
+        for (text, key) in [("amber", 3), ("Birch", 1)] {
+            left.update_group_concat(
+                Value::Utf8(text.to_owned()),
+                ConcatKeys::One(Value::Int64(key)),
+                &memory,
+            )
+            .unwrap();
+        }
+        let mut right = AggregateState::new(&distinct);
+        for (value, key) in [
+            (Value::Utf8("AMBER".to_owned()), 0),
+            (Value::Int64(7), 2),
+            (Value::Null, 9),
+        ] {
+            right
+                .update_group_concat(value, ConcatKeys::One(Value::Int64(key)), &memory)
+                .unwrap();
+        }
+        let mut left = round_trip(left, &distinct, &memory);
+        left.merge(&distinct, round_trip(right, &distinct, &memory), &memory)
+            .unwrap();
+        let AggregateValue::GroupConcat { items, .. } = &left.value else {
+            panic!("a concatenation state");
+        };
+        let mut rows = items
+            .iter()
+            .map(|item| (item.keys.get(0).clone(), item.text().to_owned()))
+            .collect::<Vec<_>>();
+        rows.sort();
+        assert_eq!(
+            rows,
+            [
+                (Value::Int64(1), "Birch".to_owned()),
+                (Value::Int64(2), "7".to_owned()),
+                (Value::Int64(3), "amber".to_owned()),
+            ]
+        );
+    }
+
+    /// `SUM(DISTINCT)` of a DECIMAL column keys by packed units; a merge or
+    /// a spill reads each key back as the decimal it stands for, never as
+    /// the integer the key is.
+    #[test]
+    fn distinct_decimal_sum_reads_unit_keys_back_as_decimals() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let decimal = DataType::Decimal {
+            precision: 12,
+            scale: 2,
+        };
+        let sum = CompiledAggregate {
+            expr: Some(CompiledExpr::Column(0)),
+            input_type: Some(decimal),
+            binary_width: None,
+            distinct: true,
+            data_type: Some(decimal),
+            ..aggregate(AggregateFunction::Sum)
+        };
+        let fill = |units: &[i128]| {
+            let mut state = AggregateState::new(&sum);
+            assert_eq!(state.distinct_units(), Some(UnitKind::Decimal { scale: 2 }));
+            for unit in units {
+                if state.insert_distinct_unit_key(*unit, &memory).unwrap() {
+                    state.update_decimal_sum_units(*unit, 2, false).unwrap();
+                }
+            }
+            state
+        };
+        // More keys than a state holds in place, a negative one, and some
+        // met on both sides.
+        let mut left = fill(&[150, 150, -25, 1_000, 7, 8, 9]);
+        let right = fill(&[150, 300, 9]);
+        // Units no 64-bit integer holds cross a spill and a merge too.
+        let wide = 10_i128.pow(30);
+        let mut far = round_trip(fill(&[wide, -wide, 3 * wide]), &sum, &memory);
+        far.merge(&sum, round_trip(fill(&[wide, 5]), &sum, &memory), &memory)
+            .unwrap();
+        assert_eq!(
+            far.finish(&memory).unwrap(),
+            Value::Utf8("30000000000000000000000000000.05".to_owned())
+        );
+        // A row that arrives as text is the same key.
+        left.update(&sum, &Value::Utf8("10.00".to_owned()), &memory)
+            .unwrap();
+        left.update(&sum, &Value::Utf8("0.05".to_owned()), &memory)
+            .unwrap();
+        let mut left = round_trip(left, &sum, &memory);
+        left.merge(&sum, round_trip(right, &sum, &memory), &memory)
+            .unwrap();
+        // 1.50 - 0.25 + 10.00 + 0.07 + 0.08 + 0.09 + 0.05 + 3.00
+        assert_eq!(
+            left.finish(&memory).unwrap(),
+            Value::Utf8("14.54".to_owned())
+        );
     }
 
     #[test]

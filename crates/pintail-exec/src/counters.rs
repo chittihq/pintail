@@ -108,6 +108,18 @@ pub struct ExecCounters {
     /// Batches a limited sort left out whole because the extremes of their
     /// first key's packed values order after its k-th row so far.
     pub top_k_batches_passed_over: u64,
+    /// Batches a `TIME` function answered from the column's packed
+    /// microseconds, without reading each value as text.
+    pub time_kernel_batches: u64,
+    /// JSON reader calls that took the document another call had parsed,
+    /// without parsing it again.
+    pub json_documents_reused: u64,
+    /// Values a `SUM(DISTINCT)` of a DECIMAL column keyed and added by
+    /// their packed units, with no text built.
+    pub distinct_units_summed: u64,
+    /// Rows a spilled window read back a batch at a time to evaluate its
+    /// keys over columns.
+    pub window_spill_rows_batched: u64,
 }
 
 thread_local! {
@@ -149,6 +161,10 @@ thread_local! {
             range_join_pairs_tested: 0,
             decimal_masks_packed: 0,
             top_k_batches_passed_over: 0,
+            time_kernel_batches: 0,
+            json_documents_reused: 0,
+            distinct_units_summed: 0,
+            window_spill_rows_batched: 0,
         })
     };
 }

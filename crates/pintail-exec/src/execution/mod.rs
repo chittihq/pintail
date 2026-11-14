@@ -3231,33 +3231,55 @@ fn project_batch(
         .saturating_add(expression_memory);
     memory.ensure_transient(batch_bytes.saturating_add(projected_memory))?;
     let mut columns = Vec::with_capacity(expressions.len());
+    // Expressions no kernel answers, by the column each fills.
+    let mut by_row = Vec::new();
     for ((expression, data_type), position) in expressions.iter().zip(&passthrough) {
         if let Some(position) = position {
-            columns.push(batch.columns()[*position].clone());
+            columns.push(Some(batch.columns()[*position].clone()));
             continue;
         }
         // A whole batch at a time over packed units where the
         // expression has kernels; row by row where it has not.
-        if let Some(column) = expression.evaluate_column(&batch, *data_type) {
-            columns.push(column);
-            continue;
+        let column = expression.evaluate_column(&batch, *data_type);
+        if column.is_none() {
+            by_row.push((columns.len(), expression, *data_type));
         }
-        let mut values = Vec::with_capacity(batch.row_count());
+        columns.push(column);
+    }
+    // Those go a row at a time, every one of them for a row before any of
+    // them for the next: the order rows are answered in, and the one in
+    // which several readers of one JSON document share its parse.
+    let mut answers = by_row
+        .iter()
+        .map(|_| Vec::with_capacity(batch.row_count()))
+        .collect::<Vec<Vec<Value>>>();
+    if !by_row.is_empty() {
         for row in 0..batch.row_count() {
-            if batch.selection().is_selected(row) {
-                values.push(expression.evaluate(&batch, row)?);
-            } else {
-                values.push(Value::Null);
+            let selected = batch.selection().is_selected(row);
+            for ((_, expression, _), values) in by_row.iter().zip(&mut answers) {
+                values.push(if selected {
+                    expression.evaluate(&batch, row)?
+                } else {
+                    Value::Null
+                });
             }
         }
-        let data_type = data_type.unwrap_or(DataType::Utf8);
-        columns.push(ColumnVector::new(data_type, values)?);
+    }
+    for ((slot, _, data_type), values) in by_row.into_iter().zip(answers) {
+        columns[slot] = Some(ColumnVector::new(
+            data_type.unwrap_or(DataType::Utf8),
+            values,
+        )?);
         crate::counters::count(|counters| {
             counters.rows_projected_scalar = counters
                 .rows_projected_scalar
                 .saturating_add(u64::try_from(batch.row_count()).unwrap_or(u64::MAX));
         });
     }
+    let columns = columns
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(ExecError::InvalidBatch("a projected column was not built"))?;
     let mut output = RecordBatch::new(batch.row_count(), columns)?;
     output.set_selection(batch.selection().clone())?;
     memory.ensure_transient(batch_bytes.saturating_add(output.estimated_bytes()))?;
@@ -8044,20 +8066,6 @@ fn validate_union_fields(layouts: &[Vec<OutputField>]) -> Result<(), ExecError> 
         ));
     }
     Ok(())
-}
-
-fn scalar_string_memory_upper_bound(value: &Value) -> usize {
-    match value {
-        Value::Null => 0,
-        Value::Boolean(_) => 1,
-        Value::Int64(_) | Value::UInt64(_) | Value::Float64(_) => 24,
-        Value::Utf8(value) | Value::Enum { label: value, .. } => value.len(),
-        Value::DecimalAverage(average) => {
-            let value = &average.label;
-            value.len()
-        }
-        Value::Binary(value) => value.len(),
-    }
 }
 
 fn batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
