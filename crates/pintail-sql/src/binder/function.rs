@@ -1082,8 +1082,8 @@ pub(super) fn bind_scalar_function(
             .into_iter()
             .enumerate()
             .map(|(index, arg)| {
-                if (!values_at_odd || index % 2 == 1) && writes_json_boolean(&arg) {
-                    json_boolean(arg)
+                if !values_at_odd || index % 2 == 1 {
+                    json_member_value(arg)
                 } else {
                     Ok(arg)
                 }
@@ -1195,6 +1195,16 @@ fn writes_json_boolean(expr: &BoundExpr) -> bool {
             _ => false,
         },
         _ => false,
+    }
+}
+
+/// A value on its way into a JSON document: a truth value as the literal
+/// `true` or `false`, anything else as it is.
+pub(super) fn json_member_value(value: BoundExpr) -> Result<BoundExpr, BindError> {
+    if writes_json_boolean(&value) {
+        json_boolean(value)
+    } else {
+        Ok(value)
     }
 }
 

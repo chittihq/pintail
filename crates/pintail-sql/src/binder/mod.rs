@@ -7168,6 +7168,9 @@ fn bind_aggregate(
             };
             pair.push(bind_expr(expr, tables, subqueries)?);
         }
+        if let Some(value) = pair.pop() {
+            pair.push(function::json_member_value(value)?);
+        }
         Some(bind_scalar(ScalarFunction::JsonObject, pair)?)
     } else if aggregate_function == AggregateFunction::Count && distinct && arguments.args.len() > 1
     {
@@ -7505,6 +7508,10 @@ fn bit_aggregate_input(
     expr: Option<BoundExpr>,
     written: Option<&FunctionArg>,
 ) -> Option<BoundExpr> {
+    // JSON_ARRAYAGG collects a truth value as `true` or `false`.
+    if function == AggregateFunction::JsonArrayAgg {
+        return expr.map(|value| function::json_member_value(value.clone()).unwrap_or(value));
+    }
     // The bit aggregates and the sums read an unintroduced literal as the
     // number its bytes spell.
     if !matches!(
