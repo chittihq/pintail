@@ -1,5 +1,5 @@
 // Classify a completed replay's mismatches without changing its comparisons.
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -26,7 +26,15 @@ for (const entry of manifest.entries) {
   entries.set(key, entry)
 }
 const result = JSON.parse(readFileSync(join(root, 'results.json'), 'utf8')) as {
-  totals: Counts; results: Result[]
+  suite?: string; mode?: string; totals: Counts; results: Result[]
+}
+// The replay names a diff after its file plus the suite and mode it ran in
+// (`func_json-mariadb.md`, `func_json-replica.md`); only the main suite in
+// local mode writes the bare name.
+const suffix = `${result.suite && result.suite !== 'mysql' ? `-${result.suite}` : ''}${result.mode === 'replica' ? '-replica' : ''}`
+const diffPath = (file: string) => {
+  const named = join(root, 'diffs', `${file}${suffix}.md`)
+  return existsSync(named) ? named : join(root, 'diffs', `${file}.md`)
 }
 const provenance = JSON.parse(readFileSync(join(root, 'run.json'), 'utf8')) as {
   provenance: unknown
@@ -38,7 +46,7 @@ let failures = 0
 for (const file of result.results) {
   const count = (file.counts.mismatch ?? 0) + (file.counts['name-mismatch'] ?? 0)
   if (!count) continue
-  const diff = readFileSync(join(root, 'diffs', `${file.file}.md`), 'utf8')
+  const diff = readFileSync(diffPath(file.file), 'utf8')
   const ids = [...diff.matchAll(/^## line \d+ \(([a-f0-9]{16})\)/gm)].map(match => match[1]!)
   if (ids.length !== count || new Set(ids).size !== count) {
     throw new Error(`${file.file}: expected ${count} distinct mismatch IDs, found ${ids.length}`)
