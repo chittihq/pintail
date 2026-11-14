@@ -164,6 +164,13 @@ enum Node {
     Atomic(Box<Node>),
 }
 
+/// A set of characters as sorted ranges.
+type Ranges = Box<[(char, char)]>;
+
+/// Ranges as written, and whether they are to be folded for case and
+/// negated.
+type Unfinished = (Vec<(char, char)>, bool, bool);
+
 /// The distinct character sets of a pattern, each kept once however often
 /// it is written, and what was computed to find them.
 #[derive(Default)]
@@ -1543,6 +1550,10 @@ impl Program {
     }
 }
 
+/// What a search answers: the capture slots of a match, none, or the
+/// error that stopped it.
+type Found = Result<Option<Box<[usize]>>, ExecError>;
+
 /// A saved alternative: where to resume, and how much of the capture log
 /// was written when it was saved.
 #[derive(Clone, Copy)]
@@ -2217,6 +2228,161 @@ mod tests {
             assert_eq!(matches(pattern, text), expected, "{pattern} over {text}");
         }
         assert_eq!(find(r"(σ)\1", "σς"), None, "case matters without the flag");
+    }
+
+    /// Patterns nobody wrote: random strings over the characters patterns
+    /// are made of are read, compiled and run by both matchers. None may
+    /// panic, none may compile past the ceilings, and every search ends by
+    /// an answer or a named error under its own budgets.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn random_patterns_are_read_compiled_and_run_within_their_bounds() {
+        const ALPHABET: &[&str] = &[
+            "a",
+            "b",
+            "s",
+            "ß",
+            "σ",
+            "é",
+            "0",
+            "9",
+            " ",
+            "\n",
+            "(",
+            ")",
+            "[",
+            "]",
+            "{",
+            "}",
+            "|",
+            "*",
+            "+",
+            "?",
+            ".",
+            "^",
+            "$",
+            "\\",
+            "-",
+            ",",
+            ":",
+            "=",
+            "!",
+            "<",
+            ">",
+            "#",
+            "(?",
+            "(?:",
+            "(?=",
+            "(?!",
+            "(?<=",
+            "(?<!",
+            "(?>",
+            "(?i)",
+            "(?x)",
+            "(?#",
+            "\\1",
+            "\\2",
+            "\\b",
+            "\\d",
+            "\\w",
+            "\\p{L}",
+            "\\Q",
+            "\\E",
+            "\\G",
+            "\\x",
+            "\\u",
+            "\\k<",
+            "[:alpha:]",
+            "{2}",
+            "{1,3}",
+            "{2,}",
+            "{16777215}",
+            "{99999999999}",
+            "*+",
+            "+?",
+            "\u{1F600}",
+            "\u{0}",
+        ];
+        const SUBJECTS: &[&str] = &["", "ab", "aaß sσς\n09", "ssssssssssssssssssssssss"];
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = move |bound: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            usize::try_from(state % bound as u64).expect("below the bound")
+        };
+        let (mut compiled, mut refused, mut matched, mut stopped) = (0, 0, 0, 0);
+        for _ in 0..20_000 {
+            let mut pattern = String::new();
+            for _ in 0..=next(12) {
+                pattern.push_str(ALPHABET[next(ALPHABET.len())]);
+            }
+            let insensitive = next(2) == 0;
+            // The matcher the engine would choose, and this one forced.
+            let chosen = crate::expression::sql_regex::Program::new(
+                &pattern,
+                insensitive,
+                next(2) == 0,
+                next(2) == 0,
+                LineEndings::Unicode,
+            );
+            if let Ok(program) = &chosen {
+                for subject in SUBJECTS {
+                    let _ = program.replace_from(
+                        subject,
+                        0,
+                        0,
+                        "[$0]",
+                        &mut InterruptCounter::unchecked(),
+                    );
+                }
+            }
+            match Program::new(&pattern, insensitive, false, false, LineEndings::Unicode) {
+                Ok(program) => {
+                    compiled += 1;
+                    assert!(
+                        program.insts.len() <= super::MAX_PROGRAM
+                            && program.work <= super::MAX_COMPILE_WORK
+                            && program.registers <= super::MAX_REGISTERS,
+                        "{pattern:?} compiled past a ceiling"
+                    );
+                    for subject in SUBJECTS {
+                        let mut steps = InterruptCounter::unchecked();
+                        let (found, ticks, work) = program.search(subject, 0, &mut steps);
+                        assert!(
+                            ticks <= super::MAX_TICKS
+                                && work
+                                    <= super::WORK_BASE
+                                        + (super::WORK_PER_BYTE + 2) * subject.len() as u64
+                                        + 2,
+                            "{pattern:?} over {subject:?}: {ticks} ticks, {work} steps"
+                        );
+                        match found {
+                            Ok(Some(slots)) => {
+                                matched += 1;
+                                assert!(
+                                    slots[0] <= slots[1]
+                                        && slots[1] <= subject.len()
+                                        && subject.is_char_boundary(slots[0])
+                                        && subject.is_char_boundary(slots[1]),
+                                    "{pattern:?} over {subject:?}: {slots:?}"
+                                );
+                            }
+                            Ok(None) => {}
+                            Err(ExecError::Regex(_)) => stopped += 1,
+                            Err(error) => panic!("{pattern:?} over {subject:?}: {error}"),
+                        }
+                    }
+                }
+                Err(ExecError::Regex(_)) => refused += 1,
+                Err(error) => panic!("{pattern:?}: {error}"),
+            }
+        }
+        // The generator reaches both outcomes in number, or it proves little.
+        assert!(
+            compiled > 2_000 && refused > 2_000 && matched > 2_000,
+            "{compiled} compiled, {refused} refused, {matched} matched, {stopped} stopped"
+        );
     }
 
     #[test]
