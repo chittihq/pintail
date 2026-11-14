@@ -11,6 +11,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `DATABASE()` and `SCHEMA()` are answered inside a query that reads a
   table, as `SELECT COUNT(*), DATABASE() FROM t`; they were answered only
   as a statement of their own.
+- `LATERAL` derived tables, which may read the columns of the tables to
+  their left. Each is evaluated once per distinct tuple of the outer
+  columns it reads (`docs/limitations.md` has the cost and the three
+  positions that reject).
+- `JSON_TABLE`, over a constant document or a column of an earlier table,
+  with `FOR ORDINALITY`, `NESTED PATH`, `EXISTS PATH`, `ON EMPTY` and
+  `ON ERROR`.
+- The `TABLE t` statement, as a statement, a derived table and a
+  set-operation branch.
+- `MOD` and `SOUNDS LIKE` written as operators, `MID(s FROM n FOR m)`,
+  `TRIM(BOTH FROM s)`, `CHAR(... USING charset)`, `CAST` and `CONVERT`
+  with a character set, parenthesized table lists (`a JOIN (b, c) ON ...`)
+  and a join condition written after a later join.
+- `COLLATION`, `CHARSET` and `COERCIBILITY` for expressions whose rule is
+  modelled; `WEIGHT_STRING` with MySQL's weight bytes for the replicated
+  collations, including `AS CHAR(n)`, `AS BINARY(n)` and the four-argument
+  form.
+- `GET_FORMAT`, `CURRENT_ROLE()`, `LAST_INSERT_ID()` and `ROW_COUNT()`.
+- Regular expressions with back-references, look-ahead, bounded
+  look-behind, atomic groups and possessive quantifiers, on a backtracking
+  matcher that is charged to its statement and stops with MySQL's timeout
+  and stack-overflow errors.
+- `UTC_DATE`, `UTC_TIME` and `UTC_TIMESTAMP` written without parentheses.
+
+### Changed
+
+- The `rc` and `stable` validation profiles run two more stages: the
+  oracle's cases replayed through sessions, the wire protocol, the first
+  copy, change capture, DDL and a restart, and MySQL's regression suite
+  replayed through replication.
+- A profile's self times sum to the root's time: an operator that was
+  only built, such as a join fused into the aggregate above it, no longer
+  has its construction counted twice.
+- Building an operator takes less than a third of the stack it took in an
+  unoptimized build, so a ten-join plan fits a 2 MiB thread there.
+- Refusals that surfaced as an internal error carry MySQL's code: 3149
+  for a JSON path with a wildcard or range where one target is taken, and
+  3686 and 3887 for a `REGEXP_REPLACE` replacement that names a group the
+  pattern does not have.
 
 ### Fixed
 
@@ -27,6 +66,64 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A text column added by a statement the source had already moved past -
   a second `ALTER` landing before the first was read - recopied the table.
   Its character set is taken from what the source still shows for it.
+- A JSON double the source prints with an exponent was stored one unit
+  off (`9.999999999999999e29` as `1e30`), from the first copy and from
+  change capture, and change capture wrote `4.35e15` as
+  `4350000000000000.0`. A mirrored document now holds the source's text.
+- `BOOLEAN` and `BOOL` columns of a local database were stored as text;
+  they are the `TINYINT(1)` MySQL makes of them.
+- A TIME under one hour was false in `NOT`, `AND`, `OR`, `IF`, `CASE`,
+  `WHERE` and `HAVING`.
+- `EXTRACT(HOUR FROM '2001-01-01T')` answered the hours since 1970; text
+  read for its clock follows MySQL's reading of a TIME, and text after a
+  clock is ignored as MySQL ignores it.
+- `->` and `->>` bind as one operand: `1 + j->'$.a'` and
+  `j->>'$.a' LIKE 'p%'` answered NULL or failed. A JSON value compares
+  with an untyped NULL.
+- A fractional position or count in `SUBSTRING`, `LEFT`, `RIGHT` and
+  `INSERT`, and a fractional digit count in `ROUND`, `TRUNCATE` and
+  `FORMAT`, are rounded as MySQL rounds them; `ROUND(1.23456, 1.5)` was
+  `1.20000`.
+- `x MEMBER OF(array)` never matched an exact decimal. A JSON range over
+  an empty array selected the array. `JSON_LENGTH` with a wildcard or
+  range path failed. `JSON_VALUE` answers over a path that can reach
+  several values. JSON null extraction, NULL merge patches, single search
+  hits, numeric containment and truth values in the JSON constructors and
+  aggregates follow MySQL.
+- `IF` and `CASE` over `BIT` values answered the number; they keep the
+  BIT, or its bytes beside a value of another type.
+- A conditional over a date and a number answers text; `LEAST` and
+  `GREATEST` find their answer among dates of mixed kinds; `CONVERT_TZ` is
+  typed as the DATETIME it answers; a date or time argument of a numeric
+  function reads as the number its digits spell; a FLOAT stays a FLOAT
+  where MySQL's type merge keeps it.
+- An aggregate in a subquery with no `FROM` is computed over that one row,
+  or is the outer query's when it reads an outer column
+  (`SELECT (SELECT SUM(c)) FROM t`).
+- An uncorrelated `EXISTS` whose subquery selects several columns failed.
+- `x REGEXP NULL` failed to parse. A case-insensitive pattern matches
+  across a case folding of several characters (`ß` and `ss`). A
+  `REGEXP_REPLACE` replacement is expanded by MySQL's grammar.
+- A negative time keeps its sign in `EXTRACT(MICROSECOND FROM ...)`; a
+  duration's fraction rounds on its last digit; text cast to `TIME(n)`
+  rounds at the microsecond first; a TIME compares with a DATE or DATETIME
+  as that time on the current date; a constant compared with a YEAR
+  column reads as the year it stores.
+- Bit operations read a DECIMAL or fractional operand through the signed
+  integer it rounds to; a hex or bit literal argument of `CHAR` reads as a
+  number; a decimal literal is bounded to MySQL's capacity.
+- Numeric range: a remainder is signed by its dividend when the divisor is
+  unsigned, an unsigned value negates from its own range, a date or time
+  negates as the number it reads as, a computed double past the BIGINT
+  range is refused where an integer is read, and counts, calendar fields
+  and interval amounts past the 64-bit range read as MySQL reads them.
+- A `DISTINCT` aggregate keeps the value its key stands for.
+- A TIME literal that is not a TIME is refused with error 1525.
+- A CTE that reads its own name binds as recursive even when a table has
+  that name; a rolled-up key selected through `*` shows NULL under
+  `WITH ROLLUP`.
+- An unaliased `NULL` is named `NULL` however it is written, and a select
+  item ending in a `0b` literal is named without the whitespace after it.
 - An `ALTER TABLE` that changed a column and also named how to carry it
   out (`MODIFY c VARCHAR(64), ALGORITHM = INPLACE, LOCK = NONE`, or an
   `ADD COLUMN ... , ALGORITHM = INSTANT`) quarantined the table for a
