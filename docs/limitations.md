@@ -617,6 +617,10 @@ stays readable as a list of things to fix.
 
 ## CDC engine
 
+- A `TINYINT(1)` column - which is what `BOOLEAN` and `BOOL` declare - is
+  mirrored as a truth value. A source row holding any other number in it
+  (`2`, `-1`) reads back as `1`, from the first copy and from change capture
+  alike.
 - A source whose table names are case-sensitive can hold two tables whose
   names differ only in case (`T1` and `t1`). Neither is streamed or queryable:
   a query naming either is refused as an unknown table, and every other table

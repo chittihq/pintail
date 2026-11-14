@@ -74,6 +74,32 @@ fn a_created_table_carries_probe_identical_types() {
 }
 
 #[test]
+fn boolean_and_bool_declare_the_type_tinyint_1_declares() {
+    // Read as an unknown type name the column was text: `flag + 0` answered
+    // a double and JSON_ARRAY(flag) a string.
+    let plan = create(
+        "CREATE TABLE t (id BIGINT PRIMARY KEY, a BOOLEAN, b BOOL NOT NULL, c TINYINT(1))",
+    )
+    .expect("binds");
+    let types: Vec<DataType> = plan
+        .table
+        .columns
+        .iter()
+        .map(|column| column.pintail_type)
+        .collect();
+    assert_eq!(
+        types,
+        [
+            DataType::Int64,
+            DataType::Boolean,
+            DataType::Boolean,
+            DataType::Boolean
+        ]
+    );
+    assert!(plan.table.columns[1].nullable && !plan.table.columns[2].nullable);
+}
+
+#[test]
 fn an_inline_primary_key_is_equivalent_to_the_table_constraint() {
     let inline = create("CREATE TABLE t (id BIGINT PRIMARY KEY, body TEXT)").expect("inline");
     let constraint =

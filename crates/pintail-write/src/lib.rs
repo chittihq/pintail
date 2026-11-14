@@ -1325,6 +1325,9 @@ fn mysql_terms(
         SqlDataType::Set(members) => {
             format!("set({})", quoted(&mut members.iter().map(String::as_str)))
         }
+        // BOOLEAN and BOOL are spellings of TINYINT(1), which is what the
+        // source reports for a column declared with either.
+        SqlDataType::Boolean | SqlDataType::Bool => "tinyint(1)".to_owned(),
         _ => data_type.to_string().to_ascii_lowercase(),
     };
     let bare = full
