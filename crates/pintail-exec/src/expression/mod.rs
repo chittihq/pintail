@@ -6297,7 +6297,23 @@ fn cast_temporal_carrier(
         let text = scalar_string(value).ok()?;
         let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
         if let Some(datetime) = whole.parse().ok().and_then(temporal::numeric_datetime) {
+            let clocked = !fraction.is_empty() && whole.parse::<i128>().ok()? >= 101_000_000;
             if target == DataType::Date32 {
+                // The number is a DATETIME first: a fraction that rounds
+                // past the last microsecond of its day is the next day.
+                if clocked
+                    && let Some(Value::Utf8(rounded)) = cast_datetime_precision(
+                        &Value::Utf8(format!(
+                            "{}.{fraction}",
+                            datetime.format("%Y-%m-%d %H:%M:%S")
+                        )),
+                        DataType::DateTime64 { fsp: 6 },
+                        statement_date,
+                    )
+                    && let Some(date) = rounded.get(..10)
+                {
+                    return Some(Value::Utf8(date.to_owned()));
+                }
                 return Some(Value::Utf8(datetime.format("%Y-%m-%d").to_string()));
             }
             let mut calendar = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -6340,6 +6356,17 @@ fn cast_temporal_carrier(
     {
         let text = scalar_string(value).ok()?;
         let whole = text.trim_start_matches(['-', '+']).split('.').next()?;
+        // A number shaped like a DATETIME is its time of day, and a
+        // fraction rounds within that time: the last instant of a day
+        // rounds to 24:00:00, never to midnight of the next.
+        if let DataType::Time64 { fsp } = target
+            && let Some((_, fraction)) = text.split_once('.')
+            && whole.parse::<i128>().ok()? >= 101_000_000
+            && let Some(datetime) = whole.parse().ok().and_then(temporal::numeric_datetime)
+        {
+            let clock = format!("{}.{fraction}", datetime.format("%H:%M:%S"));
+            return Some(cast_mysql_time(&clock, fsp).map_or(Value::Null, Value::Utf8));
+        }
         if whole.parse::<u64>().ok()? > 8_385_959 && parse_mysql_datetime(&text).is_err() {
             return Some(Value::Null);
         }

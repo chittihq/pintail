@@ -3063,6 +3063,21 @@ pub(super) fn bind_scalar(
             .map(super::choice_as_number)
             .map(super::json_as_number)
             .collect()
+    } else if matches!(
+        function,
+        ScalarFunction::DatePart(DatePart::Hour | DatePart::Minute | DatePart::Second)
+            | ScalarFunction::TimeToSec
+    ) && matches!(
+        args.first().and_then(|argument| argument.data_type),
+        Some(DataType::Decimal { scale, .. }) if scale > 0
+    ) {
+        // A fractional number is read as a TIME here, so its fraction
+        // rounds within the time of day: the last instant of a day is hour
+        // 24, not hour 0 of the next.
+        let mut args = args;
+        let number = args.remove(0);
+        args.insert(0, super::cast_to(number, DataType::Time64 { fsp: 6 }));
+        args
     } else if function == ScalarFunction::If {
         // The condition is a truth value, which is a number.
         let mut args = args;
