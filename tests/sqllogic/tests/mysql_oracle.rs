@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4339;
+const EXPECTED_CASES: usize = 4340;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5939,6 +5939,13 @@ fn engine_error_cases() -> Vec<OracleCase> {
             "remainder of a signed dividend by an unsigned divisor",
             "SELECT id FROM bounds WHERE n % u < 0 ORDER BY id",
         ),
+        // A TIME literal rounds to microseconds and stays inside the range.
+        ordered(
+            "time literals at the ends of the range",
+            "SELECT TIME '838:59:59', TIME '-838:59:59.0000004', TIME '838:59:59.00000040', \
+                    TIME '838:59:58.9999995', TIME '837:59:59.9999995', TIME '34 22:59:59', \
+                    TIME '8385959', TIME '-838:59:59.000000'",
+        ),
     ]
 }
 
@@ -8230,6 +8237,22 @@ fn documented_rejects_stay_explicit() {
 #[allow(clippy::too_many_lines)] // one table of shapes
 fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
+        (
+            // Past the range once rounded to microseconds.
+            "reject time literal past the range",
+            "SELECT TIME '838:59:59.00000005'",
+            "incorrect time value: '838:59:59.00000005'",
+        ),
+        (
+            "reject time literal past the range",
+            "SELECT id FROM events WHERE TIME '839:00:00' > '00:00:00'",
+            "incorrect time value: '839:00:00'",
+        ),
+        (
+            "reject time literal that is not a time",
+            "SELECT TIME '10:00:00x'",
+            "incorrect time value",
+        ),
         (
             // A column's negation is a BIGINT, and 2^64 - 1 has none.
             "reject negated unsigned column past the signed range",

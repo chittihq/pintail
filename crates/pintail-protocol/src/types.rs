@@ -327,6 +327,8 @@ pub enum ErrorKind {
     ErOnlyDefinedForGeographic = 3726,
     /// 1621: a `SET` named a session variable that is read-only.
     ErVariableIsReadonly = 1621,
+    /// 1525: a typed literal whose text is not a value of its type.
+    ErWrongValue = 1525,
     /// 3685: a regular expression the matcher does not read.
     ErRegexpIllegalArgument = 3685,
     /// 3694: a back-reference to a group the pattern does not have.
@@ -387,6 +389,7 @@ impl ErrorKind {
             | Self::ErGisDifferentSrids
             | Self::ErCantAggregate2Collations
             | Self::ErCantAggregateNCollations
+            | Self::ErWrongValue
             | Self::ErRegexpIllegalArgument
             | Self::ErRegexpInvalidBackRef
             | Self::ErRegexpLookBehindLimit

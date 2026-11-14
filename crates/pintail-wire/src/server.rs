@@ -4444,6 +4444,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
                 SpatialError::NotGeographic => ErrorKind::ErOnlyDefinedForGeographic,
                 SpatialError::Unsupported => ErrorKind::ErNotSupportedYet,
             },
+            SqlRejection::IncorrectValue => ErrorKind::ErWrongValue,
             SqlRejection::Regex(kind) => match kind {
                 RegexError::IllegalArgument => ErrorKind::ErRegexpIllegalArgument,
                 RegexError::InvalidBackReference => ErrorKind::ErRegexpInvalidBackRef,
@@ -6053,6 +6054,7 @@ mod tests {
                 3699,
                 *b"HY000",
             ),
+            (SqlRejection::IncorrectValue, 1525, *b"HY000"),
         ];
         for (rejection, errno, sqlstate) in expectations {
             let kind = error_kind(&QueryError::Rejected {

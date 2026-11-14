@@ -4846,6 +4846,17 @@ fn bind_expr_inner(
             .map(refuse_cast_timestamp_zero),
         // DATE '...', TIME '...', TIMESTAMP '...': the literal cast to its type.
         Expr::TypedString(typed) => {
+            if let (
+                sqlparser::ast::DataType::Time(..),
+                SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text),
+            ) = (&typed.data_type, &typed.value.value)
+                && !is_time_literal(text)
+            {
+                return Err(BindError::IncorrectValue {
+                    kind: "TIME",
+                    text: text.clone(),
+                });
+            }
             let inner = Expr::Value(typed.value.clone());
             // A TIME or TIMESTAMP literal keeps the fraction digits it is
             // written with: TIME '01:02:03.25' has two.
@@ -5835,6 +5846,32 @@ fn bind_unary(
             expr: Box::new(expr),
         },
     })
+}
+
+/// Whether a `TIME '...'` literal spells a TIME. Unlike a cast, which reads
+/// what it can and stops at the end of the range, the literal is wrong
+/// when anything in it is: text that is not a duration or is followed by
+/// more, and a duration that - rounded to microseconds - is past
+/// 838:59:59 either way.
+fn is_time_literal(text: &str) -> bool {
+    let body = text.trim_start();
+    let body = body.strip_prefix(['-', '+']).unwrap_or(body);
+    let Some(read) = pintail_types::read_duration_text(body) else {
+        return false;
+    };
+    if !body[read.read..].trim_end().is_empty() {
+        return false;
+    }
+    let seconds = read
+        .hours
+        .saturating_mul(3_600)
+        .saturating_add(read.minutes * 60 + read.seconds);
+    let top = 838 * 3_600 + 59 * 60 + 59;
+    let fraction = read.fraction.as_bytes();
+    // Past the top by any microsecond, or by a rounding digit.
+    let over = fraction.iter().take(6).any(|digit| *digit != b'0')
+        || fraction.iter().skip(6).take(3).any(|digit| *digit >= b'5');
+    seconds < top || (seconds == top && !over)
 }
 
 /// Whether `expr` is built from literals alone by operators and casts, so
@@ -11060,6 +11097,13 @@ pub enum BindError {
     UnsupportedJoinConstraint(String),
     /// A scalar expression is not implemented yet.
     UnsupportedExpression(String),
+    /// A typed literal whose text is not a value of its type.
+    IncorrectValue {
+        /// The type the literal names.
+        kind: &'static str,
+        /// The text as written.
+        text: String,
+    },
     /// A subquery requires relational execution not implemented by this path.
     UnsupportedSubquery(String),
     /// An aggregate call uses an unsupported shape or modifier.
@@ -11257,6 +11301,9 @@ impl fmt::Display for BindError {
             }
             Self::IllegalCollationMix { message, .. } | Self::InvalidGrouping(message) => {
                 formatter.write_str(message)
+            }
+            Self::IncorrectValue { kind, text } => {
+                write!(formatter, "Incorrect {kind} value: '{text}'")
             }
             Self::ExpectedPredicate { actual } => {
                 write!(formatter, "row filter has non-boolean type {actual:?}")

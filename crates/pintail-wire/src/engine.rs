@@ -230,6 +230,8 @@ pub enum SqlRejection {
     CollationMixOfSeveral,
     /// A spatial function refused its arguments, by `MySQL`'s class.
     Spatial(pintail_exec::SpatialError),
+    /// 1525: a typed literal whose text is not a value of its type.
+    IncorrectValue,
     /// A regular expression was refused or its match stopped, by `MySQL`'s
     /// class.
     Regex(pintail_exec::RegexError),
@@ -2575,6 +2577,7 @@ fn query_bind_error(error: &pintail_sql::BindError) -> QueryError {
         }
         BindError::GroupFunctionMisplaced(_) => SqlRejection::GroupFunctionMisplaced,
         BindError::ParameterCount(_) => SqlRejection::ParameterCount,
+        BindError::IncorrectValue { .. } => SqlRejection::IncorrectValue,
         BindError::IllegalCollationMix { pair: true, .. } => SqlRejection::CollationMixOfTwo,
         BindError::IllegalCollationMix { pair: false, .. } => SqlRejection::CollationMixOfSeveral,
         _ => return QueryError::Invalid(error.to_string()),
