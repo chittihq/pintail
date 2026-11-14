@@ -1737,7 +1737,7 @@ impl CompiledExpr {
                     ScalarFunction::Cast(DataType::Json) => first.saturating_mul(2).max(128),
                     // Numeric and temporal casts can expand compact input
                     // (`'12'` -> `00:00:12`, scaled DECIMAL, and so on).
-                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } | ScalarFunction::NormalizeTimestampOffset => first.max(128),
+                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } | ScalarFunction::NormalizeTimestampOffset | ScalarFunction::CalendarBound { .. } => first.max(128),
                     // Modification results hold the document plus every
                     // inserted value and separators; a merge holds both docs.
                     ScalarFunction::JsonModify { .. }
@@ -2080,7 +2080,7 @@ impl CompiledExpr {
                     | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(DataType::Utf8 | DataType::Binary) => first,
                     ScalarFunction::Cast(DataType::Json) => first.saturating_mul(2).max(128),
-                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } | ScalarFunction::NormalizeTimestampOffset => first.max(128),
+                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } | ScalarFunction::NormalizeTimestampOffset | ScalarFunction::CalendarBound { .. } => first.max(128),
                     // Modification results hold the document plus every
                     // inserted value and separators; a merge holds both docs.
                     ScalarFunction::JsonModify { .. }
@@ -5303,6 +5303,26 @@ fn evaluate_eager_scalar_inner(
                     .map_or(Value::Null, Value::Utf8));
             }
             Ok(converted.map_or(Value::Null, Value::Utf8))
+        }
+        ScalarFunction::CalendarBound {
+            date_only,
+            fsp,
+            strict,
+            shapeless,
+        } => {
+            let text = scalar_string(&values[0])?;
+            match pintail_sql::calendar_comparison_text(&text, date_only, fsp, strict, shapeless) {
+                Ok(Some(bound)) => Ok(Value::Utf8(bound)),
+                Ok(None) => Ok(Value::Utf8(text)),
+                Err(message) => {
+                    // MySQL's own wording starts with a capital.
+                    let mut message = message;
+                    if let Some(first) = message.get_mut(..1) {
+                        first.make_ascii_uppercase();
+                    }
+                    Err(ExecError::IncorrectValue(message))
+                }
+            }
         }
         ScalarFunction::NormalizeTimestampOffset => {
             let text = scalar_string(&values[0])?;

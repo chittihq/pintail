@@ -2098,6 +2098,41 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
     }
 }
 
+/// Whether text is built from literals by functions whose answer depends
+/// on nothing else: the spellings a constant date is usually assembled
+/// with. The statement's clock has already been folded to a literal by the
+/// time this is asked.
+fn statement_invariant_text(expr: &BoundExpr) -> bool {
+    match &expr.kind {
+        BoundExprKind::Literal(_) => true,
+        BoundExprKind::Scalar { function, args } => {
+            matches!(
+                function,
+                ScalarFunction::Concat
+                    | ScalarFunction::ConcatWs
+                    | ScalarFunction::DateFormat
+                    | ScalarFunction::Date
+                    | ScalarFunction::LastDay
+                    | ScalarFunction::DateInterval { .. }
+                    | ScalarFunction::Cast(_)
+                    | ScalarFunction::DeclaredCast { .. }
+                    | ScalarFunction::Left
+                    | ScalarFunction::Right
+                    | ScalarFunction::Substring
+                    | ScalarFunction::Trim
+                    | ScalarFunction::Lower
+                    | ScalarFunction::Upper
+                    | ScalarFunction::Coalesce
+                    | ScalarFunction::If
+                    | ScalarFunction::TextCharset(_, _)
+                    | ScalarFunction::DecodeText(_)
+                    | ScalarFunction::CoerceText(_)
+            ) && args.iter().all(statement_invariant_text)
+        }
+        _ => false,
+    }
+}
+
 #[allow(clippy::too_many_lines)] // one arm per expression kind reads best unsplit
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
     match &expr.kind {
@@ -2155,6 +2190,25 @@ fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
             compiled
                 .evaluate(&crate::RecordBatch::new(1, Vec::new()).ok()?, 0)
                 .ok()
+        }
+        // The bound constant text is compared under beside a calendar
+        // column is one text for the statement. Folded, the comparison is
+        // the one a written literal makes, which is what the scan's bounds
+        // and the day-range rewrite read; left as a call, every row
+        // computed it and neither saw a constant. Text a clock, a session
+        // variable or chance decides is not folded here, and an error
+        // stays in the expression for execution to raise.
+        BoundExprKind::Scalar {
+            function: ScalarFunction::CalendarBound { .. },
+            args,
+        } if args.iter().all(statement_invariant_text) => {
+            let collation = crate::collation::Collation::from_mysql_name(
+                pintail_sql::session_default_collation(),
+            )
+            .unwrap_or_default();
+            let compiled = crate::expression::CompiledExpr::compile(expr, &[], collation).ok()?;
+            let batch = crate::RecordBatch::new(1, Vec::new()).ok()?;
+            crate::execution::without_new_warnings(|| compiled.evaluate(&batch, 0).ok()).flatten()
         }
         // DATE of a literal names one day for the whole statement. Left
         // unfolded it kept an enclosing interval and the comparison above

@@ -1690,6 +1690,22 @@ pub enum ScalarFunction {
     SessionTimestamp,
     /// Resolve a datetime string's explicit offset into the captured session zone.
     NormalizeTimestampOffset,
+    /// Constant text compared with a DATE (`date_only`) or a DATETIME of
+    /// `fsp` fraction digits, as the text a written literal is compared
+    /// under: read as a DATETIME, a seventh fraction digit rounding the
+    /// sixth, and spelled the way the column prints so the column itself
+    /// is compared as it stands. Text no date can be read from is refused
+    /// where `strict`, and compared as written otherwise.
+    CalendarBound {
+        /// Whether the other operand is a DATE.
+        date_only: bool,
+        /// Fraction digits of the other operand.
+        fsp: u8,
+        /// Whether text shaped like a date that names none is an error.
+        strict: bool,
+        /// Whether text that cannot start a date is an error too.
+        shapeless: bool,
+    },
     /// `CHAR(n, ...)`: integer code points become bytes (values above 255
     /// span multiple bytes); NULL arguments are skipped, never propagated.
     Char,

@@ -2581,14 +2581,19 @@ pub(super) fn in_list_of(args: Vec<BoundExpr>, negated: bool) -> Result<BoundExp
     let args = super::unify_temporal_list(args);
     let args = super::unify_time_list(args);
     let subject = args[0].clone();
+    // One item is the equality; among several, text that cannot start a
+    // date is compared as written.
+    let single = args.len() == 2;
     let args = args
         .into_iter()
         .enumerate()
         .map(|(index, argument)| {
             if index == 0 {
                 Ok(argument)
-            } else {
+            } else if single {
                 super::canonical_literal_operand(&subject, argument)
+            } else {
+                super::canonical_list_operand(&subject, argument)
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -3671,6 +3676,7 @@ pub(super) fn bind_scalar(
         ),
         ScalarFunction::FloatString | ScalarFunction::FixedFloatString(_) | ScalarFunction::RawText(_, _) | ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::CoerceText(_) | ScalarFunction::ConcatWs
         | ScalarFunction::JsonQuote
+        | ScalarFunction::CalendarBound { .. }
         | ScalarFunction::JsonPretty => (Some(DataType::Utf8), args[0].nullable),
         ScalarFunction::Reverse
         | ScalarFunction::Repeat

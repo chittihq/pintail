@@ -99,6 +99,16 @@ impl Fixture {
     }
 
     fn run(&self, sql: &str, optimize: bool) -> (Vec<String>, PhysicalScanStats) {
+        self.try_run(sql, optimize)
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    }
+
+    /// The rows and scan statistics, or the error execution raised.
+    fn try_run(
+        &self,
+        sql: &str,
+        optimize: bool,
+    ) -> Result<(Vec<String>, PhysicalScanStats), String> {
         let snapshot = self.table.snapshot();
         let provider =
             SnapshotScanProvider::new([(DatabaseId::new(1), TableId::new(1), &snapshot)])
@@ -118,10 +128,7 @@ impl Fixture {
             Execution::start(physical, &provider, 64 * 1024 * 1024, Collation::default())
                 .expect("execution");
         let mut rows = Vec::new();
-        while let Some(batch) = execution
-            .next_batch()
-            .unwrap_or_else(|e| panic!("{sql}: {e}"))
-        {
+        while let Some(batch) = execution.next_batch().map_err(|error| error.to_string())? {
             for row in batch.selection().selected_rows() {
                 let values: Vec<_> = batch
                     .columns()
@@ -132,12 +139,12 @@ impl Fixture {
             }
         }
         rows.sort();
-        (
+        Ok((
             rows,
             provider
                 .scan_stats(DatabaseId::new(1), TableId::new(1))
                 .unwrap_or_default(),
-        )
+        ))
     }
 
     /// The optimized answer, asserted equal to the unoptimized one.
@@ -255,5 +262,130 @@ fn rewritten_predicates_prune_segments_and_blocks() {
     assert_eq!(
         stats.segments_pruned, 0,
         "a literal with a time part is not rewritten and cannot prune: {stats:?}"
+    );
+}
+
+/// Text that is constant without being a written literal - a function of
+/// constants, the statement's clock formatted - is compared with a
+/// calendar column under the rule a literal is, and the column stays
+/// bare: the scan skips exactly the segments it skips for the literal.
+#[test]
+fn constant_text_prunes_exactly_as_the_literal_it_spells() {
+    let fixture = Fixture::new();
+    for (computed, literal) in [
+        (
+            "created_at >= CONCAT('2026-07-10', ' 00:00:00')",
+            "created_at >= '2026-07-10 00:00:00'",
+        ),
+        (
+            "created_at < CONCAT('2026-07-02', '')",
+            "created_at < '2026-07-02'",
+        ),
+        (
+            "created_at BETWEEN CONCAT('2026-07-02', ' 06:00:00') AND CONCAT('2026-07-03', '')",
+            "created_at BETWEEN '2026-07-02 06:00:00' AND '2026-07-03'",
+        ),
+        (
+            "day >= CONCAT('2026-07-10', ' 00:00:01')",
+            "day >= '2026-07-10 00:00:01'",
+        ),
+        (
+            "day = DATE_FORMAT('2026-07-10 08:00:00', '%Y-%m-%d')",
+            "day = '2026-07-10'",
+        ),
+        (
+            "day IN (CONCAT('2026-07-02', ''), CONCAT('2026-07-03', ' 00:00:00'))",
+            "day IN ('2026-07-02', '2026-07-03 00:00:00')",
+        ),
+        (
+            "DATE(created_at) = DATE_FORMAT('2026-07-10 08:00:00', '%Y-%m-%d')",
+            "DATE(created_at) = '2026-07-10'",
+        ),
+        (
+            "DATE(created_at) BETWEEN CONCAT('2026-07-02', '') AND CONCAT('2026-07-', '03')",
+            "DATE(created_at) BETWEEN '2026-07-02' AND '2026-07-03'",
+        ),
+        (
+            "CAST(created_at AS DATE) >= DATE_FORMAT('2026-07-10 08:00:00', '%Y-%m-01')",
+            "CAST(created_at AS DATE) >= '2026-07-01'",
+        ),
+    ] {
+        let (computed_rows, computed_stats) = fixture.agree(computed);
+        let (literal_rows, literal_stats) = fixture.agree(literal);
+        assert_eq!(computed_rows, literal_rows, "{computed}");
+        assert_eq!(
+            computed_stats.segments_pruned, literal_stats.segments_pruned,
+            "{computed} must skip the segments {literal} skips"
+        );
+    }
+    // The shapes a report filters by: each skips whole segments.
+    for predicate in [
+        "created_at >= CONCAT('2026-11-01', ' 00:00:00')",
+        "day >= CONCAT('2026-11-01', ' 00:00:00')",
+        "day BETWEEN DATE_FORMAT('2026-11-15', '%Y-%m-01') AND CONCAT('2026-11-', '30')",
+        "DATE(created_at) = DATE_FORMAT('2026-07-10 08:00:00', '%Y-%m-%d')",
+        // Today is long after the fixture's days: nothing is read at all.
+        "DATE(created_at) = DATE_FORMAT(NOW(), '%Y-%m-%d')",
+        "created_at >= CONCAT(DATE_FORMAT(NOW(), '%Y-%m-%d'), ' 00:00:00')",
+    ] {
+        let (_, stats) = fixture.agree(predicate);
+        assert!(
+            stats.segments_pruned > 0,
+            "{predicate} must prune whole segments: {stats:?}"
+        );
+    }
+}
+
+/// A DATE beside constant text is compared as the DATETIME at its
+/// midnight, whatever spells the text: a time of day on the constant
+/// matches no date and moves the bound past that day.
+#[test]
+fn a_date_beside_constant_text_is_its_midnight() {
+    let fixture = Fixture::new();
+    let days = |predicate: &str| {
+        let (rows, _) = fixture.agree(predicate);
+        rows.len()
+    };
+    // 2026-07-03 is ids 192..288; every fifth day value is NULL.
+    let on_the_day = (192..288).filter(|id| id % 5 != 0).count();
+    let from_the_day = (192..BATCH * BATCHES).filter(|id| id % 5 != 0).count();
+    assert_eq!(days("day = CONCAT('2026-07-03', '')"), on_the_day);
+    assert_eq!(days("day = CONCAT('2026-07-03', ' 00:00:00')"), on_the_day);
+    assert_eq!(days("day = CONCAT('2026-7-3', '')"), on_the_day);
+    assert_eq!(days("day = CONCAT('2026-07-03', ' 00:00:01')"), 0);
+    assert_eq!(days("day >= CONCAT('2026-07-03', '')"), from_the_day);
+    assert_eq!(
+        days("day >= CONCAT('2026-07-03', ' 00:00:01')"),
+        from_the_day - on_the_day
+    );
+    assert_eq!(
+        days("day > CONCAT('2026-07-03', ' 12:00:00')"),
+        from_the_day - on_the_day
+    );
+    assert_eq!(
+        days("day <= CONCAT('2026-07-03', ' 12:00:00')"),
+        (0..288).filter(|id| id % 5 != 0).count()
+    );
+    // A seventh fraction digit rounds into the next day's first instant.
+    assert_eq!(
+        days("day = CONCAT('2026-07-02 23:59:59.9999999', '')"),
+        on_the_day
+    );
+    // Text that cannot start a date is refused against a column, with or
+    // without the fold, and compared as written among several IN items.
+    for optimize in [false, true] {
+        for predicate in ["day = CONCAT('junk', '')", "created_at >= CONCAT('', '')"] {
+            let error = fixture
+                .try_run(
+                    &format!("SELECT id FROM events WHERE {predicate}"),
+                    optimize,
+                )
+                .expect_err(predicate);
+            assert!(error.contains("ncorrect DATE"), "{predicate}: {error}");
+        }
+    }
+    assert_eq!(
+        days("day IN (CONCAT('2026-07-03', ''), CONCAT('junk', ''))"),
+        on_the_day
     );
 }

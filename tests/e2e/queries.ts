@@ -1781,6 +1781,58 @@ export const differentialQueries: DifferentialQuery[] = [
     sql: 'SELECT id FROM orders WHERE DATE(updated_at) = \'2025-06-01\' ORDER BY id',
     tables: ['orders'],
   },
+  // The same comparisons with the constant computed rather than written,
+  // as a report assembles its day or month: the text is read as a DATETIME
+  // whatever spells it, and a DATE meets it at its own midnight.
+  {
+    name: 'where: a DATE column against computed text at midnight',
+    sql: "SELECT id FROM orders WHERE placed_on = CONCAT('2024-03-05', ' 00:00:00') ORDER BY id",
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a DATE column against computed text with a time',
+    sql: "SELECT id FROM orders WHERE placed_on >= CONCAT('2024-06-15', ' 00:00:01') ORDER BY id LIMIT 40",
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a DATE column equal to computed text with a time',
+    sql: "SELECT COUNT(*) AS n FROM orders WHERE placed_on = CONCAT('2024-03-05', ' 12:00:00')",
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a DATE column in a computed list',
+    sql:
+      "SELECT id FROM orders WHERE placed_on IN (CONCAT('2024-03-05', ''), CONCAT('2024-02-29', ' 00:00:00'), 'no date') " +
+      'ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: DATE() of a TIMESTAMP against a formatted day',
+    sql:
+      "SELECT id FROM orders WHERE DATE(updated_at) = DATE_FORMAT('2025-06-01 09:30:00', '%Y-%m-%d') ORDER BY id",
+    tables: ['orders'],
+  },
+  {
+    name: 'where: DATE() of a TIMESTAMP against today, formatted',
+    sql:
+      "SELECT COUNT(*) AS n FROM orders WHERE DATE(updated_at) = DATE_FORMAT(NOW(), '%Y-%m-%d') " +
+      'OR DATE(updated_at) = CURDATE()',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a TIMESTAMP within a computed month',
+    sql:
+      "SELECT id FROM orders WHERE updated_at >= CONCAT(DATE_FORMAT('2025-06-15', '%Y-%m'), '-01') " +
+      "AND updated_at < CONCAT('2025-07-01', ' 00:00:00') ORDER BY id",
+    tables: ['orders'],
+  },
+  {
+    name: 'where: DATETIME(6) between computed bounds',
+    sql:
+      "SELECT COUNT(*) AS n FROM customers WHERE created_at BETWEEN CONCAT('2020-01-01', '') " +
+      "AND CONCAT('2030-01-01', ' 00:00:00.000001')",
+    tables: ['customers'],
+  },
   {
     name: 'where: DATETIME(6) against a fractional literal',
     sql: 'SELECT COUNT(*) AS n FROM customers WHERE created_at > \'2020-01-01 00:00:00.000001\'',

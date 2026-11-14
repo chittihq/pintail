@@ -8817,9 +8817,7 @@ fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, Bou
     // over one - is read as a DATETIME beside a calendar value, its
     // seventh fraction digit rounding the sixth; compared as text, a value
     // a microsecond short of midnight never met the next day.
-    let text_column = |expr: &BoundExpr| {
-        is_plain_text(expr) && crate::text_charset::literal_value(expr).is_none()
-    };
+    let text_column = |expr: &BoundExpr| is_plain_text(expr) && !reads_no_row(expr);
     // Beside a DATE that is not a written constant the text is read as a
     // DATE too: its time of day is dropped, not compared with midnight.
     let row_date =
@@ -8864,7 +8862,8 @@ fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, Bou
 /// Whether an expression is built from written constants alone.
 fn reads_no_row(expr: &BoundExpr) -> bool {
     match &expr.kind {
-        BoundExprKind::Literal(_) => true,
+        // An uncorrelated scalar subquery has one value for the statement.
+        BoundExprKind::Literal(_) | BoundExprKind::ScalarSubquery(_) => true,
         BoundExprKind::Unary { expr, .. } => reads_no_row(expr),
         BoundExprKind::Binary { left, right, .. } => reads_no_row(left) && reads_no_row(right),
         BoundExprKind::Scalar { args, .. } => args.iter().all(reads_no_row),
@@ -9688,6 +9687,23 @@ fn canonical_literal_operand(
     target: &BoundExpr,
     operand: BoundExpr,
 ) -> Result<BoundExpr, BindError> {
+    canonical_operand(target, operand, true)
+}
+
+/// One of several values in an IN list, where `MySQL` compares text that
+/// cannot start a date as it is written and does not refuse it.
+pub(super) fn canonical_list_operand(
+    target: &BoundExpr,
+    operand: BoundExpr,
+) -> Result<BoundExpr, BindError> {
+    canonical_operand(target, operand, false)
+}
+
+fn canonical_operand(
+    target: &BoundExpr,
+    operand: BoundExpr,
+    shapeless: bool,
+) -> Result<BoundExpr, BindError> {
     let date_only = match target.data_type {
         Some(DataType::Date32) => true,
         Some(DataType::DateTime64 { .. }) => false,
@@ -9703,46 +9719,103 @@ fn canonical_literal_operand(
         }
         _ => return Ok(operand),
     };
+    let fsp = match target.data_type {
+        Some(DataType::DateTime64 { fsp }) => fsp,
+        _ => 0,
+    };
+    // Against a column `MySQL` raises ERROR 1525 for text no date can be
+    // read from; against an expression such as `DATE(c)` it compares and
+    // matches nothing, which the text left as written already does.
+    let strict = matches!(target.kind, BoundExprKind::Column(_))
+        || target.session_timestamp_source().is_some();
     let literal = crate::text_charset::literal_value(&operand);
     let text = match literal.as_deref() {
         Some(Value::Utf8(text)) => text.clone(),
         Some(Value::Int64(number)) if *number > 0 => number.to_string(),
         Some(Value::UInt64(number)) => number.to_string(),
+        // Text that is constant without being written out - a function of
+        // constants, a user variable, a scalar subquery - is compared by
+        // the same rule once its value is known: the bound is computed
+        // where it is evaluated, and the other operand stays as it is.
+        _ if is_plain_text(&operand) && reads_no_row(&operand) => {
+            return Ok(BoundExpr {
+                nullable: operand.nullable,
+                data_type: Some(DataType::Utf8),
+                kind: BoundExprKind::Scalar {
+                    function: ScalarFunction::CalendarBound {
+                        date_only,
+                        fsp,
+                        strict,
+                        shapeless,
+                    },
+                    args: vec![operand],
+                },
+            });
+        }
         _ => return Ok(operand),
     };
-    let text = microsecond_temporal_bound(&text).unwrap_or(text);
-    let parsed = TemporalLiteral::parse_comparison(&text).map_err(|()| {
-        BindError::UnsupportedExpression(format!(
+    // A written number is never shapeless text.
+    let shapeless = shapeless && matches!(literal.as_deref(), Some(Value::Utf8(_)));
+    match calendar_comparison_text(&text, date_only, fsp, strict, shapeless) {
+        Ok(Some(canonical)) => Ok(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Utf8(canonical)),
+            data_type: Some(DataType::Utf8),
+            nullable: false,
+        }),
+        Ok(None) => Ok(operand),
+        Err(message) => Err(BindError::UnsupportedExpression(message)),
+    }
+}
+
+/// The text `text` is compared under beside a DATE (`date_only`) or a
+/// DATETIME of `fsp` fraction digits: read as a DATETIME, a seventh
+/// fraction digit rounding the sixth, and spelled the way such a column
+/// prints - a date alone where it names a day's first instant, the
+/// column's fraction digits where it needs no more - so the column is
+/// compared as it stands. `Ok(None)` leaves the text as written; an error
+/// carries the message for text no date can be read from. A `strict`
+/// comparison refuses text with the shape of a date that names none, and
+/// one that also refuses `shapeless` text refuses what cannot start a
+/// date at all, as `MySQL` does against a column (ERROR 1525).
+///
+/// # Errors
+///
+/// Returns the refusal's message.
+pub fn calendar_comparison_text(
+    text: &str,
+    date_only: bool,
+    fsp: u8,
+    strict: bool,
+    shapeless: bool,
+) -> Result<Option<String>, String> {
+    let incorrect = |text: &str| {
+        format!(
             "incorrect {} value: '{text}'",
             if date_only { "DATE" } else { "DATETIME" }
-        ))
-    })?;
-    let Some(parsed) = parsed else {
-        return Ok(operand);
+        )
+    };
+    // No date starts with anything but a digit.
+    if strict
+        && shapeless
+        && !text
+            .trim_start()
+            .starts_with(|first: char| first.is_ascii_digit())
+    {
+        return Err(incorrect(text));
+    }
+    let text = microsecond_temporal_bound(text).unwrap_or_else(|| text.to_owned());
+    let Some(parsed) = TemporalLiteral::parse_comparison(&text).map_err(|()| incorrect(&text))?
+    else {
+        return Ok(None);
     };
     if !parsed.is_valid() {
-        // Refused against a column, where `MySQL` raises ERROR 1525; against
-        // an expression such as `DATE(c)` it compares and matches nothing,
-        // which the literal left as written already does.
-        if !matches!(target.kind, BoundExprKind::Column(_))
-            && target.session_timestamp_source().is_none()
-        {
-            return Ok(operand);
-        }
-        return Err(BindError::UnsupportedExpression(format!(
-            "incorrect {} value: '{text}'",
-            if date_only { "DATE" } else { "DATETIME" }
-        )));
+        return if strict {
+            Err(incorrect(&text))
+        } else {
+            Ok(None)
+        };
     }
-    let fsp = match target.data_type {
-        Some(DataType::DateTime64 { fsp }) => usize::from(fsp),
-        _ => 0,
-    };
-    Ok(BoundExpr {
-        kind: BoundExprKind::Literal(Value::Utf8(parsed.canonical(date_only, fsp))),
-        data_type: Some(DataType::Utf8),
-        nullable: false,
-    })
+    Ok(Some(parsed.canonical(date_only, usize::from(fsp))))
 }
 
 /// Integer columns can absorb an integer string constant without losing bits.
@@ -11741,6 +11814,112 @@ mod tests {
         ] {
             let query = bind(&format!("SELECT {expression} FROM Events")).expect(expression);
             assert_eq!(query.projection[0].expr.data_type, expected, "{expression}");
+        }
+    }
+
+    /// Constant text that is not a written literal is compared with a
+    /// calendar column under the literal's rule, computed on the text's
+    /// side: the column is never wrapped.
+    #[test]
+    fn constant_text_beside_a_calendar_column_leaves_the_column_bare() {
+        let stays = TableEntry::new(
+            TableId::new(31),
+            "stays",
+            TableSchema::new(
+                1,
+                vec![
+                    Column::new(1, "id", DataType::UInt64, false),
+                    Column::new(2, "stay_date", DataType::Date32, true),
+                    Column::new(3, "created_at", DataType::DateTime64 { fsp: 3 }, true),
+                    Column::new(4, "note", DataType::Utf8, true),
+                ],
+            )
+            .expect("schema"),
+            TableStatistics::default(),
+        )
+        .expect("table");
+        let database = DatabaseEntry::new(DatabaseId::new(9), "inn", [stays]).expect("database");
+        let catalog = CatalogSnapshot::new([database]).expect("catalog");
+        let filter = |condition: &str| {
+            let sql = format!("SELECT id FROM stays WHERE {condition}");
+            let statement = parse_statement(&sql).expect("parse");
+            Binder::new(&catalog, Some("inn"))
+                .bind(&statement)
+                .unwrap_or_else(|error| panic!("{condition}: {error}"))
+                .filter
+                .expect("filter")
+        };
+        for (condition, date_only, fsp) in [
+            ("stay_date >= CONCAT('2024-03-05', ' 00:00:01')", true, 0),
+            ("stay_date = DATE_FORMAT(NOW(), '%Y-%m-%d')", true, 0),
+            ("created_at < CONCAT('2024-03-05', '')", false, 3),
+            ("created_at <= (SELECT MAX(note) FROM stays)", false, 3),
+        ] {
+            let BoundExprKind::Binary { left, right, .. } = filter(condition).kind else {
+                panic!("{condition} is one comparison");
+            };
+            assert!(
+                matches!(left.kind, BoundExprKind::Column(_)),
+                "{condition}: the column is compared as it stands, not {left:?}"
+            );
+            assert!(
+                matches!(
+                    right.kind,
+                    BoundExprKind::Scalar {
+                        function: crate::ScalarFunction::CalendarBound {
+                            date_only: bound_date,
+                            fsp: bound_fsp,
+                            strict: true,
+                            shapeless: true,
+                        },
+                        ..
+                    } if bound_date == date_only && bound_fsp == fsp
+                ),
+                "{condition}: {right:?}"
+            );
+        }
+        // Text that reads a row is not a constant: beside a DATE it is
+        // read as a DATE for that row.
+        let BoundExprKind::Binary { right, .. } = filter("stay_date = CONCAT(note, '')").kind
+        else {
+            panic!("one comparison");
+        };
+        assert!(!matches!(
+            right.kind,
+            BoundExprKind::Scalar {
+                function: crate::ScalarFunction::CalendarBound { .. },
+                ..
+            }
+        ));
+        // The bound itself, as a written literal would be compared.
+        for (text, date_only, fsp, expected) in [
+            ("2024-03-05", true, 0, Some("2024-03-05")),
+            ("2024-03-05 00:00:00", true, 0, Some("2024-03-05")),
+            ("2024-3-5", true, 0, Some("2024-03-05")),
+            ("2024-03-05 00:00:01", true, 0, Some("2024-03-05 00:00:01")),
+            ("2024-03-05", false, 3, Some("2024-03-05 00:00:00.000")),
+            (
+                "2024-03-05 10:00:00.5",
+                false,
+                0,
+                Some("2024-03-05 10:00:00.5"),
+            ),
+            ("2024-03-04 23:59:59.9999999", true, 0, Some("2024-03-05")),
+        ] {
+            assert_eq!(
+                super::calendar_comparison_text(text, date_only, fsp, true, true)
+                    .expect(text)
+                    .as_deref(),
+                expected,
+                "{text}"
+            );
+        }
+        for text in ["junk", "", " x"] {
+            assert!(super::calendar_comparison_text(text, true, 0, true, true).is_err());
+            assert_eq!(
+                super::calendar_comparison_text(text, true, 0, true, false),
+                Ok(None)
+            );
         }
     }
 

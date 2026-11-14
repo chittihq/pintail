@@ -2521,6 +2521,10 @@ fn query_execution_error(error: ExecError) -> QueryError {
             rejection: SqlRejection::OutOfRange,
             message: error.to_string(),
         },
+        ExecError::IncorrectValue(_) => QueryError::Rejected {
+            rejection: SqlRejection::IncorrectValue,
+            message: error.to_string(),
+        },
         // MySQL's own texts: clients and ORMs match on them.
         ExecError::ScalarSubqueryRows { .. } => QueryError::Rejected {
             rejection: SqlRejection::SubqueryRows,

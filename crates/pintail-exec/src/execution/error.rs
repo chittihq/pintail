@@ -120,6 +120,9 @@ pub enum ExecError {
     JsonTable(String),
     /// A value left its type's range; `MySQL`'s message names the expression.
     OutOfRange(String),
+    /// Text that is not a value of the type it is compared as (1525);
+    /// `MySQL`'s message names the type and the text.
+    IncorrectValue(String),
     /// A spatial function refused its arguments; `MySQL`'s message.
     Spatial {
         /// Which of `MySQL`'s spatial error classes this is.
@@ -239,7 +242,9 @@ impl fmt::Display for ExecError {
                 "Invalid JSON path expression. The error is around character position {position}."
             ),
             Self::JsonTable(message) => formatter.write_str(message),
-            Self::OutOfRange(message) | Self::Spatial { message, .. } => {
+            Self::OutOfRange(message)
+            | Self::IncorrectValue(message)
+            | Self::Spatial { message, .. } => {
                 formatter.write_str(message)
             }
             Self::NumericOverflow => formatter.write_str("numeric expression overflow"),

@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4406;
+const EXPECTED_CASES: usize = 4410;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6274,6 +6274,22 @@ fn conversion_edge_cases() -> Vec<OracleCase> {
         ordered(
             "fractional numbers as dates and times",
             "SELECT CAST(20001231235959.9999999 AS DATE), CAST(20001231235959.9999999 AS TIME), CAST(20001231235959.9999999 AS TIME(6)), HOUR(20001231235959.9999999), MINUTE(20001231235959.9999999), SECOND(20001231235959.9999999), TIME_TO_SEC(20001231235959.9999999), CAST(20001231235959.9999994 AS DATE), HOUR(235959.9999999), CAST(20001231235959.5 AS DATE)",
+        ),
+        ordered(
+            "computed text beside a calendar column",
+            "SELECT id FROM bounds WHERE day >= CONCAT('2024-03-31', ' 00:00:01') ORDER BY id",
+        ),
+        ordered(
+            "computed text beside a calendar column",
+            "SELECT id, day = CONCAT('2024-02-29', ' 00:00:00'), day = CONCAT('2024-02-29', ' 12:00:00'), day < CONCAT('2024-3-31', ''), dt3 = CONCAT('2024-02-29 00:00:00.125', ''), dt0 >= DATE_FORMAT('2024-11-03 10:00:00', '%Y-%m-%d'), dt6 <= CONCAT('2024-03-31 00:00:00.125001', ''), day <=> CONCAT('2024-02-28 23:59:59.9999999', ''), day <> CONCAT('2024-02-29', '') FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "computed text beside a calendar column",
+            "SELECT id FROM bounds WHERE DATE(dt6) = DATE_FORMAT('2024-03-31 09:00:00', '%Y-%m-%d') OR day IN (CONCAT('2025-01-01', ''), 'no date') ORDER BY id",
+        ),
+        ordered(
+            "computed text beside a calendar column",
+            "SELECT id FROM bounds WHERE dt0 BETWEEN CONCAT('2024-02-29', '') AND CONCAT('2024-11-03', ' 00:00:00') AND day NOT IN (CONCAT('2024-03-31', ' 00:00:00'), CONCAT('2024-02-29', ' 00:00:01')) ORDER BY id",
         ),
         ordered(
             "time beside a date",

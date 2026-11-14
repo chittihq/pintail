@@ -59,7 +59,9 @@ pub use user_variables::{
 pub use bound::set_session_database_name;
 pub use sqlparser::ast::Statement;
 
-pub use binder::{BindError, Binder, CALENDAR_COPY_CHECK, with_source_indexes};
+pub use binder::{
+    BindError, Binder, CALENDAR_COPY_CHECK, calendar_comparison_text, with_source_indexes,
+};
 pub use bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
     BoundFrameBound, BoundFrameOffset, BoundFrom, BoundJoin, BoundJoinKind, BoundJsonTable,
