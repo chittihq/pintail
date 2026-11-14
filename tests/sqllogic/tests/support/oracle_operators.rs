@@ -428,6 +428,11 @@ const MID_WITH_FROM_AND_FOR: &[&str] = &[
     r#"SELECT id, MID(name FROM 7), MID(name FROM id FOR 2), MID(note FROM -2) FROM events ORDER BY id"#,
 ];
 
+const BARE_UTC_CLOCKS: &[&str] = &[
+    r#"SELECT UTC_DATE = CURDATE(), UTC_TIME = CURTIME(), UTC_TIMESTAMP = NOW(), LENGTH(UTC_DATE), LENGTH(utc_time), LENGTH(Utc_Timestamp), UTC_DATE = UTC_DATE(), UTC_TIMESTAMP + 0 = UTC_TIMESTAMP() + 0"#,
+    r#"SELECT id, placed_at < UTC_TIMESTAMP, DATE(placed_at) < UTC_DATE FROM orders WHERE DATE(placed_at) <> UTC_DATE ORDER BY id"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -446,6 +451,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("bare utc clocks", BARE_UTC_CLOCKS),
         ("mid with from and for", MID_WITH_FROM_AND_FOR),
         ("json compared with null", JSON_COMPARED_WITH_NULL),
         ("json path operands", JSON_PATH_OPERANDS),

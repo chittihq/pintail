@@ -18,6 +18,8 @@
 //!   wrapped in parentheses: the grammar reads the arrow looser than the
 //!   operators around it;
 //! - `MID(s FROM n FOR m)` is `SUBSTRING(s FROM n FOR m)`;
+//! - `UTC_DATE`, `UTC_TIME` and `UTC_TIMESTAMP` written bare are the calls
+//!   with no arguments;
 //! - `WEIGHT_STRING(x AS CHAR(n))` becomes a call under an internal name,
 //!   which the binder answers for by the name the statement wrote.
 use std::collections::BTreeMap;
@@ -137,6 +139,7 @@ pub(crate) fn rewrite(tokens: &mut Vec<TokenWithSpan>) {
     if !tokens.iter().any(|token| {
         is_any_word(&token.token, &TRIGGERS)
             || is_word(&token.token, WEIGHT)
+            || is_any_word(&token.token, &UTC_CLOCKS)
             || is_word(&token.token, "MID")
             || matches!(token.token, Token::Arrow | Token::LongArrow)
     }) {
@@ -170,6 +173,15 @@ fn call_form(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: 
         json_path(tokens, significant, at, edits);
         return;
     }
+    if is_any_word(head, &UTC_CLOCKS) {
+        // Reserved words, so a bare one is never a column.
+        if token(at + 1) != Some(&Token::LParen)
+            && at.checked_sub(1).and_then(token) != Some(&Token::Period)
+        {
+            edits.after(significant[at], [Token::LParen, Token::RParen]);
+        }
+        return;
+    }
     if token(at + 1) != Some(&Token::LParen) {
         return;
     }
@@ -200,6 +212,9 @@ fn call_form(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: 
         );
     }
 }
+
+/// The clock functions the grammar reads only with parentheses.
+const UTC_CLOCKS: [&str; 3] = ["UTC_DATE", "UTC_TIME", "UTC_TIMESTAMP"];
 
 /// `column -> 'path'` or `column ->> 'path'` at the arrow `at`: the column
 /// may be qualified and the path is a string literal, which is all `MySQL`
@@ -540,6 +555,10 @@ mod tests {
                 "SELECT SUBSTRING(a FROM 2 FOR 3)",
             ),
             ("SELECT MID(a, 2, 3)", "SELECT MID(a, 2, 3)"),
+            (
+                "SELECT UTC_DATE, utc_time, UTC_TIMESTAMP()",
+                "SELECT UTC_DATE(), utc_time(), UTC_TIMESTAMP()",
+            ),
         ] {
             assert_eq!(respelled(sql), expected, "{sql}");
         }
