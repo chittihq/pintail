@@ -48,3 +48,4 @@ REVIEW.md
 # partial outcomes are rewritten locally by every run.
 /benchmark/corpus/*
 !/benchmark/corpus/results.csv
+verify-out/
