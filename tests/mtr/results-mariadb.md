@@ -1,8 +1,8 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-11-14T14:14:09.719Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-11-14T16:24:08.032Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-Replay mode: local. Source commit: 57896401ff52dda1bc11d7f83c611612d12c0d77; source dirty: false. Binary SHA-256: d008576baebf88eb4d47ace8efe362604f9c616b57e8923c44e36758c402f255.
+Replay mode: local. Source commit: 902e0fc50678757ee852a5d72176a5bff07c2d17; source dirty: false. Binary SHA-256: c9221761153d291005a1c882ef24f208c82acf18d9ebeaa9f74ab9b453460bd4.
 
 **9,873 of 10,026 compared SELECTs match MySQL byte-for-byte** (98.5%; the 430 session-diverged SELECTs are not in that percentage: counted as mismatches it is 94.4%), **out of 30,174 SELECTs replayed** - 20,148 never reached a comparison, so this is a share of what could be compared and not of the suite. 153 differ in rows, 0 in column names only. 3,038 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. 430 did not match after Pintail and MySQL disagreed on a session statement, and say nothing while the sessions differ. Fixtures: 25,847 accepted, 1,076 rejected by Pintail, 25,244 outside the replayed subset.
 
@@ -747,4 +747,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 40 | DDL: Error: character set ucs2 is not supported on a local table |
 | 39 | DDL: Error: character set utf16 is not supported on a local table |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwgh7zyu-92316/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwgluqfw-113671/diffs/` (not committed).
