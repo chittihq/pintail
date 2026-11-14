@@ -544,17 +544,35 @@ fn rebuild_only_alter(statement: &str) -> bool {
 /// count one as such - so any statement carrying double quotes has already
 /// failed by the time the retry runs, and every statement that parsed as
 /// written returns before reaching it.
+///
+/// `ALGORITHM = ...` and `LOCK = ...` say how the source carries a change
+/// out, not what the change is, and are dropped from what is returned. Left
+/// in, they sat beside the column clauses as operations of their own, and
+/// `MODIFY c VARCHAR(64), ALGORITHM = INPLACE, LOCK = NONE` read as a mixed
+/// statement that needed a recopy.
 fn parse_source_ddl(statement: &str) -> Result<Vec<Statement>, CdcError> {
-    let default = match Parser::parse_sql(&MySqlDialect {}, statement) {
-        Ok(statements) => return Ok(statements),
-        Err(error) => error,
+    let mut statements = match Parser::parse_sql(&MySqlDialect {}, statement) {
+        Ok(statements) => statements,
+        Err(default) => {
+            let quoted = pintail_sql::ParseMode {
+                ansi_quotes: true,
+                ..pintail_sql::ParseMode::default()
+            };
+            pintail_sql::with_parse_mode(quoted, || pintail_sql::parse_statements(statement))
+                .map_err(|_| CdcError::Ddl(format!("cannot parse DDL `{statement}`: {default}")))?
+        }
     };
-    let quoted = pintail_sql::ParseMode {
-        ansi_quotes: true,
-        ..pintail_sql::ParseMode::default()
-    };
-    pintail_sql::with_parse_mode(quoted, || pintail_sql::parse_statements(statement))
-        .map_err(|_| CdcError::Ddl(format!("cannot parse DDL `{statement}`: {default}")))
+    for statement in &mut statements {
+        if let Statement::AlterTable(alter) = statement {
+            alter.operations.retain(|operation| {
+                !matches!(
+                    operation,
+                    AlterTableOperation::Algorithm { .. } | AlterTableOperation::Lock { .. }
+                )
+            });
+        }
+    }
+    Ok(statements)
 }
 
 #[allow(clippy::too_many_lines)] // linear DDL-statement classification table
@@ -993,6 +1011,36 @@ mod tests {
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
                 kind: AlterKind::ModifyColumns(vec!["note".to_owned()]),
+            }]
+        );
+        // How the source carries the change out is not part of the change.
+        for statement in [
+            "ALTER TABLE events MODIFY note VARCHAR(2048) NULL, ALGORITHM = INPLACE, LOCK = NONE",
+            "ALTER TABLE events\r\n    MODIFY note VARCHAR(2048) NULL,\r\n    ALGORITHM=INPLACE, LOCK=NONE",
+            "ALTER TABLE events ALGORITHM = INSTANT, MODIFY note VARCHAR(2048)",
+        ] {
+            assert_eq!(
+                parse_ddl(statement, "app").unwrap().actions,
+                vec![DdlAction::Alter {
+                    table: "events".to_owned(),
+                    kind: AlterKind::ModifyColumns(vec!["note".to_owned()]),
+                }],
+                "{statement}"
+            );
+        }
+        assert_eq!(
+            parse_ddl(
+                "ALTER TABLE events ADD COLUMN extra INT NULL, ALGORITHM = INSTANT",
+                "app"
+            )
+            .unwrap()
+            .actions,
+            vec![DdlAction::Alter {
+                table: "events".to_owned(),
+                kind: AlterKind::AddOrDropColumns {
+                    added: vec!["extra".to_owned()],
+                    dropped: Vec::new(),
+                },
             }]
         );
         assert_eq!(
