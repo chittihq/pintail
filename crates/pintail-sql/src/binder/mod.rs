@@ -8525,6 +8525,15 @@ fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, Bou
             cast_to(as_common_temporal(right), DataType::Utf8),
         );
     }
+    // A TIME beside a DATE or DATETIME is that time on the current date -
+    // except a TIME column beside a constant, which reads the constant as
+    // a TIME and so never looks at its date.
+    if ((is_time(&left) && is_temporal(right.data_type))
+        || (is_time(&right) && is_temporal(left.data_type)))
+        && !time_column_beside_constant(&left, &right)
+    {
+        return (as_common_temporal(left), as_common_temporal(right));
+    }
     if is_temporal(left.data_type)
         && is_temporal(right.data_type)
         && left.data_type != right.data_type
@@ -8533,6 +8542,22 @@ fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, Bou
     } else {
         (left, right)
     }
+}
+
+/// Whether one operand is a TIME column and the other reads no row: the
+/// comparison `MySQL` settles by storing the constant in the column's type.
+fn time_column_beside_constant(left: &BoundExpr, right: &BoundExpr) -> bool {
+    fn constant(expr: &BoundExpr) -> bool {
+        match &expr.kind {
+            BoundExprKind::Literal(_) => true,
+            BoundExprKind::Unary { expr, .. } => constant(expr),
+            BoundExprKind::Binary { left, right, .. } => constant(left) && constant(right),
+            BoundExprKind::Scalar { args, .. } => args.iter().all(constant),
+            _ => false,
+        }
+    }
+    let column = |expr: &BoundExpr| is_time(expr) && matches!(expr.kind, BoundExprKind::Column(_));
+    (column(left) && constant(right)) || (column(right) && constant(left))
 }
 
 /// Two DATETIME operands read at one type: as they are where the types
@@ -8694,12 +8719,22 @@ fn unify_temporal_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
     let mixed = args
         .iter()
         .any(|argument| is_temporal(argument.data_type) && Some(argument.data_type) != first);
-    if !mixed {
+    // A TIME among DATEs or DATETIMEs is that time on the current date.
+    // Beside a number or text each pair compares by its own rule, and the
+    // TIME stays the number it reads as.
+    // One item in an IN list is the equality, with its column rule.
+    let timed = first.is_some()
+        && args.iter().any(is_time)
+        && args.iter().all(|argument| {
+            is_time(argument) || is_temporal(argument.data_type) || argument.data_type.is_none()
+        })
+        && !matches!(args.as_slice(), [subject, item] if time_column_beside_constant(subject, item));
+    if !mixed && !timed {
         return args;
     }
     args.into_iter()
         .map(|argument| {
-            if is_temporal(argument.data_type) {
+            if is_temporal(argument.data_type) || (timed && is_time(&argument)) {
                 as_common_temporal(argument)
             } else {
                 argument
