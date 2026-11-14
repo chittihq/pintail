@@ -6856,14 +6856,34 @@ fn cast_decimal_integer(value: &Value, target: DataType) -> Result<Value, ExecEr
 /// and clamped to the type's range.
 fn cast_text_time(text: &str, fsp: u8) -> Option<String> {
     let time = temporal::text_time_of(text)?;
-    let rendered = format_mysql_time(
-        time.negative,
-        time.hours,
-        time.minutes,
-        time.seconds,
-        &time.fraction,
-        fsp,
-    )?;
+    // The text is read to the microsecond first, rounding there, and that
+    // value is then rounded to `fsp`: `.2324995` at three digits is
+    // `.232500` and so `.233`.
+    let micros = (fsp < 6 && time.fraction.len() > 6)
+        .then(|| {
+            format_mysql_time(
+                false,
+                time.hours,
+                time.minutes,
+                time.seconds,
+                &time.fraction,
+                6,
+            )
+        })
+        .flatten();
+    let fields = micros.as_deref().and_then(|micros| {
+        let (clock, fraction) = micros.split_once('.')?;
+        let mut parts = clock.split(':');
+        Some((
+            parts.next()?.parse::<u64>().ok()?,
+            parts.next()?.parse::<u64>().ok()?,
+            parts.next()?.parse::<u64>().ok()?,
+            fraction,
+        ))
+    });
+    let (hours, minutes, seconds, fraction) =
+        fields.unwrap_or((time.hours, time.minutes, time.seconds, &time.fraction));
+    let rendered = format_mysql_time(time.negative, hours, minutes, seconds, fraction, fsp)?;
     // A written minus sign survives a zero: `-0` is `-00:00:00`.
     Some(if time.negative && !rendered.starts_with('-') {
         format!("-{rendered}")
