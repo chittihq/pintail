@@ -1,5 +1,12 @@
 //! Planner, optimizer, and vectorized executor for Pintail.
 
+// Engine code reports through its result, its counters or the log; a line
+// printed to the terminal is a leftover from debugging. The few traces an
+// operator asks for by environment variable carry their own allowance.
+#![cfg_attr(
+    not(test),
+    deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)
+)]
 mod calendar_locale;
 pub use calendar_locale::{
     calendar_locale_name, session_calendar_locale, set_session_calendar_locale,
@@ -66,3 +73,10 @@ pub use storage::{PhysicalScanStats, SnapshotScanProvider};
 
 pub use execution::cancel_query_under_memory_pressure;
 pub use execution::{ExecutionProfile, OperatorProfile};
+
+/// Writes one line of a trace an operator asked for through the
+/// environment. The only place this crate prints.
+#[allow(clippy::print_stderr)]
+pub(crate) fn trace_line(line: std::fmt::Arguments<'_>) {
+    eprintln!("{line}");
+}

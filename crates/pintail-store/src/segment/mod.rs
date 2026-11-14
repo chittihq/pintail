@@ -4369,7 +4369,7 @@ impl ColumnBuilder {
         if std::env::var_os("PINTAIL_DECODE_DEBUG").is_some()
             && matches!(self, Self::DictUtf8 { .. })
         {
-            eprintln!("[decode] dictionary degraded");
+            crate::trace_line(format_args!("[decode] dictionary degraded"));
         }
         if let Self::DictUtf8 {
             dict_heap,

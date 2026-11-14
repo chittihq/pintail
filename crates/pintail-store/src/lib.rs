@@ -6,6 +6,13 @@
 //! [`TableStore`] provides the same behavior as a standalone compatibility
 //! handle for one physical table.
 
+// Engine code reports through its result, its counters or the log; a line
+// printed to the terminal is a leftover from debugging. The few traces an
+// operator asks for by environment variable carry their own allowance.
+#![cfg_attr(
+    not(test),
+    deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)
+)]
 mod codec;
 mod database;
 mod error;
@@ -101,4 +108,11 @@ pub mod fuzzing {
     pub fn read_wal(path: &std::path::Path) {
         let _ = crate::wal::recover_read_only(path);
     }
+}
+
+/// Writes one line of a trace an operator asked for through the
+/// environment. The only place this crate prints.
+#[allow(clippy::print_stderr)]
+pub(crate) fn trace_line(line: std::fmt::Arguments<'_>) {
+    eprintln!("{line}");
 }

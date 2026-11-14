@@ -4,6 +4,13 @@
 //! choose CDC versus polling, plan a consistent snapshot, select the physical
 //! key fallback, and build Pintail schemas without guessing from result values.
 
+// Engine code reports through its result, its counters or the log; a line
+// printed to the terminal is a leftover from debugging. The few traces an
+// operator asks for by environment variable carry their own allowance.
+#![cfg_attr(
+    not(test),
+    deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)
+)]
 mod migration;
 
 use std::collections::BTreeMap;

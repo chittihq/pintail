@@ -1970,11 +1970,11 @@ fn streaming_two_pass(
             memory.release(active.reserved);
             memory.release(group_reserved);
             if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
-                eprintln!(
+                crate::trace_line(format_args!(
                     "[agg] streaming two-pass: range fold of {} slots, {} flushes",
                     active.slot_count,
                     flushes + 1
-                );
+                ));
             }
             return Ok(MaterializedRows {
                 rows: Vec::new(),
@@ -2002,13 +2002,13 @@ fn streaming_two_pass(
     }
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
         let groups: usize = maps.iter().map(HashMap::len).sum();
-        eprintln!(
+        crate::trace_line(format_args!(
             "[agg] streaming two-pass: {groups} groups, {} flushes, {} spill runs, \
              {odd_batches} batches row by row, {} groups kept by value",
             flushes + 1,
             spill_runs.len(),
             odd.len()
-        );
+        ));
     }
     if !spill_runs.is_empty() {
         // Groups went to disk along the way: the remainder joins them and

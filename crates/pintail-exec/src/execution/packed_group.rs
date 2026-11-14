@@ -2224,14 +2224,14 @@ pub(super) fn build_packed_group_aggregate(
         let groups: usize = fold.tables.iter().map(|table| table.groups).sum();
         let finish = std::time::Instant::now();
         let rows = fold.finish();
-        eprintln!(
+        crate::trace_line(format_args!(
             "[agg] packed-key fold: {groups} groups, {} spill runs; input {:.1} ms, cut and \
              fold {:.1} ms, finish {:.1} ms",
             fold.spill_runs.len(),
             pulling.as_secs_f64() * 1e3,
             folded.saturating_sub(pulling).as_secs_f64() * 1e3,
             finish.elapsed().as_secs_f64() * 1e3
-        );
+        ));
         return rows;
     }
     let note = super::ProfileNote::of(input);

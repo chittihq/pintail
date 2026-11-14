@@ -25,6 +25,13 @@
 //! `avx2` is the default spelled out; `avx512` runs the auto-vectorized
 //! kernels at AVX-512.
 
+// Engine code reports through its result, its counters or the log; a line
+// printed to the terminal is a leftover from debugging. The few traces an
+// operator asks for by environment variable carry their own allowance.
+#![cfg_attr(
+    not(test),
+    deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)
+)]
 // `#[inline(always)]` is the mechanism here, not a hint: a kernel is only
 // compiled for AVX2 when it is inlined into the dispatcher's target-feature
 // function, and LLVM's own heuristics declined the larger kernels.

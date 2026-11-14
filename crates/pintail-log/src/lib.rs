@@ -30,6 +30,13 @@
 //! row values. Call sites pass identifiers and counts. A log is the one place
 //! a credential is most likely to be copied into a bug report.
 
+// Engine code reports through its result, its counters or the log; a line
+// printed to the terminal is a leftover from debugging. The few traces an
+// operator asks for by environment variable carry their own allowance.
+#![cfg_attr(
+    not(test),
+    deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)
+)]
 use std::sync::OnceLock;
 
 /// A destination for log lines beyond stderr.

@@ -1432,12 +1432,14 @@ impl AggregateState {
                 Value::Boolean(flag) => ExactUnits::from_int(i128::from(*flag), scale),
                 Value::Int64(signed) => ExactUnits::from_int(i128::from(*signed), scale),
                 Value::UInt64(unsigned) => ExactUnits::from_int(i128::from(*unsigned), scale),
-                _ => {
-                    eprintln!(
-                        "DBG sum value {value:?} number {number:?} units {:?}",
-                        self.units
-                    );
-                    None
+                // The binder types a SUM as DECIMAL only over exact numbers,
+                // and each of those arrives as one of the kinds above. Any
+                // other kind is a typing defect, named as one instead of
+                // being reported to the reader as an overflow of their data.
+                Value::Null | Value::Float64(_) | Value::Binary(_) | Value::Enum { .. } => {
+                    return Err(ExecError::InvalidBatch(
+                        "a DECIMAL sum met a value that is not an exact number",
+                    ));
                 }
             }
             .ok_or(ExecError::NumericOverflow)?;
@@ -3423,13 +3425,13 @@ fn try_grouped_segment_fold(
         return Ok(None);
     };
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
-        eprintln!(
+        crate::trace_line(format_args!(
             "[agg] grouped fold: {} spans ({} dirty), {} reused, {} outside rows",
             fold.spans.len(),
             fold.spans.iter().filter(|span| span.dirty).count(),
             reused,
             fold.outside.len()
-        );
+        ));
     }
     let payload: usize = rows
         .iter()
@@ -3700,14 +3702,14 @@ pub(super) fn build_hash_aggregate(
     }
     let memo_key = settled_aggregate_key(input, group_by, aggregates, collation, key_collations);
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
-        eprintln!(
+        crate::trace_line(format_args!(
             "[agg] memo key: {:?} (scan found: {})",
             memo_key.as_ref().map(|(_, generation, signature)| (
                 generation,
                 signature.chars().take(60).collect::<String>()
             )),
             settled_scan(input).is_some()
-        );
+        ));
     }
     if let Some(key) = &memo_key
         && let Some(entry) = SETTLED_AGGREGATE_MEMO
@@ -4256,11 +4258,11 @@ fn try_sma_fold(
     memory.reserve(estimated_row_payload_bytes(&row))?;
     SMA_FOLD_HITS.with(|hits| hits.set(hits.get() + 1));
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
-        eprintln!(
+        crate::trace_line(format_args!(
             "[agg] SMA fold: {} segments, {} residual rows",
             sma.segments.len(),
             sma.rows.len()
-        );
+        ));
     }
     Ok(Some(vec![row]))
 }
@@ -5572,13 +5574,13 @@ fn build_buffered_hash_aggregate(
         }
     }
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
-        eprintln!(
+        crate::trace_line(format_args!(
             "[agg] general path: {} groups, {} waves over {} morsels, {} spill runs",
             groups.len(),
             waves_debug.0,
             waves_debug.1,
             spill_runs.len()
-        );
+        ));
     }
     if spill_runs.is_empty() {
         return finish_aggregate_groups(groups.into_values(), memory);
@@ -6228,12 +6230,12 @@ pub(super) fn merge_spilled_aggregate_groups(
     let merge = spill::RunMerge::open(runs, decode_group_key)
         .map_err(|error| ExecError::Source(format!("aggregate spill read: {error}")))?;
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
-        eprintln!(
+        crate::trace_line(format_args!(
             "[agg] spill merge: {} runs, used {} of {}",
             merge.len(),
             memory.used(),
             memory.limit()
-        );
+        ));
     }
     // The merged result is served a chunk at a time: a spilled map is one
     // the ceiling could not hold, and its finished rows are no smaller, so
@@ -6809,12 +6811,12 @@ fn build_fused_inner_join_aggregate(
     };
 
     if std::env::var_os("PINTAIL_PHASE_TIMING").is_some() {
-        eprintln!(
+        crate::trace_line(format_args!(
             "JOINPHASE build={}us probe={}us of_which_pull={}us",
             build_us,
             probe_clock.elapsed().as_micros(),
             pull_us
-        );
+        ));
     }
     if note.is_active() {
         use std::fmt::Write as _;
@@ -7752,7 +7754,10 @@ fn build_direct_column_aggregate(
                     })
                     .collect::<Vec<_>>()
             });
-            eprintln!("[agg] direct path: keys={} lanes={kinds:?}", keys.is_some());
+            crate::trace_line(format_args!(
+                "[agg] direct path: keys={} lanes={kinds:?}",
+                keys.is_some()
+            ));
         }
         if let (Some(keys), Some(lanes)) = (keys, lanes) {
             // Streaming scatter (phase-0 profile, 2026-08-02): retaining
