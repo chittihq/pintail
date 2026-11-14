@@ -69,6 +69,12 @@ type Case = {
   /// What to select when comparing, when `id, v` would compare a rendering
   /// difference rather than the migration.
   projection?: string
+  /// Whether the mirror is expected to take the table out of service and
+  /// copy it again. Matching the source is not enough on its own: a table
+  /// that is recopied matches too, after minutes of refusing queries on a
+  /// large one. Unset, the case fails on a recopy when the source rewrote
+  /// nothing.
+  recopies?: boolean
 }
 
 const cases: Case[] = [
@@ -1258,6 +1264,24 @@ async function main() {
     record(family.table, family.name, 'the whole table matches the source after the migration', difference ? 'FAIL' : 'PASS', difference)
     const stale = await compareUntouched(family.table, family.columns, untouched.get(family.table)!)
     record(family.table, family.name, 'rows the migration never wrote to are not stale', stale ? 'FAIL' : 'PASS', stale)
+  }
+  // How the replica took each plain migration: a table recopied where the
+  // source rewrote nothing was out of service for no reason.
+  const printed = pintailOutput.join('')
+  for (const [index, testCase] of cases.entries()) {
+    const table = tableName(index)
+    const quarantine = printed
+      .split('\n')
+      .find((line) => line.includes(`table quarantined db=${databaseId} table=${table}:`))
+    const expected = testCase.recopies ?? testCase.rewrites
+    const ok = testCase.recopies === undefined ? !quarantine || testCase.rewrites : Boolean(quarantine) === expected
+    record(
+      table,
+      testCase.name,
+      quarantine ? 'taken by recopying the table' : 'taken without a quarantine',
+      ok ? 'PASS' : 'FAIL',
+      ok ? undefined : quarantine ?? 'expected a recopy and saw none',
+    )
   }
   // How the replica took each added column, from the reason it printed: a
   // quarantine names the table and why it is recopied, an in-place change
