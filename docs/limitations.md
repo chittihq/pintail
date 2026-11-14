@@ -163,14 +163,21 @@ stays readable as a list of things to fix.
 - JSON paths support member steps, numeric and `last`-relative indexes,
   ranges (`[M to N]`), wildcards (`.*`, `[*]`) and recursive descent (`**`)
   in the multi-target functions (`JSON_EXTRACT`, `JSON_CONTAINS_PATH`), with
-  MySQL's array autowrap rules. Single-target functions (`JSON_VALUE`,
-  `JSON_LENGTH`, `JSON_KEYS`, `JSON_CONTAINS`) accept `last` but refuse
-  multi-target tokens, as MySQL does (#8).
-- Regex uses Rust's linear-time Unicode engine rather than ICU. The
+  MySQL's array autowrap rules. `JSON_VALUE` takes them too and answers
+  the one value such a path reaches, NULL for none or several. The other
+  single-target functions that refuse them in MySQL (`JSON_KEYS`,
+  `JSON_CONTAINS`) accept `last` but refuse multi-target tokens (#8).
+- Regex uses Rust's linear-time Unicode engine rather than ICU, and a
+  backtracking matcher for what that engine cannot express. The
   compatibility surface is literals, alternation, capturing/non-capturing
-  groups without backreferences,
-  quantifiers, anchors, dot, Unicode properties and character/POSIX classes;
-  lookaround and backreferences reject instead of being reinterpreted. Other
+  groups, quantifiers including possessive ones, anchors, dot, Unicode
+  properties and character/POSIX classes, back-references, look-ahead,
+  bounded look-behind, atomic groups, comment groups and `\G`. The
+  grapheme-cluster escape `\X` and named characters `\N{...}` reject. A
+  backtracking match stops with MySQL's timeout or stack-overflow error at
+  a fixed ceiling of saved alternatives rather than at MySQL's
+  `regexp_time_limit` and `regexp_stack_limit`, so a pattern near either
+  limit can finish in one engine and stop in the other. Other
   ICU syntax and same-spelling semantic edges are not claimed. Binary-string
   operands reject, patterns are limited to 64 KiB, compiled
   programs to 1 MiB, and literal programs are owned and reused by the compiled
@@ -381,8 +388,15 @@ stays readable as a list of things to fix.
   (`d IN (SELECT n FROM t)`) is compared with the numbers as text and
   matches none, where MySQL reads them as dates. Compared with `=`, or
   with the numbers written out in a list, it matches.
-- `SUM(DISTINCT d)` or `AVG(DISTINCT d)` over a DECIMAL column that is
-  also a `GROUP BY` key of the query is refused as a numeric overflow.
+- `ROUND` or `TRUNCATE` of a DOUBLE whose result is past the double range
+  (`TRUNCATE(1.7976931348623157E+308, -12)`) is refused as out of range.
+  MySQL holds an infinity there, which it prints as `0`.
+- Text read as an integer amount by `MAKETIME` or an interval stops at the
+  top of the signed range when it is a stored column and wraps past the
+  unsigned range when an expression computed it, as in MySQL. A column of
+  a derived table counts as stored here, where MySQL counts it by how it
+  resolved the derived table; the two differ only for text of more than
+  nineteen digits.
 - A row compared with a subquery (`(a, b) = (SELECT x, y ...)`) is refused
   when the subquery refers to the outer row and also uses `DISTINCT`,
   `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT` or a set operation.
