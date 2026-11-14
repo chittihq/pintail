@@ -383,78 +383,78 @@ const REGEX: &[(&str, &[&str])] = &[
 ];
 
 const TRUTH_OF_TIME_VALUES: &[&str] = &[
-    r#"SELECT id, NOT clock, clock OR 0, clock AND 1, clock XOR 0, clock IS TRUE, clock IS FALSE, clock IS NOT TRUE, IF(clock, 'y', 'n'), CASE WHEN clock THEN 'y' ELSE 'n' END FROM bounds ORDER BY id"#,
-    r#"SELECT id FROM bounds WHERE clock ORDER BY id"#,
-    r#"SELECT id FROM bounds WHERE NOT clock ORDER BY id"#,
-    r#"SELECT TIME'00:00:00.5' IS TRUE, NOT TIME'00:00:00.500000', TIME'00:00:00.5' AND 1, IF(TIME'00:00:00.5', 'y', 'n'), TIME'00:30:00' IS TRUE, NOT TIME'00:00:01', IF(TIME'00:00:00', 'y', 'n'), TIME'-00:00:01' OR 0, CASE WHEN TIME'00:00:59' THEN 1 ELSE 0 END"#,
-    r#"SELECT COUNT(*), SUM(clock IS TRUE), SUM(NOT clock) FROM bounds HAVING MAX(clock)"#,
-    r#"SELECT b.id, c.id FROM bounds b JOIN bounds c ON c.clock AND b.id = c.id ORDER BY b.id"#,
-    r#"SELECT id, SEC_TO_TIME(id * 30) IS TRUE, NOT SEC_TO_TIME(id - 3), IF(TIMEDIFF('10:00:00', '09:59:30'), 1, 0), NOT MAKETIME(0, 0, id - 1), NOT CAST('00:00:30' AS TIME) FROM users ORDER BY id"#,
+    "SELECT id, NOT clock, clock OR 0, clock AND 1, clock XOR 0, clock IS TRUE, clock IS FALSE, clock IS NOT TRUE, IF(clock, 'y', 'n'), CASE WHEN clock THEN 'y' ELSE 'n' END FROM bounds ORDER BY id",
+    "SELECT id FROM bounds WHERE clock ORDER BY id",
+    "SELECT id FROM bounds WHERE NOT clock ORDER BY id",
+    "SELECT TIME'00:00:00.5' IS TRUE, NOT TIME'00:00:00.500000', TIME'00:00:00.5' AND 1, IF(TIME'00:00:00.5', 'y', 'n'), TIME'00:30:00' IS TRUE, NOT TIME'00:00:01', IF(TIME'00:00:00', 'y', 'n'), TIME'-00:00:01' OR 0, CASE WHEN TIME'00:00:59' THEN 1 ELSE 0 END",
+    "SELECT COUNT(*), SUM(clock IS TRUE), SUM(NOT clock) FROM bounds HAVING MAX(clock)",
+    "SELECT b.id, c.id FROM bounds b JOIN bounds c ON c.clock AND b.id = c.id ORDER BY b.id",
+    "SELECT id, SEC_TO_TIME(id * 30) IS TRUE, NOT SEC_TO_TIME(id - 3), IF(TIMEDIFF('10:00:00', '09:59:30'), 1, 0), NOT MAKETIME(0, 0, id - 1), NOT CAST('00:00:30' AS TIME) FROM users ORDER BY id",
 ];
 
 const MEMBER_OF_EXACT_DECIMALS: &[&str] = &[
     r#"SELECT 1.5 MEMBER OF('[1.5]'), 1.0 MEMBER OF('[1]'), 1.50 MEMBER OF('[1.5]'), 2.5 MEMBER OF('[1.5]'), 1.5 MEMBER OF('["1.5"]'), CAST(2 AS DECIMAL(5,2)) MEMBER OF('[2]'), -0.0 MEMBER OF('[0]'), 0.1 MEMBER OF('[0.1]'), 1.5 MEMBER OF('1.5'), 1.5 MEMBER OF(NULL), 99999999999999999999.5 MEMBER OF('[1]')"#,
-    r#"SELECT id, total MEMBER OF(meta->'$.items'), total MEMBER OF('[10.5, 50, 100.00, 7]'), 9.9 MEMBER OF(meta->'$.score'), (total * 2) MEMBER OF('[21, 100]') FROM orders ORDER BY id"#,
-    r#"SELECT id, frac MEMBER OF('[0, 1.5, 2.5, -0.005]'), whole MEMBER OF('[0, 1, 2, 3, -1]') FROM bounds ORDER BY id"#,
+    "SELECT id, total MEMBER OF(meta->'$.items'), total MEMBER OF('[10.5, 50, 100.00, 7]'), 9.9 MEMBER OF(meta->'$.score'), (total * 2) MEMBER OF('[21, 100]') FROM orders ORDER BY id",
+    "SELECT id, frac MEMBER OF('[0, 1.5, 2.5, -0.005]'), whole MEMBER OF('[0, 1, 2, 3, -1]') FROM bounds ORDER BY id",
 ];
 
 const FRACTIONAL_POSITIONS_AND_COUNTS: &[&str] = &[
-    r#"SELECT MID('abcdef', 1.5, 2), SUBSTRING('abcdef', 2.5), SUBSTRING('abcdef', 1.4, 1.5), SUBSTR('abcdef', 1, 1.5), LEFT('abcdef', 1.5), LEFT('abcdef', 2.4), RIGHT('abcdef', 2.5), RIGHT('abcdef', 0.4), INSERT('abc', 1.5, 1.5, 'X'), INSERT('abc', 2.5, 1, 'X'), INSERT('abc', 1, 1.5, 'X'), SUBSTRING('abcdef', -1.5), SUBSTRING('abcdef', -2.4, 1.6), LEFT('abcdef', 0.5), LEFT('abcdef', -0.5)"#,
-    r#"SELECT MID('abcdef', 1.5e0, 2), SUBSTRING('abcdef', 2.5e0), LEFT('abcdef', 1.5e0), LEFT('abcdef', 2.5e0), LEFT('abcdef', 0.5e0), RIGHT('abcdef', 2.5e0), RIGHT('abcdef', 3.5e0), INSERT('abc', 1.5e0, 1.5e0, 'X'), INSERT('abc', 2.5e0, 2.5e0, 'X'), SUBSTRING('abcdef', -1.5e0), SUBSTRING('abcdef', -2.5e0)"#,
-    r#"SELECT MID('abcdef', '1.5', 2), SUBSTRING('abcdef', '2.5'), LEFT('abcdef', '1.5'), RIGHT('abcdef', '2.9'), INSERT('abc', '1.5', '1.5', 'X'), LEFT('abcdef', '2x')"#,
-    r#"SELECT id, LEFT(name, frac), RIGHT(name, frac), SUBSTRING(name, frac), SUBSTRING(name, 1, frac), INSERT(name, frac, frac, '#'), LEFT(name, approx), SUBSTRING(name, approx, 2), RIGHT(name, approx) FROM (SELECT b.id, b.frac, b.approx, 'abcdefgh' AS name FROM bounds b) t ORDER BY id"#,
-    r#"SELECT id, LEFT(name, total / 10), SUBSTRING(name, total / 20), RIGHT(name, id / 2), INSERT(name, id / 4, id / 3, '#') FROM (SELECT o.id, o.total, 'abcdefghijklmnop' AS name FROM orders o) t ORDER BY id"#,
-    r#"SELECT LEFT('abcdef', 18446744073709551616), LEFT('abcdef', 99999999999999999999.5), SUBSTRING('abcdef', 2, 99999999999999999999999), RIGHT('abcdef', 1e30), SUBSTRING('abcdef', -99999999999999999999)"#,
+    "SELECT MID('abcdef', 1.5, 2), SUBSTRING('abcdef', 2.5), SUBSTRING('abcdef', 1.4, 1.5), SUBSTR('abcdef', 1, 1.5), LEFT('abcdef', 1.5), LEFT('abcdef', 2.4), RIGHT('abcdef', 2.5), RIGHT('abcdef', 0.4), INSERT('abc', 1.5, 1.5, 'X'), INSERT('abc', 2.5, 1, 'X'), INSERT('abc', 1, 1.5, 'X'), SUBSTRING('abcdef', -1.5), SUBSTRING('abcdef', -2.4, 1.6), LEFT('abcdef', 0.5), LEFT('abcdef', -0.5)",
+    "SELECT MID('abcdef', 1.5e0, 2), SUBSTRING('abcdef', 2.5e0), LEFT('abcdef', 1.5e0), LEFT('abcdef', 2.5e0), LEFT('abcdef', 0.5e0), RIGHT('abcdef', 2.5e0), RIGHT('abcdef', 3.5e0), INSERT('abc', 1.5e0, 1.5e0, 'X'), INSERT('abc', 2.5e0, 2.5e0, 'X'), SUBSTRING('abcdef', -1.5e0), SUBSTRING('abcdef', -2.5e0)",
+    "SELECT MID('abcdef', '1.5', 2), SUBSTRING('abcdef', '2.5'), LEFT('abcdef', '1.5'), RIGHT('abcdef', '2.9'), INSERT('abc', '1.5', '1.5', 'X'), LEFT('abcdef', '2x')",
+    "SELECT id, LEFT(name, frac), RIGHT(name, frac), SUBSTRING(name, frac), SUBSTRING(name, 1, frac), INSERT(name, frac, frac, '#'), LEFT(name, approx), SUBSTRING(name, approx, 2), RIGHT(name, approx) FROM (SELECT b.id, b.frac, b.approx, 'abcdefgh' AS name FROM bounds b) t ORDER BY id",
+    "SELECT id, LEFT(name, total / 10), SUBSTRING(name, total / 20), RIGHT(name, id / 2), INSERT(name, id / 4, id / 3, '#') FROM (SELECT o.id, o.total, 'abcdefghijklmnop' AS name FROM orders o) t ORDER BY id",
+    "SELECT LEFT('abcdef', 18446744073709551616), LEFT('abcdef', 99999999999999999999.5), SUBSTRING('abcdef', 2, 99999999999999999999999), RIGHT('abcdef', 1e30), SUBSTRING('abcdef', -99999999999999999999)",
 ];
 
 const JSON_PATH_OPERANDS: &[&str] = &[
-    r#"SELECT id, 1 + meta->'$.score', meta->'$.score' + 1, 2 * meta->'$.items[0]' - 1, -meta->'$.score' FROM orders ORDER BY id"#,
-    r#"SELECT id, user_id = meta->'$.items[0]', meta->'$.score' >= meta->'$.items[0]', meta->'$.score' < meta->'$.items[0]', meta->>'$.score' = meta->'$.score', meta->>'$.tags[0]' = meta->'$.tags[0]', meta->'$.tags' = meta->'$.tags' FROM orders ORDER BY id"#,
-    r#"SELECT id, meta->>'$.tags[0]' LIKE 'p%', meta->>'$.tags[0]' NOT LIKE '%u%', meta->'$.missing' IS NULL, meta->'$.tags' IS NOT NULL, meta->'$.score' IS TRUE, meta->>'$.score' BETWEEN 1 AND 3, meta->>'$.tags[0]' IN ('premium', 'gift'), meta->'$.score' AND 1, NOT meta->'$.score' FROM orders ORDER BY id"#,
-    r#"SELECT id FROM orders WHERE meta->>'$.tags[0]' LIKE 'p%' AND 1 < meta->'$.score' ORDER BY id"#,
-    r#"SELECT o.id, u.name FROM orders o JOIN users u ON u.id = o.meta->'$.items[0]' ORDER BY o.id, u.id"#,
-    r#"SELECT o.id FROM orders o WHERE o.user_id + o.meta->'$.score' > 5 OR o.meta->>'$.tags[0]' REGEXP '^g' ORDER BY o.id"#,
-    r#"SELECT id, CONCAT(meta->>'$.tags[0]', '-', id), meta->'$.items[0]' DIV 2, meta->'$.items[0]' % 2 = 1, CASE meta->>'$.tags[0]' WHEN 'premium' THEN 1 ELSE 0 END, meta->'$.score' <=> 1.5 FROM orders ORDER BY id"#,
+    "SELECT id, 1 + meta->'$.score', meta->'$.score' + 1, 2 * meta->'$.items[0]' - 1, -meta->'$.score' FROM orders ORDER BY id",
+    "SELECT id, user_id = meta->'$.items[0]', meta->'$.score' >= meta->'$.items[0]', meta->'$.score' < meta->'$.items[0]', meta->>'$.score' = meta->'$.score', meta->>'$.tags[0]' = meta->'$.tags[0]', meta->'$.tags' = meta->'$.tags' FROM orders ORDER BY id",
+    "SELECT id, meta->>'$.tags[0]' LIKE 'p%', meta->>'$.tags[0]' NOT LIKE '%u%', meta->'$.missing' IS NULL, meta->'$.tags' IS NOT NULL, meta->'$.score' IS TRUE, meta->>'$.score' BETWEEN 1 AND 3, meta->>'$.tags[0]' IN ('premium', 'gift'), meta->'$.score' AND 1, NOT meta->'$.score' FROM orders ORDER BY id",
+    "SELECT id FROM orders WHERE meta->>'$.tags[0]' LIKE 'p%' AND 1 < meta->'$.score' ORDER BY id",
+    "SELECT o.id, u.name FROM orders o JOIN users u ON u.id = o.meta->'$.items[0]' ORDER BY o.id, u.id",
+    "SELECT o.id FROM orders o WHERE o.user_id + o.meta->'$.score' > 5 OR o.meta->>'$.tags[0]' REGEXP '^g' ORDER BY o.id",
+    "SELECT id, CONCAT(meta->>'$.tags[0]', '-', id), meta->'$.items[0]' DIV 2, meta->'$.items[0]' % 2 = 1, CASE meta->>'$.tags[0]' WHEN 'premium' THEN 1 ELSE 0 END, meta->'$.score' <=> 1.5 FROM orders ORDER BY id",
 ];
 
 const JSON_COMPARED_WITH_NULL: &[&str] = &[
-    r#"SELECT id, meta <=> NULL, meta = NULL, NULL <=> meta, meta <> NULL, NULL = meta, meta->'$.score' <=> NULL, meta->'$.missing' <=> NULL, meta < NULL FROM orders ORDER BY id"#,
-    r#"SELECT id FROM orders WHERE meta <=> NULL ORDER BY id"#,
-    r#"SELECT id FROM orders WHERE NOT (meta <=> NULL) AND meta->'$.missing' <=> NULL ORDER BY id"#,
+    "SELECT id, meta <=> NULL, meta = NULL, NULL <=> meta, meta <> NULL, NULL = meta, meta->'$.score' <=> NULL, meta->'$.missing' <=> NULL, meta < NULL FROM orders ORDER BY id",
+    "SELECT id FROM orders WHERE meta <=> NULL ORDER BY id",
+    "SELECT id FROM orders WHERE NOT (meta <=> NULL) AND meta->'$.missing' <=> NULL ORDER BY id",
 ];
 
 const MID_WITH_FROM_AND_FOR: &[&str] = &[
-    r#"SELECT MID('abcdef' FROM 3), MID('abcdef' FROM 2 FOR 2), MID('abcdef' FROM -4 FOR 2), MID('abcdef' FROM 7), MID(NULL FROM 1), MID('日本語' FROM 2 FOR 1)"#,
-    r#"SELECT id, MID(name FROM 7), MID(name FROM id FOR 2), MID(note FROM -2) FROM events ORDER BY id"#,
+    "SELECT MID('abcdef' FROM 3), MID('abcdef' FROM 2 FOR 2), MID('abcdef' FROM -4 FOR 2), MID('abcdef' FROM 7), MID(NULL FROM 1), MID('日本語' FROM 2 FOR 1)",
+    "SELECT id, MID(name FROM 7), MID(name FROM id FOR 2), MID(note FROM -2) FROM events ORDER BY id",
 ];
 
 const BARE_UTC_CLOCKS: &[&str] = &[
-    r#"SELECT UTC_DATE = CURDATE(), UTC_TIME = CURTIME(), UTC_TIMESTAMP = NOW(), LENGTH(UTC_DATE), LENGTH(utc_time), LENGTH(Utc_Timestamp), UTC_DATE = UTC_DATE(), UTC_TIMESTAMP + 0 = UTC_TIMESTAMP() + 0"#,
-    r#"SELECT id, placed_at < UTC_TIMESTAMP, DATE(placed_at) < UTC_DATE FROM orders WHERE DATE(placed_at) <> UTC_DATE ORDER BY id"#,
+    "SELECT UTC_DATE = CURDATE(), UTC_TIME = CURTIME(), UTC_TIMESTAMP = NOW(), LENGTH(UTC_DATE), LENGTH(utc_time), LENGTH(Utc_Timestamp), UTC_DATE = UTC_DATE(), UTC_TIMESTAMP + 0 = UTC_TIMESTAMP() + 0",
+    "SELECT id, placed_at < UTC_TIMESTAMP, DATE(placed_at) < UTC_DATE FROM orders WHERE DATE(placed_at) <> UTC_DATE ORDER BY id",
 ];
 
 const REGEXP_WITH_A_NULL_PATTERN: &[&str] = &[
-    r#"SELECT 'a' REGEXP NULL"#,
-    r#"SELECT 'a' NOT RLIKE NULL"#,
-    r#"SELECT id, note REGEXP NULL FROM events ORDER BY id"#,
-    r#"SELECT id FROM events WHERE note REGEXP NULL OR id = 3 ORDER BY id"#,
+    "SELECT 'a' REGEXP NULL",
+    "SELECT 'a' NOT RLIKE NULL",
+    "SELECT id, note REGEXP NULL FROM events ORDER BY id",
+    "SELECT id FROM events WHERE note REGEXP NULL OR id = 3 ORDER BY id",
 ];
 
 const JSON_RANGES_OVER_EMPTY_ARRAYS: &[&str] = &[
     r#"SELECT JSON_EXTRACT('[]', '$[0 to 1]'), JSON_EXTRACT('{"a":[]}', '$.a[0 to 1]'), JSON_EXTRACT('[1]', '$[1 to 2]'), JSON_EXTRACT('[1,2,3]', '$[1 to 5]'), JSON_EXTRACT('[1,2,3]', '$[0 to 0]'), JSON_EXTRACT('[1,2,3]', '$[last to last]'), JSON_EXTRACT('[1,2,3]', '$[5 to 9]'), JSON_EXTRACT('[]', '$[*]'), JSON_EXTRACT('[[]]', '$[0][0 to 1]'), JSON_EXTRACT('{}', '$.*'), JSON_EXTRACT('[1,2,3]', '$[last-1 to last]'), JSON_EXTRACT('5', '$[0 to 1]'), JSON_EXTRACT('5', '$[1 to 2]'), JSON_EXTRACT('[]', '$**.a'), JSON_EXTRACT('[1,[2]]', '$[0 to 1][0]')"#,
-    r#"SELECT id, meta->'$.items[0 to 1]', meta->'$.items[1 to 9]', meta->'$.tags[0 to 0]', meta->'$.tags[*]', meta->'$.items[last to last]' FROM orders ORDER BY id"#,
+    "SELECT id, meta->'$.items[0 to 1]', meta->'$.items[1 to 9]', meta->'$.tags[0 to 0]', meta->'$.tags[*]', meta->'$.items[last to last]' FROM orders ORDER BY id",
 ];
 
 const EXISTS_OVER_SEVERAL_COLUMNS: &[&str] = &[
-    r#"SELECT EXISTS (SELECT * FROM users), EXISTS (SELECT * FROM users WHERE id > 100), NOT EXISTS (SELECT id, name FROM users), EXISTS (SELECT 1, 2), EXISTS (TABLE users), EXISTS (SELECT * FROM users LIMIT 0), EXISTS (SELECT id, name FROM users UNION SELECT id, name FROM users)"#,
-    r#"SELECT id FROM users u WHERE EXISTS (TABLE events) ORDER BY id"#,
-    r#"SELECT id FROM users u WHERE NOT EXISTS (SELECT * FROM orders) OR EXISTS (SELECT id, total FROM orders WHERE total > 900) ORDER BY id"#,
-    r#"SELECT id, EXISTS (SELECT * FROM orders o WHERE o.user_id = u.id), EXISTS (SELECT o.id, o.total FROM orders o WHERE o.user_id = u.id AND o.total > 100) FROM users u ORDER BY id"#,
-    r#"SELECT active, COUNT(*) FROM events GROUP BY active HAVING EXISTS (SELECT * FROM orders WHERE total > 900) ORDER BY active"#,
+    "SELECT EXISTS (SELECT * FROM users), EXISTS (SELECT * FROM users WHERE id > 100), NOT EXISTS (SELECT id, name FROM users), EXISTS (SELECT 1, 2), EXISTS (TABLE users), EXISTS (SELECT * FROM users LIMIT 0), EXISTS (SELECT id, name FROM users UNION SELECT id, name FROM users)",
+    "SELECT id FROM users u WHERE EXISTS (TABLE events) ORDER BY id",
+    "SELECT id FROM users u WHERE NOT EXISTS (SELECT * FROM orders) OR EXISTS (SELECT id, total FROM orders WHERE total > 900) ORDER BY id",
+    "SELECT id, EXISTS (SELECT * FROM orders o WHERE o.user_id = u.id), EXISTS (SELECT o.id, o.total FROM orders o WHERE o.user_id = u.id AND o.total > 100) FROM users u ORDER BY id",
+    "SELECT active, COUNT(*) FROM events GROUP BY active HAVING EXISTS (SELECT * FROM orders WHERE total > 900) ORDER BY active",
 ];
 
 const STORED_JSON_AS_TEXT: &[&str] = &[
-    r#"SELECT id, meta FROM orders ORDER BY id"#,
+    "SELECT id, meta FROM orders ORDER BY id",
     r#"SELECT id, SHA(meta), MD5(meta), CONCAT(meta, ''), CAST(meta AS CHAR), LENGTH(meta), CHAR_LENGTH(meta), UPPER(meta), LEFT(meta, 12), meta LIKE '%"tags": [%' FROM orders ORDER BY id"#,
 ];
 
@@ -478,13 +478,19 @@ pub fn cases() -> Vec<OracleCase> {
         ("values statements", VALUES_CONSTRUCTOR),
         ("stored json as text", STORED_JSON_AS_TEXT),
         ("exists over several columns", EXISTS_OVER_SEVERAL_COLUMNS),
-        ("json ranges over empty arrays", JSON_RANGES_OVER_EMPTY_ARRAYS),
+        (
+            "json ranges over empty arrays",
+            JSON_RANGES_OVER_EMPTY_ARRAYS,
+        ),
         ("regexp with a null pattern", REGEXP_WITH_A_NULL_PATTERN),
         ("bare utc clocks", BARE_UTC_CLOCKS),
         ("mid with from and for", MID_WITH_FROM_AND_FOR),
         ("json compared with null", JSON_COMPARED_WITH_NULL),
         ("json path operands", JSON_PATH_OPERANDS),
-        ("fractional positions and counts", FRACTIONAL_POSITIONS_AND_COUNTS),
+        (
+            "fractional positions and counts",
+            FRACTIONAL_POSITIONS_AND_COUNTS,
+        ),
         ("member of exact decimals", MEMBER_OF_EXACT_DECIMALS),
         ("truth of time values", TRUTH_OF_TIME_VALUES),
     ] {
