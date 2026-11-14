@@ -309,6 +309,24 @@ stays readable as a list of things to fix.
   text or a number across rows is refused where MySQL makes it a string. A
   quantified comparison with one (`x = ANY (VALUES ROW(1), ROW(2))`) does
   not parse.
+- A row compared with a subquery that selects every column
+  (`(a, b) IN (TABLE t)`, `(a, b) IN (SELECT * FROM t)`) is refused; name
+  the columns in the subquery.
+- Locking reads are refused rather than run without their lock:
+  `FOR UPDATE` and `FOR SHARE` (with or without `OF`, `NOWAIT` or
+  `SKIP LOCKED`) and `LOCK IN SHARE MODE`. `SELECT ... INTO OUTFILE`,
+  `INTO DUMPFILE` and `INTO @variable` are refused as well.
+- `CREATE VIEW`, `ALTER VIEW` and `DROP VIEW` are refused, and a view
+  defined on the source is not mirrored: only base tables are.
+- `GROUP BY ... WITH ROLLUP` is refused beside `SELECT DISTINCT` and
+  beside a window function. `GROUPING()` is accepted in the select list and
+  in `HAVING` and refused in `ORDER BY`; name the select item
+  (`GROUPING(a) AS g ... ORDER BY g`) instead.
+- `DATABASE()`, `SCHEMA()` and `VERSION()` are answered only when the
+  select list holds nothing but connection functions and the statement has
+  no table; inside an expression or beside a column they are refused.
+- `UUID()` returns a random (version 4) identifier where MySQL returns a
+  time-based (version 1) one; length, layout and `IS_UUID` agree.
 - A DATE or DATETIME looked up in a subquery that selects a number column
   (`d IN (SELECT n FROM t)`) is compared with the numbers as text and
   matches none, where MySQL reads them as dates. Compared with `=`, or

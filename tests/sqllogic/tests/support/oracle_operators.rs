@@ -422,6 +422,98 @@ pub fn cases() -> Vec<OracleCase> {
     cases
 }
 
+/// Statement forms and clauses that stay refused (docs/limitations.md), as
+/// `(family, sql, needle)`: each must fail by name, never run as something
+/// narrower.
+pub const REFUSED: &[(&str, &str, &str)] = &[
+    (
+        "reject row compared with a subquery that selects every column",
+        "SELECT id FROM events WHERE (id, name) IN (TABLE users) ORDER BY id",
+        "unsupported subquery",
+    ),
+    (
+        "reject locking read for update",
+        "SELECT id FROM users WHERE id < 3 ORDER BY id FOR UPDATE",
+        "unsupported query clause",
+    ),
+    (
+        "reject locking read for share",
+        "SELECT id FROM users u WHERE id < 3 ORDER BY id FOR SHARE OF u",
+        "unsupported query clause",
+    ),
+    (
+        "reject locking read that skips locked rows",
+        "SELECT id FROM users WHERE id < 3 ORDER BY id FOR UPDATE SKIP LOCKED",
+        "unsupported query clause",
+    ),
+    (
+        "reject locking read that does not wait",
+        "SELECT id FROM users WHERE id < 3 ORDER BY id FOR SHARE NOWAIT",
+        "unsupported query clause",
+    ),
+    (
+        "reject lock in share mode",
+        "SELECT id FROM users WHERE id < 3 ORDER BY id LOCK IN SHARE MODE",
+        "parse",
+    ),
+    (
+        "reject select into outfile",
+        "SELECT id FROM users INTO OUTFILE '/tmp/users.txt'",
+        "parse",
+    ),
+    (
+        "reject select into a user variable",
+        "SELECT id INTO @first FROM users WHERE id = 1",
+        "unsupported query clause",
+    ),
+    (
+        "reject create view",
+        "CREATE VIEW recent AS SELECT id FROM users",
+        "unsupported statement",
+    ),
+    (
+        "reject drop view",
+        "DROP VIEW recent",
+        "unsupported statement",
+    ),
+    (
+        "reject distinct over rollup",
+        "SELECT DISTINCT active, COUNT(*) FROM events GROUP BY active WITH ROLLUP",
+        "unsupported query clause",
+    ),
+    (
+        "reject window function over rollup",
+        "SELECT user_id, COUNT(*), SUM(COUNT(*)) OVER () FROM orders GROUP BY user_id WITH ROLLUP",
+        "unsupported query clause",
+    ),
+    (
+        "reject grouping in order by",
+        "SELECT status, COUNT(*) FROM orders GROUP BY status WITH ROLLUP ORDER BY GROUPING(status), status",
+        "unsupported expression",
+    ),
+    (
+        // MySQL refuses this one too (error 1111).
+        "reject grouping without rollup",
+        "SELECT active, GROUPING(active) FROM events GROUP BY active",
+        "unsupported expression",
+    ),
+    (
+        "reject grouping of an expression that is not grouped",
+        "SELECT active, GROUPING(score) FROM events GROUP BY active WITH ROLLUP",
+        "not in GROUP BY",
+    ),
+    (
+        "reject connection function beside another item",
+        "SELECT DATABASE(), id FROM users",
+        "unsupported expression",
+    ),
+    (
+        "reject server version inside an expression",
+        "SELECT LENGTH(VERSION())",
+        "unsupported expression",
+    ),
+];
+
 #[test]
 fn every_statement_is_listed_once() {
     let cases = cases();

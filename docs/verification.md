@@ -108,8 +108,9 @@ zero-offset LIMIT equivalences. The latest high-volume evidence is recorded in
 [`tests/sqllogic/fuzz-results.md`](../tests/sqllogic/fuzz-results.md).
 
 A separate non-Docker unit test (`documented_rejects_stay_explicit`) pins
-twelve limitation shapes so they fail closed with an explicit error rather
-than a plausible wrong answer. Inventory and function-gap ranking:
+the documented limitation shapes - refused statement forms and clauses
+among them - so they fail closed with an explicit error rather than a
+plausible wrong answer. Inventory and function-gap ranking:
 
 ```sh
 bun run scripts/oracle-coverage.ts

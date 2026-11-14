@@ -6878,7 +6878,11 @@ fn documented_rejects_stay_explicit() {
     ])
     .expect("provider");
 
-    for (family, sql, needle) in reject_cases().into_iter().chain(oracle_lateral::rejects()) {
+    for (family, sql, needle) in reject_cases()
+        .into_iter()
+        .chain(oracle_lateral::rejects())
+        .chain(oracle_operators::REFUSED.iter().copied())
+    {
         let error = match execute_pintail(sql, &catalog, &provider) {
             Ok(rows) => panic!(
                 "{family}: expected reject for `{sql}`, got {} row(s)",
