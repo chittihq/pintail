@@ -11,6 +11,7 @@ mod outer_set;
 mod pre_aggregate;
 mod rollup;
 mod row;
+mod session_database;
 
 use function::{
     bind_between, bind_case, bind_cast, bind_convert, bind_in_list, bind_interval_arithmetic,
@@ -157,7 +158,8 @@ impl<'catalog> Binder<'catalog> {
         let Statement::Query(query) = statement else {
             return Err(BindError::UnsupportedStatement(statement.to_string()));
         };
-        let mut bound = self.bind_query(query, &[])?;
+        let named = session_database::rewrite(query, self.current_database);
+        let mut bound = self.bind_query(named.as_ref().unwrap_or(query), &[])?;
         deduplicate_union_by_instants(&mut bound);
         // sql_select_limit caps a statement's own result when the statement
         // sets no LIMIT; subqueries and a written LIMIT are untouched.
@@ -10794,6 +10796,34 @@ mod tests {
         for item in &query.projection {
             assert_eq!(item.expr.data_type, Some(DataType::UInt64), "{}", item.name);
         }
+    }
+
+    #[test]
+    fn the_session_database_is_a_string_inside_a_query() {
+        let sql = "SELECT DATABASE(), schema() AS s FROM Events WHERE DATABASE() = 'analytics'";
+        let catalog = catalog();
+        let statement = parse_statement(sql).expect("parse");
+        let query = Binder::new(&catalog, Some("analytics"))
+            .with_source(sql)
+            .bind(&statement)
+            .expect("binds");
+        assert_eq!(query.projection[0].name, "DATABASE()");
+        for item in &query.projection {
+            assert!(
+                matches!(&item.expr.kind,
+                    BoundExprKind::Literal(Value::Utf8(name)) if name == "analytics"),
+                "{}",
+                item.name
+            );
+        }
+        // No default database: NULL, as the source answers.
+        let query = Binder::new(&catalog, None)
+            .bind(&parse_statement("SELECT DATABASE() AS d FROM analytics.Events").expect("parse"))
+            .expect("binds");
+        assert!(matches!(
+            query.projection[0].expr.kind,
+            BoundExprKind::Literal(Value::Null)
+        ));
     }
 
     #[test]
