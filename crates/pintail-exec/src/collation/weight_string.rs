@@ -115,6 +115,24 @@ pub fn weight_string(
     Some(bytes)
 }
 
+/// The weights of basic-plane text under a binary collation that writes a
+/// character as its two-byte code point, cut and padded to `characters`.
+#[must_use]
+pub fn weight_string_basic_bin(text: &str, characters: Option<usize>) -> Vec<u8> {
+    let written = text.chars().count();
+    let kept = characters.map_or(written, |limit| limit.min(written));
+    let missing = characters.map_or(0, |limit| limit.saturating_sub(written));
+    let mut bytes = Vec::with_capacity((kept + missing) * 2);
+    wide(
+        &mut bytes,
+        text.chars()
+            .take(kept)
+            .map(|character| u16::try_from(u32::from(character)).unwrap_or(0xfffd))
+            .chain(std::iter::repeat_n(0x0020, missing)),
+    );
+    bytes
+}
+
 /// The bytes a result made exactly so wide is filled with: the weight of
 /// a space where the collation pads, zero where it does not.
 #[must_use]

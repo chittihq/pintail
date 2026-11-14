@@ -8409,6 +8409,7 @@ fn weight_string_value(value: &Value, function: ScalarFunction) -> Result<Value,
         characters,
         bytes,
         fill,
+        narrow,
     } = function
     else {
         return Err(ExecError::InvalidExpressionType);
@@ -8422,9 +8423,16 @@ fn weight_string_value(value: &Value, function: ScalarFunction) -> Result<Value,
         (Value::Utf8(text), Some(named)) => {
             let named = Collation::from_mysql_name(named.as_str())
                 .ok_or(ExecError::InvalidExpressionType)?;
-            let weights = crate::collation::weight_string(named, text, characters)
-                .ok_or(ExecError::InvalidExpressionType)?;
-            (weights, crate::collation::weight_string_pad(named))
+            if narrow && named == Collation::Utf8mb4Bin {
+                (
+                    crate::collation::weight_string_basic_bin(text, characters),
+                    &[0x00, 0x20],
+                )
+            } else {
+                let weights = crate::collation::weight_string(named, text, characters)
+                    .ok_or(ExecError::InvalidExpressionType)?;
+                (weights, crate::collation::weight_string_pad(named))
+            }
         }
         _ => return Err(ExecError::InvalidExpressionType),
     };

@@ -1325,6 +1325,9 @@ pub enum ScalarFunction {
         characters: Option<std::num::NonZeroU32>,
         bytes: Option<std::num::NonZeroU32>,
         fill: bool,
+        /// The text is utf8mb3, whose binary collation weighs a character
+        /// as two bytes where utf8mb4's weighs three.
+        narrow: bool,
     },
     /// Trigonometric and angle conversion functions.
     Sin,

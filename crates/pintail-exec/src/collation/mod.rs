@@ -22,7 +22,7 @@ mod thai;
 mod unicode_ci_table;
 mod weight_string;
 
-pub use weight_string::{weight_string, weight_string_pad};
+pub use weight_string::{weight_string, weight_string_basic_bin, weight_string_pad};
 
 use case_table::{
     CaseRun, LOWER_LATIN1, LOWER_UNICODE_900, LOWER_UNICODE_BASIC, UPPER_LATIN1, UPPER_UNICODE_900,

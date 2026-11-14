@@ -1430,12 +1430,23 @@ fn bind_weight_string(
     {
         return Err(refuse("the weights of an ENUM or SET column"));
     }
+    let mut narrow = false;
     let collation = match (identity.collation.as_str(), bound.data_type) {
         ("binary", Some(DataType::Binary)) => None,
         (
             "utf8mb4_0900_ai_ci" | "utf8mb4_general_ci" | "utf8mb4_unicode_ci" | "utf8mb4_bin",
             Some(DataType::Utf8),
         ) if crate::text_charset::character_set(&bound) == pintail_types::CharacterSet::Utf8Mb4 => {
+            crate::bound::NamedCollation::from_name(&identity.collation)
+        }
+        // utf8mb3 holds the basic plane alone, where these weigh every
+        // character as their utf8mb4 namesakes do; the binary one writes
+        // two bytes a character.
+        ("utf8mb3_general_ci" | "utf8mb3_unicode_ci" | "utf8mb3_bin", Some(DataType::Utf8))
+            if crate::text_charset::character_set(&bound)
+                == pintail_types::CharacterSet::Utf8Mb3 =>
+        {
+            narrow = true;
             crate::bound::NamedCollation::from_name(&identity.collation)
         }
         (collation, _) => {
@@ -1450,6 +1461,7 @@ fn bind_weight_string(
             characters: length,
             bytes,
             fill,
+            narrow,
         },
         vec![bound],
     )

@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4296;
+const EXPECTED_CASES: usize = 4297;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6522,6 +6522,17 @@ fn weight_string_default_cases() -> Vec<OracleCase> {
     );
     cases.push(
         "SELECT id FROM events ORDER BY WEIGHT_STRING(label COLLATE utf8mb4_0900_ai_ci), id"
+            .to_owned(),
+    );
+    // utf8mb3 text weighs as its utf8mb4 namesake does, the binary
+    // collation in two bytes a character.
+    cases.push(
+        "SELECT HEX(WEIGHT_STRING(CONVERT('a\u{c9}\u{df}\u{4e00} ' USING utf8mb3))), \
+         HEX(WEIGHT_STRING(CONVERT('ab' USING utf8mb3) AS CHAR(4))), \
+         HEX(WEIGHT_STRING(CONVERT('a\u{c9}\u{df}\u{4e00}' USING utf8mb3), 7, 3, 0xC0)), \
+         HEX(WEIGHT_STRING(CONVERT('' USING utf8mb3), 5, 3, 0x80)), \
+         HEX(WEIGHT_STRING(CONVERT(tag USING utf8mb3))), \
+         HEX(WEIGHT_STRING(CONVERT(label USING utf8mb3), 9, 4, 0xC0)) FROM events ORDER BY id"
             .to_owned(),
     );
     cases

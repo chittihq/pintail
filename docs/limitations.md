@@ -249,9 +249,10 @@ stays readable as a list of things to fix.
   `FIELD` and `REGEXP`; and dates or times meeting in `IF`, `COALESCE`,
   `GREATEST` or `LEAST`.
 - `WEIGHT_STRING` returns MySQL's weight bytes for `utf8mb4_0900_ai_ci`,
-  `utf8mb4_general_ci`, `utf8mb4_unicode_ci`, `utf8mb4_bin` and byte
-  strings. It refuses every other collation (`utf8mb4_0900_as_cs`, the
-  utf8mb3 and the single-byte ones included), an argument that is not a
+  `utf8mb4_general_ci`, `utf8mb4_unicode_ci`, `utf8mb4_bin`, their utf8mb3
+  namesakes and byte strings. It refuses every other collation
+  (`utf8mb4_0900_as_cs` and the single-byte ones included), an argument
+  that is not a
   string (a number, a date, JSON, an ENUM or SET column), a string whose
   collation the previous item refuses, and a length, width or count of zero
   or above 1048576. The four-argument form

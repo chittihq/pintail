@@ -458,6 +458,7 @@ impl Scope<'_, '_> {
                             "utf8mb4" => {
                                 Ok(Identity::text(crate::bound::DEFAULT_TEXT_COLLATION, 2))
                             }
+                            "utf8mb3" | "utf8" => Ok(Identity::text(SERVER_TEXT, 2)),
                             "binary" => Ok(Identity::bytes(2)),
                             _ => Err(self.unmodelled(expression)),
                         }
