@@ -10,6 +10,7 @@ pub use text_charset::{
 };
 mod call_forms;
 mod interval;
+mod join_groups;
 pub use interval::CompoundUnit;
 mod spatial;
 pub use spatial::{GeometryKind, SpatialFunction};
@@ -271,6 +272,7 @@ pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
     read_bit_literals(&mut tokens);
     interval::rewrite(&mut tokens);
     call_forms::rewrite(&mut tokens);
+    join_groups::rewrite(&mut tokens);
     let mut statements = Parser::new(&dialect)
         .with_tokens_with_locations(tokens)
         .parse_statements()

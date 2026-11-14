@@ -109,7 +109,18 @@ stays readable as a list of things to fix.
 - An aliased parenthesized join group rejects, as it does in MySQL (a
   parenthesized join is not a derived table and cannot take an alias). A
   nested group can be a later join's right input; a RIGHT JOIN *inside* a
-  parenthesized group still rejects.
+  parenthesized group still rejects. A parenthesized table list
+  (`a JOIN (b, c) ON ...`) and a join whose condition follows a later join's
+  (`a LEFT JOIN b LEFT JOIN c ON p ON q`) are groups like any other and
+  reject where a written group would: as the right input of a RIGHT JOIN,
+  and as the right input of a join inside another parenthesized group
+  (`(a, (b, c))`, `a, (b, (c, d))`).
+- Some MySQL spellings are not read and fail as parse errors: `VALUES
+  ROW(...)` as a scalar or quantified (`ANY`/`ALL`) subquery, `LIKE ...
+  ESCAPE` with anything but a plain string, a parenthesized set operation
+  directly inside an expression's parentheses, the ODBC escapes (`{fn ...}`,
+  `{d ...}`, `{oj ...}`), and `CHAR(a, b USING utf16)` with more than one
+  argument in `utf16` or `utf16le`.
 - The diagnostics area records `GROUP_CONCAT` truncation (1260), division by
   zero (1365), text read as a number past its numeric prefix (1292
   "Truncated incorrect ..."), unreadable dates (1292 "Incorrect datetime

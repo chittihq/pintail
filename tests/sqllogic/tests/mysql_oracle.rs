@@ -46,7 +46,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3181;
+const EXPECTED_CASES: usize = 3191;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6189,6 +6189,46 @@ fn written_form_cases() -> Vec<OracleCase> {
         ordered(
             "table statement",
             "SELECT 0, 'none' UNION ALL TABLE users ORDER BY 1",
+        ),
+        ordered(
+            "parenthesized table list",
+            "SELECT u.id, o.id, e.id FROM users u LEFT JOIN (orders o, events e) ON o.user_id = u.id AND e.id = o.id ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "parenthesized table list",
+            "SELECT u.id, v.id, o.id, e.id FROM (users u, users v) JOIN (orders o, events e) ON o.user_id = u.id AND e.id = o.id AND v.id = u.id + 1 ORDER BY 1, 2, 3, 4",
+        ),
+        ordered(
+            "parenthesized table list",
+            "SELECT u.id, o.id, e.id, v.id FROM users u LEFT JOIN (orders o, events e, users v) ON o.user_id = u.id AND e.id = o.id AND v.id = e.id ORDER BY 1, 2",
+        ),
+        ordered(
+            "parenthesized table list",
+            "SELECT u.id, o.id, e.id FROM users u JOIN (orders o JOIN events e ON e.id = o.id, users v) ON o.user_id = u.id AND v.id = u.id ORDER BY 1, 2",
+        ),
+        ordered(
+            "parenthesized table list",
+            "SELECT u.id, o.id FROM users u JOIN (users v, orders o JOIN events e ON e.id = o.id) ON o.user_id = u.id AND v.id = u.id ORDER BY 1, 2",
+        ),
+        ordered(
+            "parentheses around one table",
+            "SELECT x.id, x.name FROM (users x) ORDER BY x.id",
+        ),
+        ordered(
+            "parentheses around one table",
+            "SELECT u.id, y.id FROM users u JOIN ((orders y)) ON y.user_id = u.id ORDER BY 1, 2",
+        ),
+        ordered(
+            "join condition after a later join",
+            "SELECT u.id, o.id, e.id FROM users u LEFT JOIN orders o LEFT JOIN events e ON e.id = o.id ON o.user_id = u.id ORDER BY 1, 2",
+        ),
+        ordered(
+            "join condition after a later join",
+            "SELECT u.id, o.id, e.id FROM users u LEFT JOIN orders o JOIN events e ON e.id = o.id ON o.user_id = u.id AND e.score > 40 ORDER BY 1, 2",
+        ),
+        ordered(
+            "join condition after a later join",
+            "SELECT COUNT(*), SUM(e.score) FROM users u JOIN orders o JOIN events e JOIN users v ON v.id = e.id ON e.id = o.id ON o.user_id = u.id",
         ),
     ]
 }
