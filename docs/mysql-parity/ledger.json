@@ -2,19 +2,19 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "8a2de4a9d72056891f9bd99e75aefa2391ec862c",
-    "measuredAt": "2026-10-27T13:50:14.520Z",
+    "commit": "ba0d032510e4c8bf73451f8b54445a54908caac5",
+    "measuredAt": "2026-11-14T04:12:58.142Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "4064309b023754b57e10ae372194268cf9a5206296aa680fe1776c18e70d6ce1",
-    "corpusSha256": "0b8a6f9f4d1e3ce04fc47920d09c20410ea066ebdc9f41f0d33e09728d154b1c",
+    "ledgerSha256": "21feb40217596fb287bb1827380d42814241ce5997e53aa6f6b604f9ec9e400e",
+    "corpusSha256": "f1aeb2bd8cd854f2ce85aa3d11167941eaeef6e9a5759026fec510b729d8e634",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "8a2de4a9d72056891f9bd99e75aefa2391ec862c",
-      "sourceCommit": "ece0e0103038407db77081f32e02c5103fb50cc5",
-      "measuredAt": "2026-10-27T13:29:32.691120161+00:00",
+      "commit": "ba0d032510e4c8bf73451f8b54445a54908caac5",
+      "sourceCommit": "4a82f3c84ce3f64ba9ef12f3637b43a6095bec10",
+      "measuredAt": "2026-11-14T03:58:13.887918521+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70)",
-      "ledgerSha256": "aa578ddad6079f810451fde88c9ea015296535c51a0d6688575940b71cb8728e",
-      "corpusSha256": "618c064978bf33dc6b7d0dccf21df7ebe119f689c9b582decde2419d86ef51de"
+      "ledgerSha256": "f1578ad11df5977ded817245d866d6a62462d4e0bfc26f51827d1f44262d8d74",
+      "corpusSha256": "0738bc35ca2cc0ed26d9b098571065643e9a97f771048cd10dfe4fbc9fd12e0d"
     }
   },
   "baseline": {
@@ -33,7 +33,7 @@
   "pintailImplementation": [
     {
       "path": "crates/pintail-sql/src/binder/mod.rs",
-      "sha256": "adbab2a5bbd4a184b8c9b3a397cb8ab33b906cb2fe8456edc0e0b45709595066"
+      "sha256": "0b10ed059ec4b45e4c27f3f585a4dcea182011916e5d138607c2250b0dd174f2"
     },
     {
       "path": "crates/pintail-sql/src/binder/function.rs",
@@ -45,7 +45,7 @@
     },
     {
       "path": "crates/pintail-wire/src/server.rs",
-      "sha256": "a584e6439a633de8fd34a2646091a33749f6bcb42ba5f901a86cb85bbd72337e"
+      "sha256": "6059b7bec98d3e221ab2c463c87bedc14ed1d67c5cdb5deda233756016da0b2b"
     },
     {
       "path": "crates/pintail-write/src/engine.rs",
@@ -59,11 +59,11 @@
     "operators": 47,
     "features": 87,
     "functionCoverage": {
-      "differential-tested": 219,
-      "implementation-only": 14,
+      "differential-tested": 221,
+      "implementation-only": 13,
       "missing": 4,
       "out-of-scope": 178,
-      "unassessed": 52
+      "unassessed": 51
     },
     "functionStatus": {
       "gap": 21,
@@ -939,7 +939,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7058"
+        "crates/pintail-sql/src/binder/mod.rs:7060"
       ],
       "binderGuards": [
         "any arity"
@@ -1069,7 +1069,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7059"
+        "crates/pintail-sql/src/binder/mod.rs:7061"
       ],
       "binderGuards": [
         "any arity"
@@ -1115,7 +1115,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7060"
+        "crates/pintail-sql/src/binder/mod.rs:7062"
       ],
       "binderGuards": [
         "any arity"
@@ -1901,6 +1901,8 @@
         "bi looker: symmetric aggregate across a fanned-out join",
         "bi metabase: previous-period revenue window",
         "coalesce and ifnull",
+        "grouped left join counts over the unpaired row",
+        "left join counts over the unpaired row",
         "order by a tree over several aggregates",
         "order by an expression over an aggregate",
         "residual comparison through coalesce on a nullable column",
@@ -2045,9 +2047,9 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/integration/conditional_count_windows.rs:174",
+        "crates/pintail-exec/tests/integration/counted_join_pairs.rs:407",
         "crates/pintail-exec/tests/integration/declared_values.rs:301",
-        "crates/pintail-exec/tests/integration/dependent_exists_index.rs:348",
-        "crates/pintail-exec/tests/integration/dependent_set_shapes.rs:590"
+        "crates/pintail-exec/tests/integration/dependent_exists_index.rs:348"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -2845,10 +2847,12 @@
         "general_ci: trailing spaces are insignificant (PAD SPACE)",
         "geometry: null routes filter and count",
         "group by with having",
+        "grouped left join counts over the unpaired row",
         "inner join with aggregation",
         "join with a residual comparison between both inputs",
         "json: distinct case variants survive a derived table",
         "json: grouping by an extracted scalar",
+        "left join counts over the unpaired row",
         "left join keeps rows whose only matches fail the residual",
         "left join preserves unmatched rows",
         "null handling",
@@ -2858,6 +2862,9 @@
         "regex: replace folds suffix classes before grouping",
         "residual comparison through coalesce on a nullable column",
         "right join preserves unmatched rows",
+        "row compared with a correlated aggregating subquery",
+        "row compared with an aggregating subquery",
+        "row compared with an aggregating subquery over no rows",
         "set: grouped counts order by bitmask not text",
         "set: grouping orders groups by bitmask",
         "shipments: carrier value through the items bridge",
@@ -2879,6 +2886,7 @@
         "temporal convert and date_format grain",
         "temporal: month-end bucketing via last_day",
         "temporal: year-month split grouping",
+        "the session database beside a table",
         "unicode_ci: a combining mark weighs nothing",
         "unicode_ci: equality expands the characters MySQL expands",
         "unicode_ci: equality folds case and accents",
@@ -3358,7 +3366,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:2164"
+        "crates/pintail-sql/src/binder/mod.rs:2166"
       ],
       "binderGuards": [
         "any arity"
@@ -3755,8 +3763,10 @@
           "mechanism": "grammar-token"
         }
       ],
-      "coverage": "implementation-only",
-      "differentialEvidence": [],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "the session database beside a table"
+      ],
       "status": "partial",
       "scope": "client",
       "priority": "P1",
@@ -3769,7 +3779,7 @@
         "crates/pintail-exec/tests/integration/membership_lookup.rs:23",
         "crates/pintail-exec/tests/integration/null_safe_join.rs:15"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Handled by selected wire compatibility-query text patterns, not general scalar expression binding. Composition, projection aliases, HTTP and prepared execution need separate checks.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -3892,7 +3902,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:8991"
+        "crates/pintail-sql/src/binder/mod.rs:8993"
       ],
       "binderGuards": [
         "if args.len() == 1"
@@ -10852,7 +10862,7 @@
         "if args.len() >= 2"
       ],
       "testOccurrences": [
-        "crates/pintail-exec/tests/integration/fanout_join_aggregates.rs:269",
+        "crates/pintail-exec/tests/integration/fanout_join_aggregates.rs:265",
         "crates/pintail-exec/tests/integration/mysql_scalar_parity.rs:502",
         "tests/sqllogic/tests/mysql_oracle.rs:4198"
       ],
@@ -12190,7 +12200,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:2164"
+        "crates/pintail-sql/src/binder/mod.rs:2166"
       ],
       "binderGuards": [
         "any arity"
@@ -12829,7 +12839,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:2164"
+        "crates/pintail-sql/src/binder/mod.rs:2166"
       ],
       "binderGuards": [
         "any arity"
@@ -15335,8 +15345,10 @@
           "mechanism": "grammar-token"
         }
       ],
-      "coverage": "unassessed",
-      "differentialEvidence": [],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "the session database beside a table"
+      ],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -15348,7 +15360,7 @@
         "crates/pintail-exec/tests/integration/block_skip_bench.rs:30",
         "crates/pintail-exec/tests/integration/block_value_skipping.rs:28"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -19216,7 +19228,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7054"
+        "crates/pintail-sql/src/binder/mod.rs:7056"
       ],
       "binderGuards": [
         "any arity"
@@ -19258,7 +19270,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7054"
+        "crates/pintail-sql/src/binder/mod.rs:7056"
       ],
       "binderGuards": [
         "any arity"
@@ -19306,7 +19318,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7054"
+        "crates/pintail-sql/src/binder/mod.rs:7056"
       ],
       "binderGuards": [
         "any arity"
@@ -19350,7 +19362,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7055"
+        "crates/pintail-sql/src/binder/mod.rs:7057"
       ],
       "binderGuards": [
         "any arity"
@@ -19883,6 +19895,7 @@
         "storefront: rows, matches and rating sum per sale",
         "storefront: the same membership written as EXISTS",
         "temporal convert and date_format grain",
+        "the session database beside a table",
         "window running total",
         "window share of total over grouped output",
         "oracle:0485:hash aggregate",
@@ -21680,7 +21693,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7056"
+        "crates/pintail-sql/src/binder/mod.rs:7058"
       ],
       "binderGuards": [
         "any arity"
@@ -21724,7 +21737,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7057"
+        "crates/pintail-sql/src/binder/mod.rs:7059"
       ],
       "binderGuards": [
         "any arity"
@@ -21769,7 +21782,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:7056"
+        "crates/pintail-sql/src/binder/mod.rs:7058"
       ],
       "binderGuards": [
         "any arity"

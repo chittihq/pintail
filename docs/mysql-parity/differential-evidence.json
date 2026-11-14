@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "commit": "8a2de4a9d72056891f9bd99e75aefa2391ec862c",
-  "measuredAt": "2026-10-27T13:50:14.520Z",
+  "commit": "ba0d032510e4c8bf73451f8b54445a54908caac5",
+  "measuredAt": "2026-11-14T04:12:58.142Z",
   "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-  "ledgerSha256": "4064309b023754b57e10ae372194268cf9a5206296aa680fe1776c18e70d6ce1",
-  "corpusSha256": "0b8a6f9f4d1e3ce04fc47920d09c20410ea066ebdc9f41f0d33e09728d154b1c",
+  "ledgerSha256": "21feb40217596fb287bb1827380d42814241ce5997e53aa6f6b604f9ec9e400e",
+  "corpusSha256": "f1aeb2bd8cd854f2ce85aa3d11167941eaeef6e9a5759026fec510b729d8e634",
   "cases": [
     {
       "name": "a table joined twice under two aliases keeps them distinct",
@@ -1339,7 +1339,7 @@
     },
     {
       "name": "composite: a range on the first part with a filter on the second",
-      "sqlSha256": "d9ab325eb3e3b2dc0af39caba1e7dd991bf9438a6b3666fc93e68dfcb7fd3494",
+      "sqlSha256": "2fcba1676a4a30af3582c5d223ce64383839781fa4348930a42d31abdf5ac06e",
       "functions": [],
       "phases": [
         "activity-history",
@@ -1375,7 +1375,7 @@
     },
     {
       "name": "composite: descending key order with a limit",
-      "sqlSha256": "e75e4a43934bfb90eb243ad32c8fdb69c0f86859215c19e183d45d441d61280f",
+      "sqlSha256": "c612d0d4c8c0c223c5b2e141d2c3fcd4a15307e8174bae3570c2e9cc1d2bc22c",
       "functions": [],
       "phases": [
         "activity-history",
@@ -1411,7 +1411,7 @@
     },
     {
       "name": "composite: exact key pairs, deleted and reinserted among them",
-      "sqlSha256": "25d30b453553bad10ac14f54ed488376d7b876ed94076a0528547c5880a3f5f6",
+      "sqlSha256": "39b707b73aef7c48bfca50e74f4ed23a9755e76bd3971d0e62577ff58f4a19cb",
       "functions": [
         "OR",
         "WHERE"
@@ -1450,7 +1450,7 @@
     },
     {
       "name": "composite: grouped by the first part",
-      "sqlSha256": "ad0c6b2246cd6a26962fa4895139bbfb1bac97a213b6fb64c167b8309f33d5f5",
+      "sqlSha256": "b03c24a1ca726ec47816a1413865451453a65180a60f8cfbeb82e4060b66fb14",
       "functions": [
         "COUNT",
         "MAX",
@@ -1490,7 +1490,7 @@
     },
     {
       "name": "composite: join on two columns across both composite tables",
-      "sqlSha256": "8452dad7826bd989ce611808758bdd702b53d940dfa8cf11a5f09f5140d3e8b1",
+      "sqlSha256": "3fa3f3fef465a1bb504097318373191c6045e089363e067e2be3197d9946fa3f",
       "functions": [],
       "phases": [
         "activity-history",
@@ -1526,7 +1526,7 @@
     },
     {
       "name": "composite: nulls in a non-key column under the key order",
-      "sqlSha256": "e1778c036b0a61bf22b9c50e232dd222e0a6493a296417bd11e48fb0a1126aca",
+      "sqlSha256": "49828be8019b5392590972037804e3807aff4c700a10394a9c5c91c7ba29ad6f",
       "functions": [],
       "phases": [
         "activity-history",
@@ -1562,7 +1562,7 @@
     },
     {
       "name": "composite: one first part, ordered by the second",
-      "sqlSha256": "fa708428377730970bdd7575ec89beb3a12ee385985f7bf57a8ee699fc57bdbf",
+      "sqlSha256": "513b03eb07e55301b6e49a645b90f782d436f34f62806dc4930dcfb2c87e146e",
       "functions": [],
       "phases": [
         "activity-history",
@@ -1598,7 +1598,7 @@
     },
     {
       "name": "composite: text-led key grouped by its first part",
-      "sqlSha256": "882542c64a686b2192eb6655e2c5c8c8a6a093421424ad0adc0aa83992a1bf15",
+      "sqlSha256": "af4b7a63f634584e48ea0add4ac2663a7fe22c51b2eb3c6674a245c110d7131f",
       "functions": [
         "COUNT",
         "SUM"
@@ -1637,7 +1637,7 @@
     },
     {
       "name": "composite: text-led key, one tenant and a user range",
-      "sqlSha256": "9eed66fb6930824748f0982c8958c50f874c0e026b13f2361c167357378d9eff",
+      "sqlSha256": "d92fdf1a709ee1390de4b837bf6ed9a34b777f2a7bdf5abc5c61c4e97e3a7e78",
       "functions": [],
       "phases": [
         "activity-history",
@@ -3897,6 +3897,45 @@
       ]
     },
     {
+      "name": "grouped left join counts over the unpaired row",
+      "sqlSha256": "a9e16a26e8a90f3f2bf1f0dbe52715a68c7611dde96839a7eb41ad5a939bf7f9",
+      "functions": [
+        "COALESCE",
+        "COUNT"
+      ],
+      "phases": [
+        "activity-history",
+        "churn",
+        "composite-keys",
+        "connection-collation",
+        "contention",
+        "control-plane",
+        "crud",
+        "ddl",
+        "ddl-documented-gaps",
+        "drop-database",
+        "drop-table-cdc",
+        "drop-table-polling",
+        "drop-table-recreate",
+        "execution-budget",
+        "local-database",
+        "memory-pressure",
+        "orm-compat",
+        "poll-storm",
+        "pooling",
+        "reconcile-memory",
+        "restart",
+        "restart-during-resync",
+        "restart-during-snapshot",
+        "schema-drift-minimal",
+        "schema-drift-unseen",
+        "snapshot",
+        "snapshot-ddl-window",
+        "spill",
+        "type-edges"
+      ]
+    },
+    {
       "name": "inner join with aggregation",
       "sqlSha256": "5f2c45a804dc1954aebeecc40149578a6cc97ed1a4b12dd1b5ec9c790fd4ac65",
       "functions": [
@@ -4437,6 +4476,45 @@
       "sqlSha256": "b4639b48b489d3c83929b2b8ff99f127d96785c5f3524319d9234b593d533e13",
       "functions": [
         "JSON_SEARCH"
+      ],
+      "phases": [
+        "activity-history",
+        "churn",
+        "composite-keys",
+        "connection-collation",
+        "contention",
+        "control-plane",
+        "crud",
+        "ddl",
+        "ddl-documented-gaps",
+        "drop-database",
+        "drop-table-cdc",
+        "drop-table-polling",
+        "drop-table-recreate",
+        "execution-budget",
+        "local-database",
+        "memory-pressure",
+        "orm-compat",
+        "poll-storm",
+        "pooling",
+        "reconcile-memory",
+        "restart",
+        "restart-during-resync",
+        "restart-during-snapshot",
+        "schema-drift-minimal",
+        "schema-drift-unseen",
+        "snapshot",
+        "snapshot-ddl-window",
+        "spill",
+        "type-edges"
+      ]
+    },
+    {
+      "name": "left join counts over the unpaired row",
+      "sqlSha256": "cf6b16349db82f0b3048a956826b326eb6606ce3d37e675d026c3b48b84eef83",
+      "functions": [
+        "COALESCE",
+        "COUNT"
       ],
       "phases": [
         "activity-history",
@@ -5239,6 +5317,123 @@
       "sqlSha256": "1db6789c2ca22b2a8d95018db4af2841c40e477563921ac3d9d3a8b04965f0b4",
       "functions": [
         "COUNT"
+      ],
+      "phases": [
+        "activity-history",
+        "churn",
+        "composite-keys",
+        "connection-collation",
+        "contention",
+        "control-plane",
+        "crud",
+        "ddl",
+        "ddl-documented-gaps",
+        "drop-database",
+        "drop-table-cdc",
+        "drop-table-polling",
+        "drop-table-recreate",
+        "execution-budget",
+        "local-database",
+        "memory-pressure",
+        "orm-compat",
+        "poll-storm",
+        "pooling",
+        "reconcile-memory",
+        "restart",
+        "restart-during-resync",
+        "restart-during-snapshot",
+        "schema-drift-minimal",
+        "schema-drift-unseen",
+        "snapshot",
+        "snapshot-ddl-window",
+        "spill",
+        "type-edges"
+      ]
+    },
+    {
+      "name": "row compared with a correlated aggregating subquery",
+      "sqlSha256": "10a27ed1dc1421ea5a278e5c97549947c5d30bfff321c03a0f4f83ccbd5ea527",
+      "functions": [
+        "COUNT",
+        "WHERE"
+      ],
+      "phases": [
+        "activity-history",
+        "churn",
+        "composite-keys",
+        "connection-collation",
+        "contention",
+        "control-plane",
+        "crud",
+        "ddl",
+        "ddl-documented-gaps",
+        "drop-database",
+        "drop-table-cdc",
+        "drop-table-polling",
+        "drop-table-recreate",
+        "execution-budget",
+        "local-database",
+        "memory-pressure",
+        "orm-compat",
+        "poll-storm",
+        "pooling",
+        "reconcile-memory",
+        "restart",
+        "restart-during-resync",
+        "restart-during-snapshot",
+        "schema-drift-minimal",
+        "schema-drift-unseen",
+        "snapshot",
+        "snapshot-ddl-window",
+        "spill",
+        "type-edges"
+      ]
+    },
+    {
+      "name": "row compared with an aggregating subquery",
+      "sqlSha256": "a5d2625353964b2c4fb91a35a0667f05968f327f1db65ec0ec275276e159a2d9",
+      "functions": [
+        "COUNT",
+        "WHERE"
+      ],
+      "phases": [
+        "activity-history",
+        "churn",
+        "composite-keys",
+        "connection-collation",
+        "contention",
+        "control-plane",
+        "crud",
+        "ddl",
+        "ddl-documented-gaps",
+        "drop-database",
+        "drop-table-cdc",
+        "drop-table-polling",
+        "drop-table-recreate",
+        "execution-budget",
+        "local-database",
+        "memory-pressure",
+        "orm-compat",
+        "poll-storm",
+        "pooling",
+        "reconcile-memory",
+        "restart",
+        "restart-during-resync",
+        "restart-during-snapshot",
+        "schema-drift-minimal",
+        "schema-drift-unseen",
+        "snapshot",
+        "snapshot-ddl-window",
+        "spill",
+        "type-edges"
+      ]
+    },
+    {
+      "name": "row compared with an aggregating subquery over no rows",
+      "sqlSha256": "4f72a344aa0d0366e5cf4f5af58ef2efe71d252cbd003f75fc387ca097227dfa",
+      "functions": [
+        "COUNT",
+        "WHERE"
       ],
       "phases": [
         "activity-history",
@@ -6874,6 +7069,47 @@
       ]
     },
     {
+      "name": "the session database beside a table",
+      "sqlSha256": "eb59f206fb1210fce10509de5940856b331acf15ac3932a19cb48b4f3ccead72",
+      "functions": [
+        "COUNT",
+        "DATABASE",
+        "SCHEMA",
+        "SUM"
+      ],
+      "phases": [
+        "activity-history",
+        "churn",
+        "composite-keys",
+        "connection-collation",
+        "contention",
+        "control-plane",
+        "crud",
+        "ddl",
+        "ddl-documented-gaps",
+        "drop-database",
+        "drop-table-cdc",
+        "drop-table-polling",
+        "drop-table-recreate",
+        "execution-budget",
+        "local-database",
+        "memory-pressure",
+        "orm-compat",
+        "poll-storm",
+        "pooling",
+        "reconcile-memory",
+        "restart",
+        "restart-during-resync",
+        "restart-during-snapshot",
+        "schema-drift-minimal",
+        "schema-drift-unseen",
+        "snapshot",
+        "snapshot-ddl-window",
+        "spill",
+        "type-edges"
+      ]
+    },
+    {
       "name": "three-way join through items",
       "sqlSha256": "c1f6429b30bfcff5823c2c24823a81c075bf615005816ab73d3a9f226c6bc900",
       "functions": [
@@ -8450,12 +8686,12 @@
   ],
   "oracle": {
     "schemaVersion": 1,
-    "commit": "8a2de4a9d72056891f9bd99e75aefa2391ec862c",
-    "sourceCommit": "ece0e0103038407db77081f32e02c5103fb50cc5",
-    "measuredAt": "2026-10-27T13:29:32.691120161+00:00",
+    "commit": "ba0d032510e4c8bf73451f8b54445a54908caac5",
+    "sourceCommit": "4a82f3c84ce3f64ba9ef12f3637b43a6095bec10",
+    "measuredAt": "2026-11-14T03:58:13.887918521+00:00",
     "source": "MySQL 8.4.11 (mysql@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70)",
-    "ledgerSha256": "aa578ddad6079f810451fde88c9ea015296535c51a0d6688575940b71cb8728e",
-    "corpusSha256": "618c064978bf33dc6b7d0dccf21df7ebe119f689c9b582decde2419d86ef51de",
+    "ledgerSha256": "f1578ad11df5977ded817245d866d6a62462d4e0bfc26f51827d1f44262d8d74",
+    "corpusSha256": "0738bc35ca2cc0ed26d9b098571065643e9a97f771048cd10dfe4fbc9fd12e0d",
     "cases": [
       {
         "name": "oracle:0000:arithmetic and predicates",
