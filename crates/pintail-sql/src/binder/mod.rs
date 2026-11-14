@@ -7297,6 +7297,18 @@ fn numeric_bit_input(expr: BoundExpr, written: &Expr) -> Result<BoundExpr, BindE
             nullable: false,
         });
     }
+    // A computed or literal DECIMAL is read as a signed integer first, so
+    // one past the signed range is the largest signed integer and not the
+    // largest unsigned one: `99999999999999999999 | 0` is
+    // 9223372036854775807. A column is left to the unsigned reading, which
+    // is the one an UNSIGNED column takes.
+    let expr = if matches!(expr.data_type, Some(DataType::Decimal { .. }))
+        && !matches!(expr.kind, BoundExprKind::Column(_))
+    {
+        bind_scalar(ScalarFunction::Cast(DataType::Int64), vec![expr])?
+    } else {
+        expr
+    };
     bind_scalar(
         ScalarFunction::Cast(DataType::UInt64),
         vec![choice_as_number(expr)],
