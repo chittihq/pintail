@@ -1391,7 +1391,9 @@ function publish(results: FileResult[], mysqlVersion: string) {
     // the bolded sentence, because that sentence is what gets quoted and
     // "88% of MySQL's suite" is a different and untrue claim.
     `**${total('exact').toLocaleString()} of ${compared.toLocaleString()} compared SELECTs match MySQL byte-for-byte** ` +
-      `(${compared ? ((100 * total('exact')) / compared).toFixed(1) : '0'}%), ` +
+      `(${compared ? ((100 * total('exact')) / compared).toFixed(1) : '0'}%; ` +
+      `the ${total('session-diverged').toLocaleString()} session-diverged SELECTs are not in that percentage: ` +
+      `counted as mismatches it is ${compared + total('session-diverged') ? ((100 * total('exact')) / (compared + total('session-diverged'))).toFixed(1) : '0'}%), ` +
       `**out of ${(compared + notCompared).toLocaleString()} SELECTs replayed** - ` +
       `${notCompared.toLocaleString()} never reached a comparison, so this is a share of what could be compared and not of the suite. ` +
       `${total('mismatch').toLocaleString()} differ in rows, ${total('name-mismatch').toLocaleString()} in column names only. ` +
