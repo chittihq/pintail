@@ -65,14 +65,16 @@ stays readable as a list of things to fix.
   statement as written, which is what MySQL returns with
   `optimizer_switch='semijoin=off'`, so on this shape Pintail's result
   differs from a default-configured MySQL's.
-- A table whose segments overlap after its source updates rows is read
-  through a merge on every scan until compaction removes the overlap, and
-  value pruning skips only segments older than everything overlapping them.
-  On 20,000,000 rows with one in a hundred updated, an unindexed full scan
-  took 33 s against 2.5 s in MySQL, and point or IN-list lookups on an
-  indexed column took 30-80 s against 1-2 ms, with every answer exact
-  (`benchmark/results-filters.md`). There are no secondary indexes: a point
-  lookup on a non-key column reads every segment its value might be in.
+- While a table's segments overlap after its source updates rows, scans
+  mask superseded rows until compaction folds the changes in: on
+  20,000,000 rows with one in a hundred updated, a one-day count took
+  75 ms overlapped and 1.4 ms settled. A lookup on a non-key column
+  decodes one block per column per matching row: 100 rows took 6-15 ms
+  against 1.9 ms in MySQL. A limited sort on a non-key column reads every
+  row its filter keeps: the first 100 rows from a moment took 33 ms
+  (168 ms overlapped) against 1.7 ms
+  (`benchmark/evidence/decimal-literal-filters.md`,
+  `limited-sort-ordered-input.md`).
 - `x op ANY` and `x op ALL` compare a number with text values as numbers,
   as MySQL 8.4 does over a table column. MySQL answers lexically when the
   subquery reads string constants through a derived table (`3 < ANY (SELECT v

@@ -61,8 +61,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   date or date-time, and one correlated only inside its own join's `ON`,
   is answered for all outer rows in one execution
   (`benchmark/evidence/dependent-subquery-plan-share.md`).
+- A filter comparing a DECIMAL column with a decimal literal reads the
+  column's packed units (a range count over 20,000,000 rows: 3.7 s to
+  6 ms), and a limited sort skips batches lying wholly past its k-th row
+  (the first 100 rows from a moment: 185 ms to 33 ms;
+  `benchmark/evidence/decimal-literal-filters.md`,
+  `limited-sort-ordered-input.md`).
+- Aggregates over many small groups no longer allocate per group and per
+  row: a DISTINCT set holds its first four integer keys in place,
+  `SUM(DISTINCT)` of a DECIMAL column keys and adds packed units, and
+  `GROUP_CONCAT` keeps each row once (a concatenation over 150,000 groups
+  took 1.65 s and spilled under a 2 GiB ceiling; it takes 0.49 s and does
+  not spill). Several JSON functions reading one document share one
+  parse. `HOUR`, `MINUTE`, `SECOND` and `TIME_TO_SEC` of a TIME column
+  read packed microseconds. A window that spills reads its rows back in
+  batches and orders text keys by collation weights
+  (`benchmark/evidence/per-row-lanes.md`).
 
 ### Fixed
+
+- A DECIMAL or integer column compared with a decimal literal compares
+  exactly; it compared as doubles, which cannot separate values differing
+  past the fifteenth digit.
+- A DISTINCT aggregate over a DECIMAL of more than nineteen digits no
+  longer panics when its groups merge or spill.
 
 - A schema change that opened with a comment or broke the line between
   its first words (`/* step 4 */ ALTER TABLE ...`, `alter /* tool */ table
