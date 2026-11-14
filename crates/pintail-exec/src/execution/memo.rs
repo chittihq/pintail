@@ -443,13 +443,9 @@ pub(super) fn query_is_volatile(query: &BoundQuery) -> bool {
         })
         // ORDER BY keys index the projection, which is already walked.
         || query.from.iter().any(|source| {
-            source
-                .base
-                .input
-                .as_deref()
-                .is_some_and(query_is_volatile)
+            table_is_volatile(&source.base)
                 || source.joins.iter().any(|join| {
-                    join.table.input.as_deref().is_some_and(query_is_volatile)
+                    table_is_volatile(&join.table)
                         || join.condition.as_ref().is_some_and(expr_is_volatile)
                 })
         })
@@ -462,6 +458,17 @@ pub(super) fn query_is_volatile(query: &BoundQuery) -> bool {
             .recursive
             .as_deref()
             .is_some_and(|recursive| query_is_volatile(&recursive.member))
+}
+
+/// A FROM-clause relation is as volatile as the query it is derived from
+/// or the document its table function reads. A table function's column
+/// defaults are constant text, so the document is its only expression.
+fn table_is_volatile(table: &pintail_sql::BoundTable) -> bool {
+    table.input.as_deref().is_some_and(query_is_volatile)
+        || table
+            .json_table
+            .as_ref()
+            .is_some_and(|function| expr_is_volatile(&function.document))
 }
 
 /// The optimizer's notion of volatility, extended through nested

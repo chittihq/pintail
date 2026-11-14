@@ -375,6 +375,43 @@ fn a_volatile_lateral_query_is_never_memoized() {
     );
 }
 
+/// A table function is as volatile as the document it reads: a query over
+/// one whose document calls `RAND()` runs for every row, in a `LATERAL`
+/// table and in a dependent subquery alike. Six shelves carry four
+/// distinct zones, so a memoized query would run four times.
+#[test]
+fn a_volatile_table_function_document_is_never_memoized() {
+    let executions = dependent_subquery_executions();
+    let result = run("SELECT s.id, d.r FROM shelves s, \
+                      LATERAL (SELECT jt.r FROM JSON_TABLE(JSON_ARRAY(RAND()), '$[*]' \
+                               COLUMNS (r DOUBLE PATH '$')) jt \
+                               WHERE s.zone IS NULL OR s.zone > 0) d");
+    assert_eq!(result.len(), SHELVES.len());
+    assert_eq!(
+        dependent_subquery_executions() - executions,
+        SHELVES.len() as u64
+    );
+    let distinct: std::collections::BTreeSet<&String> = result.iter().map(|row| &row[1]).collect();
+    assert_eq!(distinct.len(), SHELVES.len(), "{result:?}");
+
+    let result = run(
+        "SELECT s.id, (SELECT jt.r FROM JSON_TABLE(JSON_ARRAY(RAND()), '$[*]' \
+                               COLUMNS (r DOUBLE PATH '$')) jt \
+                               WHERE s.zone IS NULL OR s.zone > 0) FROM shelves s",
+    );
+    let distinct: std::collections::BTreeSet<&String> = result.iter().map(|row| &row[1]).collect();
+    assert_eq!(distinct.len(), SHELVES.len(), "{result:?}");
+
+    // The same table over a constant document is shared as before.
+    let executions = dependent_subquery_executions();
+    let result = run("SELECT s.id, d.r FROM shelves s, \
+                      LATERAL (SELECT jt.r FROM JSON_TABLE('[7]', '$[*]' \
+                               COLUMNS (r INT PATH '$')) jt \
+                               WHERE s.zone IS NULL OR s.zone > 0) d");
+    assert_eq!(result.len(), SHELVES.len());
+    assert_eq!(dependent_subquery_executions() - executions, 4);
+}
+
 /// A table that reads nothing to its left is an ordinary derived table.
 #[test]
 fn an_uncorrelated_lateral_is_an_ordinary_derived_table() {

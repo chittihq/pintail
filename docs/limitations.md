@@ -55,7 +55,11 @@ stays readable as a list of things to fix.
   `RIGHT JOIN` (which would have to wrap it in such a group), and a join
   to one whose `ON` condition holds a subquery. An unqualified column that
   both a table to its left and an enclosing query supply is reported
-  ambiguous, where MySQL takes the nearer one.
+  ambiguous, where MySQL takes the nearer one. MySQL merges a `LATERAL`
+  table it can into the query around it, so a table function inside one
+  whose document is volatile and reads no column (`JSON_TABLE(
+  JSON_ARRAY(RAND()), ...)`) is evaluated once for the statement there and
+  once per outer row here.
 - MySQL 8.4 with its default optimizer switches answers a correlated `IN`
   or `EXISTS` in an outer join's ON condition wrongly when the subquery
   carries filters of its own: its semi-join materialization drops them, so
