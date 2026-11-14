@@ -20,6 +20,7 @@
 //! - `MID(s FROM n FOR m)` is `SUBSTRING(s FROM n FOR m)`;
 //! - `UTC_DATE`, `UTC_TIME` and `UTC_TIMESTAMP` written bare are the calls
 //!   with no arguments;
+//! - `x REGEXP NULL` is `x REGEXP (NULL)`;
 //! - `WEIGHT_STRING(x AS CHAR(n))` becomes a call under an internal name,
 //!   which the binder answers for by the name the statement wrote.
 use std::collections::BTreeMap;
@@ -141,6 +142,7 @@ pub(crate) fn rewrite(tokens: &mut Vec<TokenWithSpan>) {
             || is_word(&token.token, WEIGHT)
             || is_any_word(&token.token, &UTC_CLOCKS)
             || is_word(&token.token, "MID")
+            || is_any_word(&token.token, &["REGEXP", "RLIKE"])
             || matches!(token.token, Token::Arrow | Token::LongArrow)
     }) {
         return;
@@ -171,6 +173,15 @@ fn call_form(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: 
     }
     if matches!(head, Token::Arrow | Token::LongArrow) {
         json_path(tokens, significant, at, edits);
+        return;
+    }
+    if is_any_word(head, &["REGEXP", "RLIKE"]) {
+        // A bare NULL pattern is not read after these two; in parentheses
+        // it is.
+        if token(at + 1).is_some_and(|pattern| is_word(pattern, "NULL")) {
+            edits.before(significant[at + 1], [Token::LParen]);
+            edits.after(significant[at + 1], [Token::RParen]);
+        }
         return;
     }
     if is_any_word(head, &UTC_CLOCKS) {
@@ -555,6 +566,8 @@ mod tests {
                 "SELECT SUBSTRING(a FROM 2 FOR 3)",
             ),
             ("SELECT MID(a, 2, 3)", "SELECT MID(a, 2, 3)"),
+            ("SELECT a REGEXP NULL", "SELECT a REGEXP (NULL)"),
+            ("SELECT a NOT RLIKE NULL, 1", "SELECT a NOT RLIKE (NULL), 1"),
             (
                 "SELECT UTC_DATE, utc_time, UTC_TIMESTAMP()",
                 "SELECT UTC_DATE(), utc_time(), UTC_TIMESTAMP()",

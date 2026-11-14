@@ -433,6 +433,13 @@ const BARE_UTC_CLOCKS: &[&str] = &[
     r#"SELECT id, placed_at < UTC_TIMESTAMP, DATE(placed_at) < UTC_DATE FROM orders WHERE DATE(placed_at) <> UTC_DATE ORDER BY id"#,
 ];
 
+const REGEXP_WITH_A_NULL_PATTERN: &[&str] = &[
+    r#"SELECT 'a' REGEXP NULL"#,
+    r#"SELECT 'a' NOT RLIKE NULL"#,
+    r#"SELECT id, note REGEXP NULL FROM events ORDER BY id"#,
+    r#"SELECT id FROM events WHERE note REGEXP NULL OR id = 3 ORDER BY id"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -451,6 +458,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("regexp with a null pattern", REGEXP_WITH_A_NULL_PATTERN),
         ("bare utc clocks", BARE_UTC_CLOCKS),
         ("mid with from and for", MID_WITH_FROM_AND_FOR),
         ("json compared with null", JSON_COMPARED_WITH_NULL),
