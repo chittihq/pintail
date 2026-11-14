@@ -1075,6 +1075,23 @@ pub(super) fn bind_scalar_function(
         }
         _ => return Err(BindError::UnsupportedExpression(function.to_string())),
     };
+    if matches!(
+        scalar,
+        ScalarFunction::JsonArray | ScalarFunction::JsonObject
+    ) {
+        let values_at_odd = scalar == ScalarFunction::JsonObject;
+        args = args
+            .into_iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                if (!values_at_odd || index % 2 == 1) && writes_json_boolean(&arg) {
+                    json_boolean(arg)
+                } else {
+                    Ok(arg)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    }
     if scalar == ScalarFunction::NullIf && args.len() == 2 {
         let second = args.remove(1);
         let first = args.remove(0);
@@ -1122,6 +1139,77 @@ pub(super) fn bind_scalar_function(
         Some(target) => bind_scalar(ScalarFunction::Cast(target), vec![bound]),
         None => Ok(bound),
     }
+}
+
+/// Whether an expression is a truth value rather than a number that
+/// happens to be 0 or 1: the TRUE and FALSE literals, a comparison, a
+/// logical operator, or a predicate. A JSON constructor writes such a
+/// value as `true` or `false`; a BOOLEAN column, and a truth value that
+/// passed through IF, CASE or COALESCE, is the number.
+fn writes_json_boolean(expr: &BoundExpr) -> bool {
+    if expr.data_type != Some(DataType::Boolean) {
+        return false;
+    }
+    match &expr.kind {
+        BoundExprKind::Literal(Value::Boolean(_))
+        | BoundExprKind::Binary { .. }
+        | BoundExprKind::Unary { .. }
+        | BoundExprKind::IsNull { .. } => true,
+        BoundExprKind::Scalar { function, args } => match function {
+            ScalarFunction::InList { .. }
+            | ScalarFunction::Between { .. }
+            | ScalarFunction::Like { .. } => true,
+            // `a <=> b` is bound as COALESCE(both NULL OR a = b, FALSE).
+            ScalarFunction::Coalesce => matches!(
+                args.as_slice(),
+                [
+                    BoundExpr {
+                        kind: BoundExprKind::Binary {
+                            op: BinaryOp::Or,
+                            ..
+                        },
+                        ..
+                    },
+                    BoundExpr {
+                        kind: BoundExprKind::Literal(Value::Boolean(false)),
+                        ..
+                    },
+                ]
+            ),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// A truth value as the JSON literal a constructor writes it as; unknown
+/// stays NULL.
+fn json_boolean(truth: BoundExpr) -> Result<BoundExpr, BindError> {
+    let json = |value: Value, nullable: bool| BoundExpr {
+        kind: BoundExprKind::Literal(value),
+        data_type: Some(DataType::Json),
+        nullable,
+    };
+    let negated = BoundExpr {
+        nullable: truth.nullable,
+        data_type: Some(DataType::Boolean),
+        kind: BoundExprKind::Unary {
+            op: crate::bound::UnaryOp::Not,
+            expr: Box::new(truth.clone()),
+        },
+    };
+    let unknown = bind_scalar(
+        ScalarFunction::If,
+        vec![
+            negated,
+            json(Value::Utf8("false".to_owned()), false),
+            json(Value::Null, true),
+        ],
+    )?;
+    bind_scalar(
+        ScalarFunction::If,
+        vec![truth, json(Value::Utf8("true".to_owned()), false), unknown],
+    )
 }
 
 /// `TIMESTAMPADD(unit, amount, datetime)` is `DATE_ADD` with reordered
