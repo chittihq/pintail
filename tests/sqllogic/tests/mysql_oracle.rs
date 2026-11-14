@@ -373,6 +373,33 @@ fn oracle_preserves_null_bytes_and_expected_numeric_types() {
     ));
 }
 
+/// The documents that state how many cases the fixed corpus holds say the
+/// number it holds. They disagreed with it, and with each other, for as
+/// long as nothing compared them.
+#[test]
+fn documents_state_the_size_of_the_fixed_corpus() {
+    let thousands = EXPECTED_CASES / 1000;
+    let stated = format!("{thousands},{:03}", EXPECTED_CASES % 1000);
+    for (document, text) in [
+        ("parity.md", include_str!("../../../parity.md")),
+        ("README.md", include_str!("../../../README.md")),
+        (
+            "docs/verification.md",
+            include_str!("../../../docs/verification.md"),
+        ),
+        (
+            "docs/mysql-parity/coverage-results.md",
+            include_str!("../../../docs/mysql-parity/coverage-results.md"),
+        ),
+        ("tests/sqllogic/README.md", include_str!("../README.md")),
+    ] {
+        assert!(
+            text.contains(&stated),
+            "{document} does not state the fixed corpus's {stated} cases"
+        );
+    }
+}
+
 #[test]
 fn oracle_case_inventory_matches_the_declared_gate() {
     let cases = oracle_cases();

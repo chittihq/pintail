@@ -202,8 +202,8 @@ query corpus against that immutable bank commit. Ordinary generation and
 
 
 The fixed sqllogic oracle also contributes differential coverage. Its test
-exports `tests/sqllogic/results-oracle.json` only after all 1,081 comparisons
-pass. Each row records the executed SQL, ordering mode and PASS result. The
+exports `tests/sqllogic/results-oracle.json` only after every comparison of the fixed
+corpus passes. Each row records the executed SQL, ordering mode and PASS result. The
 artifact records the source commit captured before execution, clean-tree status, timestamp,
 MySQL version and a hash of the compiled test source (including fixture and
 case generator). Dirty starts and changed HEAD or dirty trees at export reject
