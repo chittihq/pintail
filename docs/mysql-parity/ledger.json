@@ -2,18 +2,18 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "8bf8acc60780b7a13751a9bf02451f837c3fe7a4",
-    "measuredAt": "2026-11-14T14:08:28.385Z",
+    "commit": "fbc2158a5ad30ffcce917208b567caa8b0794ed6",
+    "measuredAt": "2026-11-14T16:16:50.907Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "646b885c5fe800e3dfdc493ebf96c2ec7d49b6c3375282ef71658b724770fd1d",
+    "ledgerSha256": "85c506f53f0ea3fcc1806d0a6c40fe9b8c91e392fedf70fa06390631d574fb14",
     "corpusSha256": "ad1fdc42308c98ce399849c9437be5b79e1d8c4709c845376aec5c06cad73c5d",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "8bf8acc60780b7a13751a9bf02451f837c3fe7a4",
-      "sourceCommit": "57896401ff52dda1bc11d7f83c611612d12c0d77",
-      "measuredAt": "2026-11-14T14:06:09.425731985+00:00",
+      "commit": "fbc2158a5ad30ffcce917208b567caa8b0794ed6",
+      "sourceCommit": "902e0fc50678757ee852a5d72176a5bff07c2d17",
+      "measuredAt": "2026-11-14T16:11:38.968270131+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:0744ee5ef89ce6ccfa13de3e579fe6b9e27f93dd70da9c06d2c908b1b193fb8d)",
-      "ledgerSha256": "a4e623649b30dec737794326380f8d88838af0a2eac067bf7e980dfaf7be661e",
+      "ledgerSha256": "017d4ed7ecfe49932108ff9e14d92e1fa3b58c7d52ddb3734f779ffbdbfa7b07",
       "corpusSha256": "b2005278379579fa6d4b5c64cf58a08e0bd72b1cb5e446135a74860f59896ad0"
     }
   },
@@ -8911,9 +8911,9 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/integration/column_fold_edges.rs:72",
+        "crates/pintail-exec/tests/integration/counted_join_pairs.rs:481",
         "crates/pintail-exec/tests/integration/declared_values.rs:216",
-        "crates/pintail-exec/tests/integration/fused_join_lanes.rs:182",
-        "crates/pintail-exec/tests/integration/low_cardinality_text.rs:472"
+        "crates/pintail-exec/tests/integration/fused_join_lanes.rs:182"
       ],
       "verification": "historical-differential-cases",
       "note": "Conditional evaluation exists; a documented DECIMAL branch-scale rendering difference remains.",
@@ -11481,10 +11481,10 @@
         "if args.len() >= 2"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/counted_join_pairs.rs:503",
         "crates/pintail-exec/tests/integration/json_bin_collation.rs:138",
         "crates/pintail-exec/tests/integration/mysql_scalar_parity.rs:2379",
-        "crates/pintail-exec/tests/integration/per_row_lanes.rs:326",
-        "crates/pintail-exec/tests/integration/scalar_fallback_cost.rs:42"
+        "crates/pintail-exec/tests/integration/per_row_lanes.rs:326"
       ],
       "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
@@ -16625,10 +16625,10 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/counted_join_pairs.rs:481",
         "crates/pintail-exec/tests/integration/declared_values.rs:491",
         "crates/pintail-exec/tests/integration/dependent_set_shapes.rs:683",
-        "crates/pintail-exec/tests/integration/lateral_derived_table.rs:370",
-        "tests/sqllogic/tests/mysql_oracle.rs:1935"
+        "crates/pintail-exec/tests/integration/lateral_derived_table.rs:370"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -24289,6 +24289,7 @@
         "if args.is_empty()"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/integration/counted_join_pairs.rs:474",
         "tests/sqllogic/tests/mysql_oracle.rs:6670",
         "tests/sqllogic/tests/support/oracle_operators.rs:220"
       ],
