@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-10-27T15:41:11.774Z.
+Measured 2026-11-14T03:41:48.216Z.
 
-Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh container.
+Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**7337 passed, 0 failed, 4 documented-gap warnings, 49 skipped.**
+**7539 passed, 0 failed, 5 documented-gap warnings, 49 skipped.**
 
-224 unique corpus queries produced 6496 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+230 unique corpus queries produced 6670 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -257,6 +257,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | query:where: an unsigned column against a negative literal | PASS |  |
 | snapshot | query:where: a string number against an integer column | PASS |  |
 | snapshot | query:where: a general_ci column under PAD SPACE | PASS |  |
+| snapshot | query:left join counts over the unpaired row | PASS |  |
+| snapshot | query:grouped left join counts over the unpaired row | PASS |  |
+| snapshot | query:row compared with an aggregating subquery | PASS |  |
+| snapshot | query:row compared with an aggregating subquery over no rows | PASS |  |
+| snapshot | query:row compared with a correlated aggregating subquery | PASS |  |
+| snapshot | query:the session database beside a table | PASS |  |
+| snapshot | service:snapshot:no table left service unexpectedly | PASS |  |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -528,6 +535,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | query:where: an unsigned column against a negative literal | PASS |  |
 | orm-compat | query:where: a string number against an integer column | PASS |  |
 | orm-compat | query:where: a general_ci column under PAD SPACE | PASS |  |
+| orm-compat | query:left join counts over the unpaired row | PASS |  |
+| orm-compat | query:grouped left join counts over the unpaired row | PASS |  |
+| orm-compat | query:row compared with an aggregating subquery | PASS |  |
+| orm-compat | query:row compared with an aggregating subquery over no rows | PASS |  |
+| orm-compat | query:row compared with a correlated aggregating subquery | PASS |  |
+| orm-compat | query:the session database beside a table | PASS |  |
+| orm-compat | service:orm-compat:no table left service unexpectedly | PASS |  |
 | crud | converge:Dim | PASS |  |
 | crud | converge:Event | PASS |  |
 | crud | converge:Fact | PASS |  |
@@ -775,6 +789,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:where: an unsigned column against a negative literal | PASS |  |
 | crud | query:where: a string number against an integer column | PASS |  |
 | crud | query:where: a general_ci column under PAD SPACE | PASS |  |
+| crud | query:left join counts over the unpaired row | PASS |  |
+| crud | query:grouped left join counts over the unpaired row | PASS |  |
+| crud | query:row compared with an aggregating subquery | PASS |  |
+| crud | query:row compared with an aggregating subquery over no rows | PASS |  |
+| crud | query:row compared with a correlated aggregating subquery | PASS |  |
+| crud | query:the session database beside a table | PASS |  |
+| crud | service:crud:no table left service unexpectedly | PASS |  |
 | composite-keys | converge:Dim | PASS |  |
 | composite-keys | converge:Event | PASS |  |
 | composite-keys | converge:Fact | PASS |  |
@@ -1022,6 +1043,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | query:where: an unsigned column against a negative literal | PASS |  |
 | composite-keys | query:where: a string number against an integer column | PASS |  |
 | composite-keys | query:where: a general_ci column under PAD SPACE | PASS |  |
+| composite-keys | query:left join counts over the unpaired row | PASS |  |
+| composite-keys | query:grouped left join counts over the unpaired row | PASS |  |
+| composite-keys | query:row compared with an aggregating subquery | PASS |  |
+| composite-keys | query:row compared with an aggregating subquery over no rows | PASS |  |
+| composite-keys | query:row compared with a correlated aggregating subquery | PASS |  |
+| composite-keys | query:the session database beside a table | PASS |  |
+| composite-keys | service:composite-keys:no table left service unexpectedly | PASS |  |
 | type-edges | converge:Dim | PASS |  |
 | type-edges | converge:Event | PASS |  |
 | type-edges | converge:Fact | PASS |  |
@@ -1269,6 +1297,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:where: an unsigned column against a negative literal | PASS |  |
 | type-edges | query:where: a string number against an integer column | PASS |  |
 | type-edges | query:where: a general_ci column under PAD SPACE | PASS |  |
+| type-edges | query:left join counts over the unpaired row | PASS |  |
+| type-edges | query:grouped left join counts over the unpaired row | PASS |  |
+| type-edges | query:row compared with an aggregating subquery | PASS |  |
+| type-edges | query:row compared with an aggregating subquery over no rows | PASS |  |
+| type-edges | query:row compared with a correlated aggregating subquery | PASS |  |
+| type-edges | query:the session database beside a table | PASS |  |
+| type-edges | service:type-edges:no table left service unexpectedly | PASS |  |
 | ddl | a virtual column added mid-stream is recopied with its values | PASS |  |
 | ddl | a table created mid-stream is streaming before its rename | PASS |  |
 | ddl | a renamed table follows its new name under CDC | PASS |  |
@@ -1521,6 +1556,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | query:where: an unsigned column against a negative literal | PASS |  |
 | ddl | query:where: a string number against an integer column | PASS |  |
 | ddl | query:where: a general_ci column under PAD SPACE | PASS |  |
+| ddl | query:left join counts over the unpaired row | PASS |  |
+| ddl | query:grouped left join counts over the unpaired row | PASS |  |
+| ddl | query:row compared with an aggregating subquery | PASS |  |
+| ddl | query:row compared with an aggregating subquery over no rows | PASS |  |
+| ddl | query:row compared with a correlated aggregating subquery | PASS |  |
+| ddl | query:the session database beside a table | PASS |  |
+| ddl | service:ddl:no table left service unexpectedly | PASS |  |
 | schema-drift-minimal | converge:Dim | PASS |  |
 | schema-drift-minimal | converge:Event | PASS |  |
 | schema-drift-minimal | converge:Fact | PASS |  |
@@ -1770,6 +1812,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | query:where: an unsigned column against a negative literal | PASS |  |
 | schema-drift-minimal | query:where: a string number against an integer column | PASS |  |
 | schema-drift-minimal | query:where: a general_ci column under PAD SPACE | PASS |  |
+| schema-drift-minimal | query:left join counts over the unpaired row | PASS |  |
+| schema-drift-minimal | query:grouped left join counts over the unpaired row | PASS |  |
+| schema-drift-minimal | query:row compared with an aggregating subquery | PASS |  |
+| schema-drift-minimal | query:row compared with an aggregating subquery over no rows | PASS |  |
+| schema-drift-minimal | query:row compared with a correlated aggregating subquery | PASS |  |
+| schema-drift-minimal | query:the session database beside a table | PASS |  |
+| schema-drift-minimal | service:schema-drift-minimal:no table left service unexpectedly | PASS |  |
 | schema-drift-unseen | converge:Dim | PASS |  |
 | schema-drift-unseen | converge:Event | PASS |  |
 | schema-drift-unseen | converge:Fact | PASS |  |
@@ -2019,6 +2068,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:where: an unsigned column against a negative literal | PASS |  |
 | schema-drift-unseen | query:where: a string number against an integer column | PASS |  |
 | schema-drift-unseen | query:where: a general_ci column under PAD SPACE | PASS |  |
+| schema-drift-unseen | query:left join counts over the unpaired row | PASS |  |
+| schema-drift-unseen | query:grouped left join counts over the unpaired row | PASS |  |
+| schema-drift-unseen | query:row compared with an aggregating subquery | PASS |  |
+| schema-drift-unseen | query:row compared with an aggregating subquery over no rows | PASS |  |
+| schema-drift-unseen | query:row compared with a correlated aggregating subquery | PASS |  |
+| schema-drift-unseen | query:the session database beside a table | PASS |  |
+| schema-drift-unseen | service:schema-drift-unseen:no table left service unexpectedly | PASS |  |
 | churn-live | live:composite: one first part, ordered by the second | PASS |  |
 | churn-live | live:composite: grouped by the first part | PASS |  |
 | churn-live | live:composite: exact key pairs, deleted and reinserted among them | PASS |  |
@@ -2274,6 +2330,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | query:where: an unsigned column against a negative literal | PASS |  |
 | churn | query:where: a string number against an integer column | PASS |  |
 | churn | query:where: a general_ci column under PAD SPACE | PASS |  |
+| churn | query:left join counts over the unpaired row | PASS |  |
+| churn | query:grouped left join counts over the unpaired row | PASS |  |
+| churn | query:row compared with an aggregating subquery | PASS |  |
+| churn | query:row compared with an aggregating subquery over no rows | PASS |  |
+| churn | query:row compared with a correlated aggregating subquery | PASS |  |
+| churn | query:the session database beside a table | PASS |  |
+| churn | service:churn:no table left service unexpectedly | PASS |  |
 | contention | converge:Dim | PASS |  |
 | contention | converge:Event | PASS |  |
 | contention | converge:Fact | PASS |  |
@@ -2523,6 +2586,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | query:where: an unsigned column against a negative literal | PASS |  |
 | contention | query:where: a string number against an integer column | PASS |  |
 | contention | query:where: a general_ci column under PAD SPACE | PASS |  |
+| contention | query:left join counts over the unpaired row | PASS |  |
+| contention | query:grouped left join counts over the unpaired row | PASS |  |
+| contention | query:row compared with an aggregating subquery | PASS |  |
+| contention | query:row compared with an aggregating subquery over no rows | PASS |  |
+| contention | query:row compared with a correlated aggregating subquery | PASS |  |
+| contention | query:the session database beside a table | PASS |  |
+| contention | service:contention:no table left service unexpectedly | PASS |  |
 | execution-budget | hint:interrupts a runaway join | PASS |  |
 | execution-budget | hint:interrupts promptly | PASS |  |
 | execution-budget | hint:a generous budget runs to completion | PASS |  |
@@ -2777,6 +2847,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:where: an unsigned column against a negative literal | PASS |  |
 | execution-budget | query:where: a string number against an integer column | PASS |  |
 | execution-budget | query:where: a general_ci column under PAD SPACE | PASS |  |
+| execution-budget | query:left join counts over the unpaired row | PASS |  |
+| execution-budget | query:grouped left join counts over the unpaired row | PASS |  |
+| execution-budget | query:row compared with an aggregating subquery | PASS |  |
+| execution-budget | query:row compared with an aggregating subquery over no rows | PASS |  |
+| execution-budget | query:row compared with a correlated aggregating subquery | PASS |  |
+| execution-budget | query:the session database beside a table | PASS |  |
+| execution-budget | service:execution-budget:no table left service unexpectedly | PASS |  |
 | connection-collation | collation:default #1 | PASS |  |
 | connection-collation | collation:default #2 | PASS |  |
 | connection-collation | collation:default #3 | PASS |  |
@@ -3051,6 +3128,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | connection-collation | query:where: an unsigned column against a negative literal | PASS |  |
 | connection-collation | query:where: a string number against an integer column | PASS |  |
 | connection-collation | query:where: a general_ci column under PAD SPACE | PASS |  |
+| connection-collation | query:left join counts over the unpaired row | PASS |  |
+| connection-collation | query:grouped left join counts over the unpaired row | PASS |  |
+| connection-collation | query:row compared with an aggregating subquery | PASS |  |
+| connection-collation | query:row compared with an aggregating subquery over no rows | PASS |  |
+| connection-collation | query:row compared with a correlated aggregating subquery | PASS |  |
+| connection-collation | query:the session database beside a table | PASS |  |
+| connection-collation | service:connection-collation:no table left service unexpectedly | PASS |  |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -3304,6 +3388,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:where: an unsigned column against a negative literal | PASS |  |
 | spill | query:where: a string number against an integer column | PASS |  |
 | spill | query:where: a general_ci column under PAD SPACE | PASS |  |
+| spill | query:left join counts over the unpaired row | PASS |  |
+| spill | query:grouped left join counts over the unpaired row | PASS |  |
+| spill | query:row compared with an aggregating subquery | PASS |  |
+| spill | query:row compared with an aggregating subquery over no rows | PASS |  |
+| spill | query:row compared with a correlated aggregating subquery | PASS |  |
+| spill | query:the session database beside a table | PASS |  |
+| spill | service:spill:no table left service unexpectedly | PASS |  |
 | pooling | wire:multi-statement-setup-and-results | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
@@ -3557,6 +3648,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:where: an unsigned column against a negative literal | PASS |  |
 | pooling | query:where: a string number against an integer column | PASS |  |
 | pooling | query:where: a general_ci column under PAD SPACE | PASS |  |
+| pooling | query:left join counts over the unpaired row | PASS |  |
+| pooling | query:grouped left join counts over the unpaired row | PASS |  |
+| pooling | query:row compared with an aggregating subquery | PASS |  |
+| pooling | query:row compared with an aggregating subquery over no rows | PASS |  |
+| pooling | query:row compared with a correlated aggregating subquery | PASS |  |
+| pooling | query:the session database beside a table | PASS |  |
+| pooling | service:pooling:no table left service unexpectedly | PASS |  |
 | local-database | create table returns an OK packet | PASS |  |
 | local-database | insert reports its affected rows | PASS |  |
 | local-database | the rows read back through the same connection | PASS |  |
@@ -3825,6 +3923,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | query:where: an unsigned column against a negative literal | PASS |  |
 | local-database | query:where: a string number against an integer column | PASS |  |
 | local-database | query:where: a general_ci column under PAD SPACE | PASS |  |
+| local-database | query:left join counts over the unpaired row | PASS |  |
+| local-database | query:grouped left join counts over the unpaired row | PASS |  |
+| local-database | query:row compared with an aggregating subquery | PASS |  |
+| local-database | query:row compared with an aggregating subquery over no rows | PASS |  |
+| local-database | query:row compared with a correlated aggregating subquery | PASS |  |
+| local-database | query:the session database beside a table | PASS |  |
+| local-database | service:local-database:no table left service unexpectedly | PASS |  |
 | restart | local:rows survive a SIGKILL | PASS |  |
 | restart | converge:Dim | PASS |  |
 | restart | converge:Event | PASS |  |
@@ -4075,12 +4180,19 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:where: an unsigned column against a negative literal | PASS |  |
 | restart | query:where: a string number against an integer column | PASS |  |
 | restart | query:where: a general_ci column under PAD SPACE | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150022 sync_runs rows for db_55af0570e034d91e36a0c97f41ffa499 |
+| restart | query:left join counts over the unpaired row | PASS |  |
+| restart | query:grouped left join counts over the unpaired row | PASS |  |
+| restart | query:row compared with an aggregating subquery | PASS |  |
+| restart | query:row compared with an aggregating subquery over no rows | PASS |  |
+| restart | query:row compared with a correlated aggregating subquery | PASS |  |
+| restart | query:the session database beside a table | PASS |  |
+| restart | service:restart:no table left service unexpectedly | PASS |  |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150022 sync_runs rows for db_a375bcc8a1e6c8308fb32a7ee0bdc7ec |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
-| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 2ms p95 4ms over 150000 rows |
-| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 2ms p95 4ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 17ms p99 31ms |
-| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 30ms |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 2ms p95 3ms over 150000 rows |
+| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 2ms p95 3ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 18ms p99 32ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 31ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
 | activity-history | converge:Fact | PASS |  |
@@ -4330,10 +4442,17 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:where: an unsigned column against a negative literal | PASS |  |
 | activity-history | query:where: a string number against an integer column | PASS |  |
 | activity-history | query:where: a general_ci column under PAD SPACE | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4853 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4853 requests: p50 2ms p99 9ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 7ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 8574 vs source 8574 |
+| activity-history | query:left join counts over the unpaired row | PASS |  |
+| activity-history | query:grouped left join counts over the unpaired row | PASS |  |
+| activity-history | query:row compared with an aggregating subquery | PASS |  |
+| activity-history | query:row compared with an aggregating subquery over no rows | PASS |  |
+| activity-history | query:row compared with a correlated aggregating subquery | PASS |  |
+| activity-history | query:the session database beside a table | PASS |  |
+| activity-history | service:activity-history:no table left service unexpectedly | PASS |  |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4800 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4800 requests: p50 3ms p99 20ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 24ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 7912 vs source 7912 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
@@ -4583,6 +4702,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | poll-storm | query:where: an unsigned column against a negative literal | PASS |  |
 | poll-storm | query:where: a string number against an integer column | PASS |  |
 | poll-storm | query:where: a general_ci column under PAD SPACE | PASS |  |
+| poll-storm | query:left join counts over the unpaired row | PASS |  |
+| poll-storm | query:grouped left join counts over the unpaired row | PASS |  |
+| poll-storm | query:row compared with an aggregating subquery | PASS |  |
+| poll-storm | query:row compared with an aggregating subquery over no rows | PASS |  |
+| poll-storm | query:row compared with a correlated aggregating subquery | PASS |  |
+| poll-storm | query:the session database beside a table | PASS |  |
+| poll-storm | service:poll-storm:no table left service unexpectedly | PASS |  |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -4854,6 +4980,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | query:where: an unsigned column against a negative literal | PASS |  |
 | control-plane | query:where: a string number against an integer column | PASS |  |
 | control-plane | query:where: a general_ci column under PAD SPACE | PASS |  |
+| control-plane | query:left join counts over the unpaired row | PASS |  |
+| control-plane | query:grouped left join counts over the unpaired row | PASS |  |
+| control-plane | query:row compared with an aggregating subquery | PASS |  |
+| control-plane | query:row compared with an aggregating subquery over no rows | PASS |  |
+| control-plane | query:row compared with a correlated aggregating subquery | PASS |  |
+| control-plane | query:the session database beside a table | PASS |  |
+| control-plane | service:control-plane:no table left service unexpectedly | PASS |  |
 | snapshot-ddl-window | a table created just before a forced snapshot is still adopted | PASS |  |
 | snapshot-ddl-window | converge:Dim | PASS |  |
 | snapshot-ddl-window | converge:Event | PASS |  |
@@ -5105,6 +5238,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | query:where: an unsigned column against a negative literal | PASS |  |
 | snapshot-ddl-window | query:where: a string number against an integer column | PASS |  |
 | snapshot-ddl-window | query:where: a general_ci column under PAD SPACE | PASS |  |
+| snapshot-ddl-window | query:left join counts over the unpaired row | PASS |  |
+| snapshot-ddl-window | query:grouped left join counts over the unpaired row | PASS |  |
+| snapshot-ddl-window | query:row compared with an aggregating subquery | PASS |  |
+| snapshot-ddl-window | query:row compared with an aggregating subquery over no rows | PASS |  |
+| snapshot-ddl-window | query:row compared with a correlated aggregating subquery | PASS |  |
+| snapshot-ddl-window | query:the session database beside a table | PASS |  |
+| snapshot-ddl-window | service:snapshot-ddl-window:no table left service unexpectedly | PASS |  |
 | drop-table-cdc | drop-table:replicates before the drop | PASS |  |
 | drop-table-cdc | drop-table:source drop marks the table orphaned | PASS |  |
 | drop-table-cdc | drop-table:the rest of the database keeps replicating | PASS |  |
@@ -5360,6 +5500,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | query:where: an unsigned column against a negative literal | PASS |  |
 | drop-table-cdc | query:where: a string number against an integer column | PASS |  |
 | drop-table-cdc | query:where: a general_ci column under PAD SPACE | PASS |  |
+| drop-table-cdc | query:left join counts over the unpaired row | PASS |  |
+| drop-table-cdc | query:grouped left join counts over the unpaired row | PASS |  |
+| drop-table-cdc | query:row compared with an aggregating subquery | PASS |  |
+| drop-table-cdc | query:row compared with an aggregating subquery over no rows | PASS |  |
+| drop-table-cdc | query:row compared with a correlated aggregating subquery | PASS |  |
+| drop-table-cdc | query:the session database beside a table | PASS |  |
+| drop-table-cdc | service:drop-table-cdc:no table left service unexpectedly | PASS |  |
 | drop-table-recreate | recreate:first generation replicates | PASS |  |
 | drop-table-recreate | recreate:a table recreated under the same name replicates as a new table | PASS |  |
 | drop-table-recreate | recreate:the rest of the database keeps replicating | PASS |  |
@@ -5613,10 +5760,17 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | query:where: an unsigned column against a negative literal | PASS |  |
 | drop-table-recreate | query:where: a string number against an integer column | PASS |  |
 | drop-table-recreate | query:where: a general_ci column under PAD SPACE | PASS |  |
+| drop-table-recreate | query:left join counts over the unpaired row | PASS |  |
+| drop-table-recreate | query:grouped left join counts over the unpaired row | PASS |  |
+| drop-table-recreate | query:row compared with an aggregating subquery | PASS |  |
+| drop-table-recreate | query:row compared with an aggregating subquery over no rows | PASS |  |
+| drop-table-recreate | query:row compared with a correlated aggregating subquery | PASS |  |
+| drop-table-recreate | query:the session database beside a table | PASS |  |
+| drop-table-recreate | service:drop-table-recreate:no table left service unexpectedly | PASS |  |
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_a375bcc8a1e6c8308fb32a7ee0bdc7ec","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-11-14T03:37:02.416078472+00:00","updated_at":"2026-11-14T03:40:54.883105576+00:00"},"tables":30,"rows":11825} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -5868,6 +6022,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | query:where: an unsigned column against a negative literal | PASS |  |
 | drop-table-polling | query:where: a string number against an integer column | PASS |  |
 | drop-table-polling | query:where: a general_ci column under PAD SPACE | PASS |  |
+| drop-table-polling | query:left join counts over the unpaired row | PASS |  |
+| drop-table-polling | query:grouped left join counts over the unpaired row | PASS |  |
+| drop-table-polling | query:row compared with an aggregating subquery | PASS |  |
+| drop-table-polling | query:row compared with an aggregating subquery over no rows | PASS |  |
+| drop-table-polling | query:row compared with a correlated aggregating subquery | PASS |  |
+| drop-table-polling | query:the session database beside a table | PASS |  |
+| drop-table-polling | service:drop-table-polling:no table left service unexpectedly | PASS |  |
 | restart-during-snapshot | restart-during-snapshot:interrupts a copy in flight | PASS |  |
 | restart-during-snapshot | restart-during-snapshot:the database resumes replicating on its own | PASS |  |
 | restart-during-snapshot | restart-during-snapshot:every row arrives after the resume | PASS | big: 300000 of 300000 |
@@ -6122,6 +6283,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | query:where: an unsigned column against a negative literal | PASS |  |
 | restart-during-snapshot | query:where: a string number against an integer column | PASS |  |
 | restart-during-snapshot | query:where: a general_ci column under PAD SPACE | PASS |  |
+| restart-during-snapshot | query:left join counts over the unpaired row | PASS |  |
+| restart-during-snapshot | query:grouped left join counts over the unpaired row | PASS |  |
+| restart-during-snapshot | query:row compared with an aggregating subquery | PASS |  |
+| restart-during-snapshot | query:row compared with an aggregating subquery over no rows | PASS |  |
+| restart-during-snapshot | query:row compared with a correlated aggregating subquery | PASS |  |
+| restart-during-snapshot | query:the session database beside a table | PASS |  |
+| restart-during-snapshot | service:restart-during-snapshot:no table left service unexpectedly | PASS |  |
 | restart-during-resync | restart-during-resync:interrupts a resync in flight | PASS |  |
 | restart-during-resync | restart-during-resync:the interrupted table comes back on its own | PASS |  |
 | restart-during-resync | restart-during-resync:the other table never leaves streaming | PASS |  |
@@ -6378,13 +6546,20 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:where: an unsigned column against a negative literal | PASS |  |
 | restart-during-resync | query:where: a string number against an integer column | PASS |  |
 | restart-during-resync | query:where: a general_ci column under PAD SPACE | PASS |  |
+| restart-during-resync | query:left join counts over the unpaired row | PASS |  |
+| restart-during-resync | query:grouped left join counts over the unpaired row | PASS |  |
+| restart-during-resync | query:row compared with an aggregating subquery | PASS |  |
+| restart-during-resync | query:row compared with an aggregating subquery over no rows | PASS |  |
+| restart-during-resync | query:row compared with a correlated aggregating subquery | PASS |  |
+| restart-during-resync | query:the session database beside a table | PASS |  |
+| restart-during-resync | service:restart-during-resync:no table left service unexpectedly | PASS |  |
 | memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 97 ok, dashboards 84 ok; no errors |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 88 ok, dashboards 78 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 97 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 150ms p99 713ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 16ms over 6 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 150MB with a 256MB budget |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 88 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 150ms p99 753ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 12ms over 6 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 171MB with a 256MB budget |
 | memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200600 vs source 200600 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
@@ -6637,11 +6812,18 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | memory-pressure | query:where: an unsigned column against a negative literal | PASS |  |
 | memory-pressure | query:where: a string number against an integer column | PASS |  |
 | memory-pressure | query:where: a general_ci column under PAD SPACE | PASS |  |
+| memory-pressure | query:left join counts over the unpaired row | PASS |  |
+| memory-pressure | query:grouped left join counts over the unpaired row | PASS |  |
+| memory-pressure | query:row compared with an aggregating subquery | PASS |  |
+| memory-pressure | query:row compared with an aggregating subquery over no rows | PASS |  |
+| memory-pressure | query:row compared with a correlated aggregating subquery | PASS |  |
+| memory-pressure | query:the session database beside a table | PASS |  |
+| memory-pressure | service:memory-pressure:no table left service unexpectedly | PASS |  |
 | reconcile-memory | reconcile-memory:the source holds the large child table | PASS | 2000000 rows |
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
 | reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 4.4s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 68MB before, peak 319MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 64MB before, peak 299MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
@@ -6892,6 +7074,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | query:where: an unsigned column against a negative literal | PASS |  |
 | reconcile-memory | query:where: a string number against an integer column | PASS |  |
 | reconcile-memory | query:where: a general_ci column under PAD SPACE | PASS |  |
+| reconcile-memory | query:left join counts over the unpaired row | PASS |  |
+| reconcile-memory | query:grouped left join counts over the unpaired row | PASS |  |
+| reconcile-memory | query:row compared with an aggregating subquery | PASS |  |
+| reconcile-memory | query:row compared with an aggregating subquery over no rows | PASS |  |
+| reconcile-memory | query:row compared with a correlated aggregating subquery | PASS |  |
+| reconcile-memory | query:the session database beside a table | PASS |  |
+| reconcile-memory | service:reconcile-memory:no table left service unexpectedly | PASS |  |
 | drop-database | cross-schema:same-named table replicates first | PASS |  |
 | drop-database | cross-schema:dropping another schema's table leaves this one replicating | PASS |  |
 | drop-database | drop-database:second database snapshots | PASS |  |
@@ -7150,6 +7339,13 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | query:where: an unsigned column against a negative literal | PASS |  |
 | drop-database | query:where: a string number against an integer column | PASS |  |
 | drop-database | query:where: a general_ci column under PAD SPACE | PASS |  |
+| drop-database | query:left join counts over the unpaired row | PASS |  |
+| drop-database | query:grouped left join counts over the unpaired row | PASS |  |
+| drop-database | query:row compared with an aggregating subquery | PASS |  |
+| drop-database | query:row compared with an aggregating subquery over no rows | PASS |  |
+| drop-database | query:row compared with a correlated aggregating subquery | PASS |  |
+| drop-database | query:the session database beside a table | PASS |  |
+| drop-database | service:drop-database:no table left service unexpectedly | PASS |  |
 | ddl-documented-gaps | converge:Dim | PASS |  |
 | ddl-documented-gaps | converge:Event | PASS |  |
 | ddl-documented-gaps | converge:Fact | PASS |  |
@@ -7400,38 +7596,45 @@ Source: `mysql:8.4` (server 8.4.13), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | query:where: an unsigned column against a negative literal | PASS |  |
 | ddl-documented-gaps | query:where: a string number against an integer column | PASS |  |
 | ddl-documented-gaps | query:where: a general_ci column under PAD SPACE | PASS |  |
+| ddl-documented-gaps | query:left join counts over the unpaired row | PASS |  |
+| ddl-documented-gaps | query:grouped left join counts over the unpaired row | PASS |  |
+| ddl-documented-gaps | query:row compared with an aggregating subquery | PASS |  |
+| ddl-documented-gaps | query:row compared with an aggregating subquery over no rows | PASS |  |
+| ddl-documented-gaps | query:row compared with a correlated aggregating subquery | PASS |  |
+| ddl-documented-gaps | query:the session database beside a table | PASS |  |
+| ddl-documented-gaps | service:ddl-documented-gaps:no table left service unexpectedly | PASS |  |
 
 ## Timing
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 0.3 | 0.6 |
-| orm-compat | 2.0 | 0.0 | 0.5 |
-| crud | 0.0 | 0.0 | 0.6 |
-| composite-keys | 0.0 | 0.0 | 0.6 |
-| type-edges | 0.0 | 0.3 | 0.7 |
-| ddl | 7.9 | 0.3 | 0.4 |
-| schema-drift-minimal | 0.0 | 0.1 | 0.4 |
-| schema-drift-unseen | 0.0 | 1.1 | 0.4 |
-| churn | 0.1 | 1.8 | 0.4 |
-| contention | 16.2 | 0.1 | 1.2 |
-| execution-budget | 0.0 | 0.1 | 1.1 |
-| connection-collation | 0.2 | 0.1 | 0.8 |
-| spill | 7.0 | 0.9 | 1.1 |
-| pooling | 0.0 | 0.4 | 1.0 |
-| local-database | 0.0 | 0.1 | 1.0 |
-| restart | 0.5 | 1.4 | 0.8 |
-| activity-history | 1.4 | 0.9 | 0.8 |
-| poll-storm | 22.0 | 0.1 | 1.2 |
-| control-plane | 22.7 | 0.2 | 0.8 |
-| snapshot-ddl-window | 5.0 | 0.1 | 0.7 |
-| drop-table-cdc | 5.7 | 0.2 | 0.8 |
-| drop-table-recreate | 5.6 | 0.1 | 0.8 |
-| drop-table-polling | 35.7 | 0.1 | 0.7 |
-| restart-during-snapshot | 2.0 | 0.2 | 0.8 |
-| restart-during-resync | 4.1 | 0.2 | 0.8 |
-| memory-pressure | 6.7 | 0.2 | 0.8 |
-| reconcile-memory | 19.5 | 0.1 | 0.6 |
-| drop-database | 8.4 | 0.1 | 0.6 |
-| ddl-documented-gaps | 0.0 | 0.1 | 0.6 |
-| total | 172.9 | 9.8 | 21.5 |
+| snapshot | 0.0 | 0.1 | 0.6 |
+| orm-compat | 3.3 | 0.1 | 0.6 |
+| crud | 0.0 | 0.3 | 0.7 |
+| composite-keys | 0.0 | 0.3 | 0.8 |
+| type-edges | 0.0 | 0.1 | 0.8 |
+| ddl | 7.3 | 2.2 | 0.6 |
+| schema-drift-minimal | 0.0 | 0.6 | 0.5 |
+| schema-drift-unseen | 0.0 | 3.0 | 0.6 |
+| churn | 0.2 | 1.9 | 0.7 |
+| contention | 13.7 | 0.1 | 1.0 |
+| execution-budget | 0.0 | 0.1 | 1.0 |
+| connection-collation | 0.2 | 0.1 | 1.1 |
+| spill | 7.9 | 1.0 | 1.0 |
+| pooling | 0.0 | 0.1 | 1.3 |
+| local-database | 0.1 | 0.2 | 1.1 |
+| restart | 0.6 | 1.8 | 1.2 |
+| activity-history | 1.5 | 1.0 | 0.9 |
+| poll-storm | 21.4 | 0.1 | 0.9 |
+| control-plane | 28.4 | 0.1 | 0.6 |
+| snapshot-ddl-window | 5.1 | 0.1 | 0.6 |
+| drop-table-cdc | 5.6 | 0.1 | 0.7 |
+| drop-table-recreate | 5.6 | 0.1 | 0.7 |
+| drop-table-polling | 103.1 | 0.1 | 0.7 |
+| restart-during-snapshot | 1.7 | 0.1 | 0.7 |
+| restart-during-resync | 3.9 | 0.1 | 0.7 |
+| memory-pressure | 5.9 | 0.3 | 0.8 |
+| reconcile-memory | 20.2 | 0.1 | 0.7 |
+| drop-database | 10.2 | 0.1 | 0.7 |
+| ddl-documented-gaps | 0.0 | 0.1 | 0.5 |
+| total | 246.2 | 14.4 | 22.8 |

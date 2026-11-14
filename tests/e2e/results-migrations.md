@@ -1,8 +1,8 @@
 # Pintail schema-migration differential gate
 
-Measured 2026-10-27T13:57:45.748Z against `mysql:8.4`.
+Measured 2026-11-14T03:36:43.606Z against `mysql:8.4`.
 
-**269 passed, 0 failed.**
+**383 passed, 0 failed.**
 
 | Family | Check | Status | Detail |
 |---|---|---|---|
@@ -168,6 +168,22 @@ Measured 2026-10-27T13:57:45.748Z against `mysql:8.4`.
 | a stored generated column | rows the migration never wrote to are not stale | PASS |  |
 | a virtual generated column | the whole table matches the source after the migration | PASS |  |
 | a virtual generated column | rows the migration never wrote to are not stale | PASS |  |
+| a statement led by a comment | the whole table matches the source after the migration | PASS |  |
+| a statement led by a comment | rows the migration never wrote to are not stale | PASS |  |
+| a comment between the opening words | the whole table matches the source after the migration | PASS |  |
+| a comment between the opening words | rows the migration never wrote to are not stale | PASS |  |
+| a line break between the opening words | the whole table matches the source after the migration | PASS |  |
+| a line break between the opening words | rows the migration never wrote to are not stale | PASS |  |
+| two text columns added back to back | the whole table matches the source after the migration | PASS |  |
+| two text columns added back to back | rows the migration never wrote to are not stale | PASS |  |
+| a column and its index in one statement | the whole table matches the source after the migration | PASS |  |
+| a column and its index in one statement | rows the migration never wrote to are not stale | PASS |  |
+| a column and a unique key over it in one statement | the whole table matches the source after the migration | PASS |  |
+| a column and a unique key over it in one statement | rows the migration never wrote to are not stale | PASS |  |
+| a nullable column beside ALGORITHM | the whole table matches the source after the migration | PASS |  |
+| a nullable column beside ALGORITHM | rows the migration never wrote to are not stale | PASS |  |
+| a text column placed after another beside ALGORITHM | the whole table matches the source after the migration | PASS |  |
+| a text column placed after another beside ALGORITHM | rows the migration never wrote to are not stale | PASS |  |
 | not null over a column holding no null | the whole table matches the source after the migration | PASS |  |
 | not null over a column holding no null | rows the migration never wrote to are not stale | PASS |  |
 | integer narrows around values that fit | the whole table matches the source after the migration | PASS |  |
@@ -188,6 +204,62 @@ Measured 2026-10-27T13:57:45.748Z against `mysql:8.4`.
 | two narrowings in one statement, one of them over a null | rows the migration never wrote to are not stale | PASS |  |
 | varchar shrinks and widens again with a long row after | the whole table matches the source after the migration | PASS |  |
 | varchar shrinks and widens again with a long row after | rows the migration never wrote to are not stale | PASS |  |
+| varchar widens beside ALGORITHM and LOCK | the whole table matches the source after the migration | PASS |  |
+| varchar widens beside ALGORITHM and LOCK | rows the migration never wrote to are not stale | PASS |  |
+| not null relaxed beside ALGORITHM and LOCK | the whole table matches the source after the migration | PASS |  |
+| not null relaxed beside ALGORITHM and LOCK | rows the migration never wrote to are not stale | PASS |  |
+| integer narrows around values that fit beside ALGORITHM | the whole table matches the source after the migration | PASS |  |
+| integer narrows around values that fit beside ALGORITHM | rows the migration never wrote to are not stale | PASS |  |
+| enum gains a member beside ALGORITHM | the whole table matches the source after the migration | PASS |  |
+| enum gains a member beside ALGORITHM | rows the migration never wrote to are not stale | PASS |  |
+| column renamed beside ALGORITHM | the whole table matches the source after the migration | PASS |  |
+| column renamed beside ALGORITHM | rows the migration never wrote to are not stale | PASS |  |
+| unique key added beside ALGORITHM and LOCK | the whole table matches the source after the migration | PASS |  |
+| unique key added beside ALGORITHM and LOCK | rows the migration never wrote to are not stale | PASS |  |
+| column dropped with its index | the whole table matches the source after the migration | PASS |  |
+| column dropped with its index | rows the migration never wrote to are not stale | PASS |  |
+| index renamed | the whole table matches the source after the migration | PASS |  |
+| index renamed | rows the migration never wrote to are not stale | PASS |  |
+| index dropped | the whole table matches the source after the migration | PASS |  |
+| index dropped | rows the migration never wrote to are not stale | PASS |  |
+| one-column index made composite | the whole table matches the source after the migration | PASS |  |
+| one-column index made composite | rows the migration never wrote to are not stale | PASS |  |
+| unique key made composite beside the primary key | the whole table matches the source after the migration | PASS |  |
+| unique key made composite beside the primary key | rows the migration never wrote to are not stale | PASS |  |
+| primary key made composite | the whole table matches the source after the migration | PASS |  |
+| primary key made composite | rows the migration never wrote to are not stale | PASS |  |
+| an alter with no clause | the whole table matches the source after the migration | PASS |  |
+| an alter with no clause | rows the migration never wrote to are not stale | PASS |  |
+| integer width narrows | taken by recopying the table | PASS |  |
+| integer width widens | taken without a quarantine | PASS |  |
+| signedness changes | taken by recopying the table | PASS |  |
+| decimal digits shrink | taken by recopying the table | PASS |  |
+| decimal digits grow | taken without a quarantine | PASS |  |
+| decimal becomes double | taken by recopying the table | PASS |  |
+| varchar capacity shrinks | taken by recopying the table | PASS |  |
+| varchar becomes fixed-width char | taken by recopying the table | PASS |  |
+| varbinary becomes fixed-width binary | taken by recopying the table | PASS |  |
+| char becomes varchar | taken without a quarantine | PASS |  |
+| varchar becomes longtext | taken without a quarantine | PASS |  |
+| text family shrinks | taken by recopying the table | PASS |  |
+| varchar becomes int | taken by recopying the table | PASS |  |
+| text becomes blob | taken by recopying the table | PASS |  |
+| latin1 becomes utf8mb4 | taken without a quarantine | PASS |  |
+| collation becomes case sensitive | taken without a quarantine | PASS |  |
+| datetime becomes timestamp | taken by recopying the table | PASS |  |
+| timestamp becomes datetime | taken by recopying the table | PASS |  |
+| datetime loses fractional seconds | taken by recopying the table | PASS |  |
+| datetime becomes date | taken by recopying the table | PASS |  |
+| enum members reorder | taken without a quarantine | PASS |  |
+| enum member is dropped | taken by recopying the table | PASS |  |
+| enum member is renamed | taken by recopying the table | PASS |  |
+| enum member is appended | taken without a quarantine | PASS |  |
+| set members reorder | taken by recopying the table | PASS |  |
+| set member is appended | taken without a quarantine | PASS |  |
+| bit width narrows | taken by recopying the table | PASS |  |
+| nullable becomes not null | taken by recopying the table | PASS |  |
+| not null becomes nullable | taken without a quarantine | PASS |  |
+| varbinary capacity shrinks | taken by recopying the table | PASS |  |
 | text defaults placed first and after a column | evolved in place, never quarantined | PASS |  |
 | a latin1 text default | evolved in place, never quarantined | PASS |  |
 | enum and set defaults | evolved in place, never quarantined | PASS |  |
@@ -206,6 +278,14 @@ Measured 2026-10-27T13:57:45.748Z against `mysql:8.4`.
 | a json expression default | recopied, with the reason given | PASS |  |
 | a stored generated column | recopied, with the reason given | PASS |  |
 | a virtual generated column | recopied, with the reason given | PASS |  |
+| a statement led by a comment | evolved in place, never quarantined | PASS |  |
+| a comment between the opening words | evolved in place, never quarantined | PASS |  |
+| a line break between the opening words | evolved in place, never quarantined | PASS |  |
+| two text columns added back to back | evolved in place, never quarantined | PASS |  |
+| a column and its index in one statement | evolved in place, never quarantined | PASS |  |
+| a column and a unique key over it in one statement | recopied, with the reason given | PASS |  |
+| a nullable column beside ALGORITHM | evolved in place, never quarantined | PASS |  |
+| a text column placed after another beside ALGORITHM | evolved in place, never quarantined | PASS |  |
 | not null over a column holding no null | adopted in place on the evidence of its rows, never quarantined | PASS |  |
 | integer narrows around values that fit | adopted in place on the evidence of its rows, never quarantined | PASS |  |
 | integer narrows around a row the stream carried just before | recopied, with the reason given | PASS |  |
@@ -215,6 +295,19 @@ Measured 2026-10-27T13:57:45.748Z against `mysql:8.4`.
 | varbinary shrinks around values that fit | adopted in place on the evidence of its rows, never quarantined | PASS |  |
 | enum drops a member no row holds | adopted in place on the evidence of its rows, never quarantined | PASS |  |
 | two narrowings in one statement, one of them over a null | recopied, with the reason given | PASS |  |
+| varchar widens beside ALGORITHM and LOCK | taken without a quarantine | PASS |  |
+| not null relaxed beside ALGORITHM and LOCK | taken without a quarantine | PASS |  |
+| integer narrows around values that fit beside ALGORITHM | adopted in place on the evidence of its rows, never quarantined | PASS |  |
+| enum gains a member beside ALGORITHM | taken without a quarantine | PASS |  |
+| column renamed beside ALGORITHM | taken without a quarantine | PASS |  |
+| unique key added beside ALGORITHM and LOCK | taken without a quarantine | PASS |  |
+| column dropped with its index | recopied, with the reason given | PASS |  |
+| index renamed | taken without a quarantine | PASS |  |
+| index dropped | taken without a quarantine | PASS |  |
+| one-column index made composite | taken without a quarantine | PASS |  |
+| unique key made composite beside the primary key | taken without a quarantine | PASS |  |
+| primary key made composite | recopied, with the reason given | PASS |  |
+| an alter with no clause | taken without a quarantine | PASS |  |
 | integer width narrows | the table still matches the source after a restart | PASS |  |
 | integer width widens | the table still matches the source after a restart | PASS |  |
 | signedness changes | the table still matches the source after a restart | PASS |  |
@@ -265,6 +358,14 @@ Measured 2026-10-27T13:57:45.748Z against `mysql:8.4`.
 | a json expression default | the table still matches the source after a restart | PASS |  |
 | a stored generated column | the table still matches the source after a restart | PASS |  |
 | a virtual generated column | the table still matches the source after a restart | PASS |  |
+| a statement led by a comment | the table still matches the source after a restart | PASS |  |
+| a comment between the opening words | the table still matches the source after a restart | PASS |  |
+| a line break between the opening words | the table still matches the source after a restart | PASS |  |
+| two text columns added back to back | the table still matches the source after a restart | PASS |  |
+| a column and its index in one statement | the table still matches the source after a restart | PASS |  |
+| a column and a unique key over it in one statement | the table still matches the source after a restart | PASS |  |
+| a nullable column beside ALGORITHM | the table still matches the source after a restart | PASS |  |
+| a text column placed after another beside ALGORITHM | the table still matches the source after a restart | PASS |  |
 | not null over a column holding no null | the table still matches the source after a restart | PASS |  |
 | integer narrows around values that fit | the table still matches the source after a restart | PASS |  |
 | integer narrows around a row the stream carried just before | the table still matches the source after a restart | PASS |  |
@@ -275,3 +376,16 @@ Measured 2026-10-27T13:57:45.748Z against `mysql:8.4`.
 | enum drops a member no row holds | the table still matches the source after a restart | PASS |  |
 | two narrowings in one statement, one of them over a null | the table still matches the source after a restart | PASS |  |
 | varchar shrinks and widens again with a long row after | the table still matches the source after a restart | PASS |  |
+| varchar widens beside ALGORITHM and LOCK | the table still matches the source after a restart | PASS |  |
+| not null relaxed beside ALGORITHM and LOCK | the table still matches the source after a restart | PASS |  |
+| integer narrows around values that fit beside ALGORITHM | the table still matches the source after a restart | PASS |  |
+| enum gains a member beside ALGORITHM | the table still matches the source after a restart | PASS |  |
+| column renamed beside ALGORITHM | the table still matches the source after a restart | PASS |  |
+| unique key added beside ALGORITHM and LOCK | the table still matches the source after a restart | PASS |  |
+| column dropped with its index | the table still matches the source after a restart | PASS |  |
+| index renamed | the table still matches the source after a restart | PASS |  |
+| index dropped | the table still matches the source after a restart | PASS |  |
+| one-column index made composite | the table still matches the source after a restart | PASS |  |
+| unique key made composite beside the primary key | the table still matches the source after a restart | PASS |  |
+| primary key made composite | the table still matches the source after a restart | PASS |  |
+| an alter with no clause | the table still matches the source after a restart | PASS |  |
