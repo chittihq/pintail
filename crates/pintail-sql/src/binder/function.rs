@@ -3022,6 +3022,25 @@ pub(super) fn bind_scalar(
         args
     };
     let mut args = float_string_arguments(function, args);
+    // A position or a count is an integer, and an exact decimal becomes one
+    // by rounding. Its carrier is text, which the evaluator reads the way
+    // it reads a string argument - by its leading digits - so the rounding
+    // is spelled here, where the type is still known.
+    let counts: &[usize] = match function {
+        ScalarFunction::Substring | ScalarFunction::Insert => &[1, 2],
+        ScalarFunction::Left | ScalarFunction::Right => &[1],
+        _ => &[],
+    };
+    for &index in counts {
+        if let Some(argument) = args.get_mut(index)
+            && matches!(argument.data_type, Some(DataType::Decimal { .. }))
+        {
+            *argument = bind_scalar(
+                ScalarFunction::Round { decimal: false },
+                vec![argument.clone()],
+            )?;
+        }
+    }
     let subject = match function {
         ScalarFunction::Locate => Some(1),
         ScalarFunction::Instr | ScalarFunction::Field => Some(0),

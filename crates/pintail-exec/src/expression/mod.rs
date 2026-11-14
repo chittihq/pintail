@@ -10482,7 +10482,8 @@ fn mysql_decimals(value: &Value) -> Result<i64, ExecError> {
 fn saturating_argument(value: &Value) -> Result<i64, ExecError> {
     Ok(match value {
         Value::UInt64(unsigned) => i64::try_from(*unsigned).unwrap_or(i64::MAX),
-        Value::Float64(number) => saturating_i64(number.get()),
+        // A double becomes an integer by rounding to nearest, ties to even.
+        Value::Float64(number) => saturating_i64(number.get().round_ties_even()),
         Value::Utf8(text) | Value::Enum { label: text, .. } => {
             saturating_i64(parse_mysql_number(text))
         }

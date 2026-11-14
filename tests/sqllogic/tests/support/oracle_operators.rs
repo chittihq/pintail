@@ -398,6 +398,15 @@ const MEMBER_OF_EXACT_DECIMALS: &[&str] = &[
     r#"SELECT id, frac MEMBER OF('[0, 1.5, 2.5, -0.005]'), whole MEMBER OF('[0, 1, 2, 3, -1]') FROM bounds ORDER BY id"#,
 ];
 
+const FRACTIONAL_POSITIONS_AND_COUNTS: &[&str] = &[
+    r#"SELECT MID('abcdef', 1.5, 2), SUBSTRING('abcdef', 2.5), SUBSTRING('abcdef', 1.4, 1.5), SUBSTR('abcdef', 1, 1.5), LEFT('abcdef', 1.5), LEFT('abcdef', 2.4), RIGHT('abcdef', 2.5), RIGHT('abcdef', 0.4), INSERT('abc', 1.5, 1.5, 'X'), INSERT('abc', 2.5, 1, 'X'), INSERT('abc', 1, 1.5, 'X'), SUBSTRING('abcdef', -1.5), SUBSTRING('abcdef', -2.4, 1.6), LEFT('abcdef', 0.5), LEFT('abcdef', -0.5)"#,
+    r#"SELECT MID('abcdef', 1.5e0, 2), SUBSTRING('abcdef', 2.5e0), LEFT('abcdef', 1.5e0), LEFT('abcdef', 2.5e0), LEFT('abcdef', 0.5e0), RIGHT('abcdef', 2.5e0), RIGHT('abcdef', 3.5e0), INSERT('abc', 1.5e0, 1.5e0, 'X'), INSERT('abc', 2.5e0, 2.5e0, 'X'), SUBSTRING('abcdef', -1.5e0), SUBSTRING('abcdef', -2.5e0)"#,
+    r#"SELECT MID('abcdef', '1.5', 2), SUBSTRING('abcdef', '2.5'), LEFT('abcdef', '1.5'), RIGHT('abcdef', '2.9'), INSERT('abc', '1.5', '1.5', 'X'), LEFT('abcdef', '2x')"#,
+    r#"SELECT id, LEFT(name, frac), RIGHT(name, frac), SUBSTRING(name, frac), SUBSTRING(name, 1, frac), INSERT(name, frac, frac, '#'), LEFT(name, approx), SUBSTRING(name, approx, 2), RIGHT(name, approx) FROM (SELECT b.id, b.frac, b.approx, 'abcdefgh' AS name FROM bounds b) t ORDER BY id"#,
+    r#"SELECT id, LEFT(name, total / 10), SUBSTRING(name, total / 20), RIGHT(name, id / 2), INSERT(name, id / 4, id / 3, '#') FROM (SELECT o.id, o.total, 'abcdefghijklmnop' AS name FROM orders o) t ORDER BY id"#,
+    r#"SELECT LEFT('abcdef', 18446744073709551616), LEFT('abcdef', 99999999999999999999.5), SUBSTRING('abcdef', 2, 99999999999999999999999), RIGHT('abcdef', 1e30), SUBSTRING('abcdef', -99999999999999999999)"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -416,6 +425,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("fractional positions and counts", FRACTIONAL_POSITIONS_AND_COUNTS),
         ("member of exact decimals", MEMBER_OF_EXACT_DECIMALS),
         ("truth of time values", TRUTH_OF_TIME_VALUES),
     ] {
