@@ -94,6 +94,15 @@ pub(crate) struct DependentMemo {
 }
 
 impl DependentMemo {
+    /// A memo for one table-valued query evaluated per outer tuple (a
+    /// `LATERAL` derived table): a single slot, cached unless the query's
+    /// body is volatile.
+    pub(crate) fn for_query(query: &BoundQuery) -> Self {
+        let mut memo = Self::for_expressions(std::iter::empty());
+        memo.memoizable.push(!query_is_volatile(query));
+        memo
+    }
+
     /// A memo for one operator over `expression`, with each subquery in it
     /// classified by whether its body may be cached.
     pub(crate) fn for_expressions<'a>(expressions: impl Iterator<Item = &'a BoundExpr>) -> Self {

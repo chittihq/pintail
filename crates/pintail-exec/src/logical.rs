@@ -53,6 +53,27 @@ pub enum LogicalPlan {
         /// Synthetic columns visible to the containing query.
         columns: Vec<BoundColumn>,
     },
+    /// A `LATERAL` derived table joined to everything written to its left.
+    ///
+    /// `query` reads columns of `input` as outer references, so it has no
+    /// plan of its own here: it is planned and run for each distinct tuple
+    /// of those columns, and its rows are paired with the input rows that
+    /// carry the tuple. The rewrites treat the node as a leaf; `input` is
+    /// optimized on its own when the node is lowered.
+    Lateral {
+        /// The relations to the table's left, joined as written.
+        input: Box<LogicalPlan>,
+        /// The derived table's query, with its outer references unresolved.
+        query: Box<BoundQuery>,
+        /// Synthetic columns visible to the containing query.
+        columns: Vec<BoundColumn>,
+        /// Whether an input row with no accepted derived row is kept with
+        /// NULL derived columns (`LEFT JOIN LATERAL`).
+        preserve_input: bool,
+        /// The join's ON condition, read over the input's and the derived
+        /// table's columns.
+        condition: Option<BoundExpr>,
+    },
     /// Cartesian product of two or more inputs.
     CrossJoin {
         /// Inputs in semantic source order.
@@ -180,7 +201,7 @@ impl LogicalPlan {
                 rows.checked_mul(input.estimated_rows()?)
             }),
             Self::SetOp { left, .. } => left.estimated_rows(),
-            Self::Recursive { .. } => None,
+            Self::Recursive { .. } | Self::Lateral { .. } => None,
             Self::UnionAll { inputs } => inputs.iter().try_fold(0_u64, |rows, input| {
                 rows.checked_add(input.estimated_rows()?)
             }),
@@ -539,7 +560,76 @@ fn rewrite_window_references(expr: &mut BoundExpr, outputs: &[BoundColumn]) {
     }
 }
 
+/// A FROM clause holding a `LATERAL` derived table, lowered in written
+/// order: everything to the table's left - earlier comma-separated items
+/// as one cross join, and the joins before it in its own chain - becomes
+/// the input its query is evaluated against. A cross join with an earlier
+/// item commutes with the joins of a later one, whose conditions cannot
+/// read it, so folding the earlier items in changes no row.
+fn lateral_source_plan(from: Vec<BoundFrom>) -> LogicalPlan {
+    fn collapse(inputs: &mut Vec<LogicalPlan>) -> LogicalPlan {
+        match inputs.len() {
+            0 => LogicalPlan::OneRow,
+            1 => inputs.pop().unwrap_or(LogicalPlan::OneRow),
+            _ => LogicalPlan::CrossJoin {
+                inputs: std::mem::take(inputs),
+            },
+        }
+    }
+    fn lateral(
+        inputs: &mut Vec<LogicalPlan>,
+        mut table: BoundTable,
+        preserve_input: bool,
+        condition: Option<BoundExpr>,
+    ) -> LogicalPlan {
+        let Some(query) = table.input.take() else {
+            return relation_plan(table);
+        };
+        LogicalPlan::Lateral {
+            input: Box::new(collapse(inputs)),
+            query,
+            columns: table.columns,
+            preserve_input,
+            condition,
+        }
+    }
+    let mut inputs: Vec<LogicalPlan> = Vec::new();
+    for source in from {
+        let base = if source.base.lateral {
+            lateral(&mut inputs, source.base, false, None)
+        } else {
+            relation_plan(source.base)
+        };
+        inputs.push(base);
+        for join in source.joins {
+            let joined = if join.table.lateral {
+                lateral(
+                    &mut inputs,
+                    join.table,
+                    join.kind == BoundJoinKind::Left,
+                    join.condition,
+                )
+            } else {
+                LogicalPlan::Join {
+                    left: Box::new(inputs.pop().unwrap_or(LogicalPlan::OneRow)),
+                    right: Box::new(relation_plan(join.table)),
+                    kind: join.kind,
+                    condition: join.condition,
+                }
+            };
+            inputs.push(joined);
+        }
+    }
+    collapse(&mut inputs)
+}
+
 fn source_plan(from: Vec<BoundFrom>) -> LogicalPlan {
+    if from
+        .iter()
+        .any(|source| source.base.lateral || source.joins.iter().any(|join| join.table.lateral))
+    {
+        return lateral_source_plan(from);
+    }
     let mut inputs = from
         .into_iter()
         .map(|source| {

@@ -356,6 +356,7 @@ impl Binder<'_> {
                     key_column_ids: Vec::new(),
                     column_statistics: None,
                     input: None,
+                    lateral: false,
                 }),
             });
             factors.push(TableFactor::Table {
@@ -391,11 +392,11 @@ impl Binder<'_> {
         let unbound = "its outer rows or first table do not bind beside each other";
         let outer_scope = factors
             .iter()
-            .map(|factor| self.bind_table(factor, &scoped_ctes))
+            .map(|factor| self.bind_table(factor, &scoped_ctes, None))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| unbound)?;
         let first_table = self
-            .bind_table(&source.relation, ctes)
+            .bind_table(&source.relation, ctes, None)
             .map_err(|_| unbound)?;
         let mut joins = Vec::with_capacity(factors.len() + source.joins.len());
         for (index, factor) in factors.iter().enumerate().skip(1) {
@@ -579,7 +580,7 @@ impl Binder<'_> {
         let mut pool: Vec<Option<&Expr>> = conjuncts.iter().copied().map(Some).collect();
         let mut tables = vec![(
             &source.relation,
-            self.bind_table(&source.relation, ctes).ok()?,
+            self.bind_table(&source.relation, ctes, None).ok()?,
         )];
         for join in &source.joins {
             match &join.join_operator {
@@ -594,7 +595,10 @@ impl Binder<'_> {
                 }
                 _ => return None,
             }
-            tables.push((&join.relation, self.bind_table(&join.relation, ctes).ok()?));
+            tables.push((
+                &join.relation,
+                self.bind_table(&join.relation, ctes, None).ok()?,
+            ));
         }
         let mut placed = outer_scope.to_vec();
         let mut ordered = Vec::with_capacity(tables.len());

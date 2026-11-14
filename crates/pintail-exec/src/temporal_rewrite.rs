@@ -49,9 +49,13 @@ use pintail_types::{
 use crate::LogicalPlan;
 
 /// Rewrites every filter and join predicate in the plan.
+#[allow(clippy::too_many_lines)] // structural walk, one arm per plan node
 pub(crate) fn rewrite_temporal_predicates(plan: LogicalPlan) -> LogicalPlan {
     match plan {
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => plan,
         LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
             input: Box::new(rewrite_temporal_predicates(*input)),
             columns,

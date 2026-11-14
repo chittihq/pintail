@@ -177,6 +177,11 @@ pub struct BoundTable {
     ///
     /// Catalog-backed tables leave this empty and become storage scans.
     pub input: Option<Box<BoundQuery>>,
+    /// Whether `input` is a `LATERAL` derived table reading columns of the
+    /// relations to its left in the same FROM clause. Those references are
+    /// bound as outer columns; the table is evaluated once per distinct
+    /// tuple of them rather than once for the statement.
+    pub lateral: bool,
 }
 
 /// A column made unambiguous against one catalog snapshot.
@@ -2181,7 +2186,88 @@ impl BoundExpr {
     }
 }
 
+impl BoundExpr {
+    /// Whether any column this expression reads, at any depth, satisfies
+    /// `test`.
+    #[must_use]
+    pub fn any_column(&self, test: &dyn Fn(&BoundColumn) -> bool) -> bool {
+        match &self.kind {
+            BoundExprKind::Column(column) => test(column),
+            BoundExprKind::PreparedIn { expr, .. }
+            | BoundExprKind::Unary { expr, .. }
+            | BoundExprKind::IsNull { expr, .. } => expr.any_column(test),
+            BoundExprKind::Binary { left, right, .. } => {
+                left.any_column(test) || right.any_column(test)
+            }
+            BoundExprKind::Scalar { args, .. } => args.iter().any(|arg| arg.any_column(test)),
+            BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
+                query.any_column(test)
+            }
+            BoundExprKind::InSubquery { expr, query, .. } => {
+                expr.any_column(test) || query.any_column(test)
+            }
+            BoundExprKind::GroupKey(_)
+            | BoundExprKind::Aggregate(_)
+            | BoundExprKind::Window(_)
+            | BoundExprKind::Literal(_) => false,
+        }
+    }
+}
+
 impl BoundQuery {
+    /// Whether any column read anywhere in this query - its own clauses,
+    /// its derived inputs, its set-operation branches and the subqueries
+    /// inside its expressions - satisfies `test`.
+    #[must_use]
+    pub fn any_column(&self, test: &dyn Fn(&BoundColumn) -> bool) -> bool {
+        let reads = |expr: &BoundExpr| expr.any_column(test);
+        let window_reads = |window: &BoundWindow| {
+            let function = match &window.function {
+                WindowFunction::Aggregate(aggregate) => aggregate.expr.as_ref().is_some_and(reads),
+                WindowFunction::Offset { expr, default, .. } => {
+                    reads(expr) || default.as_deref().is_some_and(reads)
+                }
+                WindowFunction::Extreme { expr, .. } => reads(expr),
+                WindowFunction::RowNumber
+                | WindowFunction::Rank
+                | WindowFunction::DenseRank
+                | WindowFunction::NTile(_) => false,
+            };
+            function
+                || window.partition_by.iter().any(reads)
+                || window.order_by.iter().any(|key| reads(&key.expr))
+        };
+        self.projection.iter().any(|item| reads(&item.expr))
+            || self.filter.as_ref().is_some_and(reads)
+            || self.group_by.iter().any(reads)
+            || self.aggregates.iter().any(|aggregate| {
+                aggregate.expr.as_ref().is_some_and(reads)
+                    || aggregate.order_within.iter().any(|(expr, _)| reads(expr))
+            })
+            || self.windows.iter().any(window_reads)
+            || self.having.as_ref().is_some_and(reads)
+            || self.from.iter().any(|source| {
+                source
+                    .base
+                    .input
+                    .as_deref()
+                    .is_some_and(|input| input.any_column(test))
+                    || source.joins.iter().any(|join| {
+                        join.table
+                            .input
+                            .as_deref()
+                            .is_some_and(|input| input.any_column(test))
+                            || join.condition.as_ref().is_some_and(reads)
+                    })
+            })
+            || self.union_all.iter().any(|branch| branch.any_column(test))
+            || self.set_ops.iter().any(|(_, right)| right.any_column(test))
+            || self
+                .recursive
+                .as_deref()
+                .is_some_and(|recursive| recursive.member.any_column(test))
+    }
+
     /// Preserve a BIT declaration across direct derived and grouping projections.
     #[must_use]
     pub fn result_bit_width(&self, expr: &BoundExpr) -> Option<u8> {

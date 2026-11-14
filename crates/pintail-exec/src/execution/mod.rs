@@ -13,6 +13,7 @@ pub(crate) mod gather;
 mod join;
 pub(crate) use join::{PROBE_PREFETCH_BUILD_RATIO, PROBE_PREFETCH_ROWS};
 mod key_lookup;
+mod lateral;
 pub(crate) mod membership;
 mod membership_probe;
 mod memo;
@@ -559,6 +560,20 @@ pub enum PhysicalPlan {
         /// Synthetic layout visible to the containing query.
         columns: Vec<BoundColumn>,
     },
+    /// A `LATERAL` derived table joined to its input: `query` is planned
+    /// and run once per distinct tuple of the input columns it reads.
+    Lateral {
+        /// The relations to the table's left.
+        input: Box<Self>,
+        /// The derived table's query, outer references unresolved.
+        query: Box<BoundQuery>,
+        /// Synthetic layout visible to the containing query.
+        columns: Vec<BoundColumn>,
+        /// Whether an input row with no accepted derived row is kept.
+        preserve_input: bool,
+        /// The ON condition over input and derived columns.
+        condition: Option<BoundExpr>,
+    },
     /// Guarded Cartesian product.
     CrossJoin {
         /// Inputs in physical execution order.
@@ -855,6 +870,17 @@ impl PhysicalPlan {
                     timestamp: column.timestamp,
                 })
                 .collect(),
+            Self::Lateral { input, columns, .. } => {
+                let mut fields = input.output_fields();
+                fields.extend(columns.iter().map(|column| OutputField {
+                    name: column.name.clone(),
+                    data_type: Some(column.data_type),
+                    nullable: column.nullable,
+                    geometry: column.geometry,
+                    timestamp: column.timestamp,
+                }));
+                fields
+            }
             Self::Empty | Self::OneRow => Vec::new(),
         }
     }
@@ -881,6 +907,22 @@ impl PhysicalPlanner {
                 input: Box::new(Self::plan(*input, collation)?),
                 columns,
             }),
+            LogicalPlan::Lateral {
+                input,
+                query,
+                columns,
+                preserve_input,
+                condition,
+            } => {
+                let (input, condition) = crate::optimizer::optimize_lateral(*input, condition);
+                Ok(PhysicalPlan::Lateral {
+                    input: Box::new(Self::plan(input, collation)?),
+                    query,
+                    columns,
+                    preserve_input,
+                    condition,
+                })
+            }
             LogicalPlan::Filter { input, predicate } => Ok(PhysicalPlan::Filter {
                 input: Box::new(Self::plan(*input, collation)?),
                 predicate,
@@ -1777,6 +1819,16 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<RelationKey>
         | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => collect_logical_tables(input, tables),
+        LogicalPlan::Lateral { input, columns, .. } => {
+            collect_logical_tables(input, tables);
+            for column in columns {
+                tables.insert((
+                    column.database_id,
+                    column.table_id,
+                    column.relation_name.to_ascii_lowercase(),
+                ));
+            }
+        }
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
     }
 }
@@ -2434,6 +2486,9 @@ fn plan_label(plan: &PhysicalPlan) -> String {
             scan.predicates.len()
         ),
         PhysicalPlan::Derived { .. } => "Derived".to_owned(),
+        PhysicalPlan::Lateral { preserve_input, .. } => {
+            format!("Lateral preserve_input={preserve_input}")
+        }
         PhysicalPlan::CrossJoin { inputs, .. } => format!("CrossJoin inputs={}", inputs.len()),
         PhysicalPlan::UnionAll { inputs } => format!("UnionAll inputs={}", inputs.len()),
         PhysicalPlan::SetOp {
@@ -3282,6 +3337,10 @@ fn plan_regex_memory_upper_bound(plan: &PhysicalPlan) -> usize {
         PhysicalPlan::Recursive { anchor, member, .. } => {
             nested(anchor).saturating_add(nested(member))
         }
+        PhysicalPlan::Lateral {
+            input, condition, ..
+        } => nested(input)
+            .saturating_add(condition.as_ref().map_or(0, bound_regex_memory_upper_bound)),
         PhysicalPlan::KeyLookupJoin {
             left,
             right,
@@ -3543,7 +3602,10 @@ fn resolve_plan_subqueries(
                 )?;
             }
         }
+        // A lateral table's query is resolved each time it is run, with
+        // its outer values in place; its ON condition holds no subquery.
         PhysicalPlan::Derived { input, .. }
+        | PhysicalPlan::Lateral { input, .. }
         | PhysicalPlan::Distinct { input, .. }
         | PhysicalPlan::KeyRuns { input, .. }
         | PhysicalPlan::Sort { input, .. }
@@ -6721,6 +6783,42 @@ fn build_operator_inner(
             }
             let (input, _) = build_operator(*input, provider, memory, collation)?;
             Ok((input, columns))
+        }
+        PhysicalPlan::Lateral {
+            input,
+            query,
+            columns,
+            preserve_input,
+            condition,
+        } => {
+            let (mut input, input_columns) = build_operator(*input, provider, memory, collation)?;
+            let rows = lateral::execute_lateral_join(
+                &mut input,
+                &lateral::LateralJoin {
+                    input_columns: &input_columns,
+                    query: &query,
+                    columns: &columns,
+                    preserve_input,
+                    condition: condition.as_ref(),
+                },
+                provider,
+                memory,
+                collation,
+            )?;
+            let mut output_columns = input_columns;
+            output_columns.extend(columns);
+            let column_types = output_columns
+                .iter()
+                .map(|column| column.data_type)
+                .collect::<Vec<_>>();
+            Ok((
+                PullOperator::Rows {
+                    rows,
+                    cursor: 0,
+                    column_types,
+                },
+                output_columns,
+            ))
         }
         PhysicalPlan::CrossJoin {
             inputs,

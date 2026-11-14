@@ -135,7 +135,10 @@ fn push_top_k_below_left_joins(plan: &mut LogicalPlan) {
         | LogicalPlan::Window { input, .. }
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Limit { input, .. } => push_top_k_below_left_joins(input),
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => {}
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => {}
     }
 }
 
@@ -170,7 +173,10 @@ fn sink_semi_joins(plan: &mut LogicalPlan) {
         | LogicalPlan::Window { input, .. }
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Limit { input, .. } => sink_semi_joins(input),
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => {}
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => {}
     }
     sink_semi_join(plan);
 }
@@ -286,7 +292,10 @@ fn nest_outer_join_bridges(plan: &mut LogicalPlan) {
                 **input = nest_bridge(joined, bridge, target);
             }
         }
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => {}
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => {}
     }
 }
 
@@ -345,6 +354,10 @@ fn plan_tables(plan: &LogicalPlan, out: &mut BTreeSet<TableKey>) {
         | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => plan_tables(input, out),
+        LogicalPlan::Lateral { input, columns, .. } => {
+            plan_tables(input, out);
+            out.extend(columns.iter().map(column_table_key));
+        }
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
     }
 }
@@ -977,7 +990,10 @@ fn trim_derived_columns(
         LogicalPlan::Sort { input, .. }
         | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Limit { input, .. } => trim_derived_columns(input, required, false),
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => false,
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => false,
     }
 }
 
@@ -1101,7 +1117,10 @@ fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(push_aggregates_through_identity_joins(*input)),
             limit,
         },
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => plan,
     }
 }
 
@@ -1253,14 +1272,20 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(replace_metadata_counts(*input)),
             limit,
         },
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => plan,
     }
 }
 
 #[allow(clippy::too_many_lines)] // exhaustive plan-node recursion reads best unsplit
 fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
     match plan {
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => plan,
         LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
             input: Box::new(fold_constants(*input)),
             columns,
@@ -2211,7 +2236,10 @@ fn literal_truth(expr: &BoundExpr) -> Option<bool> {
 #[allow(clippy::too_many_lines)] // structural walk, one arm per plan node
 fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
     match plan {
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => plan,
         LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
             input: Box::new(push_predicates(*input)),
             columns,
@@ -2707,8 +2735,94 @@ fn push_conjunct(plan: &mut LogicalPlan, predicate: &BoundExpr) -> bool {
                 _ => false,
             }
         }
+        // A predicate over a relation to a LATERAL table's left decides
+        // which rows the table is evaluated for, whether or not the join
+        // keeps the rows it finds nothing for.
+        LogicalPlan::Lateral { input, columns, .. }
+            if !columns
+                .iter()
+                .any(|column| column_table_key(column) == *table)
+                && contains_table(input, table) =>
+        {
+            if !push_conjunct(input, predicate) {
+                let inner = std::mem::replace(input.as_mut(), LogicalPlan::Empty);
+                **input = LogicalPlan::Filter {
+                    input: Box::new(inner),
+                    predicate: predicate.clone(),
+                };
+            }
+            true
+        }
         _ => false,
     }
+}
+
+/// The columns a LATERAL table's input hands on, in order, when the input
+/// is made of the nodes a FROM clause lowers to.
+fn lateral_input_columns(plan: &LogicalPlan, out: &mut Vec<BoundColumn>) -> bool {
+    match plan {
+        LogicalPlan::OneRow => true,
+        LogicalPlan::Scan(scan) => {
+            out.extend(
+                scan.table
+                    .columns
+                    .iter()
+                    .filter(|column| scan.projected_column_ids.contains(&column.column_id))
+                    .cloned(),
+            );
+            true
+        }
+        LogicalPlan::Derived { columns, .. } => {
+            out.extend(columns.iter().cloned());
+            true
+        }
+        LogicalPlan::Lateral { input, columns, .. } => {
+            let known = lateral_input_columns(input, out);
+            out.extend(columns.iter().cloned());
+            known
+        }
+        LogicalPlan::Filter { input, .. } => lateral_input_columns(input, out),
+        LogicalPlan::CrossJoin { inputs } => {
+            inputs.iter().all(|input| lateral_input_columns(input, out))
+        }
+        LogicalPlan::Join {
+            left, right, kind, ..
+        } => {
+            lateral_input_columns(left, out)
+                && (matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti)
+                    || lateral_input_columns(right, out))
+        }
+        _ => false,
+    }
+}
+
+/// Optimizes what a LATERAL table is evaluated against, when the node is
+/// lowered. The rewrites of the enclosing plan left the input as written,
+/// apart from narrowing its scans to the columns read above and filtering
+/// it by the predicates that read it alone; here it is optimized as a plan
+/// of its own that hands on exactly the columns it has. An input of some
+/// other shape runs as written.
+pub(crate) fn optimize_lateral(
+    input: LogicalPlan,
+    condition: Option<BoundExpr>,
+) -> (LogicalPlan, Option<BoundExpr>) {
+    let mut columns = Vec::new();
+    let input = if lateral_input_columns(&input, &mut columns) && !columns.is_empty() {
+        Optimizer::optimize(LogicalPlan::Project {
+            input: Box::new(input),
+            expressions: columns
+                .into_iter()
+                .map(|column| BoundProjection {
+                    name: column.name.clone(),
+                    expr: BoundExpr::column(column),
+                })
+                .collect(),
+        })
+    } else {
+        input
+    };
+    STATEMENT_NOW.set(Some(statement_now()));
+    (input, condition.map(fold_expr))
 }
 
 fn contains_table(plan: &LogicalPlan, table: &TableKey) -> bool {
@@ -2737,6 +2851,12 @@ fn contains_table(plan: &LogicalPlan, table: &TableKey) -> bool {
         | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => contains_table(input, table),
+        LogicalPlan::Lateral { input, columns, .. } => {
+            columns
+                .iter()
+                .any(|column| column_table_key(column) == *table)
+                || contains_table(input, table)
+        }
         LogicalPlan::Empty | LogicalPlan::OneRow => false,
     }
 }
@@ -3357,7 +3477,10 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(reorder_cross_joins(*input)),
             limit,
         },
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => plan,
     }
 }
 
@@ -3455,7 +3578,10 @@ fn trim_predicate_payloads(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey
             trim_predicate_payloads(anchor, required, false);
             trim_predicate_payloads(member, required, false);
         }
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => {}
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => {}
     }
 }
 
@@ -3595,6 +3721,20 @@ fn collect_columns(
         | LogicalPlan::Limit { input, .. } => {
             collect_columns(input, required, scan_predicates, readers_only);
         }
+        // The table's query reads its input's columns as outer references,
+        // so they are read here as surely as the condition's are.
+        LogicalPlan::Lateral {
+            input,
+            query,
+            condition,
+            ..
+        } => {
+            collect_bound_query_columns(query, required);
+            if let Some(condition) = condition {
+                collect_expr_columns(condition, required);
+            }
+            collect_columns(input, required, scan_predicates, readers_only);
+        }
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
     }
 }
@@ -3632,6 +3772,7 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ScanColumnKey>
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Lateral { input, .. }
         | LogicalPlan::Limit { input, .. } => prune_scan_columns(input, required),
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
     }
@@ -3664,7 +3805,10 @@ fn push_limits(plan: &mut LogicalPlan) {
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Window { input, .. }
         | LogicalPlan::Aggregate { input, .. } => push_limits(input),
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => {}
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => {}
     }
 }
 
@@ -3698,6 +3842,7 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. }
         | LogicalPlan::Derived { .. }
+        | LogicalPlan::Lateral { .. }
         | LogicalPlan::Limit { .. } => {}
     }
 }
@@ -3866,7 +4011,10 @@ type ScanColumnKey = (DatabaseId, TableId, u32);
 #[allow(clippy::too_many_lines)] // structural walk, one arm per plan node
 fn propagate_join_constants(plan: LogicalPlan) -> LogicalPlan {
     match plan {
-        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Empty
+        | LogicalPlan::OneRow
+        | LogicalPlan::Scan(_)
+        | LogicalPlan::Lateral { .. } => plan,
         LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
             input: Box::new(propagate_join_constants(*input)),
             columns,

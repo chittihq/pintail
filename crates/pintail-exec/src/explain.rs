@@ -213,6 +213,26 @@ fn write_plan(
             )?;
             write_plan(input, depth + 1, output, provider)
         }
+        PhysicalPlan::Lateral {
+            input,
+            columns,
+            preserve_input,
+            condition,
+            ..
+        } => {
+            writeln!(
+                output,
+                "Lateral kind={} condition={} columns=[{}]",
+                if *preserve_input { "Left" } else { "Inner" },
+                condition.is_some(),
+                columns
+                    .iter()
+                    .map(|column| column.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )?;
+            write_plan(input, depth + 1, output, provider)
+        }
         PhysicalPlan::CrossJoin {
             inputs,
             estimated_rows,

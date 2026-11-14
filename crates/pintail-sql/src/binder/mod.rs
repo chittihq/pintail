@@ -143,6 +143,7 @@ impl<'catalog> Binder<'catalog> {
                 key_column_ids: Vec::new(),
                 column_statistics: None,
                 input: None,
+                lateral: false,
             });
         }
         self.bind_subquery(query, ctes, &scope)
@@ -449,6 +450,7 @@ impl<'catalog> Binder<'catalog> {
             key_column_ids: Vec::new(),
             column_statistics: None,
             input: None,
+            lateral: false,
         };
         let mut scope = ctes.to_vec();
         scope.push(BoundCte {
@@ -1288,7 +1290,7 @@ impl<'catalog> Binder<'catalog> {
         if inner.projection.iter().any(select_item_has_aggregate) {
             return Err(unsupported());
         }
-        let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
+        let probe_table = self.bind_table(&inner.from[0].relation, ctes, None)?;
         // Inside the subquery its own alias hides an outer relation of the
         // same name, as SQL scoping has it: the correlated conjuncts bind
         // without the hidden one, and the decorrelated relation takes a name
@@ -1426,7 +1428,7 @@ impl<'catalog> Binder<'catalog> {
         else {
             return Err(unsupported());
         };
-        let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
+        let probe_table = self.bind_table(&inner.from[0].relation, ctes, None)?;
         if tables.iter().any(|existing| {
             existing
                 .relation_name
@@ -1875,7 +1877,7 @@ impl<'catalog> Binder<'catalog> {
     ) -> Option<(BoundJoinRelation, Expr)> {
         let (factor, widened) =
             self.widen_outer_join_right(factor, condition, tables, right_tables, ctes)?;
-        let mut relation = self.bind_join_relation(&factor, ctes).ok()?;
+        let mut relation = self.bind_join_relation(&factor, ctes, &[]).ok()?;
         if relation
             .tables
             .iter()
@@ -1993,7 +1995,7 @@ impl<'catalog> Binder<'catalog> {
             if !simple {
                 return None;
             }
-            let probe_scope = vec![self.bind_table(&inner.from[0].relation, ctes).ok()?];
+            let probe_scope = vec![self.bind_table(&inner.from[0].relation, ctes, None).ok()?];
             let binds_inner = |expr: &Expr| bind_expr(expr, &probe_scope, None).is_ok();
             // (outer side, inner side) of each equality the membership is.
             let mut pairs: Vec<(Expr, Expr)> = Vec::new();
@@ -2165,7 +2167,7 @@ impl<'catalog> Binder<'catalog> {
                 .as_deref()
                 .is_some_and(|name| matches!(name, "COUNT" | "SUM" | "MIN" | "MAX" | "AVG"));
         let counts = aggregate && function_name.as_deref() == Some("COUNT");
-        let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
+        let probe_table = self.bind_table(&inner.from[0].relation, ctes, None)?;
         if tables.iter().any(|existing| {
             existing
                 .relation_name
@@ -2442,7 +2444,7 @@ impl<'catalog> Binder<'catalog> {
                 .as_ref()
                 .and_then(|_| on_join_relation_order(table_with_joins));
             let table_with_joins = flipped.as_ref().unwrap_or(table_with_joins);
-            let base = self.bind_table(&table_with_joins.relation, ctes)?;
+            let base = self.bind_from_factor(&table_with_joins.relation, ctes, &tables)?;
             reject_duplicate_relation(&tables, &base)?;
             tables.push(base.clone());
             let mut item_wildcard: Vec<BoundColumn> = base.columns.clone();
@@ -2453,9 +2455,23 @@ impl<'catalog> Binder<'catalog> {
                     return Err(BindError::UnsupportedQueryClause(join.to_string()));
                 }
                 let (kind, mut constraint) = bind_join_operator(&join.join_operator)?;
-                let mut relation = self.bind_join_relation(&join.relation, ctes)?;
+                let mut relation = self.bind_join_relation(&join.relation, ctes, &tables)?;
                 for visible in &relation.tables {
                     reject_duplicate_relation(&tables, visible)?;
+                }
+                let lateral = relation.table.lateral;
+                // A LATERAL table is evaluated per row of what precedes it,
+                // so only the joins that keep those rows in place can carry
+                // one.
+                if lateral
+                    && !matches!(
+                        kind,
+                        BoundJoinKind::Inner | BoundJoinKind::Cross | BoundJoinKind::Left
+                    )
+                {
+                    return Err(BindError::UnsupportedLateral(format!(
+                        "a LATERAL derived table in this kind of join: {join}"
+                    )));
                 }
                 // A LEFT join whose ON reaches its left side through a
                 // subquery is answered by widening the right input when the
@@ -2589,6 +2605,17 @@ impl<'catalog> Binder<'catalog> {
                         actual: condition.data_type,
                     });
                 }
+                // The ON condition of a LATERAL join is tested pair by pair
+                // as the pairs are produced, with no subquery to resolve.
+                if lateral
+                    && let Some(condition) = &condition
+                    && bound_contains_subquery(condition)
+                {
+                    return Err(BindError::UnsupportedLateral(
+                        "a subquery in the ON condition of a join to a LATERAL derived table"
+                            .to_owned(),
+                    ));
+                }
                 joins.push(BoundJoin {
                     scalar_aggregate: false,
                     kind,
@@ -2614,17 +2641,21 @@ impl<'catalog> Binder<'catalog> {
         })
     }
 
+    /// Binds the right side of a join. `preceding` holds the relations to
+    /// its left in the FROM clause, which a `LATERAL` derived table may
+    /// read.
     fn bind_join_relation(
         &self,
         factor: &TableFactor,
         ctes: &[BoundCte],
+        preceding: &[BoundTable],
     ) -> Result<BoundJoinRelation, BindError> {
         let TableFactor::NestedJoin {
             table_with_joins,
             alias,
         } = factor
         else {
-            let table = self.bind_table(factor, ctes)?;
+            let table = self.bind_from_factor(factor, ctes, preceding)?;
             return Ok(BoundJoinRelation {
                 wildcard_order: table.columns.clone(),
                 tables: vec![table.clone()],
@@ -2633,6 +2664,15 @@ impl<'catalog> Binder<'catalog> {
         };
         if alias.is_some() {
             return Err(BindError::UnsupportedTableFactor(factor.to_string()));
+        }
+        // A join group is evaluated as one derived input, with nothing to
+        // its left in reach, so a LATERAL table inside it could not be
+        // given the rows it may read.
+        if joins_contain_lateral(table_with_joins) {
+            return Err(BindError::UnsupportedLateral(format!(
+                "a LATERAL derived table inside a parenthesized join, or to the left of a \
+                 RIGHT JOIN that follows another join: {factor}"
+            )));
         }
 
         let scope = self.bind_from_items(std::slice::from_ref(table_with_joins), ctes)?;
@@ -2699,6 +2739,7 @@ impl<'catalog> Binder<'catalog> {
             key_column_ids: Vec::new(),
             column_statistics: None,
             input: Some(Box::new(input)),
+            lateral: false,
         };
         Ok(BoundJoinRelation {
             table,
@@ -2787,8 +2828,68 @@ impl<'catalog> Binder<'catalog> {
         Ok(condition.expect("USING joins carry at least one column"))
     }
 
+    /// Binds one FROM-clause relation. `preceding` holds the relations to
+    /// its left in the same FROM clause: a `LATERAL` derived table may read
+    /// their columns, and nothing else may.
+    fn bind_from_factor(
+        &self,
+        factor: &TableFactor,
+        ctes: &[BoundCte],
+        preceding: &[BoundTable],
+    ) -> Result<BoundTable, BindError> {
+        let TableFactor::Derived {
+            lateral: true,
+            subquery,
+            ..
+        } = factor
+        else {
+            return self.bind_table(factor, ctes, None);
+        };
+        // The relations to the left are one more enclosing scope for the
+        // derived table's query: its own tables shadow them, and a column
+        // read from them is an outer reference like any other.
+        let mut outer_tables = expression_scope(preceding, &self.outer_tables);
+        for table in &mut outer_tables {
+            for column in &mut table.columns {
+                column.outer = true;
+            }
+        }
+        let nested = Self {
+            catalog: self.catalog,
+            current_database: self.current_database,
+            next_derived_id: Cell::new(self.next_derived_id.get()),
+            outer_tables,
+            source: self.source,
+        };
+        let input = nested.bind_query(subquery, ctes);
+        self.next_derived_id.set(nested.next_derived_id.get());
+        let input = input?;
+        // Only a table that does read what precedes it is evaluated per
+        // row; one that reads nothing there is an ordinary derived table.
+        let reads_preceding = input.any_column(&|column| {
+            column.outer
+                && preceding.iter().any(|table| {
+                    table.database_id == column.database_id
+                        && table.table_id == column.table_id
+                        && table
+                            .relation_name
+                            .eq_ignore_ascii_case(&column.relation_name)
+                })
+        });
+        let mut table = self.bind_table(factor, ctes, Some(input))?;
+        table.lateral = reads_preceding;
+        Ok(table)
+    }
+
+    /// Binds a table reference or a derived table. `lateral_input` is the
+    /// already-bound query of a `LATERAL` derived table.
     #[allow(clippy::too_many_lines)]
-    fn bind_table(&self, factor: &TableFactor, ctes: &[BoundCte]) -> Result<BoundTable, BindError> {
+    fn bind_table(
+        &self,
+        factor: &TableFactor,
+        ctes: &[BoundCte],
+        lateral_input: Option<BoundQuery>,
+    ) -> Result<BoundTable, BindError> {
         if let TableFactor::Derived {
             lateral,
             subquery,
@@ -2796,7 +2897,7 @@ impl<'catalog> Binder<'catalog> {
             sample,
         } = factor
         {
-            if *lateral || sample.is_some() {
+            if (*lateral && lateral_input.is_none()) || sample.is_some() {
                 return Err(BindError::UnsupportedTableFactor(factor.to_string()));
             }
             let alias = alias
@@ -2805,7 +2906,10 @@ impl<'catalog> Binder<'catalog> {
             if alias.at.is_some() {
                 return Err(BindError::UnsupportedTableFactor(factor.to_string()));
             }
-            let input = self.bind_query(subquery, ctes)?;
+            let input = match lateral_input {
+                Some(input) => input,
+                None => self.bind_query(subquery, ctes)?,
+            };
             // `(SELECT ..) AS d (a, b)` names the derived table's columns
             // itself, in order, whatever the query calls them.
             let column_names = alias
@@ -2936,6 +3040,7 @@ impl<'catalog> Binder<'catalog> {
             key_column_ids: table.key_column_ids().to_vec(),
             column_statistics: table.column_statistics().cloned(),
             input: None,
+            lateral: false,
         })
     }
 
@@ -3022,6 +3127,7 @@ impl<'catalog> Binder<'catalog> {
             key_column_ids: Vec::new(),
             column_statistics: None,
             input: Some(Box::new(input)),
+            lateral: false,
         }
     }
 
@@ -3046,6 +3152,41 @@ impl<'catalog> Binder<'catalog> {
                 table: table_name.to_owned(),
             })?;
         Ok((database, table))
+    }
+}
+
+/// Whether a join tree holds a `LATERAL` derived table at any depth.
+fn joins_contain_lateral(item: &TableWithJoins) -> bool {
+    fn factor(factor: &TableFactor) -> bool {
+        match factor {
+            TableFactor::Derived { lateral, .. } => *lateral,
+            TableFactor::NestedJoin {
+                table_with_joins, ..
+            } => joins_contain_lateral(table_with_joins),
+            _ => false,
+        }
+    }
+    factor(&item.relation) || item.joins.iter().any(|join| factor(&join.relation))
+}
+
+/// Whether a bound expression still holds a subquery to resolve.
+fn bound_contains_subquery(expr: &BoundExpr) -> bool {
+    match &expr.kind {
+        BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. }
+        | BoundExprKind::InSubquery { .. } => true,
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => bound_contains_subquery(expr),
+        BoundExprKind::Binary { left, right, .. } => {
+            bound_contains_subquery(left) || bound_contains_subquery(right)
+        }
+        BoundExprKind::Scalar { args, .. } => args.iter().any(bound_contains_subquery),
+        BoundExprKind::Column(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_) => false,
     }
 }
 
@@ -10350,6 +10491,8 @@ pub enum BindError {
     IncompatibleSetOperation(String),
     /// A derived table or table extension is not implemented yet.
     UnsupportedTableFactor(String),
+    /// A `LATERAL` derived table in a position the engine cannot evaluate.
+    UnsupportedLateral(String),
     /// A projection extension is not implemented yet.
     UnsupportedProjection(String),
     /// A join kind is outside the v1 operator surface.
@@ -10472,6 +10615,9 @@ impl fmt::Display for BindError {
             Self::IncompatibleSetOperation(value) => formatter.write_str(value),
             Self::UnsupportedTableFactor(value) => {
                 write!(formatter, "unsupported table expression: {value}")
+            }
+            Self::UnsupportedLateral(value) => {
+                write!(formatter, "unsupported LATERAL derived table: {value}")
             }
             Self::UnsupportedProjection(value) => {
                 write!(formatter, "unsupported projection: {value}")
