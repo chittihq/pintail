@@ -102,6 +102,9 @@ pub struct ExecCounters {
     pub range_join_second_bounds: u64,
     /// Candidate pairs such a join tested against its condition.
     pub range_join_pairs_tested: u64,
+    /// Batches whose exact decimal comparison with a constant was answered
+    /// as one integer comparison over the column's packed units.
+    pub decimal_masks_packed: u64,
 }
 
 thread_local! {
@@ -141,6 +144,7 @@ thread_local! {
             range_join_searches: 0,
             range_join_second_bounds: 0,
             range_join_pairs_tested: 0,
+            decimal_masks_packed: 0,
         })
     };
 }

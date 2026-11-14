@@ -9807,6 +9807,15 @@ fn canonical_operand(
             {
                 return Ok(value);
             }
+            // A DECIMAL literal travels as text and is no string: it keeps
+            // its exact type, and the comparison stays an exact one. Read
+            // as a string here, `amount > 998.50` compared doubles - which
+            // cannot tell apart two decimals of more than fifteen digits
+            // that differ in their last - and left every packed kernel for
+            // the row path, each value spelled as text and parsed again.
+            if matches!(operand.data_type, Some(DataType::Decimal { .. })) {
+                return Ok(operand);
+            }
             return Ok(numeric_literal(operand));
         }
         _ => return Ok(operand),

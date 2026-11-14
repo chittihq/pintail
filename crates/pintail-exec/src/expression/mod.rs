@@ -250,40 +250,149 @@ fn typed_comparison_mask(
     }
 }
 
-/// A whole-number decimal column held as 64-bit units - an integer SUM's
-/// totals - ordered against a whole number: the integer comparison over
-/// the units, which is the comparison of the decimals. `None` for any other
-/// shape, which the general kernels answer.
-fn whole_decimal_mask(
+/// One side of an exact decimal comparison as a packed mask reads it.
+enum DecimalSide<'batch> {
+    /// A DECIMAL column held as 64-bit units: the units, the digits its
+    /// type holds left of the point, its scale and its validity.
+    Units(&'batch [i64], u8, u8, &'batch ValidityMask),
+    /// A constant as units at a scale.
+    Fixed(i128, u8),
+}
+
+/// `expr` as a side of an exact decimal comparison: a DECIMAL column held
+/// as 64-bit units, an exact numeric constant, or either under a cast to a
+/// DECIMAL type that holds every digit of it - the cast an equality gives
+/// both sides to meet at one type, which changes no value. `None` for
+/// anything else. A constant spelled as text counts only where the caller
+/// knows it for a DECIMAL (`decimal_text`): bare text beside a comparison
+/// operator may be a string, which compares by other rules.
+fn decimal_side<'batch>(
+    batch: &'batch RecordBatch,
+    expr: &CompiledExpr,
+    decimal_text: bool,
+) -> Option<DecimalSide<'batch>> {
+    match expr {
+        CompiledExpr::Column(index) => {
+            let column = batch.column(*index)?;
+            let DataType::Decimal { precision, scale } = column.data_type() else {
+                // A signed integer column is its own units at scale zero.
+                let (TypedValues::Int64(values), validity) = column.typed()? else {
+                    return None;
+                };
+                return (column.data_type().storage_type() == DataType::Int64)
+                    .then_some(DecimalSide::Units(values, 19, 0, validity));
+            };
+            let (
+                TypedValues::Decimal128 {
+                    values: crate::batch::DecimalUnits::Narrow(units),
+                    scale: held,
+                    ..
+                },
+                validity,
+            ) = column.typed()?
+            else {
+                return None;
+            };
+            (*held == scale).then_some(DecimalSide::Units(
+                units,
+                precision.saturating_sub(scale),
+                scale,
+                validity,
+            ))
+        }
+        CompiledExpr::Literal(Value::Int64(value)) => {
+            Some(DecimalSide::Fixed(i128::from(*value), 0))
+        }
+        CompiledExpr::Literal(Value::UInt64(value)) => {
+            Some(DecimalSide::Fixed(i128::from(*value), 0))
+        }
+        CompiledExpr::Literal(value @ Value::Utf8(_)) if decimal_text => {
+            decimal_units_of(value).map(|(units, scale)| DecimalSide::Fixed(units, scale))
+        }
+        CompiledExpr::Scalar {
+            function: ScalarFunction::Cast(DataType::Decimal { precision, scale }),
+            args,
+            ..
+        } => {
+            let [inner] = args.as_slice() else {
+                return None;
+            };
+            let inner = decimal_side(batch, inner, true)?;
+            let room = precision.saturating_sub(*scale);
+            let (digits, held) = match &inner {
+                DecimalSide::Units(_, digits, held, _) => (u32::from(*digits), *held),
+                DecimalSide::Fixed(units, held) => {
+                    let whole = units.unsigned_abs() / 10_u128.checked_pow(u32::from(*held))?;
+                    (whole.checked_ilog10().map_or(0, |log| log + 1), *held)
+                }
+            };
+            (held <= *scale && digits <= u32::from(room)).then_some(inner)
+        }
+        _ => None,
+    }
+}
+
+/// An exact decimal comparison of a DECIMAL column held as 64-bit units
+/// with a constant, as one integer comparison over the units: the constant
+/// at the column's scale is an integer of the same units. A constant with
+/// digits past the column's scale equals no stored value and lies between
+/// two neighbouring ones, so it orders as the lower of them does, strictly.
+/// `None` for any other shape, which the general kernels answer.
+///
+/// A decimal literal with a fraction had no packed comparison: `amount >
+/// 998.50` went through the kernel that builds an answer per row, or row by
+/// row where that declined, tens of times the cost of the comparison.
+fn packed_decimal_mask(
     batch: &RecordBatch,
     op: BinaryOp,
     left: &CompiledExpr,
     right: &CompiledExpr,
+    decimal_text: bool,
 ) -> Option<SelectionMask> {
-    let (column, literal, op) = match (left, right) {
-        (CompiledExpr::Column(index), CompiledExpr::Literal(value)) => (*index, value, op),
-        (CompiledExpr::Literal(value), CompiledExpr::Column(index)) => {
-            (*index, value, mirror_comparison(op))
+    let sides = (
+        decimal_side(batch, left, decimal_text)?,
+        decimal_side(batch, right, decimal_text)?,
+    );
+    let (units, scale, validity, fixed, fixed_scale, op) = match sides {
+        (DecimalSide::Units(units, _, scale, validity), DecimalSide::Fixed(fixed, fixed_scale)) => {
+            (units, scale, validity, fixed, fixed_scale, op)
+        }
+        (DecimalSide::Fixed(fixed, fixed_scale), DecimalSide::Units(units, _, scale, validity)) => {
+            (
+                units,
+                scale,
+                validity,
+                fixed,
+                fixed_scale,
+                mirror_comparison(op),
+            )
         }
         _ => return None,
     };
-    let (
-        TypedValues::Decimal128 {
-            values: crate::batch::DecimalUnits::Narrow(units),
-            scale: 0,
-            ..
-        },
-        validity,
-    ) = batch.column(column)?.typed()?
-    else {
-        return None;
+    let mask = if fixed_scale <= scale {
+        let factor = 10_i128.checked_pow(u32::from(scale - fixed_scale))?;
+        let literal = i64::try_from(fixed.checked_mul(factor)?).ok()?;
+        selection::select_i64(units, validity, op, literal)?
+    } else {
+        let factor = 10_i128.checked_pow(u32::from(fixed_scale - scale))?;
+        let below = i64::try_from(fixed.div_euclid(factor)).ok()?;
+        if fixed.rem_euclid(factor) == 0 {
+            selection::select_i64(units, validity, op, below)?
+        } else {
+            match op {
+                BinaryOp::Equal => SelectionMask::none(units.len()),
+                BinaryOp::Less | BinaryOp::LessOrEqual => {
+                    selection::select_i64(units, validity, BinaryOp::LessOrEqual, below)?
+                }
+                BinaryOp::Greater | BinaryOp::GreaterOrEqual => {
+                    selection::select_i64(units, validity, BinaryOp::Greater, below)?
+                }
+                _ => return None,
+            }
+        }
     };
-    let literal = match literal {
-        pintail_types::Value::Int64(value) => *value,
-        pintail_types::Value::UInt64(value) => i64::try_from(*value).ok()?,
-        _ => return None,
-    };
-    selection::select_i64(units, validity, op, literal)
+    crate::counters::count(|counters| counters.decimal_masks_packed += 1);
+    Some(mask)
 }
 
 /// `column IN (text literals)` over a text column, answered per distinct
@@ -1044,7 +1153,14 @@ impl CompiledExpr {
                     (Self::Literal(value), Self::Column(index)) => {
                         (*index, value, mirror_comparison(*op))
                     }
-                    _ => return Ok(session_reading_mask(batch, left, right, *op, *collation)),
+                    _ => {
+                        // An equality of exact decimals casts both sides to
+                        // one type: a column and a constant under it.
+                        if let Some(mask) = packed_decimal_mask(batch, *op, left, right, false) {
+                            return Ok(Some(mask));
+                        }
+                        return Ok(session_reading_mask(batch, left, right, *op, *collation));
+                    }
                 };
                 let Some(vector) = batch.column(column) else {
                     return Ok(None);
@@ -1065,7 +1181,7 @@ impl CompiledExpr {
                 function: ScalarFunction::DecimalComparison { op },
                 args,
                 ..
-            } if args.len() == 2 => Ok(whole_decimal_mask(batch, *op, &args[0], &args[1])),
+            } if args.len() == 2 => Ok(packed_decimal_mask(batch, *op, &args[0], &args[1], true)),
             Self::Scalar {
                 function: ScalarFunction::Between { negated: false },
                 args,

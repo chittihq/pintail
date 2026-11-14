@@ -25,6 +25,7 @@ mod date_literal_fold;
 mod date_part_grouping;
 mod decimal_average_exactness;
 mod decimal_internal_digits;
+mod decimal_literal_filters;
 mod decimal_negative_range;
 mod decimal_scale_widening;
 mod declared_values;

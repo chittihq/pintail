@@ -905,6 +905,25 @@ mod tests {
         CompiledExpr::Literal(value)
     }
 
+    fn text(text: &str) -> CompiledExpr {
+        literal(Value::Utf8(text.to_owned()))
+    }
+
+    /// `CAST(inner AS target)`, the cast an exact equality gives a side.
+    fn decimal_cast(inner: CompiledExpr, target: DataType) -> CompiledExpr {
+        CompiledExpr::Scalar {
+            function: ScalarFunction::Cast(target),
+            argument_types: vec![None],
+            args: vec![inner],
+            literal_regex: None,
+            session_zone: None,
+            variables: None,
+            data_type: Some(target),
+            collation: crate::collation::Collation::default(),
+            overflow: None,
+        }
+    }
+
     /// The kernel answers, agrees with row evaluation, and records the
     /// divisions by zero row evaluation records - for selected rows only.
     fn agrees_with_warnings(expression: &CompiledExpr, batch: &RecordBatch, data_type: DataType) {
@@ -1140,6 +1159,129 @@ mod tests {
             wider,
         );
         assert!(internal.evaluate_column(&batch, Some(wider)).is_none());
+    }
+
+    /// A DECIMAL column against a constant is one integer comparison over
+    /// the packed units, and names the rows row evaluation names: the
+    /// constant at the column's scale, at a narrower one, with digits past
+    /// it on either side of zero, and under the cast an equality gives it.
+    #[test]
+    fn a_decimal_constant_compares_the_packed_units() {
+        let batch = fixture();
+        let cast = |inner: CompiledExpr| decimal_cast(inner, decimal_type(2));
+        let ordering = [
+            BinaryOp::Less,
+            BinaryOp::LessOrEqual,
+            BinaryOp::Greater,
+            BinaryOp::GreaterOrEqual,
+        ];
+        let mut expressions = Vec::new();
+        for op in ordering {
+            for constant in [
+                "10.50", "-3.33", "0.0", "7", "-0.01", "10.505", "-3.335", "0.070", "999.99",
+            ] {
+                expressions.push(scalar(
+                    ScalarFunction::DecimalComparison { op },
+                    vec![column(0), text(constant)],
+                    DataType::Boolean,
+                ));
+                expressions.push(scalar(
+                    ScalarFunction::DecimalComparison { op },
+                    vec![text(constant), column(0)],
+                    DataType::Boolean,
+                ));
+                // A signed integer column is units at scale zero.
+                expressions.push(scalar(
+                    ScalarFunction::DecimalComparison { op },
+                    vec![column(2), text(constant)],
+                    DataType::Boolean,
+                ));
+            }
+            expressions.push(scalar(
+                ScalarFunction::DecimalComparison { op },
+                vec![column(0), literal(Value::Int64(0))],
+                DataType::Boolean,
+            ));
+        }
+        for constant in ["10.50", "-3.33", "0.07", "10.5", "5"] {
+            expressions.push(binary(
+                BinaryOp::Equal,
+                column(0),
+                cast(text(constant)),
+                DataType::Boolean,
+            ));
+            expressions.push(binary(
+                BinaryOp::Equal,
+                cast(column(0)),
+                cast(text(constant)),
+                DataType::Boolean,
+            ));
+        }
+        for constant in ["10.50", "0.07", "5"] {
+            expressions.push(binary(
+                BinaryOp::NotEqual,
+                cast(text(constant)),
+                column(0),
+                DataType::Boolean,
+            ));
+        }
+        for expression in &expressions {
+            let _ = crate::take_exec_counters();
+            let mask = expression
+                .evaluate_filter_mask(&batch)
+                .expect("mask evaluation")
+                .unwrap_or_else(|| panic!("{expression:?} has a packed mask"));
+            assert_eq!(
+                crate::take_exec_counters().decimal_masks_packed,
+                1,
+                "{expression:?} compared the units"
+            );
+            for row in batch.selection().selected_rows() {
+                let expected = matches!(
+                    expression.evaluate(&batch, row).expect("row evaluation"),
+                    Value::Boolean(true)
+                );
+                assert_eq!(
+                    mask.is_selected(row),
+                    expected,
+                    "{expression:?} at row {row}"
+                );
+            }
+        }
+    }
+
+    /// A cast that would round the constant, a comparison of the column
+    /// with bare text, and text that is no decimal are not the units' to
+    /// answer.
+    #[test]
+    fn a_rounded_or_textual_constant_is_left_to_the_kernels() {
+        let batch = fixture();
+        let narrow = DataType::Decimal {
+            precision: 12,
+            scale: 2,
+        };
+        for expression in [
+            binary(
+                BinaryOp::Equal,
+                column(0),
+                decimal_cast(text("10.505"), narrow),
+                DataType::Boolean,
+            ),
+            binary(BinaryOp::Equal, column(0), text("10.50"), DataType::Boolean),
+            scalar(
+                ScalarFunction::DecimalComparison { op: BinaryOp::Less },
+                vec![column(0), text("ten")],
+                DataType::Boolean,
+            ),
+        ] {
+            let _ = crate::take_exec_counters();
+            let _ = expression.evaluate_filter_mask(&batch);
+            assert_eq!(
+                crate::take_exec_counters().decimal_masks_packed,
+                0,
+                "{expression:?} left the units alone"
+            );
+        }
     }
 
     #[test]
