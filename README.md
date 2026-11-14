@@ -48,7 +48,7 @@ including the queries where ClickHouse still wins.
 
 ## MySQL compatibility
 
-![oracle](https://img.shields.io/badge/oracle-1%2C948%20of%201%2C948%20byte--exact-2ea44f) ![upstream suite](https://img.shields.io/badge/upstream%20suite-633%20files%20replayed-2ea44f) ![replication e2e](https://img.shields.io/badge/replication%20e2e-7%2C061%20checks-2ea44f) ![MySQL](https://img.shields.io/badge/MySQL-8.4%20and%208.0-0969da) ![crash recovery](https://img.shields.io/badge/crash%20recovery-38%20scenarios-2ea44f) ![generated SQL](https://img.shields.io/badge/generated%20SQL-100k%2B-6e7781)
+![oracle](https://img.shields.io/badge/oracle-4%2C371%20of%204%2C371%20byte--exact-2ea44f) ![upstream suite](https://img.shields.io/badge/upstream%20suite-633%20files%20replayed-2ea44f) ![replication e2e](https://img.shields.io/badge/replication%20e2e-7%2C830%20checks-2ea44f) ![MySQL](https://img.shields.io/badge/MySQL-8.4%20and%208.0-0969da) ![crash recovery](https://img.shields.io/badge/crash%20recovery-38%20scenarios-2ea44f) ![generated SQL](https://img.shields.io/badge/generated%20SQL-100k%2B-6e7781)
 
 Pintail answers queries meant for MySQL, so an answer that differs from
 MySQL's is a bug. Every change to `dev` passes these gates against real
@@ -58,9 +58,9 @@ MySQL 8.4 and 8.0 servers before it merges.
 |---|---|---:|---|
 | Differential oracle | Each query's typed result on Pintail and on MySQL, byte for byte | 4,371 queries | 4,371 match; the [known-failure ledger](tests/sqllogic/tests/support/oracle_known_failures.json) is empty |
 | Generated queries | Seeded, randomly composed queries, same comparison | 400 per run; 100,000+ in [banked sweeps](tests/sqllogic/fuzz-results.md) | no mismatch |
-| MySQL's own regression suite | `mysql-test` from [mysql/mysql-server](https://github.com/mysql/mysql-server/tree/trunk/mysql-test/t), replayed statement by statement against Pintail and a live MySQL 8.4 | 633 files, 23,119 SELECTs replayed | [9,192 of 9,302 compared match](tests/mtr/results.md); MariaDB's suite is replayed beside it |
+| MySQL's own regression suite | `mysql-test` from [mysql/mysql-server](https://github.com/mysql/mysql-server/tree/trunk/mysql-test/t), replayed statement by statement against Pintail and a live MySQL 8.4 | 633 files, 23,119 SELECTs replayed | [10,573 of 10,665 compared match](tests/mtr/results.md); MariaDB's suite is replayed beside it |
 | Storage layouts | The same answers from memtable, flushed, mixed, compacted and reopened data, and under forced spill | 5 layouts | match |
-| Replication, end to end | A real MySQL replicated through snapshot, change capture and schema changes, then queried over the wire | 7,395 passing checks on MySQL 8.4, 7,394 on 8.0 | [0 failed](tests/e2e/results.md) |
+| Replication, end to end | A real MySQL replicated through snapshot, change capture and schema changes, then queried over the wire | 7,830 passing checks on MySQL 8.4, 7,830 on 8.0 | [0 failed](tests/e2e/results.md) |
 | Crash recovery | Faults mid-write and `kill -9`, then every table compared | 38 scenarios, 692 checks | [0 failed](tests/e2e/results-recovery.md) |
 | Clients | JDBC, Go, Python, Bun and the `mysql` CLI against the wire endpoint | 5 client stacks | pass |
 
@@ -76,14 +76,17 @@ check. They are not untested: replayed in replica mode, every `INSERT`,
 binlog, and the SELECT that follows is what proves the capture was
 faithful.
 
-The number needs its denominator. Of 23,119 SELECTs replayed, 9,302
-reached a comparison and 9,192 match byte for byte: **98.8% agreement**.
-The remaining comparisons contain 110 row mismatches and no column-name
-mismatches. This is the local read replay; replication has a separate gate.
+The number needs its denominator. Of 23,119 SELECTs replayed, 10,665
+reached a comparison and 10,573 match byte for byte: **99.1% agreement**.
+The remaining comparisons contain 92 row mismatches and no column-name
+mismatches. That percentage leaves out 496 SELECTs that differed only after
+Pintail refused a session statement MySQL accepted, which says nothing about
+the answer while the two sessions differ; counted as mismatches it is 94.7%. This is the local read replay; replication has a separate gate.
 
-Another 13,817 SELECTs were not compared: 6,093 read tables changed by
-statements a local database cannot follow, 5,222 could not execute in
-Pintail, 525 were refused by MySQL, and 1,977 were classified as volatile. Legacy
+Another 12,454 SELECTs were not compared: 6,093 read tables changed by
+statements a local database cannot follow, 3,363 could not execute in
+Pintail, 525 were refused by MySQL, 1,977 were classified as volatile, and
+the 496 above differed while the sessions did. Legacy
 encodings are a substantial source of limitations: decoded text alone
 cannot reproduce source byte lengths, `HEX()` or collation weights. These
 categories stay visible rather than being folded into an agreement rate.
