@@ -137,6 +137,13 @@ struct Parser {
     groups: usize,
     names: Vec<(String, usize)>,
     depth: usize,
+    /// The character the last operand was written as, when it was one
+    /// literal character.
+    literal: Option<char>,
+    /// How many alternatives literals may still be spelled out into across
+    /// a folding of more than one character; none while such a spelling is
+    /// itself being read.
+    fold_budget: usize,
 }
 
 fn class_ranges(fragment: &str) -> Result<Vec<(char, char)>, ExecError> {
@@ -263,6 +270,9 @@ impl Parser {
 
     fn concatenation(&mut self, flags: &mut Flags) -> Result<Node, ExecError> {
         let mut items = Vec::new();
+        // The literal characters written one after another, waiting to be
+        // read as one run.
+        let mut run: Vec<(char, Node)> = Vec::new();
         loop {
             self.skip_trivia(*flags)?;
             if matches!(self.peek(), None | Some('|' | ')')) {
@@ -271,14 +281,101 @@ impl Parser {
             let Some(atom) = self.atom(flags)? else {
                 continue;
             };
+            let literal = self.literal.take().filter(|_| flags.case_insensitive);
             self.skip_trivia(*flags)?;
-            items.push(self.quantified(atom)?);
+            let before = self.at;
+            let quantified = self.quantified(atom)?;
+            match literal {
+                // A literal alone under a quantifier is a run of one.
+                Some(character) if self.at != before => {
+                    self.folded_run(&mut run, &mut items)?;
+                    let Node::Repeat {
+                        node,
+                        min,
+                        max,
+                        greed,
+                    } = quantified
+                    else {
+                        items.push(quantified);
+                        continue;
+                    };
+                    let mut single = Vec::new();
+                    self.folded_run(&mut vec![(character, *node)], &mut single)?;
+                    items.push(Node::Repeat {
+                        node: Box::new(Node::Group(None, Box::new(Node::Concat(single)))),
+                        min,
+                        max,
+                        greed,
+                    });
+                }
+                Some(character) => run.push((character, quantified)),
+                None => {
+                    self.folded_run(&mut run, &mut items)?;
+                    items.push(quantified);
+                }
+            }
         }
+        self.folded_run(&mut run, &mut items)?;
         Ok(match items.len() {
             0 => Node::Empty,
             1 => items.pop().unwrap_or(Node::Empty),
             _ => Node::Concat(items),
         })
+    }
+
+    /// Moves a run of literal characters into `items`. Under a
+    /// case-insensitive match a literal matches across a case folding of
+    /// more than one character - `ss` written out matches `ß`, and `ß`
+    /// matches `ss` - exactly as the automaton's patterns are rewritten to:
+    /// the run is spelled out by the same rule and read back.
+    fn folded_run(
+        &mut self,
+        run: &mut Vec<(char, Node)>,
+        items: &mut Vec<Node>,
+    ) -> Result<(), ExecError> {
+        if run.is_empty() {
+            return Ok(());
+        }
+        let characters = run
+            .iter()
+            .map(|(character, _)| *character)
+            .collect::<Vec<_>>();
+        let spelled = if self.fold_budget == 0 {
+            String::new()
+        } else {
+            super::sql_regex::spelled(
+                &characters,
+                0,
+                super::sql_regex::full_folds(),
+                &mut self.fold_budget,
+            )
+        };
+        if !spelled.contains("(?:") {
+            items.extend(run.drain(..).map(|(_, node)| node));
+            return Ok(());
+        }
+        run.clear();
+        let mut reader = Self {
+            chars: spelled.chars().collect(),
+            at: 0,
+            groups: 0,
+            names: Vec::new(),
+            depth: self.depth,
+            literal: None,
+            fold_budget: 0,
+        };
+        let mut flags = Flags {
+            case_insensitive: true,
+            multi_line: false,
+            dot_all: false,
+            extended: false,
+        };
+        let node = reader.alternation(&mut flags)?;
+        if reader.at != reader.chars.len() {
+            return Err(SYNTAX);
+        }
+        items.push(Node::Group(None, Box::new(node)));
+        Ok(())
     }
 
     fn quantified(&mut self, atom: Node) -> Result<Node, ExecError> {
@@ -353,7 +450,12 @@ impl Parser {
         };
         self.at += 1;
         Ok(Some(match character {
-            '(' => return self.group(flags),
+            '(' => {
+                let group = self.group(flags);
+                // What the group held is not this operand's character.
+                self.literal = None;
+                return group;
+            }
             '[' => Node::Set(self.class(*flags)?),
             '.' => Node::Any {
                 dot_all: flags.dot_all,
@@ -370,11 +472,14 @@ impl Parser {
             }),
             '\\' => return self.escape(*flags).map(Some),
             '*' | '+' | '?' => return Err(SYNTAX),
-            literal => Node::Set(finish_set(
-                vec![(literal, literal)],
-                flags.case_insensitive,
-                false,
-            )),
+            literal => {
+                self.literal = Some(literal);
+                Node::Set(finish_set(
+                    vec![(literal, literal)],
+                    flags.case_insensitive,
+                    false,
+                ))
+            }
         }))
     }
 
@@ -1084,6 +1189,8 @@ impl Program {
             groups: 0,
             names: Vec::new(),
             depth: 0,
+            literal: None,
+            fold_budget: 256,
         };
         let mut flags = Flags {
             case_insensitive,
@@ -1184,6 +1291,24 @@ struct Machine<'a, 'steps> {
     stack: Vec<Frame>,
     saves: usize,
     steps: &'steps mut InterruptCounter,
+}
+
+/// Appends the case folding of `character`: several characters where its
+/// folding is, its lower case otherwise.
+fn fold_into(out: &mut String, character: char) {
+    let folds = super::sql_regex::full_folds();
+    match folds.binary_search_by_key(&character, |(folded, _)| *folded) {
+        Ok(index) => out.push_str(&folds[index].1),
+        Err(_) => out.extend(character.to_lowercase()),
+    }
+}
+
+fn full_fold(text: &str) -> String {
+    let mut folded = String::with_capacity(text.len());
+    for character in text.chars() {
+        fold_into(&mut folded, character);
+    }
+    folded
 }
 
 fn in_set(set: &[(char, char)], character: char) -> bool {
@@ -1311,16 +1436,19 @@ impl Machine<'_, '_> {
         if !case_insensitive {
             return rest.starts_with(captured).then_some(pos + captured.len());
         }
-        let mut subject = rest.chars();
+        // Without regard to case the capture matches whatever folds to
+        // the same characters, across a folding of more than one: a
+        // captured `ss` is repeated by `ß`.
+        let wanted = full_fold(captured);
+        let mut folded = String::with_capacity(wanted.len());
         let mut length = 0;
-        for expected in captured.chars() {
+        let mut subject = rest.chars();
+        while folded.len() < wanted.len() {
             let actual = subject.next()?;
-            if actual != expected && !actual.to_lowercase().eq(expected.to_lowercase()) {
-                return None;
-            }
+            fold_into(&mut folded, actual);
             length += actual.len_utf8();
         }
-        Some(pos + length)
+        (folded == wanted).then_some(pos + length)
     }
 
     /// Runs from `pc` at `pos` to the `End` that closes this stretch of the
@@ -1564,6 +1692,30 @@ mod tests {
         assert_eq!(find(r"(?<!cd)[ab]", "cdaccb"), Some((5, 6)));
         assert_eq!(find(r"^(?:b|a(?=(.)))*\1", "abc"), Some((0, 2)));
         assert_eq!(find(r"$(?<=^(a))", "a"), Some((1, 1)));
+    }
+
+    /// The same folding rule as the automaton's rewritten patterns: a run
+    /// of literals matches across a folding of more than one character,
+    /// and nothing else does.
+    #[test]
+    fn literals_and_back_references_fold_across_several_characters() {
+        let matches = |pattern: &str, text: &str| {
+            Program::new(pattern, true, false, false, LineEndings::Unicode)
+                .unwrap_or_else(|error| panic!("{pattern} compiles: {error}"))
+                .captures_at(text, 0, &mut InterruptCounter::unchecked())
+                .expect("an unchecked search is never interrupted")
+                .is_some()
+        };
+        assert!(matches("(?=s)straße", "STRASSE"));
+        assert!(matches("(?=s)strasse", "Straße"));
+        assert!(matches("stra(?!x)sse", "Straße"));
+        assert!(matches(r"(ss)\1", "ssß"));
+        assert!(matches(r"(ß)\1", "ßss"));
+        assert!(matches("(?=.)ß+s", "sss"));
+        assert!(!matches("(?=.)s{2}", "ß"));
+        assert!(!matches("(?=.)[s]s", "ß"));
+        assert!(!matches("(?=.)[ß]", "ss"));
+        assert_eq!(find("(?i)(?!x)ss", "xß"), Some((1, 3)));
     }
 
     #[test]

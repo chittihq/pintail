@@ -449,7 +449,7 @@ fn normalize_end_spelling(pattern: &str) -> String {
 /// folding: `ß` folds to `ss`, the ligature `ﬁ` to `fi`. Read off the
 /// case mappings rather than tabulated: a character folds this way when it
 /// lowers to several characters, or when its capital form is several.
-fn full_folds() -> &'static [(char, String)] {
+pub(super) fn full_folds() -> &'static [(char, String)] {
     static FOLDS: std::sync::OnceLock<Vec<(char, String)>> = std::sync::OnceLock::new();
     FOLDS.get_or_init(|| {
         let lowered = |text: &str| {
@@ -475,7 +475,12 @@ fn full_folds() -> &'static [(char, String)] {
 
 /// What one run of literal characters matches, from `at` on: each
 /// character as written, or a character whose folding the run spells.
-fn spelled(run: &[char], at: usize, folds: &[(char, String)], budget: &mut usize) -> String {
+pub(super) fn spelled(
+    run: &[char],
+    at: usize,
+    folds: &[(char, String)],
+    budget: &mut usize,
+) -> String {
     let Some(&character) = run.get(at) else {
         return String::new();
     };

@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4342;
+const EXPECTED_CASES: usize = 4346;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5959,6 +5959,29 @@ fn engine_error_cases() -> Vec<OracleCase> {
             "computed doubles read as integers",
             "SELECT id, MAKETIME(-approx, 0, 0), LEFT('abcdefgh', approx * 2), \
                     CAST(-approx AS SIGNED) FROM bounds WHERE ABS(approx) < 100 ORDER BY id",
+        ),
+        // A literal matches across a case folding of more than one
+        // character on the backtracking matcher as on the automaton, and a
+        // back-reference repeats its capture across one.
+        ordered(
+            "regex case folding beside look-around and back-references",
+            "SELECT REGEXP_LIKE('STRASSE', '(?=s)straße'), REGEXP_LIKE('Straße', '(?=s)strasse'), \
+                    REGEXP_LIKE('Straße', 'stra(?!x)sse')",
+        ),
+        ordered(
+            "regex case folding beside look-around and back-references",
+            "SELECT REGEXP_LIKE('ssß', '(ss)\\\\1'), REGEXP_LIKE('ßss', '(ß)\\\\1'), \
+                    REGEXP_SUBSTR('aßa', '(a)ss\\\\1')",
+        ),
+        ordered(
+            "regex case folding beside look-around and back-references",
+            "SELECT REGEXP_LIKE('ß', '(?=.)s{2}'), REGEXP_LIKE('ss', '(?=.)[ß]'), \
+                    REGEXP_LIKE('Straße', '(?=s)strasse', 'c')",
+        ),
+        ordered(
+            "regex case folding beside look-around and back-references",
+            "SELECT REGEXP_REPLACE('Straße STRASSE', '(?<= )strasse|stra(?=ß)', '_'), \
+                    REGEXP_INSTR('xxß', '(?!x)ss'), REGEXP_REPLACE('ßass', '(?=.)ss', '[$0]')",
         ),
     ]
 }
