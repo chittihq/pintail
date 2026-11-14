@@ -462,6 +462,10 @@ const REBUILD_ONLY_CLAUSES: &[&str] = &[
     "ALGORITHM",
     "LOCK",
     "KEY_BLOCK_SIZE",
+    // An index under another name, or hidden from the source's planner.
+    "RENAME INDEX",
+    "RENAME KEY",
+    "ALTER INDEX",
     "STATS_PERSISTENT",
     "STATS_AUTO_RECALC",
     "STATS_SAMPLE_PAGES",
@@ -701,7 +705,6 @@ fn index_only(operation: &AlterTableOperation) -> bool {
         } | AlterTableOperation::DropIndex { .. }
             | AlterTableOperation::DropConstraint { .. }
             | AlterTableOperation::DropForeignKey { .. }
-            | AlterTableOperation::RenameIndex { .. }
     )
 }
 
@@ -1150,9 +1153,12 @@ mod tests {
             );
         }
         assert_eq!(
-            parse_ddl("ALTER TABLE events DROP COLUMN note, DROP INDEX ix_note", "app")
-                .unwrap()
-                .actions,
+            parse_ddl(
+                "ALTER TABLE events DROP COLUMN note, DROP INDEX ix_note",
+                "app"
+            )
+            .unwrap()
+            .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
                 kind: AlterKind::AddOrDropColumns {
@@ -1161,15 +1167,20 @@ mod tests {
                 },
             }]
         );
-        assert_eq!(
-            parse_ddl("ALTER TABLE events RENAME INDEX ix_a TO ix_b", "app")
-                .unwrap()
-                .actions,
-            vec![DdlAction::Alter {
-                table: "events".to_owned(),
-                kind: AlterKind::IndexOnly,
-            }]
-        );
+        for statement in [
+            "ALTER TABLE events RENAME INDEX ix_a TO ix_b",
+            "ALTER TABLE events RENAME KEY ix_a TO ix_b, ALGORITHM=INPLACE",
+            "ALTER TABLE events ALTER INDEX ix_a INVISIBLE",
+        ] {
+            assert_eq!(
+                parse_ddl(statement, "app").unwrap().actions,
+                vec![DdlAction::Alter {
+                    table: "events".to_owned(),
+                    kind: AlterKind::IndexOnly,
+                }],
+                "{statement}"
+            );
+        }
     }
 
     /// A comment or a line break in a statement's opening words does not
@@ -1192,7 +1203,11 @@ mod tests {
             "ALTER IGNORE TABLE events ADD COLUMN extra INT NULL",
             "ALTER TABLE events /*!50700 ADD COLUMN extra INT NULL */",
         ] {
-            assert_eq!(parse_ddl(statement, "app").unwrap().actions, added, "{statement}");
+            assert_eq!(
+                parse_ddl(statement, "app").unwrap().actions,
+                added,
+                "{statement}"
+            );
         }
         // Comment marks inside a string or a name are the string or name.
         assert_eq!(
@@ -1200,8 +1215,12 @@ mod tests {
             "ALTER TABLE `a#b` COMMENT '/* kept */ -- kept'"
         );
         assert_eq!(
-            parse_ddl("/* gone */ DROP  TABLE events", "app").unwrap().actions,
-            vec![DdlAction::Drop { table: "events".to_owned() }]
+            parse_ddl("/* gone */ DROP  TABLE events", "app")
+                .unwrap()
+                .actions,
+            vec![DdlAction::Drop {
+                table: "events".to_owned()
+            }]
         );
     }
 

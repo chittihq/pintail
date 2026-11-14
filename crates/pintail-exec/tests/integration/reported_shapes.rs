@@ -41,6 +41,7 @@ fn places_schema() -> TableSchema {
 }
 
 /// How many rows `sql` answers, or why it did not.
+#[allow(clippy::too_many_lines)] // two tables built and registered in one place
 fn rows(sql: &str) -> Result<usize, String> {
     let directory = tempfile::tempdir().expect("directory");
     let mut visits = TableStore::open(

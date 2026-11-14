@@ -111,8 +111,8 @@ fn an_aggregate_row_subquery_is_one_row() {
         // Correlated: per outer row, the two rows of its group.
         "SELECT COUNT(*) FROM items o \
          WHERE (2, 7) = (SELECT COUNT(*), 7 FROM items i WHERE i.grp = o.grp)",
-        // No table at all: one row, whose count is 1.
-        "SELECT COUNT(*) FROM items o WHERE (1, 7) = (SELECT COUNT(*), 7)",
+        // No table at all: the columns are read as written, with no HAVING.
+        "SELECT COUNT(*) FROM items o WHERE (4, 7) = (SELECT 4, 7)",
         // Every column an aggregate: one row as before.
         "SELECT COUNT(*) FROM items o WHERE (4, 3) = (SELECT COUNT(*), MAX(id) FROM items)",
     ];

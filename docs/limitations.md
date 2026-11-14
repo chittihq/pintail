@@ -694,6 +694,13 @@ stays readable as a list of things to fix.
   from a DATE or DATETIME reads back as that text rather than as a temporal
   value. The HTTP query API has no session and does not keep them.
 
+- `DATABASE()` and `SCHEMA()` selected beside a table answer the session's
+  database, but their result metadata is that of the name itself: `NOT
+  NULL` and as long as the name, where MySQL reports a nullable column as
+  long as the longest name it allows.
+- An aggregate in a subquery that reads no table, `(SELECT COUNT(*))`, is
+  refused as an invalid use of a group function.
+
 - `caching_sha2_password` serves both the fast-auth exchange and the
   full-authentication fallback (RSA key exchange toward a per-process
   keypair, or cleartext from a client that trusts its transport), validated

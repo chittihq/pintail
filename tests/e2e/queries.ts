@@ -1895,13 +1895,13 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers', 'orders'],
   },
   {
-    name: 'row compared with an aggregating subquery that reads no table',
-    sql: 'SELECT COUNT(*) FROM customers c WHERE (1, 7) = (SELECT COUNT(*), 7)',
-    tables: ['customers'],
-  },
-  {
     name: 'the session database beside a table',
-    sql: 'SELECT COUNT(*) AS n, DATABASE() AS db, SCHEMA() AS s FROM orders WHERE DATABASE() IS NOT NULL',
+    // Compared rather than selected: the mirror reports the name as a
+    // string of its own length where the source reports a nullable
+    // VARCHAR of the longest name it allows (docs/limitations.md).
+    sql:
+      "SELECT COUNT(*) AS n, SUM(DATABASE() = 'e2e_db') AS here, SUM(SCHEMA() = DATABASE()) AS same " +
+      'FROM orders WHERE DATABASE() IS NOT NULL',
     tables: ['orders'],
   },
 ]

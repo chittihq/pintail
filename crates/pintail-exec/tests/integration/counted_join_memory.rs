@@ -133,7 +133,10 @@ fn a_budget_too_small_for_the_index_runs_the_join() {
             }
             Err(error) => {
                 eprintln!("{limit} bytes: {error}");
-                assert!(error.contains("memory limit"), "under {limit} bytes: {error}");
+                assert!(
+                    error.contains("memory limit"),
+                    "under {limit} bytes: {error}"
+                );
             }
         }
     }
