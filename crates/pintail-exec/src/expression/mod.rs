@@ -2870,6 +2870,9 @@ fn evaluate_eager_scalar_inner(
                 // each of these decides that for itself.
                 | ScalarFunction::JsonModify { .. }
                 | ScalarFunction::JsonArrayModify { .. }
+                // A patch that is not an object replaces whatever came
+                // before it, a NULL included.
+                | ScalarFunction::JsonMergePatch
         )
     {
         return Ok(Value::Null);
@@ -3169,15 +3172,28 @@ fn evaluate_eager_scalar_inner(
             ))
         }
         ScalarFunction::JsonMergePatch => {
-            let mut merged = parse_json_argument(&values[0])?;
+            // NULL is unknown: it makes the result NULL, and so does every
+            // object patched onto it, until a patch that is not an object
+            // replaces the document outright.
+            let mut merged = match &values[0] {
+                Value::Null => None,
+                document => Some(parse_json_argument(document)?),
+            };
             for patch in &values[1..] {
+                if matches!(patch, Value::Null) {
+                    merged = None;
+                    continue;
+                }
                 let patch = parse_json_argument(patch)?;
-                merged = json_merge_patch(merged, patch);
+                merged = match merged {
+                    Some(document) => Some(json_merge_patch(document, patch)),
+                    None if patch.is_object() => None,
+                    None => Some(patch),
+                };
             }
-            Ok(json_text_result(
-                "json_merge_patch",
-                mysql_json_text(&merged),
-            ))
+            Ok(merged.map_or(Value::Null, |merged| {
+                json_text_result("json_merge_patch", mysql_json_text(&merged))
+            }))
         }
         ScalarFunction::JsonDepth => {
             let parsed = parse_json_argument(&values[0])?;
@@ -5368,11 +5384,11 @@ fn evaluate_eager_scalar_inner(
             let document = parse_json_argument(&values[0])?;
             let path = scalar_string(&values[1])?;
             Ok(
-                json_path_lookup(&document, &path)?.map_or(Value::Null, |found| {
-                    Value::Utf8(match found {
-                        serde_json::Value::String(text) => text.clone(),
-                        other => mysql_json_text(other),
-                    })
+                // The JSON null literal is the SQL NULL here, not its text.
+                json_path_lookup(&document, &path)?.map_or(Value::Null, |found| match found {
+                    serde_json::Value::Null => Value::Null,
+                    serde_json::Value::String(text) => Value::Utf8(text.clone()),
+                    other => Value::Utf8(mysql_json_text(other)),
                 }),
             )
         }
@@ -5405,9 +5421,7 @@ fn evaluate_eager_scalar_inner(
                 // MySQL answers NULL when nothing matches, one bare path for
                 // a single hit, and an array once there are several.
                 0 => Value::Null,
-                1 if !all => {
-                    Value::Utf8(mysql_json_text(&serde_json::Value::String(found.remove(0))))
-                }
+                1 => Value::Utf8(mysql_json_text(&serde_json::Value::String(found.remove(0)))),
                 _ => {
                     if !all {
                         found.truncate(1);
@@ -8929,6 +8943,12 @@ fn json_contains(
             }
             Ok(true)
         }
+        // Numbers are contained by value: 10 holds 10.0.
+        (serde_json::Value::Number(left), serde_json::Value::Number(right)) => Ok(left == right
+            || left
+                .as_f64()
+                .zip(right.as_f64())
+                .is_some_and(|(left, right)| left.total_cmp(&right).is_eq())),
         (left, right) => Ok(left == right),
     }
 }
@@ -8981,7 +9001,9 @@ impl JsonSearch<'_> {
                 for (key, value) in members {
                     // A key needing quotes in a path gets them, so the answer
                     // can be fed straight back into JSON_EXTRACT.
-                    let step = if key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    let step = if !key.is_empty()
+                        && key.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    {
                         format!("{here}.{key}")
                     } else {
                         format!("{here}.\"{key}\"")
