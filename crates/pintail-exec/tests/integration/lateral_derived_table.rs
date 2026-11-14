@@ -412,6 +412,55 @@ fn a_volatile_table_function_document_is_never_memoized() {
     assert_eq!(dependent_subquery_executions() - executions, 4);
 }
 
+/// A name declared in two enclosing scopes means the nearer one. The
+/// subquery's own `shelves s` is what its LATERAL table reads, whatever
+/// row of the outer `shelves s` the subquery is being answered for: every
+/// row gets the sum over all six shelves, not six times its own id.
+#[test]
+fn a_reference_resolves_in_the_nearest_scope_that_declares_it() {
+    let all = "21";
+    let result = run("SELECT s.id, (SELECT SUM(d.x) FROM shelves s, \
+                                    LATERAL (SELECT s.id AS x) d) \
+                      FROM shelves s ORDER BY s.id");
+    assert_eq!(result.len(), SHELVES.len());
+    assert!(result.iter().all(|row| row[1] == all), "{result:?}");
+
+    // The same through a scalar subquery instead of a LATERAL table.
+    let result = run(
+        "SELECT s.id, (SELECT SUM((SELECT s.id FROM DUAL)) FROM shelves s) \
+                      FROM shelves s ORDER BY s.id",
+    );
+    assert!(result.iter().all(|row| row[1] == all), "{result:?}");
+
+    // Three scopes declare the name, each over different rows: the
+    // innermost reads ids 5 and 6, once per row of the middle one (ids 1
+    // to 3), whatever the outermost row.
+    let result = run("SELECT s.id, (SELECT SUM((SELECT SUM(d.x) FROM shelves s, \
+                                               LATERAL (SELECT s.id AS x) d \
+                                               WHERE s.id >= 5)) \
+                                    FROM shelves s WHERE s.id <= 3) \
+                      FROM shelves s WHERE s.id IN (2, 4) ORDER BY s.id");
+    assert_eq!(result, rows(&[&["2", "33"], &["4", "33"]]));
+
+    // A scope in between that does not declare the name is looked through:
+    // the innermost reference reads the outermost row.
+    let result = run(
+        "SELECT s.id, (SELECT (SELECT s.id FROM DUAL) + p.id FROM parts p \
+                                    WHERE p.id = 2) \
+                      FROM shelves s WHERE s.id IN (2, 4) ORDER BY s.id",
+    );
+    assert_eq!(result, rows(&[&["2", "4"], &["4", "6"]]));
+
+    // An unqualified name both enclosing scopes have is the nearer one's:
+    // `weight` is not a column of shelves, `zone` is a column of both.
+    let result = run(
+        "SELECT s.id, (SELECT SUM((SELECT zone FROM DUAL)) FROM parts p \
+                                    WHERE p.id IN (4, 6)) \
+                      FROM shelves s WHERE s.id = 1",
+    );
+    assert_eq!(result, rows(&[&["1", "4"]]));
+}
+
 /// A table that reads nothing to its left is an ordinary derived table.
 #[test]
 fn an_uncorrelated_lateral_is_an_ordinary_derived_table() {

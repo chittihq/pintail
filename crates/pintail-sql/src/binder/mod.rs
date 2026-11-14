@@ -104,6 +104,7 @@ impl<'catalog> Binder<'catalog> {
         for table in &mut outer_tables {
             for column in &mut table.columns {
                 column.outer = true;
+                column.scope_depth = column.scope_depth.saturating_add(1);
             }
         }
         let nested = Self {
@@ -525,6 +526,7 @@ impl<'catalog> Binder<'catalog> {
                 bit_width: anchor.result_bit_width(&projection.expr),
                 float_decimals: projection.expr.numeric_decimals(&anchor.aggregates),
                 outer: false,
+                scope_depth: 0,
                 using_shadowed: false,
                 declared_set: false,
             })
@@ -2951,6 +2953,7 @@ impl<'catalog> Binder<'catalog> {
         for table in &mut outer_tables {
             for column in &mut table.columns {
                 column.outer = true;
+                column.scope_depth = column.scope_depth.saturating_add(1);
             }
         }
         let nested = Self {
@@ -3121,6 +3124,7 @@ impl<'catalog> Binder<'catalog> {
                 bit_width: column.bit_width(),
                 float_decimals: column.float_decimals(),
                 outer: false,
+                scope_depth: 0,
                 using_shadowed: false,
                 declared_set: column.set_members().is_some(),
             })
@@ -3210,6 +3214,7 @@ impl<'catalog> Binder<'catalog> {
                 bit_width: input.result_bit_width(&projection.expr),
                 float_decimals: projection.expr.numeric_decimals(&input.aggregates),
                 outer: false,
+                scope_depth: 0,
                 using_shadowed: false,
                 declared_set: false,
             })
@@ -5518,6 +5523,11 @@ fn bind_column(identifiers: &[Ident], tables: &[BoundTable]) -> Result<BoundExpr
     // available.
     if matches.iter().any(|column| !column.outer) {
         matches.retain(|column| !column.outer);
+    }
+    // The same holds between enclosing scopes: a name two of them declare
+    // means the nearer one, and is ambiguous only within one scope.
+    if let Some(nearest) = matches.iter().map(|column| column.scope_depth).min() {
+        matches.retain(|column| column.scope_depth == nearest);
     }
 
     let column = match matches.as_slice() {

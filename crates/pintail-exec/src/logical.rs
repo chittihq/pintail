@@ -460,6 +460,7 @@ impl LogicalPlanner {
                         _ => None,
                     },
                     outer: false,
+                    scope_depth: 0,
                     using_shadowed: false,
                     declared_set: false,
                 })

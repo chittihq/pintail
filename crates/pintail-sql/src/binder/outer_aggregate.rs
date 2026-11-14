@@ -120,6 +120,7 @@ pub(super) fn output_column(aggregate: &BoundAggregate, id: u64) -> BoundColumn 
         bit_width: source.and_then(|column| column.bit_width),
         float_decimals,
         outer: false,
+        scope_depth: 0,
         using_shadowed: false,
         declared_set: source.is_some_and(|column| column.declared_set),
     }

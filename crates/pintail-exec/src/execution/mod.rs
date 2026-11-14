@@ -4382,77 +4382,12 @@ fn substitute_outer_query(
     columns: &[BoundColumn],
     key: &mut Vec<Value>,
 ) -> Result<(), ExecError> {
-    for projection in &mut query.projection {
-        substitute_outer_expr(&mut projection.expr, batch, row, columns, key)?;
-    }
-    if let Some(filter) = &mut query.filter {
-        substitute_outer_expr(filter, batch, row, columns, key)?;
-    }
-    for expression in &mut query.group_by {
-        substitute_outer_expr(expression, batch, row, columns, key)?;
-    }
-    for aggregate in &mut query.aggregates {
-        if let Some(expression) = &mut aggregate.expr {
-            substitute_outer_expr(expression, batch, row, columns, key)?;
-        }
-        for (expression, _) in &mut aggregate.order_within {
-            substitute_outer_expr(expression, batch, row, columns, key)?;
-        }
-    }
-    for window in &mut query.windows {
-        match &mut window.function {
-            WindowFunction::Aggregate(aggregate) => {
-                if let Some(expression) = &mut aggregate.expr {
-                    substitute_outer_expr(expression, batch, row, columns, key)?;
-                }
-            }
-            WindowFunction::Offset { expr, default, .. } => {
-                substitute_outer_expr(expr, batch, row, columns, key)?;
-                if let Some(default) = default {
-                    substitute_outer_expr(default, batch, row, columns, key)?;
-                }
-            }
-            WindowFunction::Extreme { expr, .. } => {
-                substitute_outer_expr(expr, batch, row, columns, key)?;
-            }
-            WindowFunction::RowNumber
-            | WindowFunction::Rank
-            | WindowFunction::DenseRank
-            | WindowFunction::NTile(_) => {}
-        }
-        for expression in &mut window.partition_by {
-            substitute_outer_expr(expression, batch, row, columns, key)?;
-        }
-        for order_key in &mut window.order_by {
-            substitute_outer_expr(&mut order_key.expr, batch, row, columns, key)?;
-        }
-    }
-    if let Some(having) = &mut query.having {
-        substitute_outer_expr(having, batch, row, columns, key)?;
-    }
-    for source in &mut query.from {
-        if let Some(input) = &mut source.base.input {
-            substitute_outer_query(input, batch, row, columns, key)?;
-        }
-        for join in &mut source.joins {
-            if let Some(input) = &mut join.table.input {
-                substitute_outer_query(input, batch, row, columns, key)?;
-            }
-            if let Some(condition) = &mut join.condition {
-                substitute_outer_expr(condition, batch, row, columns, key)?;
-            }
-        }
-    }
-    for branch in &mut query.union_all {
-        substitute_outer_query(branch, batch, row, columns, key)?;
-    }
-    for (_, right) in &mut query.set_ops {
-        substitute_outer_query(right, batch, row, columns, key)?;
-    }
-    if let Some(recursive) = &mut query.recursive {
-        substitute_outer_query(&mut recursive.member, batch, row, columns, key)?;
-    }
-    Ok(())
+    let outer = OuterRow {
+        batch,
+        row,
+        columns,
+    };
+    substitute_scoped_query(query, &outer, &mut Vec::new(), key)
 }
 
 fn substitute_outer_expr(
@@ -4462,9 +4397,153 @@ fn substitute_outer_expr(
     columns: &[BoundColumn],
     key: &mut Vec<Value>,
 ) -> Result<(), ExecError> {
+    let outer = OuterRow {
+        batch,
+        row,
+        columns,
+    };
+    substitute_scoped_expr(expression, &outer, &mut Vec::new(), key)
+}
+
+/// The row whose values a substitution writes, and the columns it has.
+struct OuterRow<'a> {
+    batch: &'a RecordBatch,
+    row: usize,
+    columns: &'a [BoundColumn],
+}
+
+/// Adds to `hidden` the outer row's columns that `table` puts out of
+/// reach: a query that reads the same table under the same name declares
+/// a nearer scope for it, and a reference written anywhere inside that
+/// query means the nearer one. Such a reference is an outer reference of
+/// a query nested deeper still, and is written when that query's own rows
+/// are known, not from this row.
+fn hide_relation(table: &pintail_sql::BoundTable, outer: &OuterRow<'_>, hidden: &mut Vec<usize>) {
+    for (position, candidate) in outer.columns.iter().enumerate() {
+        if candidate.database_id == table.database_id
+            && candidate.table_id == table.table_id
+            && candidate
+                .relation_name
+                .eq_ignore_ascii_case(&table.relation_name)
+        {
+            hidden.push(position);
+        }
+    }
+}
+
+/// [`substitute_outer_query`] below the scopes already entered: `hidden`
+/// holds the positions of the outer row's columns that a query on the way
+/// down declares again.
+fn substitute_scoped_query(
+    query: &mut BoundQuery,
+    outer: &OuterRow<'_>,
+    hidden: &mut Vec<usize>,
+    key: &mut Vec<Value>,
+) -> Result<(), ExecError> {
+    // Everything the query writes outside its FROM clause sees every
+    // relation of that clause.
+    let enclosing = hidden.len();
+    for source in &query.from {
+        hide_relation(&source.base, outer, hidden);
+        for join in &source.joins {
+            hide_relation(&join.table, outer, hidden);
+        }
+    }
+    for projection in &mut query.projection {
+        substitute_scoped_expr(&mut projection.expr, outer, hidden, key)?;
+    }
+    if let Some(filter) = &mut query.filter {
+        substitute_scoped_expr(filter, outer, hidden, key)?;
+    }
+    for expression in &mut query.group_by {
+        substitute_scoped_expr(expression, outer, hidden, key)?;
+    }
+    for aggregate in &mut query.aggregates {
+        if let Some(expression) = &mut aggregate.expr {
+            substitute_scoped_expr(expression, outer, hidden, key)?;
+        }
+        for (expression, _) in &mut aggregate.order_within {
+            substitute_scoped_expr(expression, outer, hidden, key)?;
+        }
+    }
+    for window in &mut query.windows {
+        match &mut window.function {
+            WindowFunction::Aggregate(aggregate) => {
+                if let Some(expression) = &mut aggregate.expr {
+                    substitute_scoped_expr(expression, outer, hidden, key)?;
+                }
+            }
+            WindowFunction::Offset { expr, default, .. } => {
+                substitute_scoped_expr(expr, outer, hidden, key)?;
+                if let Some(default) = default {
+                    substitute_scoped_expr(default, outer, hidden, key)?;
+                }
+            }
+            WindowFunction::Extreme { expr, .. } => {
+                substitute_scoped_expr(expr, outer, hidden, key)?;
+            }
+            WindowFunction::RowNumber
+            | WindowFunction::Rank
+            | WindowFunction::DenseRank
+            | WindowFunction::NTile(_) => {}
+        }
+        for expression in &mut window.partition_by {
+            substitute_scoped_expr(expression, outer, hidden, key)?;
+        }
+        for order_key in &mut window.order_by {
+            substitute_scoped_expr(&mut order_key.expr, outer, hidden, key)?;
+        }
+    }
+    if let Some(having) = &mut query.having {
+        substitute_scoped_expr(having, outer, hidden, key)?;
+    }
+    for source in &mut query.from {
+        for join in &mut source.joins {
+            if let Some(condition) = &mut join.condition {
+                substitute_scoped_expr(condition, outer, hidden, key)?;
+            }
+        }
+    }
+    hidden.truncate(enclosing);
+    // A derived table sees less: a LATERAL one the relations written
+    // before it, and any other none of this FROM clause.
+    let mut preceding = Vec::new();
+    for source in &mut query.from {
+        let tables = std::iter::once(&mut source.base)
+            .chain(source.joins.iter_mut().map(|join| &mut join.table));
+        for table in tables {
+            if let Some(input) = &mut table.input {
+                if table.lateral {
+                    hidden.extend_from_slice(&preceding);
+                }
+                let result = substitute_scoped_query(input, outer, hidden, key);
+                hidden.truncate(enclosing);
+                result?;
+            }
+            hide_relation(table, outer, &mut preceding);
+        }
+    }
+    for branch in &mut query.union_all {
+        substitute_scoped_query(branch, outer, hidden, key)?;
+    }
+    for (_, right) in &mut query.set_ops {
+        substitute_scoped_query(right, outer, hidden, key)?;
+    }
+    if let Some(recursive) = &mut query.recursive {
+        substitute_scoped_query(&mut recursive.member, outer, hidden, key)?;
+    }
+    Ok(())
+}
+
+fn substitute_scoped_expr(
+    expression: &mut BoundExpr,
+    outer: &OuterRow<'_>,
+    hidden: &mut Vec<usize>,
+    key: &mut Vec<Value>,
+) -> Result<(), ExecError> {
     match &mut expression.kind {
         BoundExprKind::Column(column) if column.outer => {
-            let position = columns.iter().position(|candidate| {
+            let position = outer.columns.iter().position(|candidate| {
                 candidate.database_id == column.database_id
                     && candidate.table_id == column.table_id
                     && candidate.column_id == column.column_id
@@ -4472,10 +4551,13 @@ fn substitute_outer_expr(
                         .relation_name
                         .eq_ignore_ascii_case(&column.relation_name)
             });
-            if let Some(position) = position {
-                let value = batch
+            if let Some(position) = position
+                && !hidden.contains(&position)
+            {
+                let value = outer
+                    .batch
                     .column(position)
-                    .and_then(|values| values.value(row))
+                    .and_then(|values| values.value(outer.row))
                     .cloned()
                     .ok_or(ExecError::InvalidBatch(
                         "dependent subquery outer row is outside its input",
@@ -4488,23 +4570,23 @@ fn substitute_outer_expr(
         BoundExprKind::PreparedIn { expr, .. }
         | BoundExprKind::Unary { expr, .. }
         | BoundExprKind::IsNull { expr, .. } => {
-            substitute_outer_expr(expr, batch, row, columns, key)?;
+            substitute_scoped_expr(expr, outer, hidden, key)?;
         }
         BoundExprKind::Binary { left, right, .. } => {
-            substitute_outer_expr(left, batch, row, columns, key)?;
-            substitute_outer_expr(right, batch, row, columns, key)?;
+            substitute_scoped_expr(left, outer, hidden, key)?;
+            substitute_scoped_expr(right, outer, hidden, key)?;
         }
         BoundExprKind::Scalar { args, .. } => {
             for argument in args {
-                substitute_outer_expr(argument, batch, row, columns, key)?;
+                substitute_scoped_expr(argument, outer, hidden, key)?;
             }
         }
         BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
-            substitute_outer_query(query, batch, row, columns, key)?;
+            substitute_scoped_query(query, outer, hidden, key)?;
         }
         BoundExprKind::InSubquery { expr, query, .. } => {
-            substitute_outer_expr(expr, batch, row, columns, key)?;
-            substitute_outer_query(query, batch, row, columns, key)?;
+            substitute_scoped_expr(expr, outer, hidden, key)?;
+            substitute_scoped_query(query, outer, hidden, key)?;
         }
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
@@ -6608,6 +6690,30 @@ impl PullOperator {
     }
 }
 
+/// The column a precomputed dependent aggregate argument is read back as.
+fn dependent_argument_column(offset: usize, expression: &BoundExpr) -> BoundColumn {
+    BoundColumn {
+        database_id: DatabaseId::new(u64::MAX),
+        table_id: TableId::new(u64::MAX - 5),
+        column_id: u32::try_from(offset).unwrap_or(u32::MAX),
+        relation_name: "<dependent-argument>".to_owned(),
+        name: format!("<dependent-argument-{offset}>"),
+        data_type: expression.data_type.unwrap_or(DataType::Utf8),
+        nullable: expression.nullable,
+        collation: expression.text_collation().map(str::to_owned),
+        enum_labels: None,
+        geometry: false,
+        timestamp: false,
+        binary_width: expression.binary_width(),
+        bit_width: expression.bit_width(),
+        float_decimals: expression.numeric_decimals(&[]),
+        outer: false,
+        scope_depth: 0,
+        using_shadowed: false,
+        declared_set: false,
+    }
+}
+
 /// Lowers one plan node, wrapped in a profile recorder when the execution
 /// is profiled. The recursion below goes through here, so every node of
 /// a profiled plan is measured and an unprofiled plan is built as before.
@@ -6687,25 +6793,7 @@ fn precompute_dependent_aggregate_arguments(
     record_dependent_memo(memo.finish(memory));
     let mut output_columns = columns;
     for (offset, expression) in dependent.into_iter().enumerate() {
-        let column = BoundColumn {
-            database_id: DatabaseId::new(u64::MAX),
-            table_id: TableId::new(u64::MAX - 5),
-            column_id: u32::try_from(offset).unwrap_or(u32::MAX),
-            relation_name: "<dependent-argument>".to_owned(),
-            name: format!("<dependent-argument-{offset}>"),
-            data_type: expression.data_type.unwrap_or(DataType::Utf8),
-            nullable: expression.nullable,
-            collation: expression.text_collation().map(str::to_owned),
-            enum_labels: None,
-            geometry: false,
-            timestamp: false,
-            binary_width: expression.binary_width(),
-            bit_width: expression.bit_width(),
-            float_decimals: expression.numeric_decimals(&[]),
-            outer: false,
-            using_shadowed: false,
-            declared_set: false,
-        };
+        let column = dependent_argument_column(offset, expression);
         *expression = BoundExpr {
             kind: BoundExprKind::Column(column.clone()),
             data_type: expression.data_type,
@@ -6823,6 +6911,7 @@ fn projection_output_columns(expressions: &[BoundProjection]) -> Vec<BoundColumn
                 bit_width: projection.expr.bit_width(),
                 float_decimals: projection.expr.numeric_decimals(&[]),
                 outer: false,
+                scope_depth: 0,
                 using_shadowed: false,
                 declared_set: false,
             },
@@ -7424,6 +7513,7 @@ fn build_node_hash_aggregate(
         bit_width: None,
         float_decimals: None,
         outer: false,
+        scope_depth: 0,
         using_shadowed: false,
         declared_set: false,
     };

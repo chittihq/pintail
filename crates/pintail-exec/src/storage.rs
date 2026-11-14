@@ -2766,6 +2766,7 @@ fn text_value_filters(
             bit_width: column.bit_width(),
             float_decimals: column.float_decimals(),
             outer: false,
+            scope_depth: 0,
             using_shadowed: false,
             declared_set: false,
         }];
@@ -2881,6 +2882,7 @@ fn build_prewhere_spec(
             bit_width: column.bit_width(),
             float_decimals: column.float_decimals(),
             outer: false,
+            scope_depth: 0,
             using_shadowed: false,
             declared_set: false,
         });

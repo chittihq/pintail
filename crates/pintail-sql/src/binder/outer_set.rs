@@ -323,6 +323,7 @@ impl Binder<'_> {
                 bit_width: None,
                 float_decimals: None,
                 outer: false,
+                scope_depth: 0,
                 using_shadowed: false,
                 declared_set: false,
             }];
@@ -333,6 +334,7 @@ impl Binder<'_> {
                     column_id: u32::try_from(offset + 2)
                         .map_err(|_| "it reads too many outer columns")?,
                     outer: false,
+                    scope_depth: 0,
                     using_shadowed: false,
                     declared_set: false,
                     ..column.clone()

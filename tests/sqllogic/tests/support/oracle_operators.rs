@@ -516,6 +516,25 @@ const JSON_EXACT_INTEGERS: &[&str] = &[
     "SELECT id FROM orders WHERE JSON_CONTAINS(JSON_ARRAY(9007199254740992 + id), '9007199254740993') ORDER BY id",
 ];
 
+const NEAREST_SCOPE: &[&str] = &[
+    "SELECT id, (SELECT SUM(d.x) FROM users, LATERAL (SELECT users.id AS x) d) AS s FROM users ORDER BY id",
+    "SELECT id, (SELECT MAX((SELECT users.id FROM DUAL)) FROM users) AS s FROM users ORDER BY id",
+    "SELECT id, (SELECT SUM((SELECT SUM(d.x) FROM users, LATERAL (SELECT users.id AS x) d WHERE users.id >= 2)) FROM users WHERE users.id <= 2) AS s FROM users ORDER BY id",
+    "SELECT id, (SELECT SUM((SELECT SUM(users.id) FROM users WHERE users.id >= 2)) FROM users WHERE users.id <= 2) AS s FROM users ORDER BY id",
+    "SELECT users.id, d.s FROM users, LATERAL (SELECT SUM(f.z) AS s FROM users, LATERAL (SELECT users.id AS z) f) d ORDER BY users.id",
+    "SELECT users.id, d.s FROM users, LATERAL (SELECT (SELECT SUM(f.z) FROM users, LATERAL (SELECT users.id AS z) f) + users.id AS s) d ORDER BY users.id",
+    "SELECT o.id, (SELECT SUM(d.x) FROM users, LATERAL (SELECT users.id + o.id AS x) d) AS s FROM users o ORDER BY o.id",
+    "SELECT id, (SELECT COUNT(*) FROM users WHERE users.id = (SELECT MAX(i.id) FROM users i WHERE i.id <= users.id)) AS s FROM users ORDER BY id",
+    "SELECT id, (SELECT COUNT(*) FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)) AS s FROM users ORDER BY id",
+    "SELECT id, id IN (SELECT users.id FROM users WHERE users.id = (SELECT MIN(i.id) + 1 FROM users i WHERE i.id < users.id)) AS s FROM users ORDER BY id",
+    "SELECT u.id, (SELECT SUM((SELECT id FROM DUAL)) FROM orders WHERE orders.user_id = u.id) AS s FROM users u ORDER BY u.id",
+    "SELECT u.id, (SELECT SUM(d.x) FROM orders, LATERAL (SELECT id AS x) d WHERE orders.user_id = u.id) AS s FROM users u ORDER BY u.id",
+    "SELECT t.id, (SELECT SUM((SELECT t.user_id FROM DUAL)) FROM orders t WHERE t.user_id = 1) AS s FROM users t ORDER BY t.id",
+    "SELECT id, (SELECT (SELECT users.id FROM DUAL) + orders.id FROM orders WHERE orders.id = 2) AS s FROM users ORDER BY id",
+    "SELECT id, (SELECT SUM(d.x) FROM (SELECT * FROM users WHERE id > 1) users, LATERAL (SELECT users.id AS x) d) AS s FROM users ORDER BY id",
+    "SELECT id, (SELECT SUM(d.x) FROM orders users, LATERAL (SELECT users.user_id AS x) d) AS s FROM users ORDER BY id",
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -534,6 +553,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("nearest scope", NEAREST_SCOPE),
         ("json exact integers", JSON_EXACT_INTEGERS),
         ("time read from short text", TIME_READ_FROM_SHORT_TEXT),
         ("outer aggregate subqueries", OUTER_AGGREGATE_SUBQUERIES),

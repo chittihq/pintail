@@ -370,6 +370,11 @@ pub struct BoundColumn {
     /// than the query that owns the expression. Dependent execution replaces
     /// it with the current outer-row value before compiling the inner plan.
     pub outer: bool,
+    /// How many query scopes out of the query being bound this column is
+    /// declared: zero for its own FROM clause, one for the query around
+    /// it. Name resolution reads it, to prefer the nearest scope that
+    /// declares a name; nothing after binding does.
+    pub scope_depth: u8,
     /// Consumed as the right side of a `USING`/`NATURAL` join: hidden from
     /// unqualified name resolution and unqualified `*`, still reachable
     /// through a qualified reference.

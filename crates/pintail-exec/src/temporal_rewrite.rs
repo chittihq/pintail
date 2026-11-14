@@ -852,6 +852,7 @@ mod tests {
             bit_width: None,
             float_decimals: None,
             outer: false,
+            scope_depth: 0,
             using_shadowed: false,
             declared_set: false,
         }
