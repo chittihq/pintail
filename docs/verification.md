@@ -213,7 +213,7 @@ claims to satisfy:
 | profile | stages | claims |
 |---|---|---|
 | `development` | fmt, typecheck, unit | it compiles, lints, typechecks, and passes its unit tests |
-| `rc` | + oracle, e2e, e2e-mysql80, browser | rc correctness gates passed, on both MySQL majors the release covers |
+| `rc` | + parser-corpus, oracle, parity-replay, mtr, mtr-replica, e2e, e2e-mysql80, migrations, browser, compose, bi-clients | rc correctness gates passed, on both MySQL majors the release covers |
 | `stable` | + recovery, bench, accept | the same, with the measured evidence regenerated |
 
 `--profile rc` is the release-candidate gate; the bare command is
@@ -268,8 +268,9 @@ cover.
 
 | Gate | Oracle | Where | Widen or replay |
 |---|---|---|---|
+| Oracle cases through the real path (`parity-replay` stage) | a live MySQL 8.4 source | `tests/e2e/parity-replay.ts`, rc and stable | `PINTAIL_REPLAY_PROFILES` picks the row-image and row-metadata pairs of the source; the report is `validate-out/parity-replay.json` |
 | Upstream suites (`mtr` stage) | a live MySQL 8.4 | `tests/mtr`, rc and stable | `MTR_BANK=1` records the exact statements in `baseline*.json`; `MTR_GATE=1` fails when one stops matching. `MTR_SUITE=mariadb` replays the other suite against the same oracle |
-| Upstream suites through replication | the source the mirror follows | `tests/mtr` with `MTR_MODE=replica` | every statement runs on a binlog-enabled source and each SELECT is compared once the mirror has applied a marker row; a mirror that stops following is written up with the statements since its last marker. `MTR_LOCAL_DIR` replays a directory of reproductions |
+| Upstream suites through replication (`mtr-replica` stage) | the source the mirror follows | `tests/mtr` with `MTR_MODE=replica`, rc and stable | every statement runs on a binlog-enabled source and each SELECT is compared once the mirror has applied a marker row; a mirror that stops following is written up with the statements since its last marker. `MTR_LOCAL_DIR` replays a directory of reproductions |
 | Change-capture simulation | an in-memory model of the source | `crates/pintail-cdc/src/simulation.rs`, unit stage | `PINTAIL_CDC_SIM_SEEDS`, `PINTAIL_CDC_SIM_SEED_BASE`, `PINTAIL_CDC_SIM_STEPS`, `PINTAIL_CDC_SIM_SEED` |
 | Change-capture matrix | the source server | `tests/e2e/cdc-matrix.ts` | `CDC_MATRIX_LEGS`, `CDC_MATRIX_ROUNDS`, `CDC_MATRIX_SEED`; legs cover MySQL 8.4, 8.0 and 5.7, MariaDB 11.4 and 10.6, GTID and file position, full and minimal metadata, compression and a polling demotion |
 | Disk faults | every acknowledged state of the table | `crates/pintail-store/tests/disk_faults.rs`, unit stage | `PINTAIL_DISK_FAULT_SEEDS`, `PINTAIL_DISK_FAULT_SEED_BASE`, `PINTAIL_DISK_FAULT_SEED` |

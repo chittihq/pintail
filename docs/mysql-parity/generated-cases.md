@@ -59,8 +59,9 @@ replay warns on the same entries and leaves staleness to the fixed corpus.
 
 ## Other coverage commands
 
-`bun run tests/e2e/parity-replay.ts` covers sessions, the wire protocol,
-snapshot, CDC, DDL and restart. The ignored
+The `parity-replay` stage (`bun run tests/e2e/parity-replay.ts`, in the rc
+and stable profiles) covers sessions, the wire protocol, snapshot, CDC, DDL
+and restart. The ignored
 `matches_mysql_across_storage_layouts` Rust test replays boundary cases over
 memtable, persisted, mixed, compacted and reopened layouts, plus the spill
 paths. The standard oracle stage runs the required Docker tests serially and

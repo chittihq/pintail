@@ -253,6 +253,28 @@ const STAGES: Stage[] = [
     env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
   },
   {
+    // The oracle's boundary and relational cases replayed through the real
+    // path: sessions, the wire protocol, the first copy, change capture, DDL
+    // and a restart, under three row-image and row-metadata settings of the
+    // source. The oracle stage answers the same statements from an engine it
+    // builds in process and reaches none of those layers. The inventory it
+    // replays is exported by the oracle's own unit test, so the two can
+    // never read different corpora.
+    name: 'parity-replay',
+    remote: true,
+    timeoutMinutes: 15,
+    stallMinutes: 5,
+    command: [
+      'bash', '-c',
+      'bun install --frozen-lockfile' +
+        ' && PINTAIL_ORACLE_INVENTORY=validate-out/oracle-inventory.json "$CARGO" test -p pintail-sqllogic' +
+        ' --test mysql_oracle oracle_case_inventory_matches_the_declared_gate' +
+        ' && bun run parity-replay.ts',
+    ],
+    cwd: join(repository, 'tests', 'e2e'),
+    env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
+  },
+  {
     name: 'e2e',
     remote: true,
     // PINTAIL_E2E_DOCKER_HOST points this stage's source container at a
@@ -447,13 +469,16 @@ const PROFILES: Record<string, Profile> = {
   /// previous stable's bank, so the freshness gate is absent by design
   /// rather than by omission.
   rc: {
-    stages: ['fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'mtr', 'e2e', 'e2e-mysql80', 'migrations', 'browser', 'compose', 'bi-clients'],
+    stages: [
+      'fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'parity-replay', 'mtr', 'mtr-replica',
+      'e2e', 'e2e-mysql80', 'migrations', 'browser', 'compose', 'bi-clients',
+    ],
     claim: 'rc correctness gates passed, on both MySQL majors the release claims to cover, schema migrations included',
     caveats: [
       'Benchmark evidence is NOT regenerated: an rc ships the previous',
       'stable release\'s numbers, so the freshness gate is not part of this',
-      'profile. Bank tests/e2e/results.md, results-mysql80.md and',
-      'results-migrations.md on PASS.',
+      'profile. Bank tests/e2e/results.md, results-mysql80.md,',
+      'results-migrations.md and tests/mtr/results-replica.{md,json} on PASS.',
       'The additional recovery fault matrix runs in the stable profile only.',
     ],
   },
@@ -463,8 +488,8 @@ const PROFILES: Record<string, Profile> = {
   /// gate can pass.
   stable: {
     stages: [
-      'fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'mtr', 'e2e', 'e2e-mysql80',
-      'recovery', 'browser', 'compose', 'bi-clients', 'bench', 'accept',
+      'fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'parity-replay', 'mtr', 'mtr-replica',
+      'e2e', 'e2e-mysql80', 'recovery', 'browser', 'compose', 'bi-clients', 'bench', 'accept',
     ],
     claim: 'every correctness gate passed and the measured evidence was regenerated',
     caveats: [
@@ -1163,7 +1188,7 @@ async function main() {
         process.exit(2)
       }
     }
-    const binaryConsumers = ['e2e', 'browser', 'accept', 'soak', 'mtr', 'mtr-replica', 'migrations', 'e2e-mysql80']
+    const binaryConsumers = ['e2e', 'browser', 'accept', 'soak', 'mtr', 'mtr-replica', 'parity-replay', 'migrations', 'e2e-mysql80']
     if (
       !process.env.PINTAIL_E2E_BINARY
       && requested.some((name) => binaryConsumers.includes(name))
