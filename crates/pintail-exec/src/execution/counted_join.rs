@@ -609,9 +609,9 @@ pub(super) fn plan(
         // Taken once a batch, by what the indexes have grown to. An index
         // the budget cannot hold leaves the join to its own path, which
         // can spill.
-        let slots = pairings
-            .iter()
-            .fold(0_usize, |bytes, pairing| bytes.saturating_add(pairing.slot_bytes()));
+        let slots = pairings.iter().fold(0_usize, |bytes, pairing| {
+            bytes.saturating_add(pairing.slot_bytes())
+        });
         if !held.grow_to(outside.saturating_add(slots)) {
             return Ok(None);
         }
