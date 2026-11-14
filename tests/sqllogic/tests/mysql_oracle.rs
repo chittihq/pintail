@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4333;
+const EXPECTED_CASES: usize = 4336;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5900,6 +5900,23 @@ fn engine_error_cases() -> Vec<OracleCase> {
         ordered(
             "negated unsigned values",
             "SELECT id, -(u >> 1), -(u & 255), -BIT_COUNT(u) FROM bounds ORDER BY id",
+        ),
+        // A date or a time negates as the number it reads as.
+        ordered(
+            "negated dates and times",
+            "SELECT -DATE '2024-03-05', -TIME '12:34:56', -TIMESTAMP '2024-03-05 12:34:56', \
+                    -TIME '-01:02:03.5', -TIMESTAMP '2024-03-05 12:34:56.123456', \
+                    -TIME '10:00:00' * 2, -(-TIME '10:00:00'), ABS(-DATE '2024-03-05'), \
+                    -DATE '2024-03-05' + 1",
+        ),
+        ordered(
+            "negated dates and times",
+            "SELECT id, -day, -dt0, -dt3, -dt6, -clock, -day + 1 FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "negated dates and times",
+            "SELECT id, -placed_at, -DATE(placed_at), -TIME(placed_at) FROM orders \
+             WHERE -placed_at < -20200101000000 ORDER BY id",
         ),
     ]
 }

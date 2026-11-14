@@ -5766,8 +5766,18 @@ fn bind_unary(
     } else {
         expr
     };
+    // A date or a time negates as the number it reads as, and that number
+    // is a double: -DATE '2024-03-05' is -20240305, and a DATETIME(6) keeps
+    // the microseconds a double holds. The double shows the digits of the
+    // fraction it was read with (see `BoundExpr::numeric_decimals`).
+    let temporal = operator == UnaryOperator::Minus
+        && matches!(
+            expr.data_type,
+            Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. })
+        );
     let expr = match operator {
-        UnaryOperator::Minus => json_as_number(expr),
+        UnaryOperator::Minus if temporal => cast_to(temporal_as_number(expr), DataType::Float64),
+        UnaryOperator::Minus => json_as_number(temporal_as_number(expr)),
         UnaryOperator::Not => json_truth(expr),
         _ => expr,
     };

@@ -446,9 +446,37 @@ fn binary_branch_width(args: &[BoundExpr]) -> Option<u32> {
     })
 }
 
+/// The fraction digits a negated date or time shows: it is a double read
+/// from the temporal's number, and keeps the digits that number has.
+/// `None` for any other negated double.
+fn negated_temporal_decimals(operand: &BoundExpr, aggregates: &[BoundAggregate]) -> Option<u8> {
+    let BoundExprKind::Scalar {
+        function: ScalarFunction::Cast(DataType::Float64),
+        args,
+    } = &operand.kind
+    else {
+        return None;
+    };
+    let number = args.first()?;
+    let read_from_temporal = matches!(
+        number.data_type,
+        Some(DataType::Int64 | DataType::Decimal { .. })
+    ) && matches!(
+        &number.kind,
+        BoundExprKind::Scalar {
+            function: ScalarFunction::Cast(_),
+            ..
+        }
+    );
+    read_from_temporal
+        .then(|| number.numeric_decimals(aggregates))
+        .flatten()
+}
+
 impl BoundExpr {
     /// Fractional digits used by numeric comparison; absent for unrestricted floats.
     #[must_use]
+    #[allow(clippy::too_many_lines)] // one arm per expression kind
     pub fn numeric_decimals(&self, aggregates: &[BoundAggregate]) -> Option<u8> {
         match &self.kind {
             BoundExprKind::Column(column)
@@ -484,6 +512,12 @@ impl BoundExpr {
                 function: ScalarFunction::Pi,
                 ..
             } => Some(6),
+            BoundExprKind::Unary {
+                op: UnaryOp::Minus,
+                expr,
+            } if self.data_type == Some(DataType::Float64) => {
+                negated_temporal_decimals(expr, aggregates)
+            }
             BoundExprKind::Binary { op, left, right }
                 if matches!(
                     op,

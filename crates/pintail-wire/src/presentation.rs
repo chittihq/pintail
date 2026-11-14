@@ -446,6 +446,16 @@ fn expression(
             }
             _ => {}
         },
+        // A negated date or time is a double that shows the fraction
+        // digits it was read with: -TIME '01:02:03.250' is -10203.250.
+        BoundExprKind::Unary {
+            op: pintail_sql::UnaryOp::Minus,
+            ..
+        } if column.coltype == ColumnType::MysqlTypeDouble => {
+            if let Some(decimals) = expr.numeric_decimals(&query.aggregates) {
+                column.decimals = decimals;
+            }
+        }
         BoundExprKind::Binary { op, left, right } => {
             let left_column = expression(left, query, catalog, facts);
             let right_column = expression(right, query, catalog, facts);
