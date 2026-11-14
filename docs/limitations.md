@@ -284,6 +284,25 @@ stays readable as a list of things to fix.
   single zone letter. `CONVERT_TZ` and a comparison of computed text with a
   DATE or DATETIME column do not read a date that other text follows
   (`CONCAT(d, 'Z') = d` is 0 where MySQL answers 1).
+- More date and time text MySQL reads and Pintail does not, measured.
+  A date written with one-digit parts is read with a 2000s year
+  (`EXTRACT(YEAR FROM '1-2-3')` is 1 in MySQL and 2001 here). A clock read
+  as a date (`EXTRACT(YEAR FROM '01:02:03')` is 2001 in MySQL), a packed
+  number read as a day (`EXTRACT(DAY FROM '11111')` is 1), three-digit
+  month and day fields (`CAST('2002-011-012' AS DATE)`), and a packed date
+  and time of sixteen or more digits
+  (`CAST('2012103123595912' AS DATETIME(6))`) are NULL here. Text of
+  twelve characters or more that MySQL first tries as a date and time
+  follows that only where a clock can follow the date:
+  `CAST('01:02:03    ' AS TIME)` is `00:00:00` in MySQL and `01:02:03`
+  here, and `EXTRACT(HOUR FROM '100000:02:03 ')` is NULL there and 838
+  here. A date written out in full and read for its clock
+  (`EXTRACT(MINUTE FROM '2001-01-01')`) is midnight here, where MySQL
+  reads untyped text of that length as the TIME `00:20:01`.
+  `EXTRACT(DAY FROM 0.9)` is NULL here and 0 in MySQL.
+- An interval of seconds written with more than six fractional digits
+  (`INTERVAL 0.9999999 SECOND`) rounds its seventh digit here; MySQL cuts
+  it, so the result there ends in `.999999` and here is the next second.
 - TIME text written with more than six fractional digits is rounded by
   its seventh digit. MySQL rounds a TIME up when the LAST digit written is
   five or more, whatever the seventh is: `MICROSECOND('00:00:01.12345649')`
@@ -355,17 +374,39 @@ stays readable as a list of things to fix.
   the columns in the subquery.
 - Locking reads are refused rather than run without their lock:
   `FOR UPDATE` and `FOR SHARE` (with or without `OF`, `NOWAIT` or
-  `SKIP LOCKED`) and `LOCK IN SHARE MODE`. `SELECT ... INTO OUTFILE`,
-  `INTO DUMPFILE` and `INTO @variable` are refused as well.
+  `SKIP LOCKED`) and `LOCK IN SHARE MODE`. `SELECT ... INTO OUTFILE` and
+  `INTO DUMPFILE` are refused as well.
 - `CREATE VIEW`, `ALTER VIEW` and `DROP VIEW` are refused, and a view
   defined on the source is not mirrored: only base tables are.
+- There is no full-text search: `MATCH (...) AGAINST (...)` is refused as an
+  unsupported expression, and a source's FULLTEXT index is not used.
+- These functions are refused as unsupported expressions:
+  `JSON_SCHEMA_VALID` and `JSON_SCHEMA_VALIDATION_REPORT`; `ExtractValue`
+  and `UpdateXML`; `AES_ENCRYPT` and `AES_DECRYPT`; `COMPRESS`,
+  `UNCOMPRESS` and `UNCOMPRESSED_LENGTH`.
+- `SET NAMES` and `SET CHARACTER SET` refuse a connection character set
+  with error 1210 unless it is `utf8mb4`, `utf8mb3`, `latin1`, `latin2`,
+  `koi8r` or `binary`. Refused, measured: `gbk`, `gb2312`, `gb18030`,
+  `big5`, `sjis`, `cp932`, `ujis`, `eucjpms`, `euckr`, `cp1250`, `cp1251`
+  and `ascii`. A client configured for one of them cannot connect its
+  session to its own encoding.
+- `DO expr` is not read as a statement. A prepared `SET`
+  (`PREPARE s FROM 'SET @x = 1'`) prepares and is then refused at
+  `EXECUTE` as a write. `PREPARE ... FROM 'USE db'` is accepted where
+  MySQL refuses it (error 1295).
+- `CAST(text AS JSON)` reads a number with a fraction or an exponent as
+  exactly the double it spells. MySQL's JSON parser lands one unit lower
+  or higher for some spellings: `CAST('[1.0e30]' AS JSON)` is
+  `[9.999999999999999e29]` there and `[1e30]` here. A document a source
+  stored is unaffected: its doubles are kept as stored.
+- `IF` and `CASE` over `BIT` values of different widths answer every value
+  at the widest width (`0x0032` for a `BIT(8)` value beside a `BIT(16)`
+  one), where MySQL answers each at its own. Grouped by, such an
+  expression shows its bytes, where MySQL shows the number.
 - `GROUP BY ... WITH ROLLUP` is refused beside `SELECT DISTINCT` and
   beside a window function. `GROUPING()` is accepted in the select list and
   in `HAVING` and refused in `ORDER BY`; name the select item
   (`GROUPING(a) AS g ... ORDER BY g`) instead.
-- `DATABASE()`, `SCHEMA()` and `VERSION()` are answered only when the
-  select list holds nothing but connection functions and the statement has
-  no table; inside an expression or beside a column they are refused.
 - `UUID()` returns a random (version 4) identifier where MySQL returns a
   time-based (version 1) one; length, layout and `IS_UUID` agree.
 - A FROM-less subquery whose aggregate reads an outer column
@@ -860,6 +901,9 @@ stays readable as a list of things to fix.
 
 ## MySQL wire protocol
 
+- `CAST(json AS CHAR)` and `CONCAT(json, '')` are described to the client
+  as `VAR_STRING`, where MySQL describes them as `LONGTEXT` (type 251, and
+  for `CONCAT` a different length and flag). The values are the same.
 - A user variable holds the literal its expression answered, so one assigned
   from a DATE or DATETIME reads back as that text rather than as a temporal
   value. The HTTP query API has no session and does not keep them.
@@ -1020,7 +1064,11 @@ but may be wrong.
   column `DEFAULT` must be `NULL`, a number or a string; an expression default
   such as `CURRENT_TIMESTAMP` is refused at `CREATE TABLE`.
 - `INSERT` takes literal values only; an expression such as `1 + 1` or
-  `NOW()` is refused rather than evaluated.
+  `NOW()` is refused rather than evaluated. A bit literal (`b'0101'`) is
+  refused too; write the number.
+- `CREATE TABLE` on a local database does not read `ZEROFILL` or
+  `PARTITION BY` (both fail as parse errors) and refuses an `INVISIBLE`
+  column by name.
 - A local table cannot be joined against a replicated one. A query reaches
   exactly one database, and the two kinds are separate databases
   (deferred, not foreclosed - see `docs/decisions.md`).
