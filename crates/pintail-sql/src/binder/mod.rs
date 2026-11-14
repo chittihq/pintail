@@ -8622,8 +8622,23 @@ fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, Bou
         let (right, left) = datetime_pair(right, left);
         return (left, right);
     }
-    let text_column =
-        |expr: &BoundExpr| is_plain_text(expr) && matches!(expr.kind, BoundExprKind::Column(_));
+    // Text that is not a written constant - a column, or an expression
+    // over one - is read as a DATETIME beside a calendar value, its
+    // seventh fraction digit rounding the sixth; compared as text, a value
+    // a microsecond short of midnight never met the next day.
+    let text_column = |expr: &BoundExpr| {
+        is_plain_text(expr) && crate::text_charset::literal_value(expr).is_none()
+    };
+    // Beside a DATE that is not a written constant the text is read as a
+    // DATE too: its time of day is dropped, not compared with midnight.
+    let row_date =
+        |expr: &BoundExpr| expr.data_type == Some(DataType::Date32) && !reads_no_row(expr);
+    if row_date(&left) && text_column(&right) {
+        return (cast_to(left, DataType::Utf8), calendar_text_date(right));
+    }
+    if row_date(&right) && text_column(&left) {
+        return (calendar_text_date(left), cast_to(right, DataType::Utf8));
+    }
     if is_temporal(left.data_type) && text_column(&right) {
         return (
             cast_to(as_common_temporal(left), DataType::Utf8),
@@ -8655,18 +8670,44 @@ fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, Bou
     }
 }
 
+/// Whether an expression is built from written constants alone.
+fn reads_no_row(expr: &BoundExpr) -> bool {
+    match &expr.kind {
+        BoundExprKind::Literal(_) => true,
+        BoundExprKind::Unary { expr, .. } => reads_no_row(expr),
+        BoundExprKind::Binary { left, right, .. } => reads_no_row(left) && reads_no_row(right),
+        BoundExprKind::Scalar { args, .. } => args.iter().all(reads_no_row),
+        _ => false,
+    }
+}
+
+/// The date a piece of text holds, as the ten characters a DATE prints:
+/// read as a DATETIME first, so a seventh fraction digit can carry into
+/// the next day, and the zero date where no date can be read.
+fn calendar_text_date(expr: BoundExpr) -> BoundExpr {
+    let text = calendar_text_comparand(expr);
+    let nullable = text.nullable;
+    BoundExpr {
+        data_type: Some(DataType::Utf8),
+        nullable,
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::Left,
+            args: vec![
+                text,
+                BoundExpr {
+                    data_type: Some(DataType::Int64),
+                    nullable: false,
+                    kind: BoundExprKind::Literal(Value::Int64(10)),
+                },
+            ],
+        },
+    }
+}
+
 /// Whether one operand is a TIME column and the other reads no row: the
 /// comparison `MySQL` settles by storing the constant in the column's type.
 fn time_column_beside_constant(left: &BoundExpr, right: &BoundExpr) -> bool {
-    fn constant(expr: &BoundExpr) -> bool {
-        match &expr.kind {
-            BoundExprKind::Literal(_) => true,
-            BoundExprKind::Unary { expr, .. } => constant(expr),
-            BoundExprKind::Binary { left, right, .. } => constant(left) && constant(right),
-            BoundExprKind::Scalar { args, .. } => args.iter().all(constant),
-            _ => false,
-        }
-    }
+    let constant = reads_no_row;
     let column = |expr: &BoundExpr| is_time(expr) && matches!(expr.kind, BoundExprKind::Column(_));
     (column(left) && constant(right)) || (column(right) && constant(left))
 }
