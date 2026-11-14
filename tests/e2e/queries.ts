@@ -1855,4 +1855,53 @@ export const differentialQueries: DifferentialQuery[] = [
     sql: 'SELECT id FROM customers WHERE legacy_label = \'pending \' ORDER BY id',
     tables: ['customers'],
   },
+  {
+    // A left join counted rather than run: a left row with no pair is one
+    // row whose right side is NULL, so it counts for an expression that is
+    // not NULL there and not for the column itself.
+    name: 'left join counts over the unpaired row',
+    sql:
+      'SELECT COUNT(*), COUNT(b.id), COUNT(COALESCE(b.id, 0)), COUNT(b.id IS NULL) ' +
+      'FROM customers a LEFT JOIN customers b ON b.id < a.id',
+    tables: ['customers'],
+  },
+  {
+    name: 'grouped left join counts over the unpaired row',
+    sql:
+      'SELECT c.id, COUNT(*), COUNT(o.id), COUNT(COALESCE(o.id, 0)), COUNT(o.id IS NULL) ' +
+      'FROM customers c LEFT JOIN orders o ON o.customer_id = c.id AND o.total > 400 ' +
+      'GROUP BY c.id ORDER BY c.id',
+    tables: ['customers', 'orders'],
+  },
+  {
+    // A row compared with a subquery that aggregates beside a plain value:
+    // the subquery is one row whatever it reads.
+    name: 'row compared with an aggregating subquery',
+    sql:
+      'SELECT COUNT(*) FROM customers c ' +
+      'WHERE ((SELECT COUNT(*) FROM orders), 7) = (SELECT COUNT(*), 7 FROM orders)',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'row compared with an aggregating subquery over no rows',
+    sql: 'SELECT COUNT(*) FROM customers c WHERE (0, 7) = (SELECT COUNT(*), 7 FROM orders WHERE id < 0)',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'row compared with a correlated aggregating subquery',
+    sql:
+      'SELECT c.id FROM customers c ' +
+      'WHERE (0, 7) = (SELECT COUNT(*), 7 FROM orders o WHERE o.customer_id = c.id) ORDER BY c.id',
+    tables: ['customers', 'orders'],
+  },
+  {
+    name: 'row compared with an aggregating subquery that reads no table',
+    sql: 'SELECT COUNT(*) FROM customers c WHERE (1, 7) = (SELECT COUNT(*), 7)',
+    tables: ['customers'],
+  },
+  {
+    name: 'the session database beside a table',
+    sql: 'SELECT COUNT(*) AS n, DATABASE() AS db, SCHEMA() AS s FROM orders WHERE DATABASE() IS NOT NULL',
+    tables: ['orders'],
+  },
 ]

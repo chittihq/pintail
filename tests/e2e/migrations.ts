@@ -616,6 +616,21 @@ const addedCases: AddedCase[] = [
     projection: 'id, d, half',
     inPlace: false,
   },
+  {
+    name: 'a nullable column beside ALGORITHM',
+    alters: ['ADD COLUMN extra INT DEFAULT NULL, ALGORITHM=INSTANT'],
+    projection: 'id, d, extra',
+    inPlace: true,
+  },
+  {
+    name: 'a text column placed after another beside ALGORITHM',
+    alters: [
+      'ADD COLUMN label VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci ' +
+        'DEFAULT NULL AFTER d, ALGORITHM=INSTANT',
+    ],
+    projection: 'id, d, label',
+    inPlace: true,
+  },
 ]
 
 /// Declarations that permit a rewrite of stored values, run over rows that
@@ -624,6 +639,8 @@ const addedCases: AddedCase[] = [
 /// change before the statement holds the same rows, so it can read whether
 /// any of them was rewritten. `path` says how it is expected to take the
 /// change: in place when none was, by recopying the table when one was.
+/// `not quarantined` is for a change that rewrites nothing and so prints no
+/// adoption line: the table only has to stay in service.
 /// A case without it only has to match the source.
 type NarrowedCase = {
   name: string
@@ -633,7 +650,7 @@ type NarrowedCase = {
   streamed?: string[]
   alters: string[]
   writes: string[]
-  path?: 'in place' | 'recopy'
+  path?: 'in place' | 'recopy' | 'not quarantined'
   projection?: string
 }
 
@@ -722,6 +739,66 @@ const narrowedCases: NarrowedCase[] = [
     rows: ["(1, 'ab')", "(2, 'cd')"],
     alters: ['MODIFY v VARCHAR(8) NULL', 'MODIFY v VARCHAR(64) NULL'],
     writes: ["INSERT INTO {t} (id, v) VALUES (90, REPEAT('z', 40))", "UPDATE {t} SET v = REPEAT('y', 30) WHERE id = 2"],
+  },
+  // How the source is told to carry a change out - ALGORITHM, LOCK - is not
+  // part of the change: each of these is taken exactly as it is without
+  // the clause.
+  {
+    name: 'varchar widens beside ALGORITHM and LOCK',
+    before: 'v VARCHAR(255) NULL',
+    rows: ["(1, 'abc')", "(2, 'de')"],
+    alters: ['MODIFY v VARCHAR(2048) NULL,\r\n    ALGORITHM = INPLACE, LOCK = NONE'],
+    writes: ["INSERT INTO {t} (id, v) VALUES (90, REPEAT('x', 300))", "UPDATE {t} SET v = 'changed' WHERE id = 2"],
+    path: 'not quarantined',
+  },
+  {
+    name: 'not null relaxed beside ALGORITHM and LOCK',
+    before: 'v BIGINT NOT NULL',
+    rows: ['(1, 5)', '(2, 6)'],
+    alters: ['MODIFY COLUMN v BIGINT NULL, ALGORITHM=INPLACE, LOCK=NONE'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, NULL)', 'UPDATE {t} SET v = NULL WHERE id = 2'],
+    path: 'not quarantined',
+  },
+  {
+    name: 'integer narrows around values that fit beside ALGORITHM',
+    before: 'v BIGINT NULL',
+    rows: ['(1, 32767)', '(2, -32768)'],
+    alters: ['MODIFY v SMALLINT NULL, ALGORITHM=COPY'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, 123)', 'UPDATE {t} SET v = 456 WHERE id = 2'],
+    path: 'in place',
+  },
+  {
+    name: 'enum gains a member beside ALGORITHM',
+    before: "v ENUM('alpha','beta') NOT NULL",
+    rows: ["(1, 'alpha')", "(2, 'beta')"],
+    alters: ["MODIFY COLUMN v ENUM('alpha','beta','gamma') NOT NULL, ALGORITHM=INSTANT"],
+    writes: ["INSERT INTO {t} (id, v) VALUES (90, 'gamma')", "UPDATE {t} SET v = 'gamma' WHERE id = 2"],
+    path: 'not quarantined',
+  },
+  {
+    name: 'column renamed beside ALGORITHM',
+    before: 'v INT NULL',
+    rows: ['(1, 5)', '(2, 6)'],
+    alters: ['RENAME COLUMN v TO w, ALGORITHM=INSTANT'],
+    writes: ['INSERT INTO {t} (id, w) VALUES (90, 9)', 'UPDATE {t} SET w = 8 WHERE id = 2'],
+    path: 'not quarantined',
+    projection: 'id, w',
+  },
+  {
+    name: 'unique key added beside ALGORITHM and LOCK',
+    before: 'v INT NULL',
+    rows: ['(1, 5)', '(2, 6)'],
+    alters: ['ADD UNIQUE KEY uq_v (v), ALGORITHM=INPLACE, LOCK=NONE'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
+    path: 'not quarantined',
+  },
+  {
+    name: 'an alter with no clause',
+    before: 'v INT NULL',
+    rows: ['(1, 5)', '(2, 6)'],
+    alters: [''],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
+    path: 'not quarantined',
   },
 ]
 
@@ -1183,13 +1260,20 @@ async function main() {
       .split('\n')
       .find((line) => line.includes(`table quarantined db=${databaseId} table=${table}:`))
     const adopted = output.includes(`cdc column change adopted in place db=${databaseId} table=${table} `)
-    const ok = narrowed.path === 'in place' ? !quarantine && adopted : Boolean(quarantine) && !adopted
+    const ok =
+      narrowed.path === 'in place'
+        ? !quarantine && adopted
+        : narrowed.path === 'not quarantined'
+          ? !quarantine
+          : Boolean(quarantine) && !adopted
     record(
       table,
       narrowed.name,
       narrowed.path === 'in place'
         ? 'adopted in place on the evidence of its rows, never quarantined'
-        : 'recopied, with the reason given',
+        : narrowed.path === 'not quarantined'
+          ? 'taken without a quarantine'
+          : 'recopied, with the reason given',
       ok ? 'PASS' : 'FAIL',
       ok ? undefined : quarantine ?? 'no quarantine line and no in-place line',
     )
