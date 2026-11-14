@@ -173,7 +173,7 @@ fn a_band_join_reads_only_the_rows_its_bounds_reach() {
 }
 
 /// A table of every kind of column the sorted search reads, with NULLs
-/// spread over each: `(id, x, lo, hi, amt, t0, t3, s, s2)`.
+/// spread over each: `(id, x, lo, hi, amt, t0, t3, s, s2, z)`.
 fn wide_schema() -> TableSchema {
     TableSchema::new(
         1,
@@ -195,6 +195,7 @@ fn wide_schema() -> TableSchema {
             Column::new(7, "t3", DataType::DateTime64 { fsp: 3 }, true),
             Column::new(8, "s", DataType::Utf8, true),
             Column::new(9, "s2", DataType::Utf8, true),
+            Column::new(10, "z", DataType::Float64, false),
         ],
     )
     .expect("schema")
@@ -288,6 +289,12 @@ fn run_wide(rows: i64, sql: &str) -> (String, pintail_exec::ExecCounters) {
                             ),
                             text(row.label.map(label_text)),
                             text(row.label.map(|label| label_text(label + 2))),
+                            // A zero of either sign, by turns.
+                            Value::Float64(pintail_types::Float64::new(if id % 2 == 0 {
+                                -0.0
+                            } else {
+                                0.0
+                            })),
                         ],
                         key,
                         false,
@@ -519,4 +526,44 @@ fn an_outer_join_condition_with_a_subquery_and_no_equality_searches_by_its_inequ
         counters.range_join_pairs_tested, candidates,
         "the subquery is resolved only for the pairs the inequalities reach"
     );
+}
+
+#[test]
+fn a_count_over_decimal_bounds_is_taken_from_the_span() {
+    // Nothing but the count is asked for, so no pair is produced: each
+    // left row's count is the stretch of the sorted side its bounds leave.
+    let cents = |row: Wide| row.cents;
+    let (_, pairs) = expected_pairs(
+        |x, y| matches!((cents(x), cents(y)), (Some(x), Some(y)) if y > x && y <= x + 125),
+    );
+    let (answer, counters) = run_wide(
+        WIDE_ROWS,
+        "SELECT COUNT(*) FROM w AS x JOIN w AS y ON y.amt > x.amt AND y.amt <= x.amt + 1.25",
+    );
+    assert_eq!(answer, pairs.to_string());
+    assert_eq!(counters.join_pairs_counted, pairs);
+    assert_eq!(counters.range_join_pairs_tested, 0);
+}
+
+#[test]
+fn a_negative_zero_is_searched_as_the_zero_it_equals() {
+    // `z` is a zero in every row, negative in every second one. The two
+    // zeros are equal, so every row pairs with every row; an order that
+    // put the negative zero first would search past half of them.
+    let rows = WIDE_ROWS.unsigned_abs();
+    let ids = rows * (rows + 1) / 2;
+    let (answer, counters) = run_wide(
+        WIDE_ROWS,
+        "SELECT COUNT(*), SUM(y.id) FROM w AS x JOIN w AS y ON y.z >= x.z",
+    );
+    assert_eq!(answer, format!("{},{}", rows * rows, rows * ids));
+    assert_eq!(counters.range_join_searches, rows);
+
+    // Counted from the span, the same pairs.
+    let (answer, counters) = run_wide(
+        WIDE_ROWS,
+        "SELECT COUNT(*) FROM w AS x JOIN w AS y ON y.z >= x.z",
+    );
+    assert_eq!(answer, (rows * rows).to_string());
+    assert_eq!(counters.join_pairs_counted, rows * rows);
 }
