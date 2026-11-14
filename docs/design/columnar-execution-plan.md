@@ -237,15 +237,31 @@ cases as before this program.
 Measured at the close, in the order of what they cost:
 
 - Aggregates over many groups: `SUM(DISTINCT)`/`COUNT(DISTINCT)` and
-  `GROUP_CONCAT` fold through per-group state that allocates per row.
-- JSON and `TIME` functions evaluate through the batch adapter, parsing
-  each document or time value per row; a parsed JSON form and packed
-  `TIME` units would remove that.
+  `GROUP_CONCAT` folded through per-group state that allocated per row.
+  A DISTINCT set now holds its first four integer keys in the state, a
+  DECIMAL `SUM(DISTINCT)` keys and adds packed units, and `GROUP_CONCAT`
+  keeps each row once (measurements in
+  [`benchmark/evidence/per-row-lanes.md`](../../benchmark/evidence/per-row-lanes.md)).
+  What remains is the grouping loop these shapes take - a value-keyed
+  map probed a row at a time - and one allocation per collected text:
+  a `COUNT(DISTINCT text)` per group, and a `GROUP_CONCAT`, still cost
+  several times a plain `COUNT` over the same groups. An arena shared by
+  a statement's groups would remove the allocation; every fold, merge
+  and spill takes a state by itself today, so that is a change to all of
+  them.
+- JSON functions parse each document per row. Several readers of one
+  document share one parse now; a single reader still parses every row,
+  which only a stored binary form would remove. `HOUR`, `MINUTE`,
+  `SECOND` and `TIME_TO_SEC` of a `TIME` column read packed
+  microseconds; `ADDTIME`, `SUBTIME`, `TIMEDIFF` and `TIME_FORMAT` of
+  one still read each value as text.
 - A scalar subquery nested in another still runs per outer row (about
   0.3 ms each). Decorrelating it would evaluate its inner subquery for
   rows the outer query never reaches, which can raise errors the query
   never would, so it needs a form that proves the inner lookup answers at
   most one row.
 - A correlated `IN` inside an outer join's `ON` clause runs per pair.
-- The spilled window path is still row-at-a-time, and a window ordered by
-  a text key under a collation weighs that text at every comparison.
+- The spilled window path reads its rows back a batch at a time and
+  orders text keys by their weights, as the memory path's columnar sort
+  already did; it still sorts and merges rows of values, twice per
+  window, where the memory path orders row references.
