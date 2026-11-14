@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4310;
+const EXPECTED_CASES: usize = 4312;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5725,6 +5725,32 @@ fn engine_error_cases() -> Vec<OracleCase> {
         ordered(
             "format numbers with more digits than a unit count holds",
             "SELECT id, FORMAT(score * 1e40, 2), FORMAT(score * -1.5e250, 0, 'sv_SE') \
+             FROM events ORDER BY id",
+        ),
+        // Text written with an exponent casts to DECIMAL with the point
+        // moved; an exponent too large to apply answers the top of the type.
+        ordered(
+            "cast text with an exponent to decimal",
+            "SELECT CAST('1.00000001335143196001808973960578441619873046875E-10' AS DECIMAL(30,15)), \
+                    CAST('0e111111111' AS DECIMAL(38,0)), CAST('0e1111111111' AS DECIMAL(38,0)), \
+                    CAST('.00000000000000000000000000000000000001e111111111111111111111' \
+                         AS DECIMAL(38,0)), \
+                    CAST('1.5E-10' AS DECIMAL(30,15)), CAST('1e-40' AS DECIMAL(30,15)), \
+                    CAST('-1.25e-3' AS DECIMAL(10,4)), CAST('1e99999999999' AS DECIMAL(10,2)), \
+                    CAST('-1e99999999999' AS DECIMAL(10,2)), CAST('1e-99999999999' AS DECIMAL(10,2)), \
+                    CAST('12e2' AS DECIMAL(10,2)), CAST('0.0e400' AS DECIMAL(10,2)), \
+                    CAST('1e82' AS DECIMAL(65,0)), CAST('-1e82' AS DECIMAL(65,0)), \
+                    CAST('1e64' AS DECIMAL(65,0)), CAST('1e-82' AS DECIMAL(65,30)), \
+                    CAST('123456789e-5' AS DECIMAL(20,10)), CAST('5e-1' AS DECIMAL(10,0)), \
+                    CAST('-5e-1' AS DECIMAL(10,0)), CAST('4.9e-1' AS DECIMAL(10,0)), \
+                    CAST('0e2147483647' AS DECIMAL(10,2)), CAST('1e1073741823' AS DECIMAL(10,2)), \
+                    CAST('1e1073741824' AS DECIMAL(10,2)), CAST('-3e2x' AS DECIMAL(10,2)), \
+                    CAST(' +7.5e+1 ' AS DECIMAL(10,2)), CAST('1e' AS DECIMAL(10,2))",
+        ),
+        ordered(
+            "cast text with an exponent to decimal",
+            "SELECT id, CAST(CONCAT(score, 'e-3') AS DECIMAL(12,4)), \
+                    CAST(CONCAT('-', score, '.5E', id) AS DECIMAL(20,1)) \
              FROM events ORDER BY id",
         ),
     ]

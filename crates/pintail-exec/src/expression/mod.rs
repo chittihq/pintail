@@ -7778,7 +7778,16 @@ fn cast_decimal(value: &Value, precision: u8, scale: u8) -> Result<Value, ExecEr
         // for what it drops: CAST('3.5z' AS DECIMAL(5,2)) is 3.50.
         Value::Utf8(value) | Value::Enum { label: value, .. } => text(value).or_else(|| {
             note_numeric_truncation("DECIMAL", value);
-            numeric_prefix(value).map_or(Some(WideInt::from_i128(0)), text)
+            let Some(prefix) = numeric_prefix(value) else {
+                return Some(WideInt::from_i128(0));
+            };
+            match exponent_spelling(prefix) {
+                Some(ExponentRead::Plain(plain)) => text(&plain),
+                // Whatever the sign, the top of the type.
+                Some(ExponentRead::Top) => WideInt::pow10(u32::from(precision))
+                    .and_then(|limit| limit.checked_sub(WideInt::from_i128(1))),
+                None => text(prefix),
+            }
         }),
         Value::DecimalAverage(average) => text(&average.label),
         Value::Boolean(flag) => wide_rescale(WideInt::from_i128(i128::from(*flag)), 0, scale),
@@ -7814,6 +7823,68 @@ fn cast_decimal(value: &Value, precision: u8, scale: u8) -> Result<Value, ExecEr
         Some(units) => pintail_types::format_decimal_scaled(units, scale),
         None => pintail_types::format_decimal_wide(&units, scale),
     }))
+}
+
+/// What text written with an exponent reads as when it becomes a DECIMAL.
+enum ExponentRead {
+    /// The same number written without the exponent.
+    Plain(String),
+    /// An exponent too large to apply: `MySQL` answers the largest value of
+    /// the target type, positive whatever the number's sign.
+    Top,
+}
+
+/// Reads `[sign]digits[.digits]e[sign]digits`, `None` when `text` has no
+/// exponent. `MySQL` moves the decimal point by the exponent; an exponent
+/// no 64-bit integer holds reads the whole number as zero, one past half the
+/// 32-bit range upward as an overflow, and one past it downward as zero.
+fn exponent_spelling(text: &str) -> Option<ExponentRead> {
+    let (mantissa, exponent) = text.split_once(['e', 'E'])?;
+    let zero = || Some(ExponentRead::Plain("0".to_owned()));
+    let Ok(exponent) = exponent.parse::<i64>() else {
+        return zero();
+    };
+    if exponent > i64::from(i32::MAX / 2) {
+        return Some(ExponentRead::Top);
+    }
+    let (sign, digits) = match mantissa.as_bytes().first() {
+        Some(b'-') => ("-", &mantissa[1..]),
+        Some(b'+') => ("", &mantissa[1..]),
+        _ => ("", mantissa),
+    };
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    let whole = whole.trim_start_matches('0');
+    let all = format!("{whole}{fraction}");
+    if all.bytes().all(|digit| digit == b'0') {
+        return zero();
+    }
+    // Where the point stands among the digits once it has moved. Far
+    // enough either way the digits no longer matter: the value is past
+    // every DECIMAL or below every scale.
+    let point = i64::try_from(whole.len()).ok()?.checked_add(exponent)?;
+    let leading_zeros = all.bytes().take_while(|digit| *digit == b'0').count();
+    let first_digit = point - i64::try_from(leading_zeros).ok()?;
+    let reach = i64::try_from(MAX_DECIMAL_DIGITS).ok()? + 2;
+    if first_digit > reach {
+        return Some(ExponentRead::Plain(format!(
+            "{sign}1{}",
+            "0".repeat(usize::try_from(reach).ok()?)
+        )));
+    }
+    if first_digit < -reach {
+        return zero();
+    }
+    let plain = if point <= 0 {
+        format!("0.{}{all}", "0".repeat(usize::try_from(-point).ok()?))
+    } else {
+        let point = usize::try_from(point).ok()?;
+        if point >= all.len() {
+            format!("{all}{}", "0".repeat(point - all.len()))
+        } else {
+            format!("{}.{}", &all[..point], &all[point..])
+        }
+    };
+    Some(ExponentRead::Plain(format!("{sign}{plain}")))
 }
 
 /// The widest DECIMAL `MySQL` computes.
