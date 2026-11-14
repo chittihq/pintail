@@ -9646,8 +9646,16 @@ fn metamorphic_variants(parts: &QueryParts) -> Vec<(&'static str, String)> {
             parts.render_tail()
         ),
     ));
-    // UNION converts ENUM to text, changing ordering even with an empty arm.
-    if parts.from.is_some() && parts.family != "enum" {
+    // UNION converts ENUM to text, changing ordering even with an empty arm:
+    // the query orders an ENUM column by its declaration, the union's result
+    // by its labels. That holds for the ENUM family and for any query that
+    // orders by the bare column, as a grouped one keyed by it does.
+    let orders_by_enum = parts
+        .select
+        .iter()
+        .take(parts.order_columns)
+        .any(|item| item.trim() == "o.status");
+    if parts.from.is_some() && parts.family != "enum" && !orders_by_enum {
         // q UNION ALL (q WHERE FALSE) == q: the second arm contributes
         // nothing, whatever grouping or having the arms carry.
         variants.push((
