@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4105;
+const EXPECTED_CASES: usize = 4195;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5597,6 +5597,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
     .chain(weight_string_cases())
     .chain(regex_fold_cases())
     .chain(wide_conversion_cases())
+    .chain(weight_string_width_cases())
     .collect()
 }
 
@@ -6392,6 +6393,59 @@ fn weight_string_cases() -> Vec<OracleCase> {
         });
     }
     cases
+}
+
+/// `WEIGHT_STRING(str, width, count, flags)`: the weights of the first
+/// `count` characters cut to `width` bytes, and filled out to that width
+/// under flag 0x80, across every width that cuts a weight in two.
+fn weight_string_width_cases() -> Vec<OracleCase> {
+    const WIDTHS: [u32; 7] = [1, 2, 3, 4, 5, 7, 25];
+    const COUNTS: [u32; 5] = [1, 2, 3, 4, 6];
+    const FLAGS: [&str; 4] = ["0xC0", "0x40", "0x80", "0"];
+    let mut subjects = Vec::new();
+    for collation in ["utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_bin"] {
+        for text in ["'a'", "'abc'", "'a\u{df}\u{4e00}\u{1f600}x'", "''", "'ab  '"] {
+            subjects.push(format!("{text} COLLATE {collation}"));
+        }
+    }
+    for text in ["'a'", "'abc'", "''", "'ab  '", "x'4142'", "x'41424344'", "_binary'a '"] {
+        subjects.push(text.to_owned());
+    }
+    let mut cases = Vec::new();
+    for subject in &subjects {
+        for flags in FLAGS {
+            let projection = WIDTHS
+                .iter()
+                .flat_map(|width| COUNTS.iter().map(move |count| (width, count)))
+                .map(|(width, count)| {
+                    format!("HEX(WEIGHT_STRING({subject}, {width}, {count}, {flags}))")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            cases.push(format!("SELECT {projection}"));
+        }
+    }
+    cases.push(
+        "SELECT id, HEX(WEIGHT_STRING(tag, 5, 3, 0xC0)), HEX(WEIGHT_STRING(label, 25, 4, 0xC0)), \
+         HEX(WEIGHT_STRING(name, 4, 2, 0xC0)), HEX(WEIGHT_STRING(note, 6, 2, 0x80)), \
+         HEX(WEIGHT_STRING(CAST(tag AS BINARY), 3, 2, 192)) FROM events ORDER BY id"
+            .to_owned(),
+    );
+    cases.push(
+        "SELECT HEX(WEIGHT_STRING(NULL, 4, 2, 0xC0)), LENGTH(WEIGHT_STRING('abc', 100000, 2, 0xC0)), \
+         LENGTH(WEIGHT_STRING('abc' COLLATE utf8mb4_general_ci, 70000, 3, 0xC0)), \
+         LENGTH(WEIGHT_STRING('abc', 100000, 100000, 0x40))"
+            .to_owned(),
+    );
+    cases
+        .into_iter()
+        .map(|sql| OracleCase {
+            sql_mode: "",
+            family: "weight string",
+            sql,
+            ordered: true,
+        })
+        .collect()
 }
 
 /// Typed multi-table cases on the `orders` seed — DECIMAL / DATETIME / JSON
@@ -7919,9 +7973,19 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "NONE coercibility rung",
         ),
         (
-            "reject the four-argument weight string",
+            "reject weight string flags that choose a level",
             "SELECT WEIGHT_STRING('ab', 4, 4, 65)",
-            "four-argument",
+            "flags other than 0x40 and 0x80",
+        ),
+        (
+            "reject a weight string width of zero",
+            "SELECT WEIGHT_STRING('ab', 0, 4, 0xC0)",
+            "width or count outside",
+        ),
+        (
+            "reject a weight string count of zero",
+            "SELECT WEIGHT_STRING('ab', 4, 0, 0xC0)",
+            "width or count outside",
         ),
         (
             "reject a weight string level clause",

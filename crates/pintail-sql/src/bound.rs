@@ -1314,11 +1314,17 @@ pub enum ScalarFunction {
     /// Original, unbounded phonetic key.
     Soundex,
     /// The weights a collation compares a string by, as bytes. `None` is a
-    /// byte string, which weighs itself; `characters` is the `AS CHAR(N)`
-    /// length the value is cut and, under a padding collation, padded to.
+    /// byte string, which weighs itself; `characters` is the length the
+    /// value is cut and, under a padding collation, padded to. `bytes` cuts
+    /// the weights themselves to that many bytes, and `fill` then makes
+    /// them exactly that long with the weight a pad has. The lengths are
+    /// never zero, which keeps this variant no wider than the others: every
+    /// expression node carries the width of the widest.
     WeightString {
         collation: Option<NamedCollation>,
-        characters: Option<u32>,
+        characters: Option<std::num::NonZeroU32>,
+        bytes: Option<std::num::NonZeroU32>,
+        fill: bool,
     },
     /// Trigonometric and angle conversion functions.
     Sin,

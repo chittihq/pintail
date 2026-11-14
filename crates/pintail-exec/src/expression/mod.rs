@@ -1763,9 +1763,10 @@ impl CompiledExpr {
                     ScalarFunction::Soundex => first.saturating_add(4),
                     // Three bytes a character is the widest weight; a padded
                     // result is as wide as its declared length.
-                    ScalarFunction::WeightString { characters, .. } => first
-                        .max(characters.map_or(0, |characters| characters as usize))
-                        .saturating_mul(3),
+                    ScalarFunction::WeightString { characters, bytes, .. } => first
+                        .max(characters.map_or(0, |characters| characters.get() as usize))
+                        .saturating_mul(3)
+                        .max(bytes.map_or(0, |bytes| bytes.get() as usize)),
                     ScalarFunction::Locate | ScalarFunction::Instr => string_arguments.saturating_mul(32).saturating_add(8),
                     ScalarFunction::Replace => replace_upper_bound(first, &args[1], string(2)),
                     ScalarFunction::RegexpReplace => {
@@ -2099,9 +2100,10 @@ impl CompiledExpr {
                     ScalarFunction::Soundex => first.saturating_add(4),
                     // Three bytes a character is the widest weight; a padded
                     // result is as wide as its declared length.
-                    ScalarFunction::WeightString { characters, .. } => first
-                        .max(characters.map_or(0, |characters| characters as usize))
-                        .saturating_mul(3),
+                    ScalarFunction::WeightString { characters, bytes, .. } => first
+                        .max(characters.map_or(0, |characters| characters.get() as usize))
+                        .saturating_mul(3)
+                        .max(bytes.map_or(0, |bytes| bytes.get() as usize)),
                     ScalarFunction::Replace => replace_upper_bound(first, &args[1], bound(2)),
                     ScalarFunction::RegexpReplace => {
                         first.saturating_add(first.saturating_add(1).saturating_mul(bound(2)))
@@ -2950,25 +2952,7 @@ fn evaluate_eager_scalar_inner(
             }))
         }
         ScalarFunction::Soundex => Ok(Value::Utf8(mysql_soundex(&scalar_string(&values[0])?))),
-        ScalarFunction::WeightString {
-            collation: weighed,
-            characters,
-        } => {
-            let characters = characters.map(|characters| characters as usize);
-            match (&values[0], weighed) {
-                (Value::Binary(bytes), None) => {
-                    let kept = characters.map_or(bytes.len(), |limit| limit.min(bytes.len()));
-                    Ok(Value::Binary(bytes[..kept].to_vec()))
-                }
-                (Value::Utf8(text), Some(named)) => Collation::from_mysql_name(named.as_str())
-                    .and_then(|named| crate::collation::weight_string(named, text, characters))
-                    .map(Value::Binary)
-                    .ok_or(ExecError::UnsupportedOperator(
-                        "WEIGHT_STRING under utf8mb4_0900_ai_ci weighs ASCII text only",
-                    )),
-                _ => Err(ExecError::InvalidExpressionType),
-            }
-        }
+        ScalarFunction::WeightString { .. } => weight_string_value(&values[0], function),
         ScalarFunction::WidePrefix(charset) => match &values[0] {
             Value::Binary(bytes) => Ok(Value::Binary(charset.valid_wide_prefix(bytes))),
             _ => Err(ExecError::InvalidExpressionType),
@@ -8412,6 +8396,51 @@ fn normalize_mysql_regex_line_endings(text: &str) -> String {
         }
     }
     normalized
+}
+
+/// `WEIGHT_STRING`: the weights of the first `characters` characters, cut
+/// to `bytes` bytes and, with `fill`, made exactly that wide with the
+/// weight a pad has. Apart from the scalar evaluator, whose frame every
+/// nested expression pays for.
+#[inline(never)]
+fn weight_string_value(value: &Value, function: ScalarFunction) -> Result<Value, ExecError> {
+    let ScalarFunction::WeightString {
+        collation,
+        characters,
+        bytes,
+        fill,
+    } = function
+    else {
+        return Err(ExecError::InvalidExpressionType);
+    };
+    let characters = characters.map(|characters| characters.get() as usize);
+    let (mut weights, pad): (Vec<u8>, &[u8]) = match (value, collation) {
+        (Value::Binary(bytes), None) => {
+            let kept = characters.map_or(bytes.len(), |limit| limit.min(bytes.len()));
+            (bytes[..kept].to_vec(), &[0])
+        }
+        (Value::Utf8(text), Some(named)) => {
+            let named = Collation::from_mysql_name(named.as_str())
+                .ok_or(ExecError::InvalidExpressionType)?;
+            let weights = crate::collation::weight_string(named, text, characters).ok_or(
+                ExecError::UnsupportedOperator(
+                    "WEIGHT_STRING under utf8mb4_0900_ai_ci weighs ASCII text only",
+                ),
+            )?;
+            (weights, crate::collation::weight_string_pad(named))
+        }
+        _ => return Err(ExecError::InvalidExpressionType),
+    };
+    if let Some(width) = bytes.map(|bytes| bytes.get() as usize) {
+        weights.truncate(width);
+        if fill {
+            // The weights so far end on a whole one, so the pad starts on
+            // its first byte.
+            let missing = width - weights.len();
+            weights.extend(pad.iter().copied().cycle().take(missing));
+        }
+    }
+    Ok(Value::Binary(weights))
 }
 
 fn compile_regex(

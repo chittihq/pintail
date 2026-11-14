@@ -1333,6 +1333,7 @@ fn bind_collation_report(
 /// The weights belong to the collation the string resolves to, so the
 /// answer is given only where that collation is known and its weights are
 /// `MySQL`'s byte for byte; any other string is refused by collation name.
+#[allow(clippy::too_many_lines)]
 fn bind_weight_string(
     name: &str,
     function: &Function,
@@ -1363,19 +1364,43 @@ fn bind_weight_string(
         })
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| BindError::UnsupportedExpression(written.clone()))?;
+    // A whole number written as a literal, in digits or in hex.
+    let number = |expression: &Expr| match expression {
+        Expr::Value(value) => match &value.value {
+            SqlValue::Number(digits, _) => digits.parse::<u32>().ok(),
+            SqlValue::HexStringLiteral(digits) => u32::from_str_radix(digits, 16).ok(),
+            _ => None,
+        },
+        _ => None,
+    };
+    let within = |length: Option<u32>| {
+        length
+            .filter(|length| *length <= 1 << 20)
+            .and_then(std::num::NonZeroU32::new)
+    };
+    let mut bytes = None;
+    let mut fill = false;
     let (operand, length) = match (name, operands.as_slice()) {
         (SHOWN, [operand]) => (*operand, None),
-        (SHOWN, [_, _, _, _]) => {
-            return Err(refuse("the four-argument form is not implemented"));
+        // The form the server's own tests write: the weights of the first
+        // `count` characters, cut to `width` bytes, and with flag 0x80
+        // made exactly that wide. Flag 0x40 changes nothing; any other
+        // flag, and a zero that means "no limit", is refused.
+        (SHOWN, [operand, width, count, flags]) => {
+            let (Some(width), Some(count)) = (within(number(width)), within(number(count))) else {
+                return Err(refuse("a width or count outside 1 to 1048576"));
+            };
+            let Some(flags) = number(flags).filter(|flags| flags & !0xc0 == 0) else {
+                return Err(refuse("flags other than 0x40 and 0x80"));
+            };
+            bytes = Some(width);
+            fill = flags & 0x80 != 0;
+            (*operand, Some(count))
         }
         (SHOWN, _) => return Err(BindError::ParameterCount(SHOWN.to_owned())),
-        (_, [operand, Expr::Value(length)]) => {
-            let length = match &length.value {
-                SqlValue::Number(digits, _) => digits.parse::<u32>().ok(),
-                _ => None,
-            }
-            .filter(|length| (1..=1 << 20).contains(length))
-            .ok_or_else(|| refuse("a length outside 1 to 1048576"))?;
+        (_, [operand, length]) => {
+            let length =
+                within(number(length)).ok_or_else(|| refuse("a length outside 1 to 1048576"))?;
             (*operand, Some(length))
         }
         _ => return Err(BindError::UnsupportedExpression(written.clone())),
@@ -1392,7 +1417,7 @@ fn bind_weight_string(
         let cast = Expr::Cast {
             kind: sqlparser::ast::CastKind::Cast,
             expr: Box::new(operand.clone()),
-            data_type: SqlDataType::Binary(length.map(u64::from)),
+            data_type: SqlDataType::Binary(length.map(|length| u64::from(length.get()))),
             array: false,
             format: None,
         };
@@ -1423,6 +1448,8 @@ fn bind_weight_string(
         ScalarFunction::WeightString {
             collation,
             characters: length,
+            bytes,
+            fill,
         },
         vec![bound],
     )

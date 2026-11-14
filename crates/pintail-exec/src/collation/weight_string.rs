@@ -93,6 +93,18 @@ pub fn weight_string(
     Some(bytes)
 }
 
+/// The bytes a result made exactly so wide is filled with: the weight of
+/// a space where the collation pads, zero where it does not.
+#[must_use]
+pub fn weight_string_pad(collation: Collation) -> &'static [u8] {
+    match collation {
+        Collation::Utf8mb4GeneralCi => &[0x00, 0x20],
+        Collation::Utf8mb4UnicodeCi => &[0x02, 0x09],
+        Collation::Utf8mb4Bin => &[0x00, 0x00, 0x20],
+        _ => &[0],
+    }
+}
+
 fn wide(bytes: &mut Vec<u8>, weights: impl Iterator<Item = u16>) {
     for weight in weights {
         bytes.extend_from_slice(&weight.to_be_bytes());

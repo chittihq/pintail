@@ -254,8 +254,9 @@ stays readable as a list of things to fix.
   a value holding any other character. It refuses every other collation
   (`utf8mb4_0900_as_cs` and the single-byte ones included), an argument that
   is not a string (a number, a date, JSON, an ENUM or SET column), a string
-  whose collation the previous item refuses, the four-argument form, and a
-  length above 1048576.
+  whose collation the previous item refuses, and a length, width or count
+  of zero or above 1048576. The four-argument form
+  `WEIGHT_STRING(str, width, count, flags)` takes flags 0x40 and 0x80 only.
 - A case-insensitive regular expression matches a character whose case
   folding is several characters (`ß` and `ss`, a ligature and its letters)
   only where the pattern writes plain literal text or lists the character
