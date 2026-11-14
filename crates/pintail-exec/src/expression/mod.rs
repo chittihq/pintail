@@ -8422,11 +8422,8 @@ fn weight_string_value(value: &Value, function: ScalarFunction) -> Result<Value,
         (Value::Utf8(text), Some(named)) => {
             let named = Collation::from_mysql_name(named.as_str())
                 .ok_or(ExecError::InvalidExpressionType)?;
-            let weights = crate::collation::weight_string(named, text, characters).ok_or(
-                ExecError::UnsupportedOperator(
-                    "WEIGHT_STRING under utf8mb4_0900_ai_ci weighs ASCII text only",
-                ),
-            )?;
+            let weights = crate::collation::weight_string(named, text, characters)
+                .ok_or(ExecError::InvalidExpressionType)?;
             (weights, crate::collation::weight_string_pad(named))
         }
         _ => return Err(ExecError::InvalidExpressionType),

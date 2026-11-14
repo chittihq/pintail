@@ -15,6 +15,7 @@
 //! `JOIN`, `GROUP BY` and `ORDER BY` on its text columns was refused.
 
 pub(crate) mod ai_ci_ascii;
+mod ai_ci_table;
 mod case_table;
 mod general_ci_table;
 mod thai;

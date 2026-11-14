@@ -248,22 +248,20 @@ stays readable as a list of things to fix.
   `_binary`; `GROUP_CONCAT`, `EXPORT_SET`, `JSON_VALUE`, `LOCATE`, `INSTR`,
   `FIELD` and `REGEXP`; and dates or times meeting in `IF`, `COALESCE`,
   `GREATEST` or `LEAST`.
-- `WEIGHT_STRING` returns MySQL's weight bytes for `utf8mb4_general_ci`,
-  `utf8mb4_unicode_ci`, `utf8mb4_bin` and byte strings. Under
-  `utf8mb4_0900_ai_ci` it answers ASCII text only and fails the statement on
-  a value holding any other character. It refuses every other collation
-  (`utf8mb4_0900_as_cs` and the single-byte ones included), an argument that
-  is not a string (a number, a date, JSON, an ENUM or SET column), a string
-  whose collation the previous item refuses, and a length, width or count
-  of zero or above 1048576. The four-argument form
+- `WEIGHT_STRING` returns MySQL's weight bytes for `utf8mb4_0900_ai_ci`,
+  `utf8mb4_general_ci`, `utf8mb4_unicode_ci`, `utf8mb4_bin` and byte
+  strings. It refuses every other collation (`utf8mb4_0900_as_cs`, the
+  utf8mb3 and the single-byte ones included), an argument that is not a
+  string (a number, a date, JSON, an ENUM or SET column), a string whose
+  collation the previous item refuses, and a length, width or count of zero
+  or above 1048576. The four-argument form
   `WEIGHT_STRING(str, width, count, flags)` takes flags 0x40 and 0x80 only.
 - A case-insensitive regular expression matches a character whose case
   folding is several characters (`ß` and `ss`, a ligature and its letters)
-  only where the pattern writes plain literal text or lists the character
-  in a bracketed set. MySQL also matches in a few shapes this does not
-  cover: a literal directly followed by a quantifier (`'ß' REGEXP 'ss?'` is
-  1 in MySQL and 0 here), a range or negated set that contains such a
-  character, and a pattern that sets its own flags with `(?...)`.
+  where the pattern writes a run of literal characters, as MySQL does. A
+  pattern that sets its own flags with `(?...)` gets no such folding, and
+  a range or negated set containing such a character is untested against
+  MySQL.
 - `FOUND_ROWS()` and `ICU_VERSION()` are refused. `LAST_INSERT_ID()` is
   always 0 (no statement generates a key) and `LAST_INSERT_ID(expr)` is
   refused. `CURRENT_ROLE()` is always `NONE`. `GET_FORMAT` takes its format

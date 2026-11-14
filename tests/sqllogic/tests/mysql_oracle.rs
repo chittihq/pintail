@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4195;
+const EXPECTED_CASES: usize = 4296;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5598,6 +5598,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
     .chain(regex_fold_cases())
     .chain(wide_conversion_cases())
     .chain(weight_string_width_cases())
+    .chain(weight_string_default_cases())
     .collect()
 }
 
@@ -6404,11 +6405,25 @@ fn weight_string_width_cases() -> Vec<OracleCase> {
     const FLAGS: [&str; 4] = ["0xC0", "0x40", "0x80", "0"];
     let mut subjects = Vec::new();
     for collation in ["utf8mb4_general_ci", "utf8mb4_unicode_ci", "utf8mb4_bin"] {
-        for text in ["'a'", "'abc'", "'a\u{df}\u{4e00}\u{1f600}x'", "''", "'ab  '"] {
+        for text in [
+            "'a'",
+            "'abc'",
+            "'a\u{df}\u{4e00}\u{1f600}x'",
+            "''",
+            "'ab  '",
+        ] {
             subjects.push(format!("{text} COLLATE {collation}"));
         }
     }
-    for text in ["'a'", "'abc'", "''", "'ab  '", "x'4142'", "x'41424344'", "_binary'a '"] {
+    for text in [
+        "'a'",
+        "'abc'",
+        "''",
+        "'ab  '",
+        "x'4142'",
+        "x'41424344'",
+        "_binary'a '",
+    ] {
         subjects.push(text.to_owned());
     }
     let mut cases = Vec::new();
@@ -6435,6 +6450,78 @@ fn weight_string_width_cases() -> Vec<OracleCase> {
         "SELECT HEX(WEIGHT_STRING(NULL, 4, 2, 0xC0)), LENGTH(WEIGHT_STRING('abc', 100000, 2, 0xC0)), \
          LENGTH(WEIGHT_STRING('abc' COLLATE utf8mb4_general_ci, 70000, 3, 0xC0)), \
          LENGTH(WEIGHT_STRING('abc', 100000, 100000, 0x40))"
+            .to_owned(),
+    );
+    cases
+        .into_iter()
+        .map(|sql| OracleCase {
+            sql_mode: "",
+            family: "weight string",
+            sql,
+            ordered: true,
+        })
+        .collect()
+}
+
+/// `WEIGHT_STRING` under the default collation across the whole character
+/// space: runs of consecutive characters from every script and symbol
+/// block, ignorable marks, expansions, ideographs, Hangul syllables,
+/// characters above the basic plane and ones no table names.
+fn weight_string_default_cases() -> Vec<OracleCase> {
+    // `(first, last, step, width)`: a text of `width` consecutive
+    // characters at every `step` from `first` to `last`.
+    const BLOCKS: [(u32, u32, u32, u32); 11] = [
+        (0xa0, 0x30ff, 32, 32),
+        (0x3100, 0x33ff, 64, 16),
+        (0x4e00, 0x4e40, 64, 16),
+        (0xa000, 0xabff, 64, 16),
+        (0xac00, 0xd7a3, 997, 4),
+        (0xf900, 0xffef, 64, 16),
+        (0x10000, 0x1efff, 256, 16),
+        (0x1f000, 0x1faff, 64, 16),
+        (0x20000, 0x20010, 64, 8),
+        (0xe0000, 0xe01ff, 128, 8),
+        (0x0010_fff0, 0x0010_ffff, 16, 16),
+    ];
+    let mut texts = Vec::new();
+    for (first, last, step, width) in BLOCKS {
+        let mut start = first;
+        while start <= last {
+            texts.push(
+                (start..start + width)
+                    .filter_map(char::from_u32)
+                    .collect::<String>(),
+            );
+            start += step;
+        }
+    }
+    let mut cases = texts
+        .chunks(8)
+        .map(|chunk| {
+            let projection = chunk
+                .iter()
+                .map(|text| format!("HEX(WEIGHT_STRING('{text}'))"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("SELECT {projection}")
+        })
+        .collect::<Vec<_>>();
+    cases.push(
+        "SELECT HEX(WEIGHT_STRING('\u{e9}\u{df}\u{4e00}\u{1f600}' AS CHAR(3))), \
+         HEX(WEIGHT_STRING('a\u{df}\u{4e00}\u{1f600}x', 7, 3, 0xC0)), \
+         HEX(WEIGHT_STRING('a\u{df}\u{4e00}\u{1f600}x', 25, 6, 0x80)), \
+         HEX(WEIGHT_STRING('e\u{301}\u{ac01}\u{1100}\u{1161}\u{11a8}', 9, 4, 0)), \
+         HEX(WEIGHT_STRING('\u{c4}rger \u{e6}ther \u{3b1}\u{3b2} \u{416}\u{436}'))"
+            .to_owned(),
+    );
+    cases.push(
+        "SELECT id, HEX(WEIGHT_STRING(label COLLATE utf8mb4_0900_ai_ci)), \
+         HEX(WEIGHT_STRING(CONCAT(name, '\u{4e00}\u{e9}'))), \
+         HEX(WEIGHT_STRING(label COLLATE utf8mb4_0900_ai_ci, 6, 4, 0xC0)) FROM events ORDER BY id"
+            .to_owned(),
+    );
+    cases.push(
+        "SELECT id FROM events ORDER BY WEIGHT_STRING(label COLLATE utf8mb4_0900_ai_ci), id"
             .to_owned(),
     );
     cases
@@ -7936,16 +8023,6 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "reject mixed explicit collations",
             "SELECT COLLATION(CONCAT(name COLLATE utf8mb4_bin, tag COLLATE utf8mb4_general_ci)) FROM events",
             "explicit collations",
-        ),
-        (
-            "reject weights beyond ascii under the default collation",
-            "SELECT WEIGHT_STRING('\u{e9}')",
-            "ASCII text only",
-        ),
-        (
-            "reject weights of a stored value beyond ascii under the default collation",
-            "SELECT WEIGHT_STRING(CONCAT(name, '\u{4e00}')) FROM events",
-            "ASCII text only",
         ),
         (
             "reject weights under a collation that is not carried",
