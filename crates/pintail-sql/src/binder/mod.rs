@@ -5824,6 +5824,8 @@ fn bind_binary(
     // to COALESCE((l IS NULL AND r IS NULL) OR l = r, FALSE) so every
     // executor path treats it as ordinary boolean algebra.
     if matches!(operator, BinaryOperator::Spaceship) {
+        let right = year_constant_operand(&left, right);
+        let left = year_constant_operand(&right, left);
         let both_null = BoundExpr {
             data_type: Some(DataType::Boolean),
             nullable: false,
@@ -5922,6 +5924,8 @@ fn bind_binary(
         };
         let (left, right) = unify_temporal_operands(left, right);
         let (left, right) = unify_time_operands(left, right);
+        let right = year_constant_operand(&left, right);
+        let left = year_constant_operand(&right, left);
         let right = canonical_literal_operand(&left, right)?;
         let left = canonical_literal_operand(&right, left)?;
         let (left, right) = text_as_number(left, right);
@@ -9170,6 +9174,75 @@ fn numeric_list_as_double(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
 /// string and answers wrongly. Anything that is not such a literal comes
 /// back unchanged; a literal shaped like a date that names an impossible
 /// one is refused against a column, as `MySQL` refuses it.
+/// A constant compared with a YEAR column is first read as a year, the way
+/// the column itself would store it: 10 is 2010, 99 is 1999, a fraction
+/// rounds, and the text '0' is 2000 where the number 0 is the zero year.
+/// A constant no year can hold is compared as written.
+pub(super) fn year_constant_operand(target: &BoundExpr, operand: BoundExpr) -> BoundExpr {
+    if target.data_type != Some(DataType::Year) || !matches!(target.kind, BoundExprKind::Column(_))
+    {
+        return operand;
+    }
+    let two_digit = |number: u64| match number {
+        0..=69 => Some(number + 2000),
+        70..=99 => Some(number + 1900),
+        1901..=2155 => Some(number),
+        _ => None,
+    };
+    // The number 0 is the zero year; only the text '0' is 2000.
+    let number_year = |number: u64| {
+        if number == 0 {
+            Some(0)
+        } else {
+            two_digit(number)
+        }
+    };
+    let year = match crate::text_charset::literal_value(&operand).as_deref() {
+        Some(Value::Int64(number)) => u64::try_from(*number).ok().and_then(number_year),
+        Some(Value::UInt64(number)) => number_year(*number),
+        Some(Value::Float64(number)) => rounded_year(number.get()).and_then(number_year),
+        Some(Value::Utf8(text)) if operand.data_type == Some(DataType::Utf8) => {
+            let digits = text.trim_matches(' ');
+            if digits.is_empty()
+                || digits.len() > 4
+                || !digits.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                None
+            } else {
+                match digits.parse::<u64>() {
+                    Ok(0) if text.len() == 4 => Some(0),
+                    Ok(number) => two_digit(number),
+                    Err(_) => None,
+                }
+            }
+        }
+        Some(Value::Utf8(text)) if matches!(operand.data_type, Some(DataType::Decimal { .. })) => {
+            text.parse::<f64>()
+                .ok()
+                .and_then(rounded_year)
+                .and_then(number_year)
+        }
+        _ => None,
+    };
+    match year {
+        Some(year) => BoundExpr {
+            kind: BoundExprKind::Literal(Value::UInt64(year)),
+            data_type: Some(DataType::UInt64),
+            nullable: false,
+        },
+        None => operand,
+    }
+}
+
+/// A fractional constant as the whole number a YEAR column rounds it to.
+fn rounded_year(number: f64) -> Option<u64> {
+    let rounded = number.round();
+    if !(0.0..=2155.0).contains(&rounded) {
+        return None;
+    }
+    format!("{rounded:.0}").parse().ok()
+}
+
 fn canonical_literal_operand(
     target: &BoundExpr,
     operand: BoundExpr,

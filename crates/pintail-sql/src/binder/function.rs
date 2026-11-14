@@ -1075,6 +1075,14 @@ pub(super) fn bind_scalar_function(
         }
         _ => return Err(BindError::UnsupportedExpression(function.to_string())),
     };
+    if scalar == ScalarFunction::NullIf && args.len() == 2 {
+        let second = args.remove(1);
+        let first = args.remove(0);
+        let second = super::year_constant_operand(&first, second);
+        let first = super::year_constant_operand(&second, first);
+        args.push(first);
+        args.push(second);
+    }
     if scalar == ScalarFunction::BitCount
         && let Some(FunctionArg::Unnamed(FunctionArgExpr::Expr(written))) = arguments.args.first()
     {
@@ -2218,6 +2226,8 @@ pub(super) fn bind_between(
     let [subject, low, high]: [BoundExpr; 3] = args
         .try_into()
         .map_err(|_| BindError::InvalidScalarFunction("BETWEEN".to_owned()))?;
+    let low = super::year_constant_operand(&subject, low);
+    let high = super::year_constant_operand(&subject, high);
     let low = super::canonical_literal_operand(&subject, low)?;
     let high = super::canonical_literal_operand(&subject, high)?;
     let args = super::choice_among_numbers(vec![subject, low, high]);
