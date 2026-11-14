@@ -6830,7 +6830,10 @@ fn projection_output_columns(expressions: &[BoundProjection]) -> Vec<BoundColumn
         .collect()
 }
 
-#[allow(clippy::too_many_lines)]
+/// Builds one plan node. Each arm of any size lives in its own function,
+/// never inlined: building recurses once per plan node, and with every
+/// arm's locals in this one frame an unoptimized build spent about 134 KiB
+/// of stack a level, so a plan of ten joins did not fit a 2 MiB thread.
 fn build_operator_inner(
     plan: PhysicalPlan,
     provider: &dyn ScanProvider,
@@ -6840,258 +6843,24 @@ fn build_operator_inner(
     match plan {
         PhysicalPlan::Empty => Ok((PullOperator::Empty, Vec::new())),
         PhysicalPlan::OneRow => Ok((PullOperator::OneRow { emitted: false }, Vec::new())),
-        PhysicalPlan::Scan(scan) => {
-            let columns = scan
-                .projected_column_ids
-                .iter()
-                .map(|id| {
-                    scan.table
-                        .columns
-                        .iter()
-                        .find(|column| column.column_id == *id)
-                        .cloned()
-                        .ok_or(ExecError::InvalidPhysicalPlan(
-                            "scan projection references an unknown stable column ID",
-                        ))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let expected_types = columns.iter().map(|column| column.data_type).collect();
-            let predicates = scan
-                .predicates
-                .iter()
-                .map(|predicate| CompiledExpr::compile(predicate, &columns, collation))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut stream = match points::open(&scan, provider, memory.remaining())? {
-                Some(runs) => runs,
-                None => provider.open_scan(&scan, memory.remaining())?,
-            };
-            memory.reserve(stream.retained_bytes())?;
-            // The scan's own evaluation stands in for these Filters only
-            // where it compared text as they do.
-            let storage = stream.prefilter_collation() == Some(collation);
-            if storage {
-                stream.stop_after_filtered_rows();
-            }
-            let mut operator = PullOperator::Scan {
-                stream,
-                expected_types,
-            };
-            for predicate in crate::expression::pair_column_ranges(predicates) {
-                operator = PullOperator::Filter {
-                    input: Box::new(operator),
-                    predicate,
-                    storage,
-                };
-            }
-            Ok((operator, columns))
+        plan @ PhysicalPlan::Scan(_) => build_node_scan(plan, provider, memory, collation),
+        plan @ PhysicalPlan::Derived { .. } => {
+            build_node_derived(plan, provider, memory, collation)
         }
-        PhysicalPlan::Derived { input, columns } => {
-            let fields = input.output_fields();
-            // A field with no data type is an untyped NULL projection
-            // (SELECT NULL AS k) - compatible with any bound column type,
-            // and refusing it made GROUP BY over a NULL-only derived table
-            // an internal error (conformance suite).
-            if fields.len() != columns.len()
-                || fields.iter().zip(&columns).any(|(field, column)| {
-                    field
-                        .data_type
-                        .is_some_and(|data_type| data_type != column.data_type)
-                })
-            {
-                return Err(ExecError::InvalidPhysicalPlan(
-                    "derived input layout does not match its bound columns",
-                ));
-            }
-            let (input, _) = build_operator(*input, provider, memory, collation)?;
-            Ok((input, columns))
-        }
-        PhysicalPlan::Lateral {
-            input,
-            query,
-            columns,
-            preserve_input,
-            condition,
-        } => {
-            let (mut input, input_columns) = build_operator(*input, provider, memory, collation)?;
-            let rows = lateral::execute_lateral_join(
-                &mut input,
-                &lateral::LateralJoin {
-                    input_columns: &input_columns,
-                    query: &query,
-                    columns: &columns,
-                    preserve_input,
-                    condition: condition.as_ref(),
-                },
-                provider,
-                memory,
-                collation,
-            )?;
-            let mut output_columns = input_columns;
-            output_columns.extend(columns);
-            let column_types = output_columns
-                .iter()
-                .map(|column| column.data_type)
-                .collect::<Vec<_>>();
-            Ok((
-                PullOperator::Rows {
-                    rows,
-                    cursor: 0,
-                    column_types,
-                },
-                output_columns,
-            ))
+        plan @ PhysicalPlan::Lateral { .. } => {
+            build_node_lateral(plan, provider, memory, collation)
         }
         PhysicalPlan::JsonTable { input, apply } => {
             json_table::build(input, apply, provider, memory, collation)
         }
-        PhysicalPlan::CrossJoin {
-            inputs,
-            estimated_rows: _,
-        } => {
-            let mut built = Vec::with_capacity(inputs.len());
-            for input in inputs {
-                built.push(build_operator(input, provider, memory, collation)?);
-            }
-            let mut operators = Vec::with_capacity(built.len());
-            let mut columns = Vec::new();
-            for (operator, input_columns) in built {
-                operators.push(operator);
-                columns.extend(input_columns);
-            }
-            let column_types = columns.iter().map(|column| column.data_type).collect();
-            Ok((
-                PullOperator::CrossJoin {
-                    inputs: operators,
-                    column_types,
-                    state: None,
-                },
-                columns,
-            ))
+        plan @ PhysicalPlan::CrossJoin { .. } => {
+            build_node_cross_join(plan, provider, memory, collation)
         }
-        PhysicalPlan::UnionAll { inputs } => {
-            let layouts = inputs
-                .iter()
-                .map(PhysicalPlan::output_fields)
-                .collect::<Vec<_>>();
-            validate_union_fields(&layouts)?;
-            let mut built = Vec::with_capacity(inputs.len());
-            for input in inputs {
-                built.push(build_operator(input, provider, memory, collation)?);
-            }
-            let (operators, columns): (Vec<_>, Vec<_>) = built.into_iter().unzip();
-            let columns = columns.into_iter().next().unwrap_or_default();
-            Ok((
-                PullOperator::UnionAll {
-                    inputs: operators,
-                    current: 0,
-                },
-                columns,
-            ))
+        plan @ PhysicalPlan::UnionAll { .. } => {
+            build_node_union_all(plan, provider, memory, collation)
         }
-        PhysicalPlan::HashJoin {
-            left,
-            right,
-            kind,
-            left_key,
-            right_key,
-            extra_keys,
-            null_safe,
-            probe_estimate,
-            build_estimate,
-            residual,
-        } => {
-            // The estimates decide the read-ahead; forcing it (see
-            // `probe_prefetch_forced`) is a measurement switch only. Forced
-            // on every left join it cost wide grouped reports more than the
-            // index lookups it enabled saved them.
-            let probe_prefetch = probe_prefetch_applies(kind, probe_estimate, build_estimate)
-                || probe_prefetch_forced(kind);
-            let (left, left_columns) = build_operator(*left, provider, memory, collation)?;
-            let (right, right_columns) = build_operator(*right, provider, memory, collation)?;
-            // Each join key decides its own collation from the columns it
-            // compares, so a plan may join general_ci here and 0900_ai_ci in
-            // the next operator. The two sides of ONE key may
-            // carry different collations; they resolve together, as the
-            // comparison itself would.
-            let key_collation = pair_key_collation(&left_key, &right_key, collation);
-            let null_safe_at = |key: usize| null_safe.get(key).copied().unwrap_or(false);
-            let key_mode =
-                hash_join_key_mode(left_key.data_type, right_key.data_type, key_collation)
-                    .map(|mode| JoinKeyMode {
-                        null_safe: null_safe_at(0),
-                        ..mode
-                    })
-                    .ok_or(ExecError::InvalidPhysicalPlan(
-                        "hash join keys have incompatible scalar types",
-                    ))?;
-            let extra_keys = extra_keys
-                .into_iter()
-                .enumerate()
-                .map(|(index, (extra_left, extra_right))| {
-                    let mode = hash_join_key_mode(
-                        extra_left.data_type,
-                        extra_right.data_type,
-                        pair_key_collation(&extra_left, &extra_right, collation),
-                    )
-                    .map(|mode| JoinKeyMode {
-                        null_safe: null_safe_at(index + 1),
-                        ..mode
-                    })
-                    .ok_or(ExecError::InvalidPhysicalPlan(
-                        "hash join keys have incompatible scalar types",
-                    ))?;
-                    Ok((
-                        CompiledExpr::compile(&extra_left, &left_columns, collation)?,
-                        CompiledExpr::compile(&extra_right, &right_columns, collation)?,
-                        mode,
-                    ))
-                })
-                .collect::<Result<Vec<_>, ExecError>>()?;
-            let left_key = CompiledExpr::compile(&left_key, &left_columns, collation)?;
-            let right_key = CompiledExpr::compile(&right_key, &right_columns, collation)?;
-            let right_width = right_columns.len();
-            // The residual reads both sides, so it compiles against the
-            // concatenation - which is NOT output_columns, because semi and
-            // anti joins project the left side alone.
-            let mut residual_columns = left_columns.clone();
-            residual_columns.extend(right_columns.iter().cloned());
-            let residual_reads = residual
-                .as_ref()
-                .map(|predicate| ResidualReads::compile(predicate, &residual_columns, collation))
-                .transpose()?
-                .map(Box::new);
-            let residual = residual
-                .map(|predicate| CompiledExpr::compile(&predicate, &residual_columns, collation))
-                .transpose()?;
-            let mut output_columns = left_columns;
-            if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
-                output_columns.extend(right_columns);
-            }
-            let column_types = output_columns
-                .iter()
-                .map(|column| column.data_type)
-                .collect();
-            Ok((
-                PullOperator::HashJoin {
-                    left: Box::new(left),
-                    right: Box::new(right),
-                    kind,
-                    left_key,
-                    right_key,
-                    extra_keys,
-                    key_mode,
-                    column_types,
-                    right_width,
-                    state: None,
-                    residual,
-                    residual_columns,
-                    residual_reads,
-                    collation,
-                    probe_prefetch,
-                    build_estimate,
-                },
-                output_columns,
-            ))
+        plan @ PhysicalPlan::HashJoin { .. } => {
+            build_node_hash_join(plan, provider, memory, collation)
         }
         PhysicalPlan::KeyLookupJoin {
             left,
@@ -7115,545 +6884,999 @@ fn build_operator_inner(
             memory,
             collation,
         ),
-        PhysicalPlan::NestedLoopJoin {
-            left,
-            right,
+        plan @ PhysicalPlan::NestedLoopJoin { .. } => {
+            build_node_nested_loop_join(plan, provider, memory, collation)
+        }
+        plan @ PhysicalPlan::Filter { .. } => build_node_filter(plan, provider, memory, collation),
+        plan @ PhysicalPlan::HashAggregate { .. } => {
+            build_node_hash_aggregate(plan, provider, memory, collation)
+        }
+        plan @ PhysicalPlan::Project { .. } => {
+            build_node_project(plan, provider, memory, collation)
+        }
+        plan @ PhysicalPlan::Recursive { .. } => {
+            build_node_recursive(plan, provider, memory, collation)
+        }
+        plan @ PhysicalPlan::SetOp { .. } => build_node_set_op(plan, provider, memory, collation),
+        plan @ PhysicalPlan::KeyRuns { .. } => {
+            build_node_key_runs(plan, provider, memory, collation)
+        }
+        plan @ PhysicalPlan::Distinct { .. } => {
+            build_node_distinct(plan, provider, memory, collation)
+        }
+        plan @ PhysicalPlan::Window { .. } => build_node_window(plan, provider, memory, collation),
+        plan @ PhysicalPlan::Sort { .. } => build_node_sort(plan, provider, memory, collation),
+        plan @ PhysicalPlan::Limit { .. } => build_node_limit(plan, provider, memory, collation),
+    }
+}
+
+/// The `Scan` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_scan(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Scan(scan) = plan else {
+        unreachable!("the caller matched Scan")
+    };
+    let columns = scan
+        .projected_column_ids
+        .iter()
+        .map(|id| {
+            scan.table
+                .columns
+                .iter()
+                .find(|column| column.column_id == *id)
+                .cloned()
+                .ok_or(ExecError::InvalidPhysicalPlan(
+                    "scan projection references an unknown stable column ID",
+                ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected_types = columns.iter().map(|column| column.data_type).collect();
+    let predicates = scan
+        .predicates
+        .iter()
+        .map(|predicate| CompiledExpr::compile(predicate, &columns, collation))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut stream = match points::open(&scan, provider, memory.remaining())? {
+        Some(runs) => runs,
+        None => provider.open_scan(&scan, memory.remaining())?,
+    };
+    memory.reserve(stream.retained_bytes())?;
+    // The scan's own evaluation stands in for these Filters only
+    // where it compared text as they do.
+    let storage = stream.prefilter_collation() == Some(collation);
+    if storage {
+        stream.stop_after_filtered_rows();
+    }
+    let mut operator = PullOperator::Scan {
+        stream,
+        expected_types,
+    };
+    for predicate in crate::expression::pair_column_ranges(predicates) {
+        operator = PullOperator::Filter {
+            input: Box::new(operator),
+            predicate,
+            storage,
+        };
+    }
+    Ok((operator, columns))
+}
+
+/// The `Derived` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_derived(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Derived { input, columns } = plan else {
+        unreachable!("the caller matched Derived")
+    };
+    let fields = input.output_fields();
+    // A field with no data type is an untyped NULL projection
+    // (SELECT NULL AS k) - compatible with any bound column type,
+    // and refusing it made GROUP BY over a NULL-only derived table
+    // an internal error (conformance suite).
+    if fields.len() != columns.len()
+        || fields.iter().zip(&columns).any(|(field, column)| {
+            field
+                .data_type
+                .is_some_and(|data_type| data_type != column.data_type)
+        })
+    {
+        return Err(ExecError::InvalidPhysicalPlan(
+            "derived input layout does not match its bound columns",
+        ));
+    }
+    let (input, _) = build_operator(*input, provider, memory, collation)?;
+    Ok((input, columns))
+}
+
+/// The `Lateral` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_lateral(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Lateral {
+        input,
+        query,
+        columns,
+        preserve_input,
+        condition,
+    } = plan
+    else {
+        unreachable!("the caller matched Lateral")
+    };
+    let (mut input, input_columns) = build_operator(*input, provider, memory, collation)?;
+    let rows = lateral::execute_lateral_join(
+        &mut input,
+        &lateral::LateralJoin {
+            input_columns: &input_columns,
+            query: &query,
+            columns: &columns,
+            preserve_input,
+            condition: condition.as_ref(),
+        },
+        provider,
+        memory,
+        collation,
+    )?;
+    let mut output_columns = input_columns;
+    output_columns.extend(columns);
+    let column_types = output_columns
+        .iter()
+        .map(|column| column.data_type)
+        .collect::<Vec<_>>();
+    Ok((
+        PullOperator::Rows {
+            rows,
+            cursor: 0,
+            column_types,
+        },
+        output_columns,
+    ))
+}
+
+/// The `CrossJoin` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_cross_join(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::CrossJoin {
+        inputs,
+        estimated_rows: _,
+    } = plan
+    else {
+        unreachable!("the caller matched CrossJoin")
+    };
+    let mut built = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        built.push(build_operator(input, provider, memory, collation)?);
+    }
+    let mut operators = Vec::with_capacity(built.len());
+    let mut columns = Vec::new();
+    for (operator, input_columns) in built {
+        operators.push(operator);
+        columns.extend(input_columns);
+    }
+    let column_types = columns.iter().map(|column| column.data_type).collect();
+    Ok((
+        PullOperator::CrossJoin {
+            inputs: operators,
+            column_types,
+            state: None,
+        },
+        columns,
+    ))
+}
+
+/// The `UnionAll` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_union_all(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::UnionAll { inputs } = plan else {
+        unreachable!("the caller matched UnionAll")
+    };
+    let layouts = inputs
+        .iter()
+        .map(PhysicalPlan::output_fields)
+        .collect::<Vec<_>>();
+    validate_union_fields(&layouts)?;
+    let mut built = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        built.push(build_operator(input, provider, memory, collation)?);
+    }
+    let (operators, columns): (Vec<_>, Vec<_>) = built.into_iter().unzip();
+    let columns = columns.into_iter().next().unwrap_or_default();
+    Ok((
+        PullOperator::UnionAll {
+            inputs: operators,
+            current: 0,
+        },
+        columns,
+    ))
+}
+
+/// The `HashJoin` arm of [`build_operator_inner`], in a frame of its own.
+#[allow(clippy::too_many_lines)]
+#[inline(never)]
+fn build_node_hash_join(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::HashJoin {
+        left,
+        right,
+        kind,
+        left_key,
+        right_key,
+        extra_keys,
+        null_safe,
+        probe_estimate,
+        build_estimate,
+        residual,
+    } = plan
+    else {
+        unreachable!("the caller matched HashJoin")
+    };
+    // The estimates decide the read-ahead; forcing it (see
+    // `probe_prefetch_forced`) is a measurement switch only. Forced
+    // on every left join it cost wide grouped reports more than the
+    // index lookups it enabled saved them.
+    let probe_prefetch =
+        probe_prefetch_applies(kind, probe_estimate, build_estimate) || probe_prefetch_forced(kind);
+    let (left, left_columns) = build_operator(*left, provider, memory, collation)?;
+    let (right, right_columns) = build_operator(*right, provider, memory, collation)?;
+    // Each join key decides its own collation from the columns it
+    // compares, so a plan may join general_ci here and 0900_ai_ci in
+    // the next operator. The two sides of ONE key may
+    // carry different collations; they resolve together, as the
+    // comparison itself would.
+    let key_collation = pair_key_collation(&left_key, &right_key, collation);
+    let null_safe_at = |key: usize| null_safe.get(key).copied().unwrap_or(false);
+    let key_mode = hash_join_key_mode(left_key.data_type, right_key.data_type, key_collation)
+        .map(|mode| JoinKeyMode {
+            null_safe: null_safe_at(0),
+            ..mode
+        })
+        .ok_or(ExecError::InvalidPhysicalPlan(
+            "hash join keys have incompatible scalar types",
+        ))?;
+    let extra_keys = extra_keys
+        .into_iter()
+        .enumerate()
+        .map(|(index, (extra_left, extra_right))| {
+            let mode = hash_join_key_mode(
+                extra_left.data_type,
+                extra_right.data_type,
+                pair_key_collation(&extra_left, &extra_right, collation),
+            )
+            .map(|mode| JoinKeyMode {
+                null_safe: null_safe_at(index + 1),
+                ..mode
+            })
+            .ok_or(ExecError::InvalidPhysicalPlan(
+                "hash join keys have incompatible scalar types",
+            ))?;
+            Ok((
+                CompiledExpr::compile(&extra_left, &left_columns, collation)?,
+                CompiledExpr::compile(&extra_right, &right_columns, collation)?,
+                mode,
+            ))
+        })
+        .collect::<Result<Vec<_>, ExecError>>()?;
+    let left_key = CompiledExpr::compile(&left_key, &left_columns, collation)?;
+    let right_key = CompiledExpr::compile(&right_key, &right_columns, collation)?;
+    let right_width = right_columns.len();
+    // The residual reads both sides, so it compiles against the
+    // concatenation - which is NOT output_columns, because semi and
+    // anti joins project the left side alone.
+    let mut residual_columns = left_columns.clone();
+    residual_columns.extend(right_columns.iter().cloned());
+    let residual_reads = residual
+        .as_ref()
+        .map(|predicate| ResidualReads::compile(predicate, &residual_columns, collation))
+        .transpose()?
+        .map(Box::new);
+    let residual = residual
+        .map(|predicate| CompiledExpr::compile(&predicate, &residual_columns, collation))
+        .transpose()?;
+    let mut output_columns = left_columns;
+    if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
+        output_columns.extend(right_columns);
+    }
+    let column_types = output_columns
+        .iter()
+        .map(|column| column.data_type)
+        .collect();
+    Ok((
+        PullOperator::HashJoin {
+            left: Box::new(left),
+            right: Box::new(right),
             kind,
-            keys,
-            ranges,
-            condition,
-        } => {
-            let (mut left, left_columns) = build_operator(*left, provider, memory, collation)?;
-            let (mut right, right_columns) = build_operator(*right, provider, memory, collation)?;
-            let mut output_columns = left_columns.clone();
-            if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
-                output_columns.extend(right_columns.clone());
-            }
-            let column_types = output_columns
-                .iter()
-                .map(|column| column.data_type)
-                .collect::<Vec<_>>();
-            let rows = execute_nested_loop_join(
-                &mut left,
-                &mut right,
-                &left_columns,
-                &right_columns,
-                kind,
-                &keys,
-                &ranges,
-                &condition,
-                provider,
-                memory,
-                collation,
-            )?;
-            Ok((
-                PullOperator::Sort {
-                    input: Box::new(PullOperator::Empty),
-                    keys: Vec::new(),
-                    trim: column_types.len(),
-                    column_types,
-                    top_k: None,
-                    state: Some(rows),
-                    collation,
-                    fallback: None,
-                },
-                output_columns,
-            ))
-        }
-        PhysicalPlan::Filter { input, predicate } => {
-            let dependent = expression_has_dependent_subquery(&predicate);
-            let (mut input, columns) = build_operator(*input, provider, memory, collation)?;
-            if dependent {
-                let column_types = columns
-                    .iter()
-                    .map(|column| column.data_type)
-                    .collect::<Vec<_>>();
-                let mut rows = Vec::new();
-                let mut memo = DependentMemo::for_expressions(std::iter::once(&predicate));
-                let window = outer_set::window_rows(std::iter::once(&predicate));
-                let mut held = std::collections::VecDeque::new();
-                while let Some(batch) = outer_set::next_held(&mut input, memory, &mut held, window)?
-                {
-                    let batch_bytes = batch.estimated_bytes();
-                    for row in batch.selection().selected_rows() {
-                        let mut expression = hollow_clone(&predicate);
-                        let context = DependentRow {
-                            batch: &batch,
-                            row,
-                            columns: &columns,
-                            provider,
-                            memory,
-                            collation,
-                            ahead: held.as_slices().0,
-                        };
-                        memo.begin_row();
-                        resolve_dependent_expr_subqueries(&mut expression, &context, &mut memo)?;
-                        let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
-                        if !predicate_truth(&compiled.evaluate(&batch, row)?)? {
-                            continue;
-                        }
-                        let values = batch_row(&batch, row)?;
-                        let row_bytes = estimated_row_payload_bytes(&values);
-                        memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
-                        memory.reserve(row_bytes)?;
-                        rows.push(values);
-                    }
-                }
-                record_dependent_memo(memo.finish(memory));
-                return Ok((
-                    PullOperator::Rows {
-                        rows,
-                        cursor: 0,
-                        column_types,
-                    },
-                    columns,
-                ));
-            }
-            let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
-            Ok((
-                PullOperator::Filter {
-                    input: Box::new(input),
-                    predicate,
-                    storage: false,
-                },
-                columns,
-            ))
-        }
-        PhysicalPlan::HashAggregate {
-            input,
-            group_by,
-            mut aggregates,
-        } => {
-            // Counts over a join on an inequality are taken from how many
-            // rows each left row pairs with; the join is not run.
-            let (input, columns) = match counted_join::plan(
-                &input,
-                &group_by,
-                &aggregates,
-                provider,
-                memory,
-                collation,
-            )? {
-                Some(counted) => {
-                    aggregates = counted.aggregates;
-                    (counted.input, counted.columns)
-                }
-                None => build_operator(*input, provider, memory, collation)?,
-            };
-            let (input, columns) = precompute_dependent_aggregate_arguments(
-                input,
-                columns,
-                &mut aggregates,
-                provider,
-                memory,
-                collation,
-            )?;
-            let column_types = group_by
-                .iter()
-                .map(|expression| expression.data_type.unwrap_or(DataType::Utf8))
-                .chain(
-                    aggregates
-                        .iter()
-                        .map(|aggregate| aggregate.data_type.unwrap_or(DataType::Utf8)),
-                )
-                .collect();
-            // The aggregate's output schema is positional (group keys, then
-            // aggregate results). Downstream operators that sit between the
-            // aggregate and the final projection — the window operator — need
-            // real column entries so their own type layout and appended
-            // outputs line up; synthetic identities keep Column resolution
-            // unambiguous, matching the window-output convention.
-            let synthetic = |index: usize,
-                             data_type: Option<DataType>,
-                             nullable: bool,
-                             binary_width: Option<u32>| BoundColumn {
-                database_id: DatabaseId::new(u64::MAX),
-                table_id: TableId::new(u64::MAX - 1),
-                column_id: u32::try_from(index).unwrap_or(u32::MAX),
-                relation_name: "<aggregate>".to_owned(),
-                name: format!("<aggregate-{index}>"),
-                data_type: data_type.unwrap_or(DataType::Utf8),
-                nullable,
-                collation: None,
-                enum_labels: None,
-                geometry: false,
-                timestamp: false,
-                binary_width,
-                bit_width: None,
-                float_decimals: None,
-                outer: false,
-                using_shadowed: false,
-                declared_set: false,
-            };
-            let mut output_columns = group_by
-                .iter()
-                .enumerate()
-                .map(|(index, expression)| match &expression.kind {
-                    BoundExprKind::Column(column) => {
-                        let mut column = column.clone();
-                        column.outer = false;
-                        column.nullable = expression.nullable;
-                        column
-                    }
-                    _ => synthetic(
-                        index,
-                        expression.data_type,
-                        expression.nullable,
-                        expression.binary_width(),
-                    ),
-                })
-                .collect::<Vec<_>>();
-            output_columns.extend(aggregates.iter().enumerate().map(|(offset, aggregate)| {
-                if let Some(column) = &aggregate.output_column {
-                    return column.as_ref().clone();
-                }
-                synthetic(
-                    group_by.len().saturating_add(offset),
-                    aggregate.data_type,
-                    aggregate.nullable,
-                    aggregate.expr.as_ref().and_then(BoundExpr::binary_width),
-                )
-            }));
-            // Each grouping key folds under ITS OWN collation - grouping
-            // never compares one key column against another, so keys of two
-            // collations are answerable, exactly as a sort orders each key
-            // by its own rules. The uniform collation, when the keys share
-            // one, keeps the specialized single-table paths eligible; mixed
-            // keys take the general per-key path.
-            let (key_collations, uniform_key_collation) =
-                grouping_key_collations(&group_by, collation);
-            let group_collation = uniform_key_collation.unwrap_or(collation);
-            let group_by = group_by
-                .iter()
-                .zip(&key_collations)
-                .map(|(expression, key_collation)| {
-                    CompiledExpr::compile(expression, &columns, *key_collation)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let aggregates = aggregates
-                .iter()
-                .map(|aggregate| CompiledAggregate::compile(aggregate, &columns, collation))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok((
-                PullOperator::HashAggregate {
-                    input: Box::new(input),
-                    input_width: columns.len(),
-                    group_by,
-                    aggregates,
-                    column_types,
-                    state: None,
-                    collation: group_collation,
-                    key_collations,
-                },
-                output_columns,
-            ))
-        }
-        PhysicalPlan::Project { input, expressions } => {
-            let dependent = expressions
-                .iter()
-                .any(|projection| expression_has_dependent_subquery(&projection.expr));
-            let (mut input, columns) = build_operator(*input, provider, memory, collation)?;
-            let output_columns = projection_output_columns(&expressions);
-            if dependent {
-                let column_types = expressions
-                    .iter()
-                    .map(|projection| projection.expr.data_type.unwrap_or(DataType::Utf8))
-                    .collect::<Vec<_>>();
-                let mut rows = Vec::new();
-                let mut memo = DependentMemo::for_expressions(
-                    expressions.iter().map(|projection| &projection.expr),
-                );
-                let window =
-                    outer_set::window_rows(expressions.iter().map(|projection| &projection.expr));
-                let mut held = std::collections::VecDeque::new();
-                while let Some(batch) = outer_set::next_held(&mut input, memory, &mut held, window)?
-                {
-                    let batch_bytes = batch.estimated_bytes();
-                    for row in batch.selection().selected_rows() {
-                        let mut values = Vec::with_capacity(expressions.len());
-                        let context = DependentRow {
-                            batch: &batch,
-                            row,
-                            columns: &columns,
-                            provider,
-                            memory,
-                            collation,
-                            ahead: held.as_slices().0,
-                        };
-                        memo.begin_row();
-                        for projection in &expressions {
-                            let mut expression = hollow_clone(&projection.expr);
-                            resolve_dependent_expr_subqueries(
-                                &mut expression,
-                                &context,
-                                &mut memo,
-                            )?;
-                            let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
-                            values.push(compiled.evaluate(&batch, row)?);
-                        }
-                        let row_bytes = estimated_row_payload_bytes(&values);
-                        memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
-                        memory.reserve(row_bytes)?;
-                        rows.push(values);
-                    }
-                }
-                record_dependent_memo(memo.finish(memory));
-                return Ok((
-                    PullOperator::Rows {
-                        rows,
-                        cursor: 0,
-                        column_types,
-                    },
-                    output_columns,
-                ));
-            }
-            let expressions = expressions
-                .iter()
-                .map(|projection| {
-                    Ok((
-                        CompiledExpr::compile(&projection.expr, &columns, collation)?,
-                        projection.expr.data_type,
-                    ))
-                })
-                .collect::<Result<Vec<_>, ExecError>>()?;
-            Ok((
-                PullOperator::Project {
-                    input: Box::new(input),
-                    expressions,
-                },
-                output_columns,
-            ))
-        }
-        PhysicalPlan::Recursive {
-            working,
-            distinct,
-            limit,
-            anchor,
-            member,
-        } => {
-            // The working-table layout comes from the anchor's client-visible
-            // fields, independent from internal synthetic projection IDs.
-            let column_types: Vec<DataType> = anchor
-                .output_fields()
-                .iter()
-                .map(|field| field.data_type.unwrap_or(DataType::Utf8))
-                .collect();
-            let (mut anchor_op, columns) = build_operator(*anchor, provider, memory, collation)?;
-            let mut seen: HashSet<Vec<Value>> = HashSet::new();
-            let mut rows: Vec<Vec<Value>> = Vec::new();
-            let mut delta = drain_recursive_rows(
-                &mut anchor_op,
-                distinct,
-                &mut seen,
-                &mut rows,
-                memory,
-                collation,
-            )?;
-            // The CTE's own LIMIT ends the recursion once enough rows exist,
-            // so a member with no terminating condition still finishes.
-            let wanted = limit.map(|limit| {
-                usize::try_from(limit.offset.saturating_add(limit.count)).unwrap_or(usize::MAX)
-            });
-            let recursion_limit = SESSION_CTE_MAX_RECURSION_DEPTH.get();
-            let mut iterations: u64 = 0;
-            while !delta.is_empty() && wanted.is_none_or(|wanted| rows.len() < wanted) {
-                iterations += 1;
-                if iterations > recursion_limit {
-                    return Err(ExecError::RecursionDepthExceeded {
-                        limit: recursion_limit,
-                    });
-                }
-                let overlay = RecursiveWorkingProvider {
-                    base: provider,
-                    working,
-                    column_types: &column_types,
-                    delta: &delta,
-                };
-                let (mut member_op, _) =
-                    build_operator((*member).clone(), &overlay, memory, collation)?;
-                delta = drain_recursive_rows(
-                    &mut member_op,
-                    distinct,
-                    &mut seen,
-                    &mut rows,
+            left_key,
+            right_key,
+            extra_keys,
+            key_mode,
+            column_types,
+            right_width,
+            state: None,
+            residual,
+            residual_columns,
+            residual_reads,
+            collation,
+            probe_prefetch,
+            build_estimate,
+        },
+        output_columns,
+    ))
+}
+
+/// The `NestedLoopJoin` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_nested_loop_join(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::NestedLoopJoin {
+        left,
+        right,
+        kind,
+        keys,
+        ranges,
+        condition,
+    } = plan
+    else {
+        unreachable!("the caller matched NestedLoopJoin")
+    };
+    let (mut left, left_columns) = build_operator(*left, provider, memory, collation)?;
+    let (mut right, right_columns) = build_operator(*right, provider, memory, collation)?;
+    let mut output_columns = left_columns.clone();
+    if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
+        output_columns.extend(right_columns.clone());
+    }
+    let column_types = output_columns
+        .iter()
+        .map(|column| column.data_type)
+        .collect::<Vec<_>>();
+    let rows = execute_nested_loop_join(
+        &mut left,
+        &mut right,
+        &left_columns,
+        &right_columns,
+        kind,
+        &keys,
+        &ranges,
+        &condition,
+        provider,
+        memory,
+        collation,
+    )?;
+    Ok((
+        PullOperator::Sort {
+            input: Box::new(PullOperator::Empty),
+            keys: Vec::new(),
+            trim: column_types.len(),
+            column_types,
+            top_k: None,
+            state: Some(rows),
+            collation,
+            fallback: None,
+        },
+        output_columns,
+    ))
+}
+
+/// The `Filter` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_filter(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Filter { input, predicate } = plan else {
+        unreachable!("the caller matched Filter")
+    };
+    let dependent = expression_has_dependent_subquery(&predicate);
+    let (mut input, columns) = build_operator(*input, provider, memory, collation)?;
+    if dependent {
+        let column_types = columns
+            .iter()
+            .map(|column| column.data_type)
+            .collect::<Vec<_>>();
+        let mut rows = Vec::new();
+        let mut memo = DependentMemo::for_expressions(std::iter::once(&predicate));
+        let window = outer_set::window_rows(std::iter::once(&predicate));
+        let mut held = std::collections::VecDeque::new();
+        while let Some(batch) = outer_set::next_held(&mut input, memory, &mut held, window)? {
+            let batch_bytes = batch.estimated_bytes();
+            for row in batch.selection().selected_rows() {
+                let mut expression = hollow_clone(&predicate);
+                let context = DependentRow {
+                    batch: &batch,
+                    row,
+                    columns: &columns,
+                    provider,
                     memory,
                     collation,
-                )?;
+                    ahead: held.as_slices().0,
+                };
+                memo.begin_row();
+                resolve_dependent_expr_subqueries(&mut expression, &context, &mut memo)?;
+                let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
+                if !predicate_truth(&compiled.evaluate(&batch, row)?)? {
+                    continue;
+                }
+                let values = batch_row(&batch, row)?;
+                let row_bytes = estimated_row_payload_bytes(&values);
+                memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
+                memory.reserve(row_bytes)?;
+                rows.push(values);
             }
-            if let (Some(limit), Some(wanted)) = (limit, wanted) {
-                rows.truncate(wanted);
-                rows.drain(
-                    ..usize::try_from(limit.offset)
-                        .unwrap_or(usize::MAX)
-                        .min(rows.len()),
-                );
-            }
-            Ok((
-                PullOperator::Rows {
-                    rows,
-                    cursor: 0,
-                    column_types,
-                },
-                columns,
-            ))
         }
-        PhysicalPlan::SetOp {
+        record_dependent_memo(memo.finish(memory));
+        return Ok((
+            PullOperator::Rows {
+                rows,
+                cursor: 0,
+                column_types,
+            },
+            columns,
+        ));
+    }
+    let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
+    Ok((
+        PullOperator::Filter {
+            input: Box::new(input),
+            predicate,
+            storage: false,
+        },
+        columns,
+    ))
+}
+
+/// The `HashAggregate` arm of [`build_operator_inner`], in a frame of its own.
+#[allow(clippy::too_many_lines)]
+#[inline(never)]
+fn build_node_hash_aggregate(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::HashAggregate {
+        input,
+        group_by,
+        mut aggregates,
+    } = plan
+    else {
+        unreachable!("the caller matched HashAggregate")
+    };
+    // Counts over a join on an inequality are taken from how many
+    // rows each left row pairs with; the join is not run.
+    let (input, columns) =
+        match counted_join::plan(&input, &group_by, &aggregates, provider, memory, collation)? {
+            Some(counted) => {
+                aggregates = counted.aggregates;
+                (counted.input, counted.columns)
+            }
+            None => build_operator(*input, provider, memory, collation)?,
+        };
+    let (input, columns) = precompute_dependent_aggregate_arguments(
+        input,
+        columns,
+        &mut aggregates,
+        provider,
+        memory,
+        collation,
+    )?;
+    let column_types = group_by
+        .iter()
+        .map(|expression| expression.data_type.unwrap_or(DataType::Utf8))
+        .chain(
+            aggregates
+                .iter()
+                .map(|aggregate| aggregate.data_type.unwrap_or(DataType::Utf8)),
+        )
+        .collect();
+    // The aggregate's output schema is positional (group keys, then
+    // aggregate results). Downstream operators that sit between the
+    // aggregate and the final projection — the window operator — need
+    // real column entries so their own type layout and appended
+    // outputs line up; synthetic identities keep Column resolution
+    // unambiguous, matching the window-output convention.
+    let synthetic = |index: usize,
+                     data_type: Option<DataType>,
+                     nullable: bool,
+                     binary_width: Option<u32>| BoundColumn {
+        database_id: DatabaseId::new(u64::MAX),
+        table_id: TableId::new(u64::MAX - 1),
+        column_id: u32::try_from(index).unwrap_or(u32::MAX),
+        relation_name: "<aggregate>".to_owned(),
+        name: format!("<aggregate-{index}>"),
+        data_type: data_type.unwrap_or(DataType::Utf8),
+        nullable,
+        collation: None,
+        enum_labels: None,
+        geometry: false,
+        timestamp: false,
+        binary_width,
+        bit_width: None,
+        float_decimals: None,
+        outer: false,
+        using_shadowed: false,
+        declared_set: false,
+    };
+    let mut output_columns = group_by
+        .iter()
+        .enumerate()
+        .map(|(index, expression)| match &expression.kind {
+            BoundExprKind::Column(column) => {
+                let mut column = column.clone();
+                column.outer = false;
+                column.nullable = expression.nullable;
+                column
+            }
+            _ => synthetic(
+                index,
+                expression.data_type,
+                expression.nullable,
+                expression.binary_width(),
+            ),
+        })
+        .collect::<Vec<_>>();
+    output_columns.extend(aggregates.iter().enumerate().map(|(offset, aggregate)| {
+        if let Some(column) = &aggregate.output_column {
+            return column.as_ref().clone();
+        }
+        synthetic(
+            group_by.len().saturating_add(offset),
+            aggregate.data_type,
+            aggregate.nullable,
+            aggregate.expr.as_ref().and_then(BoundExpr::binary_width),
+        )
+    }));
+    // Each grouping key folds under ITS OWN collation - grouping
+    // never compares one key column against another, so keys of two
+    // collations are answerable, exactly as a sort orders each key
+    // by its own rules. The uniform collation, when the keys share
+    // one, keeps the specialized single-table paths eligible; mixed
+    // keys take the general per-key path.
+    let (key_collations, uniform_key_collation) = grouping_key_collations(&group_by, collation);
+    let group_collation = uniform_key_collation.unwrap_or(collation);
+    let group_by = group_by
+        .iter()
+        .zip(&key_collations)
+        .map(|(expression, key_collation)| {
+            CompiledExpr::compile(expression, &columns, *key_collation)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let aggregates = aggregates
+        .iter()
+        .map(|aggregate| CompiledAggregate::compile(aggregate, &columns, collation))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((
+        PullOperator::HashAggregate {
+            input: Box::new(input),
+            input_width: columns.len(),
+            group_by,
+            aggregates,
+            column_types,
+            state: None,
+            collation: group_collation,
+            key_collations,
+        },
+        output_columns,
+    ))
+}
+
+/// The `Project` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_project(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Project { input, expressions } = plan else {
+        unreachable!("the caller matched Project")
+    };
+    let dependent = expressions
+        .iter()
+        .any(|projection| expression_has_dependent_subquery(&projection.expr));
+    let (mut input, columns) = build_operator(*input, provider, memory, collation)?;
+    let output_columns = projection_output_columns(&expressions);
+    if dependent {
+        let column_types = expressions
+            .iter()
+            .map(|projection| projection.expr.data_type.unwrap_or(DataType::Utf8))
+            .collect::<Vec<_>>();
+        let mut rows = Vec::new();
+        let mut memo =
+            DependentMemo::for_expressions(expressions.iter().map(|projection| &projection.expr));
+        let window = outer_set::window_rows(expressions.iter().map(|projection| &projection.expr));
+        let mut held = std::collections::VecDeque::new();
+        while let Some(batch) = outer_set::next_held(&mut input, memory, &mut held, window)? {
+            let batch_bytes = batch.estimated_bytes();
+            for row in batch.selection().selected_rows() {
+                let mut values = Vec::with_capacity(expressions.len());
+                let context = DependentRow {
+                    batch: &batch,
+                    row,
+                    columns: &columns,
+                    provider,
+                    memory,
+                    collation,
+                    ahead: held.as_slices().0,
+                };
+                memo.begin_row();
+                for projection in &expressions {
+                    let mut expression = hollow_clone(&projection.expr);
+                    resolve_dependent_expr_subqueries(&mut expression, &context, &mut memo)?;
+                    let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
+                    values.push(compiled.evaluate(&batch, row)?);
+                }
+                let row_bytes = estimated_row_payload_bytes(&values);
+                memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
+                memory.reserve(row_bytes)?;
+                rows.push(values);
+            }
+        }
+        record_dependent_memo(memo.finish(memory));
+        return Ok((
+            PullOperator::Rows {
+                rows,
+                cursor: 0,
+                column_types,
+            },
+            output_columns,
+        ));
+    }
+    let expressions = expressions
+        .iter()
+        .map(|projection| {
+            Ok((
+                CompiledExpr::compile(&projection.expr, &columns, collation)?,
+                projection.expr.data_type,
+            ))
+        })
+        .collect::<Result<Vec<_>, ExecError>>()?;
+    Ok((
+        PullOperator::Project {
+            input: Box::new(input),
+            expressions,
+        },
+        output_columns,
+    ))
+}
+
+/// The `Recursive` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_recursive(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Recursive {
+        working,
+        distinct,
+        limit,
+        anchor,
+        member,
+    } = plan
+    else {
+        unreachable!("the caller matched Recursive")
+    };
+    // The working-table layout comes from the anchor's client-visible
+    // fields, independent from internal synthetic projection IDs.
+    let column_types: Vec<DataType> = anchor
+        .output_fields()
+        .iter()
+        .map(|field| field.data_type.unwrap_or(DataType::Utf8))
+        .collect();
+    let (mut anchor_op, columns) = build_operator(*anchor, provider, memory, collation)?;
+    let mut seen: HashSet<Vec<Value>> = HashSet::new();
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    let mut delta = drain_recursive_rows(
+        &mut anchor_op,
+        distinct,
+        &mut seen,
+        &mut rows,
+        memory,
+        collation,
+    )?;
+    // The CTE's own LIMIT ends the recursion once enough rows exist,
+    // so a member with no terminating condition still finishes.
+    let wanted = limit.map(|limit| {
+        usize::try_from(limit.offset.saturating_add(limit.count)).unwrap_or(usize::MAX)
+    });
+    let recursion_limit = SESSION_CTE_MAX_RECURSION_DEPTH.get();
+    let mut iterations: u64 = 0;
+    while !delta.is_empty() && wanted.is_none_or(|wanted| rows.len() < wanted) {
+        iterations += 1;
+        if iterations > recursion_limit {
+            return Err(ExecError::RecursionDepthExceeded {
+                limit: recursion_limit,
+            });
+        }
+        let overlay = RecursiveWorkingProvider {
+            base: provider,
+            working,
+            column_types: &column_types,
+            delta: &delta,
+        };
+        let (mut member_op, _) = build_operator((*member).clone(), &overlay, memory, collation)?;
+        delta = drain_recursive_rows(
+            &mut member_op,
+            distinct,
+            &mut seen,
+            &mut rows,
+            memory,
+            collation,
+        )?;
+    }
+    if let (Some(limit), Some(wanted)) = (limit, wanted) {
+        rows.truncate(wanted);
+        rows.drain(
+            ..usize::try_from(limit.offset)
+                .unwrap_or(usize::MAX)
+                .min(rows.len()),
+        );
+    }
+    Ok((
+        PullOperator::Rows {
+            rows,
+            cursor: 0,
+            column_types,
+        },
+        columns,
+    ))
+}
+
+/// The `SetOp` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_set_op(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::SetOp {
+        keep_matching,
+        all,
+        left,
+        right,
+    } = plan
+    else {
+        unreachable!("the caller matched SetOp")
+    };
+    let (left, columns) = build_operator(*left, provider, memory, collation)?;
+    let (right, _) = build_operator(*right, provider, memory, collation)?;
+    let column_types = columns
+        .iter()
+        .map(|column| column.data_type)
+        .collect::<Vec<_>>();
+    Ok((
+        PullOperator::SetOp {
+            left: Some(Box::new(left)),
+            right: Some(Box::new(right)),
             keep_matching,
             all,
-            left,
-            right,
-        } => {
-            let (left, columns) = build_operator(*left, provider, memory, collation)?;
-            let (right, _) = build_operator(*right, provider, memory, collation)?;
-            let column_types = columns
-                .iter()
-                .map(|column| column.data_type)
-                .collect::<Vec<_>>();
-            Ok((
-                PullOperator::SetOp {
-                    left: Some(Box::new(left)),
-                    right: Some(Box::new(right)),
-                    keep_matching,
-                    all,
-                    column_types,
-                    state: None,
-                    collation,
-                },
-                columns,
-            ))
-        }
-        PhysicalPlan::KeyRuns { input, key } => {
-            let (input, columns) = build_operator(*input, provider, memory, collation)?;
-            let position = CompiledExpr::compile(&key, &columns, collation)?
-                .column_index()
-                .ok_or(ExecError::InvalidPhysicalPlan("key runs group by a column"))?;
-            let column = columns
-                .get(position)
-                .cloned()
-                .ok_or(ExecError::InvalidPhysicalPlan("key runs group by a column"))?;
-            Ok((
-                PullOperator::KeyRuns {
-                    input: Box::new(input),
-                    position,
-                    last: None,
-                },
-                vec![column],
-            ))
-        }
-        PhysicalPlan::Distinct {
-            input,
+            column_types,
+            state: None,
+            collation,
+        },
+        columns,
+    ))
+}
+
+/// The `KeyRuns` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_key_runs(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::KeyRuns { input, key } = plan else {
+        unreachable!("the caller matched KeyRuns")
+    };
+    let (input, columns) = build_operator(*input, provider, memory, collation)?;
+    let position = CompiledExpr::compile(&key, &columns, collation)?
+        .column_index()
+        .ok_or(ExecError::InvalidPhysicalPlan("key runs group by a column"))?;
+    let column = columns
+        .get(position)
+        .cloned()
+        .ok_or(ExecError::InvalidPhysicalPlan("key runs group by a column"))?;
+    Ok((
+        PullOperator::KeyRuns {
+            input: Box::new(input),
+            position,
+            last: None,
+        },
+        vec![column],
+    ))
+}
+
+/// The `Distinct` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_distinct(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Distinct {
+        input,
+        key_collations,
+    } = plan
+    else {
+        unreachable!("the caller matched Distinct")
+    };
+    let column_types = input
+        .output_fields()
+        .into_iter()
+        .map(|field| field.data_type.unwrap_or(DataType::Utf8))
+        .collect();
+    let (input, columns) = build_operator(*input, provider, memory, collation)?;
+    Ok((
+        PullOperator::Distinct {
+            input: Box::new(input),
+            column_types,
+            state: None,
+            collation,
             key_collations,
-        } => {
-            let column_types = input
-                .output_fields()
-                .into_iter()
-                .map(|field| field.data_type.unwrap_or(DataType::Utf8))
-                .collect();
-            let (input, columns) = build_operator(*input, provider, memory, collation)?;
-            Ok((
-                PullOperator::Distinct {
-                    input: Box::new(input),
-                    column_types,
-                    state: None,
-                    collation,
-                    key_collations,
-                },
-                columns,
-            ))
+        },
+        columns,
+    ))
+}
+
+/// The `Window` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_window(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Window {
+        input,
+        windows,
+        outputs,
+    } = plan
+    else {
+        unreachable!("the caller matched Window")
+    };
+    let (input_op, mut columns) = build_operator(*input, provider, memory, collation)?;
+    let compiled = windows
+        .iter()
+        .map(|window| CompiledWindow::compile(window, &columns, collation))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut column_types = columns
+        .iter()
+        .map(|column| column.data_type)
+        .collect::<Vec<_>>();
+    column_types.extend(outputs.iter().map(|column| column.data_type));
+    columns.extend(outputs);
+    Ok((
+        PullOperator::Window {
+            input: Box::new(input_op),
+            windows: compiled,
+            column_types,
+            state: None,
+            collation,
+        },
+        columns,
+    ))
+}
+
+/// The `Sort` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_sort(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Sort {
+        input,
+        keys,
+        top_k,
+        trim,
+    } = plan
+    else {
+        unreachable!("the caller matched Sort")
+    };
+    let mut column_types = input
+        .output_fields()
+        .into_iter()
+        .map(|field| field.data_type.unwrap_or(DataType::Utf8))
+        .collect::<Vec<_>>();
+    if keys.iter().any(|key| key.index >= column_types.len()) {
+        return Err(ExecError::InvalidPhysicalPlan(
+            "sort key is outside the projected result layout",
+        ));
+    }
+    let visible = column_types.len().saturating_sub(trim);
+    column_types.truncate(visible);
+    let order = order_limit_target(&input, &keys, top_k);
+    let fallback_plan = order.map(|_| (*input).clone());
+    let (mut input, mut columns) = build_operator(*input, provider, memory, collation)?;
+    columns.truncate(visible);
+    // A scan narrowed to the rows the side index places first keeps
+    // an unrestricted twin, read only when the narrowed rows do not
+    // prove the answer.
+    let fallback = match (order, fallback_plan) {
+        (Some(target), Some(plan)) => {
+            narrow_order_limit(&mut input, target, plan, provider, memory, collation)?
         }
-        PhysicalPlan::Window {
-            input,
-            windows,
-            outputs,
-        } => {
-            let (input_op, mut columns) = build_operator(*input, provider, memory, collation)?;
-            let compiled = windows
-                .iter()
-                .map(|window| CompiledWindow::compile(window, &columns, collation))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut column_types = columns
-                .iter()
-                .map(|column| column.data_type)
-                .collect::<Vec<_>>();
-            column_types.extend(outputs.iter().map(|column| column.data_type));
-            columns.extend(outputs);
-            Ok((
-                PullOperator::Window {
-                    input: Box::new(input_op),
-                    windows: compiled,
-                    column_types,
-                    state: None,
-                    collation,
-                },
-                columns,
-            ))
-        }
-        PhysicalPlan::Sort {
-            input,
+        _ => None,
+    };
+    Ok((
+        PullOperator::Sort {
+            input: Box::new(input),
             keys,
+            column_types,
             top_k,
             trim,
-        } => {
-            let mut column_types = input
-                .output_fields()
-                .into_iter()
-                .map(|field| field.data_type.unwrap_or(DataType::Utf8))
-                .collect::<Vec<_>>();
-            if keys.iter().any(|key| key.index >= column_types.len()) {
-                return Err(ExecError::InvalidPhysicalPlan(
-                    "sort key is outside the projected result layout",
-                ));
-            }
-            let visible = column_types.len().saturating_sub(trim);
-            column_types.truncate(visible);
-            let order = order_limit_target(&input, &keys, top_k);
-            let fallback_plan = order.map(|_| (*input).clone());
-            let (mut input, mut columns) = build_operator(*input, provider, memory, collation)?;
-            columns.truncate(visible);
-            // A scan narrowed to the rows the side index places first keeps
-            // an unrestricted twin, read only when the narrowed rows do not
-            // prove the answer.
-            let fallback = match (order, fallback_plan) {
-                (Some(target), Some(plan)) => {
-                    narrow_order_limit(&mut input, target, plan, provider, memory, collation)?
-                }
-                _ => None,
-            };
-            Ok((
-                PullOperator::Sort {
-                    input: Box::new(input),
-                    keys,
-                    column_types,
-                    top_k,
-                    trim,
-                    state: None,
-                    collation,
-                    fallback,
-                },
-                columns,
-            ))
-        }
-        PhysicalPlan::Limit {
-            input,
-            offset,
-            count,
-        } => {
-            if deferred_projection::applies(&input, offset, count) {
-                return deferred_projection::build(
-                    *input, offset, count, provider, memory, collation,
-                );
-            }
-            let (input, columns) = build_operator(*input, provider, memory, collation)?;
-            Ok((
-                PullOperator::Limit {
-                    input: Box::new(input),
-                    skip: offset,
-                    take: count,
-                },
-                columns,
-            ))
-        }
+            state: None,
+            collation,
+            fallback,
+        },
+        columns,
+    ))
+}
+
+/// The `Limit` arm of [`build_operator_inner`], in a frame of its own.
+#[inline(never)]
+fn build_node_limit(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let PhysicalPlan::Limit {
+        input,
+        offset,
+        count,
+    } = plan
+    else {
+        unreachable!("the caller matched Limit")
+    };
+    if deferred_projection::applies(&input, offset, count) {
+        return deferred_projection::build(*input, offset, count, provider, memory, collation);
     }
+    let (input, columns) = build_operator(*input, provider, memory, collation)?;
+    Ok((
+        PullOperator::Limit {
+            input: Box::new(input),
+            skip: offset,
+            take: count,
+        },
+        columns,
+    ))
 }
 
 fn validate_union_fields(layouts: &[Vec<OutputField>]) -> Result<(), ExecError> {
