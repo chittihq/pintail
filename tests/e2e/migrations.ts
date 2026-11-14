@@ -857,6 +857,41 @@ const narrowedCases: NarrowedCase[] = [
     writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
     path: 'not quarantined',
   },
+  // Secondary indexes have nothing stored here: dropping one, or turning a
+  // one-column index into a composite one, leaves the table in service.
+  // The key rows are identified by is different: changing it recopies.
+  {
+    name: 'index dropped',
+    before: 'v INT NULL, KEY ix_v (v)',
+    rows: ['(1, 5)', '(2, 6)'],
+    alters: ['DROP INDEX ix_v'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
+    path: 'not quarantined',
+  },
+  {
+    name: 'one-column index made composite',
+    before: 'v INT NULL, w INT NULL, KEY ix_v (v)',
+    rows: ['(1, 5, 50)', '(2, 6, 60)'],
+    alters: ['DROP INDEX ix_v, ADD INDEX ix_v (v, w), ALGORITHM=INPLACE, LOCK=NONE'],
+    writes: ['INSERT INTO {t} (id, v, w) VALUES (90, 9, 90)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
+    path: 'not quarantined',
+  },
+  {
+    name: 'unique key made composite beside the primary key',
+    before: 'v INT NULL, w INT NULL, UNIQUE KEY uq_v (v)',
+    rows: ['(1, 5, 50)', '(2, 6, 60)'],
+    alters: ['DROP INDEX uq_v, ADD UNIQUE KEY uq_v (v, w)'],
+    writes: ['INSERT INTO {t} (id, v, w) VALUES (90, 5, 90)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
+    path: 'not quarantined',
+  },
+  {
+    name: 'primary key made composite',
+    before: 'v INT NOT NULL',
+    rows: ['(1, 5)', '(2, 6)'],
+    alters: ['DROP PRIMARY KEY, ADD PRIMARY KEY (id, v)'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (1, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
+    path: 'recopy',
+  },
   {
     name: 'an alter with no clause',
     before: 'v INT NULL',
