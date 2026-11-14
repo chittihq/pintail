@@ -967,6 +967,40 @@ mod tests {
         );
     }
 
+    /// How the source carries a change out is not part of the change.
+    #[test]
+    fn a_change_beside_algorithm_or_lock_is_read_as_the_change() {
+        for statement in [
+            "ALTER TABLE events MODIFY note VARCHAR(2048) NULL, ALGORITHM = INPLACE, LOCK = NONE",
+            "ALTER TABLE events\r\n    MODIFY note VARCHAR(2048) NULL,\r\n    ALGORITHM=INPLACE, LOCK=NONE",
+            "ALTER TABLE events ALGORITHM = INSTANT, MODIFY note VARCHAR(2048)",
+        ] {
+            assert_eq!(
+                parse_ddl(statement, "app").unwrap().actions,
+                vec![DdlAction::Alter {
+                    table: "events".to_owned(),
+                    kind: AlterKind::ModifyColumns(vec!["note".to_owned()]),
+                }],
+                "{statement}"
+            );
+        }
+        assert_eq!(
+            parse_ddl(
+                "ALTER TABLE events ADD COLUMN extra INT NULL, ALGORITHM = INSTANT",
+                "app"
+            )
+            .unwrap()
+            .actions,
+            vec![DdlAction::Alter {
+                table: "events".to_owned(),
+                kind: AlterKind::AddOrDropColumns {
+                    added: vec!["extra".to_owned()],
+                    dropped: Vec::new(),
+                },
+            }]
+        );
+    }
+
     #[test]
     fn classifies_supported_mysql_schema_changes() {
         assert_eq!(
@@ -1014,36 +1048,6 @@ mod tests {
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
                 kind: AlterKind::ModifyColumns(vec!["note".to_owned()]),
-            }]
-        );
-        // How the source carries the change out is not part of the change.
-        for statement in [
-            "ALTER TABLE events MODIFY note VARCHAR(2048) NULL, ALGORITHM = INPLACE, LOCK = NONE",
-            "ALTER TABLE events\r\n    MODIFY note VARCHAR(2048) NULL,\r\n    ALGORITHM=INPLACE, LOCK=NONE",
-            "ALTER TABLE events ALGORITHM = INSTANT, MODIFY note VARCHAR(2048)",
-        ] {
-            assert_eq!(
-                parse_ddl(statement, "app").unwrap().actions,
-                vec![DdlAction::Alter {
-                    table: "events".to_owned(),
-                    kind: AlterKind::ModifyColumns(vec!["note".to_owned()]),
-                }],
-                "{statement}"
-            );
-        }
-        assert_eq!(
-            parse_ddl(
-                "ALTER TABLE events ADD COLUMN extra INT NULL, ALGORITHM = INSTANT",
-                "app"
-            )
-            .unwrap()
-            .actions,
-            vec![DdlAction::Alter {
-                table: "events".to_owned(),
-                kind: AlterKind::AddOrDropColumns {
-                    added: vec!["extra".to_owned()],
-                    dropped: Vec::new(),
-                },
             }]
         );
         assert_eq!(
