@@ -115,6 +115,7 @@ mod recreated_table_lookup;
 mod row_constructors;
 mod row_member_expansion;
 mod row_path_text_cost;
+mod reported_shapes;
 mod row_subquery_aggregate;
 mod runtime_join_filter;
 mod scalar_fallback_cost;

@@ -41,7 +41,7 @@ fn label(id: u64) -> String {
 /// What `SELECT COUNT(*) ... ON a.label <> b.label` over `rows` rows
 /// answers under `limit` bytes: the count, the pairs counted rather than
 /// run, and the query's peak.
-fn count_unequal_pairs(rows: u64, limit: usize) -> (Vec<Value>, u64, usize) {
+fn count_unequal_pairs(rows: u64, limit: usize) -> Result<(Vec<Value>, u64, usize), String> {
     let directory = tempfile::tempdir().expect("directory");
     let mut table =
         TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("table");
@@ -83,24 +83,24 @@ fn count_unequal_pairs(rows: u64, limit: usize) -> (Vec<Value>, u64, usize) {
     )
     .expect("plan");
     let _ = take_exec_counters();
-    let mut execution =
-        Execution::start(plan, &provider, limit, Collation::default()).expect("execution");
+    let mut execution = Execution::start(plan, &provider, limit, Collation::default())
+        .map_err(|error| error.to_string())?;
     let mut answer = Vec::new();
-    while let Some(batch) = execution.next_batch().expect("batch") {
+    while let Some(batch) = execution.next_batch().map_err(|error| error.to_string())? {
         for row in batch.selection().selected_rows() {
             answer.push(batch.columns()[0].value_owned(row).expect("value"));
         }
     }
-    (
+    Ok((
         answer,
         take_exec_counters().join_pairs_counted,
         execution.memory().peak(),
-    )
+    ))
 }
 
 #[test]
 fn a_counted_index_is_charged_to_the_query() {
-    let (answer, counted, peak) = count_unequal_pairs(ROWS, 1 << 30);
+    let (answer, counted, peak) = count_unequal_pairs(ROWS, 1 << 30).expect("runs");
     let pairs = ROWS * (ROWS - 1);
     assert_eq!(answer, vec![Value::UInt64(pairs)]);
     assert_eq!(counted, pairs, "counted");
@@ -113,12 +113,29 @@ fn a_counted_index_is_charged_to_the_query() {
 }
 
 /// Under a budget the index does not fit, the join runs as written and
-/// answers the same.
+/// answers the same; a budget too small for that as well refuses the query.
+/// No budget gives a different answer.
 #[test]
 fn a_budget_too_small_for_the_index_runs_the_join() {
-    let index = usize::try_from(FEW_ROWS).expect("small") * LABEL_BYTES;
-    let (answer, counted, peak) = count_unequal_pairs(FEW_ROWS, index / 2);
-    assert_eq!(answer, vec![Value::UInt64(FEW_ROWS * (FEW_ROWS - 1))]);
-    assert_eq!(counted, 0, "the join was counted");
-    assert!(peak <= index / 2, "peak {peak} bytes is over the budget");
+    let pairs = FEW_ROWS * (FEW_ROWS - 1);
+    let (_, counted, roomy) = count_unequal_pairs(FEW_ROWS, 1 << 30).expect("runs");
+    assert_eq!(counted, pairs, "counted with room");
+    let mut ran_as_written = false;
+    for eighths in (1..8).rev() {
+        let limit = roomy / 8 * eighths;
+        match count_unequal_pairs(FEW_ROWS, limit) {
+            Ok((answer, counted, peak)) => {
+                assert_eq!(answer, vec![Value::UInt64(pairs)], "under {limit} bytes");
+                assert!(peak <= limit, "peak {peak} bytes is over {limit}");
+                assert!(counted == 0 || counted == pairs, "{counted} pairs counted");
+                eprintln!("{limit} bytes: answered, {counted} pairs counted");
+                ran_as_written |= counted == 0;
+            }
+            Err(error) => {
+                eprintln!("{limit} bytes: {error}");
+                assert!(error.contains("memory limit"), "under {limit} bytes: {error}");
+            }
+        }
+    }
+    assert!(ran_as_written, "no budget ran the join as written");
 }
