@@ -5304,6 +5304,13 @@ fn bind_constant_set_expr(expression: &SetExpr) -> Result<Vec<BoundExpr>, BindEr
                 Err(BindError::UnsupportedExpression(_)) if has_window_function(expression) => {
                     Err(BindError::UnsupportedSubquery(select.to_string()))
                 }
+                // Nor is an aggregate: it is computed over that one row, so
+                // `(SELECT COUNT(*))` is 1. One that names a column stays
+                // refused, since a column from the query outside may make
+                // the aggregate that query's own.
+                Err(BindError::GroupFunctionMisplaced(_)) if !names_a_column(expression) => {
+                    Err(BindError::UnsupportedSubquery(select.to_string()))
+                }
                 Err(error) => Err(error),
             }
         }
@@ -5320,6 +5327,18 @@ fn bind_constant_set_expr(expression: &SetExpr) -> Result<Vec<BoundExpr>, BindEr
         SetExpr::Query(query) => bind_constant_subquery(query),
         _ => Err(BindError::UnsupportedSubquery(expression.to_string())),
     }
+}
+
+/// Whether `expression` names a column anywhere.
+fn names_a_column(expression: &Expr) -> bool {
+    sqlparser::ast::visit_expressions(expression, |node| {
+        if matches!(node, Expr::Identifier(_) | Expr::CompoundIdentifier(_)) {
+            std::ops::ControlFlow::Break(())
+        } else {
+            std::ops::ControlFlow::Continue(())
+        }
+    })
+    .is_break()
 }
 
 /// Whether `expression` calls a window function anywhere.
