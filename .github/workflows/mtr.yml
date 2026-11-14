@@ -59,6 +59,11 @@ jobs:
       - run: cargo build --release -p pintail
       - run: bun install --frozen-lockfile
         working-directory: tests/mtr
+      # The baselines are banked against MySQL 8.4.11 and the replay refuses
+      # an oracle that moved. `mysql:8.4` is a moving tag, so the banked patch
+      # is pulled and given that name; a newer patch is a deliberate rebank.
+      - name: Pin the oracle to the banked patch
+        run: docker pull -q mysql:8.4.11 && docker tag mysql:8.4.11 mysql:8.4
       - name: Replay against MySQL 8.4
         working-directory: tests/mtr
         env:
