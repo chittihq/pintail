@@ -1615,6 +1615,24 @@ pub(super) fn extract_time(
     } else {
         None
     };
+    let pack = |fields: [i64; 4]| {
+        fields[index(leading)..=index(trailing)]
+            .iter()
+            .fold(0, |total, part| total * 100 + part)
+    };
+    // Short text that is neither a calendar nor a clean clock is read the
+    // way the source reads a TIME: by its leading number, whatever follows.
+    // A date written out in full is left as a calendar: a DATE value
+    // arrives here as that same text, and its clock is midnight.
+    if matches!(value, Value::Utf8(_))
+        && super::canonical_temporal_parts(text, true).is_none()
+        && let Some(written) = scalar_string(value).ok().as_deref().map(str::trim_start)
+        && written.len() < 12
+        && let Some((negative, hours, minutes, seconds)) = short_time_text(written)
+    {
+        let number = pack([0, hours, minutes, seconds]);
+        return Ok(if negative { -number } else { number });
+    }
     let text = calendar.as_deref().unwrap_or(text);
     let (day, clock) =
         super::canonical_temporal_parts(text, true).map_or((0, text), |(date, clock)| {
@@ -1624,6 +1642,32 @@ pub(super) fn extract_time(
             )
         });
     let time = super::parse_temporal_micros(clock).ok_or(ExecError::InvalidDateTime)?;
+    // Text that read as a calendar after all is a moment, not a duration:
+    // its clock is the time of that day.
+    if time.datetime {
+        // A date with nothing after it is no moment either: with no clock
+        // to take, the source reads the text as a TIME from its front.
+        if matches!(value, Value::Utf8(_))
+            && let Ok(written) = scalar_string(value)
+            && clockless_date(written.trim_start())
+        {
+            let (negative, hours, minutes, seconds) =
+                short_time_text(written.trim_start()).ok_or(ExecError::InvalidDateTime)?;
+            let number = pack([0, hours, minutes, seconds]);
+            return Ok(if negative { -number } else { number });
+        }
+        let moment = chrono::DateTime::from_timestamp_micros(
+            i64::try_from(time.micros).map_err(|_| ExecError::NumericOverflow)?,
+        )
+        .ok_or(ExecError::InvalidDateTime)?
+        .naive_utc();
+        return Ok(pack([
+            i64::from(chrono::Datelike::day(&moment)),
+            i64::from(chrono::Timelike::hour(&moment)),
+            i64::from(chrono::Timelike::minute(&moment)),
+            i64::from(chrono::Timelike::second(&moment)),
+        ]));
+    }
     let seconds =
         i64::try_from(time.micros.abs() / 1_000_000).map_err(|_| ExecError::NumericOverflow)?;
     let fields = [day, seconds / 3_600, seconds / 60 % 60, seconds % 60];
@@ -1669,6 +1713,116 @@ pub(super) fn extract_micros(value: &Value, leading: Option<DatePart>) -> Result
     } else {
         packed
     })
+}
+
+/// A TIME read from text of fewer than twelve characters, as the source
+/// reads one: `[-][days ]hours[:minutes[:seconds]]` or one packed `HHMMSS`
+/// number, taken from the front of the text. Whatever follows the part that
+/// reads is ignored - `01:02:03-` is 01:02:03, and `2001-01-01T` is the
+/// number 2001, twenty minutes and one second. `None` where the source
+/// answers NULL: minutes or seconds past 59, or an exponent. Hours past the
+/// largest TIME are that largest TIME. The fraction is not returned.
+fn short_time_text(text: &str) -> Option<(bool, i64, i64, i64)> {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    let negative = bytes.first() == Some(&b'-');
+    if negative {
+        at += 1;
+    }
+    let digit_at = |at: usize| bytes.get(at).is_some_and(u8::is_ascii_digit);
+    let number = |at: &mut usize| -> Option<i64> {
+        let mut value = 0_i64;
+        while let Some(digit) = bytes.get(*at).filter(|byte| byte.is_ascii_digit()) {
+            value = value.checked_mul(10)?.checked_add(i64::from(digit - b'0'))?;
+            *at += 1;
+        }
+        (value <= i64::from(u32::MAX)).then_some(value)
+    };
+    // Text that starts with no number is no TIME at all.
+    if !digit_at(at) {
+        return None;
+    }
+    let first = number(&mut at)?;
+    let after_number = at;
+    while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+        at += 1;
+    }
+    // days, hours, minutes, seconds
+    let mut fields = [0_i64; 4];
+    let mut filled;
+    let days_or_hours = if at != after_number && bytes.len() - at > 1 && digit_at(at) {
+        fields[0] = first;
+        filled = 1;
+        true
+    } else if bytes.len() - at > 1 && bytes[at] == b':' && digit_at(at + 1) {
+        fields[1] = first;
+        filled = 2;
+        at += 1;
+        true
+    } else {
+        fields = [0, first / 10_000, first / 100 % 100, first % 100];
+        filled = 4;
+        false
+    };
+    if days_or_hours {
+        loop {
+            fields[filled] = number(&mut at)?;
+            filled += 1;
+            if filled == 4 || bytes.len() - at < 2 || bytes[at] != b':' || !digit_at(at + 1) {
+                break;
+            }
+            at += 1;
+        }
+    }
+    // A fraction reads, and an exponent after it does not.
+    if bytes.get(at) == Some(&b'.') {
+        at += 1;
+        while digit_at(at) {
+            at += 1;
+        }
+    }
+    if matches!(bytes.get(at), Some(b'e' | b'E'))
+        && (digit_at(at + 1) || (matches!(bytes.get(at + 1), Some(b'+' | b'-')) && digit_at(at + 2)))
+    {
+        return None;
+    }
+    let [days, hours, minutes, seconds] = fields;
+    if minutes > 59 || seconds > 59 {
+        return None;
+    }
+    let hours = days.checked_mul(24)?.checked_add(hours)?;
+    Some(if hours > 838 {
+        (negative, 838, 59, 59)
+    } else {
+        (negative, hours, minutes, seconds)
+    })
+}
+
+/// Whether text is a date the source will not take a clock from: three
+/// numbers with a mark between each, and then anything but whitespace
+/// followed by more text. After a `T`, a dash or nothing at all it reads
+/// no clock, even when one is written.
+fn clockless_date(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    for part in 0..3 {
+        let start = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+        if at == start {
+            return false;
+        }
+        if part < 2 {
+            if !bytes.get(at).is_some_and(u8::is_ascii_punctuation) {
+                return false;
+            }
+            at += 1;
+        }
+    }
+    let rest = &bytes[at..];
+    !(rest.first().is_some_and(u8::is_ascii_whitespace)
+        && rest.iter().any(|byte| !byte.is_ascii_whitespace()))
 }
 
 /// HHMMSS packed into an integer, up to the largest TIME.
