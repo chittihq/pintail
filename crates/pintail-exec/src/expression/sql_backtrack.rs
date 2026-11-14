@@ -1594,14 +1594,13 @@ struct Machine<'a, 'steps> {
     steps: &'steps mut InterruptCounter,
 }
 
-/// Appends the case folding of `character`: several characters where its
-/// folding is, its lower case otherwise.
+/// Appends the full case folding of `character`: what two characters
+/// must share to be the same without regard to case. It is not the lower
+/// case - a final sigma lowers to itself and folds to a sigma - and it can
+/// be several characters, as `ß` folds to `ss`.
 fn fold_into(out: &mut String, character: char) {
-    let folds = super::sql_regex::full_folds();
-    match folds.binary_search_by_key(&character, |(folded, _)| *folded) {
-        Ok(index) => out.push_str(&folds[index].1),
-        Err(_) => out.extend(character.to_lowercase()),
-    }
+    use unicode_casefold::UnicodeCaseFold as _;
+    out.extend(character.case_fold());
 }
 
 fn full_fold(text: &str) -> String {
@@ -2187,6 +2186,34 @@ mod tests {
         assert!(!matches("(?=.)[s]s", "ß"));
         assert!(!matches("(?=.)[ß]", "ss"));
         assert_eq!(find("(?i)(?!x)ss", "xß"), Some((1, 3)));
+    }
+
+    /// A back-reference without regard to case compares case foldings,
+    /// as the sets of the pattern do: measured against MySQL 8.4.
+    #[test]
+    fn a_back_reference_compares_case_foldings() {
+        let matches = |pattern: &str, text: &str| {
+            Program::new(pattern, true, false, false, LineEndings::Unicode)
+                .unwrap_or_else(|error| panic!("{pattern} compiles: {error}"))
+                .captures_at(text, 0, &mut InterruptCounter::unchecked())
+                .expect("an unchecked search is never interrupted")
+                .is_some()
+        };
+        for (pattern, text, expected) in [
+            (r"(σ)\1", "σς", true),
+            (r"(ς)\1", "ςσ", true),
+            (r"(σ)\1", "Σς", true),
+            (r"(ǆ)\1", "ǅǆ", true),
+            (r"(s)\1", "ſs", true),
+            (r"(k)\1", "K\u{212a}", true),
+            (r"(ß)\1", "ßSS", true),
+            (r"(ŉ)\1", "ŉʼn", true),
+            (r"(i)\1", "İi", false),
+            (r"(i)\1", "iİ", false),
+        ] {
+            assert_eq!(matches(pattern, text), expected, "{pattern} over {text}");
+        }
+        assert_eq!(find(r"(σ)\1", "σς"), None, "case matters without the flag");
     }
 
     #[test]

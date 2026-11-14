@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4395;
+const EXPECTED_CASES: usize = 4398;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6063,6 +6063,23 @@ fn engine_error_cases() -> Vec<OracleCase> {
             "SELECT REGEXP_LIKE(REPEAT('x', 700), '(?=x)x+y'), \
                     REGEXP_LIKE(REPEAT('x', 60), '^(?=x)x*x*x*y'), \
                     REGEXP_LIKE(REPEAT('x', 12), '^(?=x)(x+x+)+y')",
+        ),
+        // A back-reference without regard to case compares case foldings:
+        // a final sigma repeats a sigma, and `İ` does not repeat `i`.
+        ordered(
+            "regex back-references compare case foldings",
+            "SELECT REGEXP_LIKE('σς', '(σ)\\\\1'), REGEXP_LIKE('ςσ', '(ς)\\\\1'), \
+                    REGEXP_LIKE('Σς', '(σ)\\\\1')",
+        ),
+        ordered(
+            "regex back-references compare case foldings",
+            "SELECT REGEXP_LIKE('σς', '(σ)\\\\1', 'c'), REGEXP_LIKE('ǅǆ', '(ǆ)\\\\1'), \
+                    REGEXP_LIKE('ſs', '(s)\\\\1')",
+        ),
+        ordered(
+            "regex back-references compare case foldings",
+            "SELECT REGEXP_LIKE('ŉʼn', '(ŉ)\\\\1'), REGEXP_LIKE('İi', '(i)\\\\1'), \
+                    REGEXP_LIKE('iİ', '(i)\\\\1')",
         ),
     ]
 }
