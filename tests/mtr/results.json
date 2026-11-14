@@ -5,14 +5,14 @@
   "ref": "99960bf74fa919347e4f4e3ca47672f333d6e91f",
   "mysqlVersion": "8.4.11",
   "provenance": {
-    "sourceCommit": "858d050d26d78c8101016f5d12c5d5ffcc9a41c9",
+    "sourceCommit": "57896401ff52dda1bc11d7f83c611612d12c0d77",
     "sourceDirty": false,
-    "binarySha256": "6b732e63091bab90dc5e42caf79a2588aec553c6c6af5540cc4f78fac03e1426"
+    "binarySha256": "d008576baebf88eb4d47ace8efe362604f9c616b57e8923c44e36758c402f255"
   },
-  "artifacts": "validate-out/mtr/runs/mwge2gex-64991",
-  "measuredAt": "2026-11-14T12:39:08.614Z",
+  "artifacts": "validate-out/mtr/runs/mwgh7zyt-92315",
+  "measuredAt": "2026-11-14T14:06:43.436Z",
   "totals": {
-    "exact": 10573,
+    "exact": 10574,
     "compared": 10665,
     "queries": 20617,
     "replayed": 23119,
@@ -15295,8 +15295,8 @@
       "file": "window_jsonaggs",
       "statements": 93,
       "counts": {
-        "exact": 14,
-        "mismatch": 1,
+        "exact": 15,
+        "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 31,
         "mysql-error": 0,
