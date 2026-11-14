@@ -115,6 +115,7 @@ mod pre_aggregated_join;
 mod prefiltered_scan;
 mod probe_peek;
 mod profile;
+mod projection_error_order;
 mod range_join;
 mod range_prune_bench;
 mod recreated_table_lookup;

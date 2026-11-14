@@ -80,6 +80,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- When two expressions of a select list fail on different rows, the
+  statement raises the earlier row's error, as MySQL does; it raised the
+  leftmost expression's.
 - A DECIMAL or integer column compared with a decimal literal compares
   exactly; it compared as doubles, which cannot separate values differing
   past the fifteenth digit.
