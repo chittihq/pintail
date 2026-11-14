@@ -491,3 +491,32 @@ fn a_value_between_two_right_columns_skips_the_rows_its_upper_bound_rejects() {
     assert_eq!(answer, expected);
     assert_eq!(counters.range_join_pairs_tested, pairs);
 }
+
+#[test]
+fn an_outer_join_condition_with_a_subquery_and_no_equality_searches_by_its_inequalities() {
+    // The subquery reads the left row alone: it finds that row's own `x`
+    // again and asks whether its `hi` is missing. The inequalities bound
+    // the pairs it is resolved for; without them every pair would be.
+    let in_range =
+        |x: Wide, y: Wide| matches!((x.x, y.x), (Some(x), Some(y)) if y > x && y <= x + 2);
+    let accepts = |x: Wide, y: Wide| in_range(x, y) && x.hi.is_some();
+    let all = || (1..=WIDE_ROWS).map(wide);
+    let candidates = all()
+        .map(|x| all().filter(|y| in_range(x, *y)).count() as u64)
+        .sum::<u64>();
+    let pairs = all()
+        .map(|x| all().filter(|y| accepts(x, *y)).count() as u64)
+        .sum::<u64>();
+    let unmatched = all().filter(|x| !all().any(|y| accepts(*x, y))).count() as u64;
+    let (answer, counters) = run_wide(
+        WIDE_ROWS,
+        "SELECT COUNT(*), COUNT(y.id) FROM w AS x LEFT JOIN w AS y ON y.x > x.x AND y.x <= x.x + 2 \
+         AND NOT EXISTS (SELECT 1 FROM w AS z WHERE z.x = x.x AND z.hi IS NULL)",
+    );
+    assert_eq!(answer, format!("{},{pairs}", pairs + unmatched));
+    assert_eq!(counters.range_join_searches, WIDE_ROWS.unsigned_abs());
+    assert_eq!(
+        counters.range_join_pairs_tested, candidates,
+        "the subquery is resolved only for the pairs the inequalities reach"
+    );
+}

@@ -1004,12 +1004,23 @@ impl PhysicalPlanner {
                 let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
                 if expression_has_subquery(&condition) {
                     let keys = dependent_join_keys(&condition, &left, &right, collation);
+                    // With no equality to bucket by, the condition's plain
+                    // inequalities still bound the pairs its subqueries are
+                    // resolved for. An alias both sides carry would leave
+                    // their orientation ambiguous, as it does the keys'.
+                    let ranges = if keys.is_empty()
+                        && logical_tables(&left).is_disjoint(&logical_tables(&right))
+                    {
+                        range_join_keys(&condition, &left, &right)
+                    } else {
+                        Vec::new()
+                    };
                     return Ok(PhysicalPlan::NestedLoopJoin {
                         left: Box::new(Self::plan(*left, collation)?),
                         right: Box::new(Self::plan(*right, collation)?),
                         kind,
                         keys,
-                        ranges: Vec::new(),
+                        ranges,
                         condition,
                     });
                 }

@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3022;
+const EXPECTED_CASES: usize = 3026;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6626,6 +6626,22 @@ fn relational_edge_cases() -> Vec<OracleCase> {
         ordered(
             "inequality join sorted search",
             "SELECT x.id, COUNT(y.id) FROM bounds x LEFT JOIN bounds y ON y.dt6 > x.dt6 GROUP BY x.id ORDER BY x.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT x.id, y.id FROM events x LEFT JOIN orders y ON y.user_id > x.id AND y.user_id <= x.id + 2 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = x.id AND u.name > 'user-05') ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT x.id, y.id FROM events x LEFT JOIN orders y ON y.total > x.score AND y.total < x.score * 3 AND x.id NOT IN (SELECT o.user_id FROM orders o WHERE o.total > 20) ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT x.id, y.id FROM bounds x LEFT JOIN bounds y ON y.dt3 >= x.dt0 AND y.dt3 < x.dt0 + INTERVAL 400 DAY AND EXISTS (SELECT 1 FROM bounds z WHERE z.n = x.n AND z.frac < y.frac) ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT x.id, y.id FROM bounds x LEFT JOIN bounds y ON x.frac BETWEEN y.frac - 1 AND y.frac + 1 AND y.txt NOT IN (SELECT z.txt FROM bounds z WHERE z.id > x.id AND z.txt IS NOT NULL) ORDER BY x.id, y.id",
         ),
     ]
 }

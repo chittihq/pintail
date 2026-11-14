@@ -51,6 +51,45 @@ reaches the left value is skipped whole.
 | `b.amt < a.amt AND b.x > a.x - 3` (a DECIMAL and an integer bound) | 3,512, 3,440 | 8.7, 8.4 | about 4,500,000 | 5,997 |
 | `b.t3 > a.t0 AND b.x < a.x + 3` | 19,606, 18,356 | 31.3, 27.6 | about 4,500,000 | 8,997 |
 
+## A subquery in the condition
+
+A join condition that holds a subquery runs on the dependent join path:
+its plain equalities bucket the right rows, and each candidate pair is
+tested with the subquery resolved for it. With no equality there were no
+buckets, and the subquery was resolved for every pair. The condition's
+plain inequalities now bound those pairs as they do a join without a
+subquery.
+
+| condition | before ms (median, min) | after ms (median, min) | pairs tested before | after |
+|---|---:|---:|---:|---:|
+| `LEFT JOIN b ON b.x < a.x - 3 AND b.x > a.x - 6 AND NOT EXISTS (SELECT 1 FROM b c WHERE c.x = a.x AND c.k = 1)` | 25,593, 20,678 | 18.5, 18.2 | 9,000,000 | 5,991 |
+
+With an equality in the condition the path was already bounded by the
+pairs the equality reaches, and this change does not touch it. Over
+20,000 left rows and 8,000 right rows sharing 1,000 keys (160,000
+candidate pairs, `SURVEY_LEFT=20000 SURVEY_RIGHT=8000 SURVEY_KEYS=1000
+SURVEY_ONLY=t2_on,t2b`), base and changed builds read the same within
+the box's noise:
+
+| subquery beside `b.k = a.k` in a LEFT join's ON | ms (fastest of six runs) | inner executions |
+|---|---:|---:|
+| `b.x IN (SELECT c.x FROM b c WHERE c.lo = a.x)` (widened into the right input) | 10.9 | 0 |
+| `EXISTS (SELECT 1 FROM b c WHERE c.x = a.x AND c.k = b.k)` (widened) | 23.1 | 0 |
+| `NOT EXISTS (SELECT 1 FROM b c WHERE c.x = b.x AND c.lo = a.x)` | 217.6 | 0 |
+| `b.x NOT IN (SELECT c.x FROM b c WHERE c.lo = a.x)` | 340.7 | 0 |
+| `EXISTS (SELECT 1 FROM b c WHERE c.x = b.x AND c.lo < a.x)` | 314.8 | 0 |
+| `b.x IN (SELECT c.x FROM b c JOIN b d ON d.id = c.id WHERE d.lo = a.x)` | 307.5 | 0 |
+| `a.x NOT IN (SELECT c.x FROM b c WHERE c.k = a.k)` (reads the left row alone) | 406.3 | 0 |
+| `b.x IN (SELECT c.x FROM b c WHERE c.lo = a.x GROUP BY c.x HAVING COUNT(*) >= 1)` | 2,202 | 20,000 |
+
+None of the shapes the widening leaves runs its subquery per pair - an
+index or one execution for the batch answers it - except the grouped
+one, which runs once per left row. What they pay is the pair itself:
+1.4 to 2.5 microseconds for each candidate, against 0.07 where the
+subquery became part of the right input. A profile puts that in building
+a one-row batch of every column of both sides for each candidate, and in
+copying and compiling the condition for it.
+
 ## What it does not reach
 
 - A condition with no `<`, `<=`, `>`, `>=` or `BETWEEN` between the two
