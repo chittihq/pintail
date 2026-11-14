@@ -1733,7 +1733,9 @@ fn short_time_text(text: &str) -> Option<(bool, i64, i64, i64)> {
     let number = |at: &mut usize| -> Option<i64> {
         let mut value = 0_i64;
         while let Some(digit) = bytes.get(*at).filter(|byte| byte.is_ascii_digit()) {
-            value = value.checked_mul(10)?.checked_add(i64::from(digit - b'0'))?;
+            value = value
+                .checked_mul(10)?
+                .checked_add(i64::from(digit - b'0'))?;
             *at += 1;
         }
         (value <= i64::from(u32::MAX)).then_some(value)
@@ -1782,7 +1784,8 @@ fn short_time_text(text: &str) -> Option<(bool, i64, i64, i64)> {
         }
     }
     if matches!(bytes.get(at), Some(b'e' | b'E'))
-        && (digit_at(at + 1) || (matches!(bytes.get(at + 1), Some(b'+' | b'-')) && digit_at(at + 2)))
+        && (digit_at(at + 1)
+            || (matches!(bytes.get(at + 1), Some(b'+' | b'-')) && digit_at(at + 2)))
     {
         return None;
     }

@@ -3280,6 +3280,35 @@ pub(super) fn bind_scalar(
                 condition.clone(),
             )));
         }
+        // Beside a value of another type a BIT value is chosen as its
+        // bytes: the result is a string, and the BIT's part of it is the
+        // bytes it holds, not the digits of its number. An unsigned
+        // integer is the one companion a BIT stays a number beside.
+        let bits = |value: &BoundExpr| value.bit_width().is_some();
+        let typed = |value: &&BoundExpr| value.data_type.is_some();
+        let unsigned = |value: &BoundExpr| {
+            matches!(
+                value.data_type,
+                Some(DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64)
+            )
+        };
+        if args.iter().skip(1).filter(typed).any(bits)
+            && args
+                .iter()
+                .skip(1)
+                .filter(typed)
+                .any(|value| !bits(value) && !unsigned(value))
+        {
+            for value in args.iter_mut().skip(1) {
+                if let Some(width) = value.bit_width() {
+                    *value = crate::text_charset::wrap(
+                        value.clone(),
+                        ScalarFunction::BitBytes(width.div_ceil(8)),
+                        DataType::Binary,
+                    );
+                }
+            }
+        }
         args
     } else {
         args

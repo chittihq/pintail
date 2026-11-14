@@ -1180,6 +1180,79 @@ mod tests {
     }
 
     #[test]
+    fn if_and_case_over_bit_values_stay_bit_and_the_merging_functions_do_not() {
+        use pintail_catalog::{DatabaseEntry, DatabaseId, TableEntry, TableId};
+        use pintail_types::{Column as SchemaColumn, TableSchema};
+
+        let schema = TableSchema::new(
+            1,
+            vec![
+                SchemaColumn::new(0, "narrow", DataType::UInt64, true).with_bit_width(Some(8)),
+                SchemaColumn::new(1, "wide", DataType::UInt64, true).with_bit_width(Some(16)),
+                SchemaColumn::new(2, "n", DataType::Int64, true),
+                SchemaColumn::new(3, "u", DataType::UInt32, true),
+            ],
+        )
+        .unwrap();
+        let catalog = CatalogSnapshot::new([DatabaseEntry::new(
+            DatabaseId::new(1),
+            "sample",
+            [TableEntry::new(
+                TableId::new(1),
+                "flags_table",
+                schema,
+                pintail_catalog::TableStatistics::default(),
+            )
+            .unwrap()],
+        )
+        .unwrap()])
+        .unwrap();
+        let statement = pintail_sql::parse_statement(
+            "SELECT IF(n > 1, narrow, narrow), CASE WHEN n > 1 THEN narrow END, \
+             CASE n WHEN 1 THEN narrow WHEN 2 THEN wide ELSE narrow END, \
+             COALESCE(narrow, narrow), IFNULL(narrow, wide), \
+             IF(n > 1, narrow, n), CASE WHEN n > 1 THEN n ELSE wide END, \
+             IF(n > 1, narrow, u) \
+             FROM flags_table",
+        )
+        .unwrap();
+        let query = pintail_sql::Binder::new(&catalog, Some("sample"))
+            .bind(&statement)
+            .unwrap();
+        let fields = columns(&query, &catalog, &SourceFacts::default());
+        // Chosen as they are, BIT values stay BIT, as wide as the widest.
+        for (index, width) in [(0, 8), (1, 8), (2, 16)] {
+            assert_eq!(
+                (fields[index].coltype, fields[index].column_length),
+                (ColumnType::MysqlTypeBit, width),
+                "item {index}"
+            );
+        }
+        // Merged, or chosen beside a value of another type, they do not.
+        for (index, field) in fields.iter().enumerate().take(8).skip(3) {
+            assert_ne!(field.coltype, ColumnType::MysqlTypeBit, "item {index}");
+        }
+        // Beside another type the BIT value is its bytes, so the result is
+        // a string and not the number.
+        for (index, item) in query.projection.iter().enumerate().take(7).skip(5) {
+            assert!(
+                matches!(item.expr.data_type, Some(DataType::Utf8 | DataType::Binary)),
+                "item {index}: {:?}",
+                item.expr.data_type
+            );
+        }
+        // An unsigned integer is the one companion it stays a number beside.
+        assert!(
+            !matches!(
+                query.projection[7].expr.data_type,
+                Some(DataType::Utf8 | DataType::Binary)
+            ),
+            "{:?}",
+            query.projection[7].expr.data_type
+        );
+    }
+
+    #[test]
     fn spatial_and_text_carried_temporal_declarations_survive_binding() {
         use pintail_catalog::{DatabaseEntry, DatabaseId, TableEntry, TableId};
         use pintail_types::{Column as SchemaColumn, TableSchema};

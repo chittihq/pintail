@@ -77,10 +77,9 @@ fn a_created_table_carries_probe_identical_types() {
 fn boolean_and_bool_declare_the_type_tinyint_1_declares() {
     // Read as an unknown type name the column was text: `flag + 0` answered
     // a double and JSON_ARRAY(flag) a string.
-    let plan = create(
-        "CREATE TABLE t (id BIGINT PRIMARY KEY, a BOOLEAN, b BOOL NOT NULL, c TINYINT(1))",
-    )
-    .expect("binds");
+    let plan =
+        create("CREATE TABLE t (id BIGINT PRIMARY KEY, a BOOLEAN, b BOOL NOT NULL, c TINYINT(1))")
+            .expect("binds");
     let types: Vec<DataType> = plan
         .table
         .columns

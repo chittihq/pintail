@@ -591,6 +591,22 @@ impl BoundExpr {
     pub fn bit_width(&self) -> Option<u8> {
         match &self.kind {
             BoundExprKind::Column(column) => column.bit_width,
+            // IF and CASE choose one of their values as it is, so over BIT
+            // values alone the result is a BIT, as wide as the widest. (The
+            // functions that compare or merge - COALESCE, IFNULL, LEAST,
+            // GREATEST - answer a number.)
+            BoundExprKind::Scalar {
+                function: ScalarFunction::If,
+                args,
+            } => {
+                let mut widths = args
+                    .iter()
+                    .skip(1)
+                    .filter(|value| value.data_type.is_some())
+                    .map(Self::bit_width);
+                let first = widths.next()??;
+                widths.try_fold(first, |widest, width| Some(widest.max(width?)))
+            }
             _ => None,
         }
     }
