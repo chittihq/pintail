@@ -649,6 +649,21 @@ const addedCases: AddedCase[] = [
     inPlace: true,
   },
   {
+    name: 'a column and its index in one statement',
+    alters: [
+      "ADD COLUMN `owner_id` BIGINT NULL COMMENT 'ref' AFTER `d`, " +
+        'ADD INDEX `ix_owner` (`owner_id`), ALGORITHM=INPLACE, LOCK=NONE',
+    ],
+    projection: 'id, d, owner_id',
+    inPlace: true,
+  },
+  {
+    name: 'a column and a unique key over it in one statement',
+    alters: ['ADD COLUMN extra INT NULL, ADD UNIQUE KEY uq_extra (extra)'],
+    projection: 'id, d, extra',
+    inPlace: true,
+  },
+  {
     name: 'a nullable column beside ALGORITHM',
     alters: ['ADD COLUMN extra INT DEFAULT NULL, ALGORITHM=INSTANT'],
     projection: 'id, d, extra',
@@ -821,6 +836,24 @@ const narrowedCases: NarrowedCase[] = [
     before: 'v INT NULL',
     rows: ['(1, 5)', '(2, 6)'],
     alters: ['ADD UNIQUE KEY uq_v (v), ALGORITHM=INPLACE, LOCK=NONE'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
+    path: 'not quarantined',
+  },
+  // An ORM changes a column and its index in one statement; the index has
+  // nothing stored here, so the statement is its column change.
+  {
+    name: 'column dropped with its index',
+    before: 'v INT NULL, w INT NULL, KEY ix_w (w)',
+    rows: ['(1, 5, 50)', '(2, 6, 60)'],
+    alters: ['DROP COLUMN w, DROP INDEX ix_w'],
+    writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
+    path: 'not quarantined',
+  },
+  {
+    name: 'index renamed',
+    before: 'v INT NULL, KEY ix_a (v)',
+    rows: ['(1, 5)', '(2, 6)'],
+    alters: ['RENAME INDEX ix_a TO ix_b'],
     writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
     path: 'not quarantined',
   },

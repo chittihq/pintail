@@ -686,6 +686,25 @@ fn opening_words_spaced(text: &str) -> String {
     rest.to_owned()
 }
 
+/// Whether `operation` changes only indexes or constraints, which have no
+/// storage here.
+fn index_only(operation: &AlterTableOperation) -> bool {
+    matches!(
+        operation,
+        AlterTableOperation::AddConstraint {
+            constraint: TableConstraint::Unique(_)
+                | TableConstraint::ForeignKey(_)
+                | TableConstraint::Check(_)
+                | TableConstraint::Index(_)
+                | TableConstraint::FulltextOrSpatial(_),
+            ..
+        } | AlterTableOperation::DropIndex { .. }
+            | AlterTableOperation::DropConstraint { .. }
+            | AlterTableOperation::DropForeignKey { .. }
+            | AlterTableOperation::RenameIndex { .. }
+    )
+}
+
 #[allow(clippy::too_many_lines)] // linear DDL-statement classification table
 pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, CdcError> {
     let statement = readable_ddl(statement);
@@ -745,10 +764,18 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
     let mut parsed = ParsedDdl::default();
     for statement in statements {
         match statement {
-            Statement::AlterTable(alter) => {
+            Statement::AlterTable(mut alter) => {
                 let Some(table) = table_in_schema(&alter.name, database, &mut parsed)? else {
                     continue;
                 };
+                // An index or constraint clause beside a column clause - an
+                // ORM adds a column and its index in one statement - changes
+                // nothing stored here. The statement is read by its column
+                // clauses; the keys it changed arrive with the re-probe, and
+                // a changed key strategy still fails stabilization there.
+                if !alter.operations.iter().all(index_only) {
+                    alter.operations.retain(|operation| !index_only(operation));
+                }
                 // `ALTER TABLE old RENAME [TO | AS] new` with nothing beside
                 // it is `RENAME TABLE old TO new` spelled the other way: the
                 // rows stay where they are and only the name moves. Read as
@@ -851,21 +878,7 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
                             })
                             .collect(),
                     )
-                } else if alter.operations.iter().all(|operation| {
-                    matches!(
-                        operation,
-                        AlterTableOperation::AddConstraint {
-                            constraint: TableConstraint::Unique(_)
-                                | TableConstraint::ForeignKey(_)
-                                | TableConstraint::Check(_)
-                                | TableConstraint::Index(_)
-                                | TableConstraint::FulltextOrSpatial(_),
-                            ..
-                        } | AlterTableOperation::DropIndex { .. }
-                            | AlterTableOperation::DropConstraint { .. }
-                            | AlterTableOperation::DropForeignKey { .. }
-                    )
-                }) {
+                } else if alter.operations.iter().all(index_only) {
                     AlterKind::IndexOnly
                 } else {
                     AlterKind::RequiresResnapshot
@@ -1108,6 +1121,53 @@ mod tests {
                     added: vec!["extra".to_owned()],
                     dropped: Vec::new(),
                 },
+            }]
+        );
+    }
+
+    /// An index clause beside a column clause leaves the statement its
+    /// column clauses' kind.
+    #[test]
+    fn an_index_clause_beside_a_column_clause_is_read_as_the_column_change() {
+        for statement in [
+            "ALTER TABLE events ADD COLUMN extra INT NULL, ADD INDEX ix_extra (extra)",
+            "ALTER TABLE `events` ADD COLUMN `extra` BIGINT NULL COMMENT 'ref' AFTER `note`, \
+             ADD INDEX `ix_extra` (`extra`), ALGORITHM=INPLACE, LOCK=NONE",
+            "ALTER TABLE events ADD COLUMN extra INT NULL, \
+             ADD CONSTRAINT fk_extra FOREIGN KEY (extra) REFERENCES owners (id)",
+            "ALTER TABLE events ADD UNIQUE KEY uq_extra (extra), ADD COLUMN extra INT NULL",
+        ] {
+            assert_eq!(
+                parse_ddl(statement, "app").unwrap().actions,
+                vec![DdlAction::Alter {
+                    table: "events".to_owned(),
+                    kind: AlterKind::AddOrDropColumns {
+                        added: vec!["extra".to_owned()],
+                        dropped: Vec::new(),
+                    },
+                }],
+                "{statement}"
+            );
+        }
+        assert_eq!(
+            parse_ddl("ALTER TABLE events DROP COLUMN note, DROP INDEX ix_note", "app")
+                .unwrap()
+                .actions,
+            vec![DdlAction::Alter {
+                table: "events".to_owned(),
+                kind: AlterKind::AddOrDropColumns {
+                    added: Vec::new(),
+                    dropped: vec!["note".to_owned()],
+                },
+            }]
+        );
+        assert_eq!(
+            parse_ddl("ALTER TABLE events RENAME INDEX ix_a TO ix_b", "app")
+                .unwrap()
+                .actions,
+            vec![DdlAction::Alter {
+                table: "events".to_owned(),
+                kind: AlterKind::IndexOnly,
             }]
         );
     }
