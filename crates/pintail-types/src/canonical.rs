@@ -698,6 +698,23 @@ pub fn read_duration_text(body: &str) -> Option<DurationText<'_>> {
     })
 }
 
+/// The fraction digits a duration's text rounds on. `MySQL` keeps six
+/// digits and, of any written past them, rounds on the LAST one rather
+/// than the seventh: `.2323049640` stays `.232304` and `.23230405` becomes
+/// `.232305`. The answer is the six digits followed by that last digit, so
+/// a reader that rounds on the seventh digit rounds as `MySQL` does. Text
+/// that is a date and time does not come through here: its fraction rounds
+/// on the seventh digit.
+#[must_use]
+pub fn duration_fraction_digits(fraction: &str) -> std::borrow::Cow<'_, str> {
+    if fraction.len() <= 7 || !fraction.is_ascii() {
+        return std::borrow::Cow::Borrowed(fraction);
+    }
+    let mut digits = fraction[..6].to_owned();
+    digits.push_str(&fraction[fraction.len() - 1..]);
+    std::borrow::Cow::Owned(digits)
+}
+
 /// A text constant that is exactly a TIME, as `HH:MM:SS.ffffff`: a
 /// duration, or a date and time whose clock it is, read to its end and
 /// inside the type's range. `None` for text `MySQL` would have to cut or
@@ -749,8 +766,9 @@ pub fn exact_time_text(text: &str) -> Option<String> {
     if !body[duration.read..].trim().is_empty() {
         return None;
     }
-    let digits = duration.fraction.as_bytes();
-    let mut micros = fraction_micros(&duration.fraction[..digits.len().min(6)])?;
+    let fraction = duration_fraction_digits(duration.fraction);
+    let digits = fraction.as_bytes();
+    let mut micros = fraction_micros(&fraction[..digits.len().min(6)])?;
     if digits.get(6).is_some_and(|digit| *digit >= b'5') {
         micros += 1;
     }

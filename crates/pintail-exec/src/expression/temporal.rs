@@ -1215,7 +1215,7 @@ pub(super) fn text_time_of(text: &str) -> Option<TextTime> {
         hours: duration.hours,
         minutes: duration.minutes,
         seconds: duration.seconds,
-        fraction: duration.fraction.to_owned(),
+        fraction: pintail_types::duration_fraction_digits(duration.fraction).into_owned(),
         calendar: None,
     })
 }
