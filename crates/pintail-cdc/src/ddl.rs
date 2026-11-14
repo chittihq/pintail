@@ -590,7 +590,7 @@ fn parse_source_ddl(statement: &str) -> Result<Vec<Statement>, CdcError> {
 /// none of the words looked for here, so it was read as no schema change
 /// at all and the table's declaration moved without the mirror following.
 /// A `/*! ... */` comment is not one to the source: its text is kept.
-fn readable_ddl(statement: &str) -> String {
+pub(crate) fn readable_ddl(statement: &str) -> String {
     let mut text = String::with_capacity(statement.len());
     let mut chars = statement.chars().peekable();
     let mut quote = None;
@@ -690,6 +690,20 @@ fn opening_words_spaced(text: &str) -> String {
     rest.to_owned()
 }
 
+/// Whether `operation` adds an index that identifies no row and needs no
+/// reconciliation: a plain, full-text or spatial index, or a check.
+fn plain_index_added(operation: &AlterTableOperation) -> bool {
+    matches!(
+        operation,
+        AlterTableOperation::AddConstraint {
+            constraint: TableConstraint::Index(_)
+                | TableConstraint::FulltextOrSpatial(_)
+                | TableConstraint::Check(_),
+            ..
+        }
+    )
+}
+
 /// Whether `operation` changes only indexes or constraints, which have no
 /// storage here.
 fn index_only(operation: &AlterTableOperation) -> bool {
@@ -771,13 +785,17 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
                 let Some(table) = table_in_schema(&alter.name, database, &mut parsed)? else {
                     continue;
                 };
-                // An index or constraint clause beside a column clause - an
-                // ORM adds a column and its index in one statement - changes
-                // nothing stored here. The statement is read by its column
-                // clauses; the keys it changed arrive with the re-probe, and
-                // a changed key strategy still fails stabilization there.
+                // A plain index added beside a column clause - an ORM adds
+                // a column and its index in one statement - changes nothing
+                // stored here and nothing a row is identified by, so the
+                // statement is read by its column clauses. A unique key, a
+                // foreign key or a dropped index can change what identifies
+                // a row or what has to be reconciled, which the column
+                // handlers do not re-read: those stay a mixed statement.
                 if !alter.operations.iter().all(index_only) {
-                    alter.operations.retain(|operation| !index_only(operation));
+                    alter
+                        .operations
+                        .retain(|operation| !plain_index_added(operation));
                 }
                 // `ALTER TABLE old RENAME [TO | AS] new` with nothing beside
                 // it is `RENAME TABLE old TO new` spelled the other way: the
@@ -1136,9 +1154,7 @@ mod tests {
             "ALTER TABLE events ADD COLUMN extra INT NULL, ADD INDEX ix_extra (extra)",
             "ALTER TABLE `events` ADD COLUMN `extra` BIGINT NULL COMMENT 'ref' AFTER `note`, \
              ADD INDEX `ix_extra` (`extra`), ALGORITHM=INPLACE, LOCK=NONE",
-            "ALTER TABLE events ADD COLUMN extra INT NULL, \
-             ADD CONSTRAINT fk_extra FOREIGN KEY (extra) REFERENCES owners (id)",
-            "ALTER TABLE events ADD UNIQUE KEY uq_extra (extra), ADD COLUMN extra INT NULL",
+            "ALTER TABLE events ADD FULLTEXT INDEX ft_extra (note), ADD COLUMN extra INT NULL",
         ] {
             assert_eq!(
                 parse_ddl(statement, "app").unwrap().actions,
@@ -1152,21 +1168,23 @@ mod tests {
                 "{statement}"
             );
         }
-        assert_eq!(
-            parse_ddl(
-                "ALTER TABLE events DROP COLUMN note, DROP INDEX ix_note",
-                "app"
-            )
-            .unwrap()
-            .actions,
-            vec![DdlAction::Alter {
-                table: "events".to_owned(),
-                kind: AlterKind::AddOrDropColumns {
-                    added: Vec::new(),
-                    dropped: vec!["note".to_owned()],
-                },
-            }]
-        );
+        // A clause that can change what identifies a row, or what has to be
+        // reconciled, keeps the statement mixed.
+        for statement in [
+            "ALTER TABLE events ADD COLUMN extra INT NULL, ADD UNIQUE KEY uq_extra (extra)",
+            "ALTER TABLE events ADD COLUMN extra INT NULL, \
+             ADD CONSTRAINT fk_extra FOREIGN KEY (extra) REFERENCES owners (id)",
+            "ALTER TABLE events DROP COLUMN note, DROP INDEX ix_note",
+        ] {
+            assert_eq!(
+                parse_ddl(statement, "app").unwrap().actions,
+                vec![DdlAction::Alter {
+                    table: "events".to_owned(),
+                    kind: AlterKind::RequiresResnapshot,
+                }],
+                "{statement}"
+            );
+        }
         for statement in [
             "ALTER TABLE events RENAME INDEX ix_a TO ix_b",
             "ALTER TABLE events RENAME KEY ix_a TO ix_b, ALGORITHM=INPLACE",

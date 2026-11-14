@@ -3831,16 +3831,22 @@ async function waitUntil(
   }
 }
 
-/// Everything the replica printed, so a phase can be asked what it decided.
-const pintailOutput: string[] = []
+/// Every whole line the replica printed, so a phase can be asked what it
+/// decided. A chunk can end mid-line; the rest of a line waits for its end
+/// so a table's name is never read cut short.
+const pintailLines: string[] = []
 
 function relayPintail(stream: ReadableStream<Uint8Array>, sink: NodeJS.WriteStream) {
   void (async () => {
     const decoder = new TextDecoder()
+    let tail = ''
     for await (const chunk of stream) {
       sink.write(chunk)
-      pintailOutput.push(decoder.decode(chunk, { stream: true }))
+      const lines = (tail + decoder.decode(chunk, { stream: true })).split('\n')
+      tail = lines.pop() ?? ''
+      pintailLines.push(...lines)
     }
+    if (tail) pintailLines.push(tail)
   })()
 }
 
@@ -3859,10 +3865,7 @@ let quarantinesSeen = 0
 /// Fails `phase` for every table quarantined during it that it does not
 /// expect.
 function verifyService(phase: string) {
-  const lines = pintailOutput
-    .join('')
-    .split('\n')
-    .filter((line) => line.includes('table quarantined db='))
+  const lines = pintailLines.filter((line) => line.includes('table quarantined db='))
   const fresh = lines.slice(quarantinesSeen)
   quarantinesSeen = lines.length
   const expected = new Set(expectedQuarantines[phase] ?? [])

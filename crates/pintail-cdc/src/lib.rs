@@ -1499,7 +1499,12 @@ async fn run_cdc_inner(
                     // inside the transaction. It is not a statement, and
                     // treating it as one committed the open transaction
                     // statement by statement.
-                    if normalized == "BEGIN" || normalized.starts_with('#') {
+                    // A comment that leads a statement is not such an event:
+                    // the statement after it is read.
+                    if normalized == "BEGIN"
+                        || normalized.starts_with('#')
+                            && ddl::readable_ddl(&statement).trim().is_empty()
+                    {
                         continue;
                     }
                     if normalized == "ROLLBACK" {
@@ -3138,7 +3143,11 @@ fn schema_as_of(
         {
             continue;
         }
-        let column = added_column(name, declaration, moved_on)?;
+        let column = with_shown_character_set(
+            added_column(name, declaration, moved_on)?,
+            declaration,
+            moved_on,
+        );
         if let Some(existing) = as_of
             .columns
             .iter()
@@ -3214,6 +3223,23 @@ fn added_column(
     described.map_err(|error| error.to_string())
 }
 
+/// [`added_column`] for a text column, with the character set the source
+/// shows for it: a declaration alone is read as utf8mb4, and the rows the
+/// stream carries for a latin1 column are not.
+fn with_shown_character_set(
+    mut column: pintail_probe::SourceColumn,
+    declaration: &ddl::AddedColumn,
+    moved_on: Option<&SourceTable>,
+) -> pintail_probe::SourceColumn {
+    if ddl::declared_terms(&declaration.declared_type).is_none()
+        && let Some(shown) = moved_on.and_then(|table| still_shown_as_declared(table, declaration))
+    {
+        column.character_set.clone_from(&shown.character_set);
+        column.collation.clone_from(&shown.collation);
+    }
+    column
+}
+
 /// The text column `table` still shows under the name and the very type
 /// `declaration` gave it: a later statement that retyped or replaced the
 /// column leaves a type that no longer reads the same.
@@ -3227,6 +3253,12 @@ fn still_shown_as_declared<'table>(
             .collect::<String>()
             .to_ascii_lowercase()
     };
+    // A quoted label - an ENUM's, a SET's - is not type syntax: spacing
+    // and case inside it are part of the value, so such a type is not
+    // matched this way at all.
+    if declaration.declared_type.contains(['\'', '"']) {
+        return None;
+    }
     table.columns.iter().find(|column| {
         column.name.eq_ignore_ascii_case(&declaration.name)
             && column.collation.is_some()

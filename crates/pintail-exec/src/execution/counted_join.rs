@@ -561,7 +561,10 @@ pub(super) fn plan(
     // A left join's unpaired row is one row whose right side is NULL: one
     // for COUNT(*), and one for a count of a right expression that is not
     // NULL there, as `COALESCE(b.id, 0)` or `b.id IS NULL` is not.
-    let unpaired = if kind == BoundJoinKind::Left {
+    // Worked out when the first unpaired row is met, not before: an
+    // expression that fails over the NULL row fails a join that has such a
+    // row and no other.
+    let unpaired_counts = || -> Result<Vec<u64>, ExecError> {
         let nulls = RecordBatch::new(
             1,
             right_columns
@@ -579,10 +582,9 @@ pub(super) fn plan(
                     }
                 })
             })
-            .collect::<Result<Vec<_>, ExecError>>()?
-    } else {
-        Vec::new()
+            .collect()
     };
+    let mut unpaired: Option<Vec<u64>> = None;
     let mut held = Held { memory, bytes: 0 };
     // What the keys and values hold outside the indexes' own slots.
     let mut outside = 0_usize;
@@ -661,7 +663,10 @@ pub(super) fn plan(
                 if kind == BoundJoinKind::Inner {
                     continue 'rows;
                 }
-                counts.clone_from(&unpaired);
+                if unpaired.is_none() {
+                    unpaired = Some(unpaired_counts()?);
+                }
+                counts.clone_from(unpaired.as_ref().expect("just worked out"));
             }
             if grouped {
                 let mut values = batch_row(&batch, row)?;

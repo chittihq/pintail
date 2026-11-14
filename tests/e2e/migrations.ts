@@ -677,7 +677,8 @@ const addedCases: AddedCase[] = [
     name: 'a column and a unique key over it in one statement',
     alters: ['ADD COLUMN extra INT NULL, ADD UNIQUE KEY uq_extra (extra)'],
     projection: 'id, d, extra',
-    inPlace: true,
+    // A unique key can become what identifies a row: copied again.
+    inPlace: false,
   },
   {
     name: 'a nullable column beside ALGORITHM',
@@ -855,15 +856,17 @@ const narrowedCases: NarrowedCase[] = [
     writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
     path: 'not quarantined',
   },
-  // An ORM changes a column and its index in one statement; the index has
-  // nothing stored here, so the statement is its column change.
+  // An ORM changes a column and its index in one statement. A plain index
+  // added beside a column is the column change; one dropped is not.
   {
     name: 'column dropped with its index',
     before: 'v INT NULL, w INT NULL, KEY ix_w (w)',
     rows: ['(1, 5, 50)', '(2, 6, 60)'],
     alters: ['DROP COLUMN w, DROP INDEX ix_w'],
     writes: ['INSERT INTO {t} (id, v) VALUES (90, 9)', 'UPDATE {t} SET v = 8 WHERE id = 2'],
-    path: 'not quarantined',
+    // A dropped index may be the key rows are identified by, which the
+    // statement does not say: the table is copied again.
+    path: 'recopy',
   },
   {
     name: 'index renamed',
