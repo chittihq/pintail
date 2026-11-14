@@ -490,8 +490,10 @@ fn rebuild_only_alter(statement: &str) -> bool {
         return false;
     };
     let clauses = clauses.trim().trim_end_matches(';').trim();
+    // `ALTER TABLE t` with no clause is a statement the source accepts and
+    // does nothing for; the parser wants a clause and refused it.
     if clauses.is_empty() {
-        return false;
+        return true;
     }
     let mut depth = 0_i32;
     let mut quote = None;
@@ -878,6 +880,8 @@ mod convert_charset_tests {
             "ALTER TABLE ledger AUTO_INCREMENT = 1000;",
             "ALTER TABLE ledger COMMENT 'a, b', STATS_PERSISTENT=1",
             "ALTER TABLE ledger DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+            "ALTER TABLE `ledger`",
+            "ALTER TABLE ledger ;",
         ] {
             assert_eq!(
                 parse_ddl(statement, "app").expect(statement).actions,
@@ -892,7 +896,6 @@ mod convert_charset_tests {
             "ALTER TABLE ledger FORCE, ADD COLUMN note INT",
             "ALTER TABLE ledger ADD PRIMARY KEY (id)",
             "ALTER TABLE ledger ENGINE=InnoDB, DROP COLUMN amount",
-            "ALTER TABLE ledger",
         ] {
             assert!(
                 !super::rebuild_only_alter(statement),
