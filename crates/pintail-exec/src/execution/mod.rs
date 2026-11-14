@@ -2304,6 +2304,11 @@ pub struct OperatorProfile {
     /// before the tree exists, so a profile that counted pulls alone
     /// showed their scans and nothing above them.
     pub construction: Duration,
+    /// The part of this operator's pull time that fell inside the
+    /// construction of an operator above it, by that operator's depth. An
+    /// operator that runs while it is built pulls its inputs there, and
+    /// that time is already inside its own construction.
+    pub built_pulls: Vec<(usize, Duration)>,
     /// What became of the operator beyond its pulls, when anything did:
     /// a join fused into the aggregate above it, for one.
     pub note: Option<String>,
@@ -2375,6 +2380,19 @@ impl ProfileSink {
             return;
         };
         entry.inclusive += elapsed;
+        // Operators are built depth first, so the ones under construction
+        // are a path from the root and the deepest is the one pulling.
+        let building = self.depth.load(std::sync::atomic::Ordering::Relaxed);
+        if let Some(builder) = building.checked_sub(1) {
+            match entry
+                .built_pulls
+                .iter_mut()
+                .find(|(depth, _)| *depth == builder)
+            {
+                Some((_, total)) => *total += elapsed,
+                None => entry.built_pulls.push((builder, elapsed)),
+            }
+        }
         if let Some(rows) = rows {
             entry.batches += 1;
             entry.rows += u64::try_from(rows).unwrap_or(u64::MAX);
@@ -2416,8 +2434,10 @@ impl ExecutionProfile {
     /// built - the operator above took its inputs directly - is the time
     /// it took to build plus what those inputs took to run, so a fused
     /// join leaves neither its scans nor its own construction on the
-    /// aggregate's account; and its own share is its construction less
-    /// that of the inputs built inside it.
+    /// aggregate's account. The own share of an operator that was only
+    /// built is its construction less what its inputs took inside it:
+    /// their construction, and their pulls when it ran them while it was
+    /// being built.
     #[must_use]
     pub fn exclusive(&self, index: usize) -> Duration {
         let Some(node) = self.operators.get(index) else {
@@ -2427,7 +2447,9 @@ impl ExecutionProfile {
         let taken: Duration = if Self::ran(node) {
             inputs.map(|input| self.subtree(input)).sum()
         } else {
-            inputs.map(|input| self.operators[input].construction).sum()
+            inputs
+                .map(|input| self.operators[input].construction + self.pulled_by(input, node.depth))
+                .sum()
         };
         node.inclusive.saturating_sub(taken)
     }
@@ -2448,24 +2470,59 @@ impl ExecutionProfile {
             .map(move |(offset, _)| index + 1 + offset)
     }
 
-    /// Everything an input accounts for inside the operator above it.
+    /// Everything an input accounts for inside the operator above it: its
+    /// whole time when it ran, and otherwise its construction plus the
+    /// pulls of its inputs that happened after it was built. Pulls made
+    /// while it was being built are inside its construction already.
     fn subtree(&self, index: usize) -> Duration {
         let node = &self.operators[index];
         if Self::ran(node) {
             node.inclusive
         } else {
-            node.construction + self.inputs(index).map(|input| self.pulled(input)).sum()
+            node.construction
+                + self
+                    .inputs(index)
+                    .map(|input| self.pulled_after(input, node.depth))
+                    .sum()
         }
     }
 
-    /// The time an operator and the inputs below it spent being pulled,
-    /// their construction left out: that belongs to whichever built them.
-    fn pulled(&self, index: usize) -> Duration {
+    /// The time an operator and the inputs below it spent being pulled
+    /// outside the construction of every operator at `depth` or deeper:
+    /// construction belongs to whichever built them.
+    fn pulled_after(&self, index: usize, depth: usize) -> Duration {
         let node = &self.operators[index];
         if Self::ran(node) {
-            node.inclusive.saturating_sub(node.construction)
+            let inside: Duration = node
+                .built_pulls
+                .iter()
+                .filter(|(builder, _)| *builder >= depth)
+                .map(|(_, time)| *time)
+                .sum();
+            node.inclusive
+                .saturating_sub(node.construction)
+                .saturating_sub(inside)
         } else {
-            self.inputs(index).map(|input| self.pulled(input)).sum()
+            self.inputs(index)
+                .map(|input| self.pulled_after(input, depth))
+                .sum()
+        }
+    }
+
+    /// The time an operator and the inputs below it spent being pulled by
+    /// the operator at `depth` above them while that one was being built.
+    fn pulled_by(&self, index: usize, depth: usize) -> Duration {
+        let node = &self.operators[index];
+        if Self::ran(node) {
+            node.built_pulls
+                .iter()
+                .filter(|(builder, _)| *builder == depth)
+                .map(|(_, time)| *time)
+                .sum()
+        } else {
+            self.inputs(index)
+                .map(|input| self.pulled_by(input, depth))
+                .sum()
         }
     }
 

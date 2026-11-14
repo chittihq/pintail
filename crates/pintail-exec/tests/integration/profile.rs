@@ -250,62 +250,80 @@ fn profiling_does_not_change_the_execution_path() {
     );
 }
 
-/// The accounting over this plan's own shape, with the clock taken out:
-/// every operator is given a distinct time of its own to build and, where
-/// it produced batches, to run, the recorded times are replaced by what
-/// those add up to, and each operator's self time must then be exactly its
-/// own - which also makes them sum to the root. Measured times cannot say
-/// this: a built-only operator's construction counted twice is a
-/// microsecond on an idle host and milliseconds on a busy one.
-fn assert_self_times_account_for_the_root_once(measured: &pintail_exec::ExecutionProfile) {
+/// One operator of an accounting shape: its depth, whether it was pulled,
+/// and the depth of the operator that pulled it while being built, when
+/// its pulls happened there rather than after the tree stood.
+type Shape = (usize, bool, Option<usize>);
+
+/// Self times must account for the root exactly once. The check runs on a
+/// fixed clock: keeping the tree a real execution produced (or one written
+/// by hand), every operator is given a known time to build and, when it
+/// was pulled, to run, the recorded times are replaced by what those add
+/// up to, and each operator's self time must then be exactly its own -
+/// which also makes them sum to the root. Measured times cannot say this:
+/// a built-only operator's construction counted twice is a microsecond on
+/// an idle host and milliseconds on a busy one.
+fn assert_shape_accounts_for_the_root_once(
+    template: &pintail_exec::ExecutionProfile,
+    shape: &[Shape],
+) {
     use std::time::Duration;
-    let mut profile = measured.clone();
-    let count = profile.operators.len();
-    let ran: Vec<bool> = profile
-        .operators
-        .iter()
-        .map(|node| node.batches > 0)
-        .collect();
-    let inputs = |index: usize| -> Vec<usize> {
-        let depth = measured.operators[index].depth;
-        (index + 1..count)
-            .take_while(|&below| measured.operators[below].depth > depth)
-            .filter(|&below| measured.operators[below].depth == depth + 1)
-            .collect()
-    };
+    let count = shape.len();
     let millis = |value: usize| Duration::from_millis(u64::try_from(value).expect("small"));
     let built = |index: usize| millis(3 + 2 * index);
     let run = |index: usize| {
-        if ran[index] {
+        if shape[index].1 {
             millis(101 + 10 * index)
         } else {
             Duration::ZERO
         }
     };
-    // Operators are in preorder: walking back meets every input before
-    // the operator that reads it.
-    let mut pulled = vec![Duration::ZERO; count];
-    for index in (0..count).rev() {
-        let below = inputs(index);
-        let construction = built(index)
-            + below
-                .iter()
-                .map(|&input| profile.operators[input].construction)
-                .sum::<Duration>();
-        // What the inputs spent being pulled is inside this operator's
-        // pulls when it ran, and passes up to the one above when it did not.
-        let passed: Duration = below.iter().map(|&input| pulled[input]).sum();
-        pulled[index] = run(index) + passed;
-        let inclusive = construction
-            + if ran[index] {
-                pulled[index]
-            } else {
-                Duration::ZERO
-            };
-        profile.operators[index].construction = construction;
-        profile.operators[index].inclusive = inclusive;
-    }
-    assert!(ran[0], "the root produced the rows: {}", measured.render());
+    let below = |index: usize| -> Vec<usize> {
+        (index + 1..count)
+            .take_while(|&other| shape[other].0 > shape[index].0)
+            .collect()
+    };
+    let mut profile = template.clone();
+    profile.operators = (0..count)
+        .map(|index| {
+            let (depth, ran, when) = shape[index];
+            let descendants = below(index);
+            // Building an operator builds everything below it, and holds
+            // the pulls made meanwhile, by it or by one built inside it.
+            let construction = built(index)
+                + descendants
+                    .iter()
+                    .map(|&other| {
+                        built(other)
+                            + if shape[other].2.is_some_and(|builder| builder >= depth) {
+                                run(other)
+                            } else {
+                                Duration::ZERO
+                            }
+                    })
+                    .sum::<Duration>();
+            // A pull of an operator holds the pulls it makes in turn: those
+            // of the operators below it that ran in the same phase.
+            let pulls = run(index)
+                + descendants
+                    .iter()
+                    .filter(|&&other| shape[other].2 == when)
+                    .map(|&other| run(other))
+                    .sum::<Duration>();
+            pintail_exec::OperatorProfile {
+                label: format!("operator {index}"),
+                depth,
+                batches: u64::from(ran),
+                construction,
+                inclusive: construction + if ran { pulls } else { Duration::ZERO },
+                built_pulls: match when {
+                    Some(builder) if ran => vec![(builder, pulls)],
+                    _ => Vec::new(),
+                },
+                ..pintail_exec::OperatorProfile::default()
+            }
+        })
+        .collect();
     for index in 0..count {
         assert_eq!(
             profile.exclusive(index),
@@ -321,6 +339,27 @@ fn assert_self_times_account_for_the_root_once(measured: &pintail_exec::Executio
         "{}",
         profile.render()
     );
+}
+
+/// The same check over the tree a real execution produced.
+fn assert_self_times_account_for_the_root_once(measured: &pintail_exec::ExecutionProfile) {
+    let shape: Vec<Shape> = measured
+        .operators
+        .iter()
+        .map(|node| {
+            (
+                node.depth,
+                node.batches > 0,
+                node.built_pulls.first().map(|(builder, _)| *builder),
+            )
+        })
+        .collect();
+    assert!(
+        shape[0].1,
+        "the root produced the rows: {}",
+        measured.render()
+    );
+    assert_shape_accounts_for_the_root_once(measured, &shape);
 }
 
 #[test]
@@ -368,4 +407,72 @@ fn a_fused_join_and_a_built_join_keep_the_accounting_consistent() {
     );
     let rendered = profile.render();
     assert!(rendered.contains("build="), "{rendered}");
+    // Its inputs were pulled while it was being built, and say so.
+    let position = profile
+        .operators
+        .iter()
+        .position(|node| node.label.starts_with("NestedLoopJoin"))
+        .expect("nested loop");
+    let depth = profile.operators[position].depth;
+    assert!(
+        profile.operators[position + 1..]
+            .iter()
+            .take_while(|node| node.depth > depth)
+            .any(|node| node
+                .built_pulls
+                .iter()
+                .any(|(builder, _)| *builder == depth)),
+        "the join's inputs record the pulls made while it was built: {rendered}"
+    );
+    assert_self_times_account_for_the_root_once(&profile);
+
+    // Shapes a query does not reliably produce, on the same fixed clock.
+    // A join that ran its inputs while it was built and was never pulled
+    // itself, because the other side of the join above it was empty:
+    assert_shape_accounts_for_the_root_once(
+        &profile,
+        &[
+            (0, true, None),
+            (1, true, None),
+            (1, false, None),
+            (2, true, Some(1)),
+            (2, true, Some(1)),
+        ],
+    );
+    // the same join pulled afterwards;
+    assert_shape_accounts_for_the_root_once(
+        &profile,
+        &[
+            (0, true, None),
+            (1, true, None),
+            (2, true, Some(1)),
+            (2, true, Some(1)),
+        ],
+    );
+    // one that took the inputs of a fused operator below it while built;
+    assert_shape_accounts_for_the_root_once(
+        &profile,
+        &[
+            (0, true, None),
+            (1, false, None),
+            (2, false, None),
+            (3, true, Some(1)),
+        ],
+    );
+    // a root that did the same;
+    assert_shape_accounts_for_the_root_once(
+        &profile,
+        &[(0, true, None), (1, false, None), (2, true, Some(0))],
+    );
+    // and one built-time join inside another that was never pulled.
+    assert_shape_accounts_for_the_root_once(
+        &profile,
+        &[
+            (0, true, None),
+            (1, false, None),
+            (2, true, Some(1)),
+            (3, true, Some(2)),
+            (2, true, Some(1)),
+        ],
+    );
 }
