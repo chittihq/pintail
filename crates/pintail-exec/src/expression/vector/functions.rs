@@ -133,6 +133,10 @@ pub(super) fn scalar_column(
     if let Some(column) = super::temporal::repeated_column(batch, call, &operands, effects) {
         return Some(column);
     }
+    // A TIME column of more distinct values than that reads each once.
+    if let Some(column) = super::time::time_column(batch, call.function, &operands, declared) {
+        return Some(column);
+    }
     // Nothing packed answers this call, so what follows reads the selected
     // rows one at a time. A caller with a row path of its own declines here
     // instead: adapting would build a column for every row on top of the

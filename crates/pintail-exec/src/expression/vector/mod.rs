@@ -36,6 +36,7 @@ mod functions;
 mod numeric;
 mod temporal;
 mod text;
+mod time;
 
 /// Warnings a batch's evaluation raised, for the selected rows only.
 pub(super) struct Effects {
