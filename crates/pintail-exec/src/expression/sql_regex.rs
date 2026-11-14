@@ -80,7 +80,15 @@ impl Program {
         // The automaton copies an operand once per count and refuses a
         // pattern that grows past its size; the other machine counts, so a
         // pattern refused for its counts runs there.
-        match Self::automaton(pattern, case, multiline, dotall, line_endings) {
+        // Without regard to case a run of literals matches across a case
+        // folding of several characters. The other machine reads its
+        // patterns that way; for the automaton the pattern is rewritten.
+        let folded = if case {
+            with_full_case_folds(pattern)
+        } else {
+            std::borrow::Cow::Borrowed(pattern)
+        };
+        match Self::automaton(&folded, case, multiline, dotall, line_endings) {
             Err(_) if largest > AUTOMATON_COUNT => backtrack(),
             compiled => compiled,
         }
@@ -464,11 +472,50 @@ pub(super) fn largest_count(pattern: &str) -> u64 {
 /// Whether `pattern` runs on the backtracking machine. Only a pattern the
 /// automaton's syntax cannot write, or reads as something else, goes
 /// there: one it can write and refuses for its size stays refused.
+///
+/// A pattern that switches case sensitivity for part of itself and holds a
+/// literal that folds across several characters is one of them: which
+/// literals fold depends on where the switch reaches, which the rewrite
+/// for the automaton cannot say and the other machine's reading can.
 pub(super) fn needs_backtracking(pattern: &str) -> bool {
-    possessive(pattern)
-        || regex_syntax::ast::parse::Parser::new()
-            .parse(pattern)
-            .is_err()
+    if possessive(pattern) {
+        return true;
+    }
+    let Ok(ast) = regex_syntax::ast::parse::Parser::new().parse(pattern) else {
+        return true;
+    };
+    sets_case(&ast) && !fold_edits(&ast).is_empty()
+}
+
+/// Whether the pattern turns case sensitivity on or off for itself or for
+/// a group: `(?i)`, `(?-i)`, `(?i:...)`.
+fn sets_case(ast: &regex_syntax::ast::Ast) -> bool {
+    use regex_syntax::ast::{Ast, Flag, Flags, FlagsItemKind, GroupKind};
+    let names_case = |flags: &Flags| {
+        flags
+            .items
+            .iter()
+            .any(|item| matches!(item.kind, FlagsItemKind::Flag(Flag::CaseInsensitive)))
+    };
+    let mut pending = vec![ast];
+    while let Some(node) = pending.pop() {
+        match node {
+            Ast::Flags(set) if names_case(&set.flags) => return true,
+            Ast::Group(group) => {
+                if let GroupKind::NonCapturing(flags) = &group.kind
+                    && names_case(flags)
+                {
+                    return true;
+                }
+                pending.push(&group.ast);
+            }
+            Ast::Repetition(repetition) => pending.push(&repetition.ast),
+            Ast::Alternation(alternation) => pending.extend(alternation.asts.iter()),
+            Ast::Concat(concat) => pending.extend(concat.asts.iter()),
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Whether `pattern` holds a possessive quantifier: a `+` written straight
@@ -599,24 +646,47 @@ pub(super) fn spelled(
 /// A case-insensitive pattern in which a literal matches across a folding
 /// of more than one character, as the reference engine's literals do:
 /// `ss` written out also matches `ß`, and `ß` written out also matches
-/// `ss`. Only what is written as a run of literal characters does: `s{2}`,
-/// `[s]s` and `s.` still do not match `ß`, and `[ß]` does not match `ss`.
+/// `ss`. Only what is written as a run of literal characters does, in a
+/// group or out of one: `s{2}`, `[s]s`, `s.` and `s(?:s)` still do not
+/// match `ß`, and `[ß]` does not match `ss`.
 ///
 /// The pattern comes back unchanged when it has no such literal, when it
-/// does not parse here, or when it sets flags of its own.
+/// does not parse here, or when it switches case sensitivity for part of
+/// itself - that pattern runs on the other machine (see
+/// [`needs_backtracking`]).
 pub(super) fn with_full_case_folds(pattern: &str) -> std::borrow::Cow<'_, str> {
-    use regex_syntax::ast::Ast;
     use std::borrow::Cow;
-    if pattern.contains("(?") {
-        return Cow::Borrowed(pattern);
-    }
     let Ok(ast) = regex_syntax::ast::parse::Parser::new().parse(pattern) else {
         return Cow::Borrowed(pattern);
     };
+    if sets_case(&ast) {
+        return Cow::Borrowed(pattern);
+    }
+    let mut edits = fold_edits(&ast);
+    if edits.is_empty() {
+        return Cow::Borrowed(pattern);
+    }
+    edits.sort_unstable_by_key(|(start, _, _)| *start);
+    let mut result = String::with_capacity(pattern.len() * 2);
+    let mut copied = 0;
+    for (start, end, replacement) in edits {
+        result.push_str(&pattern[copied..start]);
+        result.push_str(&replacement);
+        copied = end;
+    }
+    result.push_str(&pattern[copied..]);
+    Cow::Owned(result)
+}
+
+/// The runs of literal characters of a pattern that match across a case
+/// folding of several characters, each with the span it is written over
+/// and what it is spelled out as.
+fn fold_edits(ast: &regex_syntax::ast::Ast) -> Vec<(usize, usize, String)> {
+    use regex_syntax::ast::Ast;
     let folds = full_folds();
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     let mut budget = 256_usize;
-    let mut pending = vec![&ast];
+    let mut pending = vec![ast];
     let mut run_of = |literals: &[&regex_syntax::ast::Literal], edits: &mut Vec<_>| {
         let run = literals.iter().map(|literal| literal.c).collect::<Vec<_>>();
         let replaced = spelled(&run, 0, folds, &mut budget);
@@ -654,19 +724,7 @@ pub(super) fn with_full_case_folds(pattern: &str) -> std::borrow::Cow<'_, str> {
             _ => {}
         }
     }
-    if edits.is_empty() {
-        return Cow::Borrowed(pattern);
-    }
-    edits.sort_unstable_by_key(|(start, _, _)| *start);
-    let mut result = String::with_capacity(pattern.len() * 2);
-    let mut copied = 0;
-    for (start, end, replacement) in edits {
-        result.push_str(&pattern[copied..start]);
-        result.push_str(&replacement);
-        copied = end;
-    }
-    result.push_str(&pattern[copied..]);
-    Cow::Owned(result)
+    edits
 }
 
 /// Keep strict end-of-input separate from the dollar assertion in the NFA.
@@ -918,6 +976,127 @@ impl BoundaryProgram {
 #[cfg(test)]
 mod tests {
     use super::{ExecError, InterruptCounter, LineEndings, Program};
+
+    /// The two matchers answer alike. Every pattern the automaton can
+    /// express is run through both, forced, over every subject: whether it
+    /// matches, and where. Which matcher a pattern's syntax routes it to
+    /// must not show in the answer.
+    #[test]
+    fn both_matchers_give_the_same_answers() {
+        const PATTERNS: &[&str] = &[
+            "sse",
+            "(?:ss)e",
+            "(ss)e",
+            "stra(?:ss|x)e",
+            "(?:ß)e",
+            "(ß)e",
+            "s(?:s)e",
+            "(?:s)(?:s)e",
+            "ss?e",
+            "s{2}e",
+            "(?:ss)+e",
+            "a(?:ss|tt)e",
+            "a(?:ß|tt)e",
+            "(?:fi)n",
+            "(?:ﬁ)n",
+            "(?m)sse",
+            "(?s:ss)e",
+            "(?x) s s e",
+            "ss|x",
+            "^ss$",
+            "a[ß]",
+            "sss?",
+            "[s]s",
+            "s.",
+            "(s)(s)",
+            "s+",
+            "ß+",
+            "ß{2}",
+            "i",
+            "ffi",
+            "straße",
+            r"s\x73e",
+            "(?:a|b)+c",
+            "a{2,3}b",
+            "(a|ab)(c|bcd)",
+            "x*",
+            "(x)*y",
+            "^(?:ab)*$",
+            "a.c",
+            r"\bss\b",
+            "[^s]+",
+            "(?:ß|s)s",
+            "s?ß",
+        ];
+        const SUBJECTS: &[&str] = &[
+            "straße", "STRASSE", "strasse", "ß", "ss", "ﬁn", "FIN", "fin", "aßb", "assb", "ẞ",
+            "sss", "ﬃ", "İ", "xße", "", "abab", "aab", "abcd", "xxy", "a\nc", "ß ss ß", "sßs",
+        ];
+        let mut compared = 0;
+        for insensitive in [true, false] {
+            for pattern in PATTERNS {
+                let folded = if insensitive {
+                    super::with_full_case_folds(pattern)
+                } else {
+                    std::borrow::Cow::Borrowed(*pattern)
+                };
+                let Ok(automaton) =
+                    Program::automaton(&folded, insensitive, false, false, LineEndings::Unicode)
+                else {
+                    continue;
+                };
+                let machine = Program::Backtrack(
+                    crate::expression::sql_backtrack::Program::new(
+                        pattern,
+                        insensitive,
+                        false,
+                        false,
+                        LineEndings::Unicode,
+                    )
+                    .unwrap_or_else(|error| panic!("{pattern}: {error}")),
+                );
+                for subject in SUBJECTS {
+                    let span = |program: &Program| {
+                        program
+                            .nth_match(subject, 0, 1, &mut InterruptCounter::unchecked())
+                            .unwrap_or_else(|error| panic!("{pattern} over {subject}: {error}"))
+                            .map(|found| (found.start(), found.end()))
+                    };
+                    assert_eq!(
+                        span(&machine),
+                        span(&automaton),
+                        "{pattern} over {subject:?}, insensitive: {insensitive}"
+                    );
+                    compared += 1;
+                }
+            }
+        }
+        assert!(compared > 1_500, "{compared} comparisons");
+    }
+
+    /// A pattern that switches case sensitivity for part of itself and
+    /// holds a literal that folds across several characters runs on the
+    /// machine that reads the switch. Answers measured against MySQL 8.4.
+    #[test]
+    fn a_pattern_that_switches_case_folds_where_the_switch_reaches() {
+        for (pattern, insensitive, text, expected) in [
+            ("(?i)sse", true, "straße", true),
+            ("(?i:ss)e", true, "straße", true),
+            ("(?-i)sse", true, "straße", false),
+            ("(?i)sse", false, "straße", true),
+            ("(?:ss)e", true, "straße", true),
+            ("(?:ss)e", false, "straße", false),
+        ] {
+            let program = Program::new(pattern, insensitive, false, false, LineEndings::Unicode)
+                .unwrap_or_else(|error| panic!("{pattern}: {error}"));
+            assert_eq!(
+                matches!(program, Program::Backtrack(_)),
+                pattern.contains('i'),
+                "{pattern}"
+            );
+            assert_eq!(is_match(&program, text), expected, "{pattern} over {text}");
+        }
+    }
 
     #[test]
     fn a_literal_matches_across_a_folding_of_several_characters() {

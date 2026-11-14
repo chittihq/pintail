@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4398;
+const EXPECTED_CASES: usize = 4406;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6080,6 +6080,49 @@ fn engine_error_cases() -> Vec<OracleCase> {
             "regex back-references compare case foldings",
             "SELECT REGEXP_LIKE('ŉʼn', '(ŉ)\\\\1'), REGEXP_LIKE('İi', '(i)\\\\1'), \
                     REGEXP_LIKE('iİ', '(i)\\\\1')",
+        ),
+        // A run of literals folds across several characters wherever it is
+        // written - in a group, after a flag, beside a comment - and
+        // whichever matcher the rest of the pattern is run by.
+        ordered(
+            "regex literal runs fold in any syntax",
+            "SELECT REGEXP_LIKE('straße', '(?:ss)e'), REGEXP_LIKE('straße', 'sse'), \
+                    REGEXP_LIKE('straße', '(ss)e'), REGEXP_LIKE('straße', 'stra(?:ss|x)e')",
+        ),
+        ordered(
+            "regex literal runs fold in any syntax",
+            "SELECT REGEXP_LIKE('STRASSE', '(?:ß)e'), REGEXP_LIKE('STRASSE', '(ß)e'), \
+                    REGEXP_LIKE('straße', 's(?:s)e'), REGEXP_LIKE('straße', '(?:s)(?:s)e')",
+        ),
+        ordered(
+            "regex literal runs fold in any syntax",
+            "SELECT REGEXP_LIKE('straße', '(?i)sse'), REGEXP_LIKE('straße', '(?i:ss)e'), \
+                    REGEXP_LIKE('straße', '(?-i)sse')",
+        ),
+        ordered(
+            "regex literal runs fold in any syntax",
+            "SELECT REGEXP_LIKE('straße', '(?i)sse', 'c'), REGEXP_LIKE('straße', 'ss?e'), \
+                    REGEXP_LIKE('straße', 's{2}e'), REGEXP_LIKE('straße', '(?:ss)+e')",
+        ),
+        ordered(
+            "regex literal runs fold in any syntax",
+            "SELECT REGEXP_LIKE('straße', 'a(?:ss|tt)e'), REGEXP_LIKE('STRASSE', 'a(?:ß|tt)e'), \
+                    REGEXP_LIKE('ﬁn', '(?:fi)n'), REGEXP_LIKE('FIN', '(?:ﬁ)n')",
+        ),
+        ordered(
+            "regex literal runs fold in any syntax",
+            "SELECT REGEXP_LIKE('straße', '(?m)sse'), REGEXP_LIKE('straße', '(?s:ss)e'), \
+                    REGEXP_LIKE('straße', '(?x) s s e')",
+        ),
+        ordered(
+            "regex literal runs fold in any syntax",
+            "SELECT REGEXP_LIKE('straße', 'S(?#c)Se'), REGEXP_LIKE('straße', '(?=s)(?:ss)e'), \
+                    REGEXP_SUBSTR('xstraßex', '(?:ss)e')",
+        ),
+        ordered(
+            "regex literal runs fold in any syntax",
+            "SELECT REGEXP_REPLACE('straße', '(ss)', '[$1]'), REGEXP_INSTR('straße', '(?:ss)'), \
+                    REGEXP_SUBSTR('STRASSE', '(?:ß)')",
         ),
     ]
 }

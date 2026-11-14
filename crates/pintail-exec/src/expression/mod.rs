@@ -8893,11 +8893,6 @@ fn compile_regex(
         u8::from(match_type.contains('u'))
     );
     let translated = unicode_posix_classes(pattern);
-    let translated = if case_insensitive {
-        sql_regex::with_full_case_folds(&translated).into_owned()
-    } else {
-        translated
-    };
     let program = Arc::new(sql_regex::Program::new(
         &translated,
         case_insensitive,

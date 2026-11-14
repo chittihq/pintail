@@ -876,7 +876,10 @@ impl Parser<'_> {
             }
             'E' => Node::Empty,
             other => match self.escaped_item(other)? {
+                // An escaped character is a literal like any other, and
+                // part of the run it stands in.
                 Item::Char(literal) => {
+                    self.literal = Some(literal);
                     self.set(vec![(literal, literal)], flags.case_insensitive, false)?
                 }
                 Item::Ranges(ranges) => self.set(ranges, flags.case_insensitive, false)?,
