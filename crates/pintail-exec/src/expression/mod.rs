@@ -3364,15 +3364,17 @@ fn evaluate_eager_scalar_inner(
             }))
         }
         ScalarFunction::JsonDepth => {
-            let parsed = parse_json_argument(&values[0])?;
-            Ok(Value::Int64(json_depth(&parsed)))
+            let parsed = read_json_argument(&values[0])?;
+            let parsed: &serde_json::Value = &parsed;
+            Ok(Value::Int64(json_depth(parsed)))
         }
         ScalarFunction::JsonQuote => Ok(Value::Utf8(mysql_json_text(&serde_json::Value::String(
             scalar_string(&values[0])?,
         )))),
         ScalarFunction::JsonPretty => {
-            let parsed = parse_json_argument(&values[0])?;
-            Ok(json_text_result("json_pretty", json_pretty(&parsed, 0)))
+            let parsed = read_json_argument(&values[0])?;
+            let parsed: &serde_json::Value = &parsed;
+            Ok(json_text_result("json_pretty", json_pretty(parsed, 0)))
         }
         ScalarFunction::JsonOverlaps => {
             let left = parse_json_argument(&values[0])?;
@@ -5589,10 +5591,7 @@ fn evaluate_eager_scalar_inner(
             Ok(Value::Utf8(replaced))
         }
         ScalarFunction::JsonExtract { unquote } => {
-            let document = scalar_string(&values[0])?;
-            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&document) else {
-                return Err(ExecError::InvalidExpressionType);
-            };
+            let parsed = read_json_argument(&values[0])?;
             // MySQL wraps the result as an array exactly when it COULD hold
             // several values: several paths, or any wildcard/descent/range
             // step - even when only one value actually matched.
@@ -5674,7 +5673,7 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::JsonValue => {
             // JSON_VALUE extracts and unquotes; a RETURNING type is lowered
             // to a CAST around this, so the extraction stays one job.
-            let document = parse_json_argument(&values[0])?;
+            let document = read_json_argument(&values[0])?;
             let path = scalar_string(&values[1])?;
             let steps = json_path_steps(&path)?;
             // A path that can reach several values answers the one it
@@ -5745,11 +5744,13 @@ fn evaluate_eager_scalar_inner(
             )))
         }
         ScalarFunction::JsonType => {
-            let parsed = parse_json_argument(&values[0])?;
-            Ok(Value::Utf8(json_type_name(&parsed).to_owned()))
+            let parsed = read_json_argument(&values[0])?;
+            let parsed: &serde_json::Value = &parsed;
+            Ok(Value::Utf8(json_type_name(parsed).to_owned()))
         }
         ScalarFunction::JsonLength => {
-            let parsed = parse_json_argument(&values[0])?;
+            let parsed = read_json_argument(&values[0])?;
+            let parsed: &serde_json::Value = &parsed;
             // A scalar has length 1; only containers count members.
             let length = |value: &serde_json::Value| match value {
                 serde_json::Value::Array(items) => items.len() as u64,
@@ -5757,7 +5758,7 @@ fn evaluate_eager_scalar_inner(
                 _ => 1,
             };
             let measured = match values.get(1) {
-                None => Some(length(&parsed)),
+                None => Some(length(parsed)),
                 Some(path) => {
                     let path = scalar_string(path)?;
                     let steps = json_path_steps(&path)?;
@@ -5766,20 +5767,21 @@ fn evaluate_eager_scalar_inner(
                         // as the array its matches make: their count, or
                         // NULL when it selects nothing.
                         let mut matches = Vec::new();
-                        collect_json_matches(&parsed, &steps, &mut matches);
+                        collect_json_matches(parsed, &steps, &mut matches);
                         (!matches.is_empty()).then_some(matches.len() as u64)
                     } else {
-                        json_path_lookup(&parsed, &path)?.map(length)
+                        json_path_lookup(parsed, &path)?.map(length)
                     }
                 }
             };
             Ok(measured.map_or(Value::Null, Value::UInt64))
         }
         ScalarFunction::JsonKeys => {
-            let parsed = parse_json_argument(&values[0])?;
+            let parsed = read_json_argument(&values[0])?;
+            let parsed: &serde_json::Value = &parsed;
             let found = match values.get(1) {
-                None => Some(&parsed),
-                Some(path) => json_path_lookup(&parsed, &scalar_string(path)?)?,
+                None => Some(parsed),
+                Some(path) => json_path_lookup(parsed, &scalar_string(path)?)?,
             };
             // MySQL answers NULL rather than raising when the target is not
             // an object.
@@ -5816,7 +5818,8 @@ fn evaluate_eager_scalar_inner(
             )?)))
         }
         ScalarFunction::JsonContainsPath => {
-            let parsed = parse_json_argument(&values[0])?;
+            let parsed = read_json_argument(&values[0])?;
+            let parsed: &serde_json::Value = &parsed;
             let mode = scalar_string(&values[1])?;
             let require_all = if mode.eq_ignore_ascii_case("all") {
                 true
@@ -5833,7 +5836,7 @@ fn evaluate_eager_scalar_inner(
                 // them.
                 let steps = json_path_steps(&scalar_string(path)?)?;
                 let mut matches: Vec<&serde_json::Value> = Vec::new();
-                collect_json_matches(&parsed, &steps, &mut matches);
+                collect_json_matches(parsed, &steps, &mut matches);
                 if !matches.is_empty() {
                     found += 1;
                 }
@@ -9541,6 +9544,62 @@ fn make_time(
 
 /// Parses a JSON-valued argument, raising rather than guessing when the text
 /// is not JSON — every function except `JSON_VALID` requires a real document.
+/// The longest document text whose parsed form is kept for the next reader.
+const REUSED_JSON_BYTES: usize = 1 << 16;
+
+thread_local! {
+    /// The document the last JSON reader on this thread parsed, beside its
+    /// text. Several readers of one column - two `JSON_EXTRACT`s and a
+    /// `JSON_LENGTH`, say - are evaluated one after another for each row,
+    /// and each parsed the same text again. One document is held, of
+    /// bounded size, and it is matched by its whole text, so a reader never
+    /// sees another document's parse.
+    static LAST_JSON: std::cell::RefCell<Option<(String, std::rc::Rc<serde_json::Value>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// [`parse_json_argument`] for a function that only reads the document:
+/// the parse is shared with the reader before it when that one read the
+/// same text.
+fn read_json_argument(value: &Value) -> Result<std::rc::Rc<serde_json::Value>, ExecError> {
+    // Text is matched where it lies: copying it first was a copy per call.
+    if let Value::Utf8(text) = value {
+        if let Some(parsed) = held_json(text) {
+            return Ok(parsed);
+        }
+        return parse_json_text(text.clone());
+    }
+    let text = scalar_string(value)?;
+    match held_json(&text) {
+        Some(parsed) => Ok(parsed),
+        None => parse_json_text(text),
+    }
+}
+
+/// The held parse, when it is of exactly `text`.
+fn held_json(text: &str) -> Option<std::rc::Rc<serde_json::Value>> {
+    let held = LAST_JSON.with_borrow(|last| {
+        last.as_ref()
+            .filter(|(known, _)| known == text)
+            .map(|(_, parsed)| std::rc::Rc::clone(parsed))
+    })?;
+    crate::counters::count(|counters| {
+        counters.json_documents_reused = counters.json_documents_reused.saturating_add(1);
+    });
+    Some(held)
+}
+
+fn parse_json_text(text: String) -> Result<std::rc::Rc<serde_json::Value>, ExecError> {
+    let parsed = std::rc::Rc::new(
+        serde_json::from_str::<serde_json::Value>(&text)
+            .map_err(|_| ExecError::InvalidExpressionType)?,
+    );
+    LAST_JSON.with_borrow_mut(|last| {
+        *last = (text.len() <= REUSED_JSON_BYTES).then(|| (text, std::rc::Rc::clone(&parsed)));
+    });
+    Ok(parsed)
+}
+
 fn parse_json_argument(value: &Value) -> Result<serde_json::Value, ExecError> {
     serde_json::from_str::<serde_json::Value>(&scalar_string(value)?)
         .map_err(|_| ExecError::InvalidExpressionType)
