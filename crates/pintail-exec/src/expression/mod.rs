@@ -9288,6 +9288,9 @@ fn collect_json_matches<'a>(
                     }
                 }
             }
+            // An empty array has no cell for a range to select; only a
+            // value that is not an array stands in for its own first cell.
+            serde_json::Value::Array(_) => {}
             other if matches!(from, JsonBound::Forward(0) | JsonBound::Last(0)) => {
                 collect_json_matches(other, rest, out);
             }

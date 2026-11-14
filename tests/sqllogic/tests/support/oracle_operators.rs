@@ -440,6 +440,11 @@ const REGEXP_WITH_A_NULL_PATTERN: &[&str] = &[
     r#"SELECT id FROM events WHERE note REGEXP NULL OR id = 3 ORDER BY id"#,
 ];
 
+const JSON_RANGES_OVER_EMPTY_ARRAYS: &[&str] = &[
+    r#"SELECT JSON_EXTRACT('[]', '$[0 to 1]'), JSON_EXTRACT('{"a":[]}', '$.a[0 to 1]'), JSON_EXTRACT('[1]', '$[1 to 2]'), JSON_EXTRACT('[1,2,3]', '$[1 to 5]'), JSON_EXTRACT('[1,2,3]', '$[0 to 0]'), JSON_EXTRACT('[1,2,3]', '$[last to last]'), JSON_EXTRACT('[1,2,3]', '$[5 to 9]'), JSON_EXTRACT('[]', '$[*]'), JSON_EXTRACT('[[]]', '$[0][0 to 1]'), JSON_EXTRACT('{}', '$.*'), JSON_EXTRACT('[1,2,3]', '$[last-1 to last]'), JSON_EXTRACT('5', '$[0 to 1]'), JSON_EXTRACT('5', '$[1 to 2]'), JSON_EXTRACT('[]', '$**.a'), JSON_EXTRACT('[1,[2]]', '$[0 to 1][0]')"#,
+    r#"SELECT id, meta->'$.items[0 to 1]', meta->'$.items[1 to 9]', meta->'$.tags[0 to 0]', meta->'$.tags[*]', meta->'$.items[last to last]' FROM orders ORDER BY id"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -458,6 +463,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("json ranges over empty arrays", JSON_RANGES_OVER_EMPTY_ARRAYS),
         ("regexp with a null pattern", REGEXP_WITH_A_NULL_PATTERN),
         ("bare utc clocks", BARE_UTC_CLOCKS),
         ("mid with from and for", MID_WITH_FROM_AND_FOR),
