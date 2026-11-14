@@ -129,7 +129,7 @@
     "name": "LATERAL derived tables",
     "category": "SQL and relational execution",
     "scope": "analytics",
-    "status": "gap",
+    "status": "partial",
     "priority": "P1",
     "source": [
       {
@@ -139,9 +139,10 @@
       }
     ],
     "evidence": [
-      "crates/pintail-sql/src/binder/mod.rs"
+      "crates/pintail-exec/src/execution/lateral.rs",
+      "docs/limitations.md"
     ],
-    "note": "Derived-table binding explicitly rejects lateral=true.",
+    "note": "LATERAL derived tables are evaluated on the dependent path and compared with MySQL in the fixed oracle: correlation scope, joins, empty results and top-N per group. A LATERAL table is never decorrelated, and three positions are refused by name (inside a parenthesized join, before a RIGHT JOIN in its chain, joined with a subquery in ON); docs/limitations.md has the list.",
     "acceptance": "Add dependent table evaluation and compare correlation scope, joins and empty results."
   },
   {
@@ -170,7 +171,7 @@
     "name": "ROLLUP and GROUPING",
     "category": "SQL and relational execution",
     "scope": "analytics",
-    "status": "unassessed",
+    "status": "partial",
     "priority": "P1",
     "source": [
       {
@@ -180,9 +181,10 @@
       }
     ],
     "evidence": [
-      "crates/pintail-sql/src/binder/mod.rs"
+      "crates/pintail-sql/src/binder/mod.rs",
+      "docs/limitations.md"
     ],
-    "note": "Keyword inventories do not establish subtotal/grouping-indicator execution.",
+    "note": "GROUP BY ... WITH ROLLUP and GROUPING() are compared with MySQL in the fixed oracle: subtotal against stored NULLs, HAVING, ordering by a GROUPING alias, DISTINCT aggregates. Refused: ROLLUP beside SELECT DISTINCT or a window function, and GROUPING() in ORDER BY.",
     "acceptance": "Exercise WITH ROLLUP, genuine NULL versus subtotal NULL, HAVING and ORDER BY; then classify support."
   },
   {
@@ -211,7 +213,7 @@
     "name": "JSON_TABLE relational expansion",
     "category": "SQL and relational execution",
     "scope": "analytics",
-    "status": "gap",
+    "status": "partial",
     "priority": "P1",
     "source": [
       {
@@ -221,9 +223,10 @@
       }
     ],
     "evidence": [
-      "crates/pintail-sql/src/binder/mod.rs"
+      "crates/pintail-exec/src/expression/json_table.rs",
+      "docs/limitations.md"
     ],
-    "note": "No supported JSON_TABLE table-factor route.",
+    "note": "JSON_TABLE is a table factor with FOR ORDINALITY, NESTED PATH, EXISTS PATH, ON EMPTY and ON ERROR and implicit lateral reference, compared with MySQL in the fixed oracle. The accepted column types and the remaining differences are in docs/limitations.md.",
     "acceptance": "Implement ordinality, nested paths, ON EMPTY/ERROR, coercion and implicit lateral semantics."
   },
   {
@@ -231,7 +234,7 @@
     "name": "Views and view security semantics",
     "category": "SQL and relational execution",
     "scope": "analytics",
-    "status": "unassessed",
+    "status": "gap",
     "priority": "P1",
     "source": [
       {
@@ -241,9 +244,10 @@
       }
     ],
     "evidence": [
-      "crates/pintail-sql/src/metadata.rs"
+      "crates/pintail-sql/src/metadata.rs",
+      "docs/limitations.md"
     ],
-    "note": "A VIEWS discovery relation does not prove CREATE VIEW or executable stored views.",
+    "note": "Assessed: there are no views. CREATE VIEW, ALTER VIEW and DROP VIEW are refused, a view defined on the source is not mirrored (only base tables are), and information_schema.VIEWS is served empty.",
     "acceptance": "Check source-view discovery/replication and local view DDL, resolution, definer/invoker and check-option semantics separately."
   },
   {
@@ -313,7 +317,7 @@
     "name": "TABLE, VALUES and locking SELECT forms",
     "category": "SQL and relational execution",
     "scope": "analytics",
-    "status": "unassessed",
+    "status": "partial",
     "priority": "P2",
     "source": [
       {
@@ -323,9 +327,10 @@
       }
     ],
     "evidence": [
-      "crates/pintail-sql/src/binder/mod.rs"
+      "crates/pintail-sql/src/call_forms.rs",
+      "docs/limitations.md"
     ],
-    "note": "Parser keywords alone do not establish executable statement forms.",
+    "note": "The TABLE statement and VALUES ROW(...) as a statement, a derived table and an IN subquery are compared with MySQL in the fixed oracle. Locking reads (FOR UPDATE, FOR SHARE, LOCK IN SHARE MODE with or without NOWAIT or SKIP LOCKED) and SELECT ... INTO OUTFILE, DUMPFILE or a variable are refused by name on a read-only mirror.",
     "acceptance": "Probe TABLE/VALUES, INTO OUTFILE, FOR UPDATE/SHARE, NOWAIT/SKIP LOCKED and document each contract."
   },
   {

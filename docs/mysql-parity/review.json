@@ -1801,44 +1801,45 @@
       "priority": "P1"
     },
     "CUME_DIST": {
-      "status": "gap",
-      "note": "No dispatch in the window binder; the supported ranking/offset/extreme branches do not implement this MySQL window function.",
+      "status": "implemented-unverified",
+      "note": "Bound as a window function and compared with MySQL in the fixed oracle. Frames, peers under ties, NULL ordering and wire metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs:41"
+        "crates/pintail-sql/src/binder/mod.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "PERCENT_RANK": {
-      "status": "gap",
-      "note": "No dispatch in the window binder; the supported ranking/offset/extreme branches do not implement this MySQL window function.",
+      "status": "implemented-unverified",
+      "note": "Bound as a window function and compared with MySQL in the fixed oracle. Frames, peers under ties, NULL ordering and wire metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs:41"
+        "crates/pintail-sql/src/binder/mod.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "NTH_VALUE": {
-      "status": "gap",
-      "note": "No dispatch in the window binder; the supported ranking/offset/extreme branches do not implement this MySQL window function.",
+      "status": "implemented-unverified",
+      "note": "Bound as a window function and compared with MySQL in the fixed oracle. Frames, peers under ties, NULL ordering and wire metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs:41"
+        "crates/pintail-sql/src/binder/mod.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "JSON_TABLE": {
-      "status": "gap",
-      "note": "Relational JSON expansion has no supported table-factor binding path.",
+      "status": "partial",
+      "note": "A table factor evaluated per outer row, compared with MySQL in the fixed oracle: ordinality, nested paths, EXISTS PATH, ON EMPTY and ON ERROR. The column types it accepts and the remaining differences are listed in docs/limitations.md.",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs:1607"
+        "crates/pintail-exec/src/expression/json_table.rs",
+        "docs/limitations.md"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "DATABASE": {
       "status": "partial",
-      "note": "Handled by selected wire compatibility-query text patterns, not general scalar expression binding. Composition, projection aliases, HTTP and prepared execution need separate checks.",
+      "note": "Answered from the session by the server, alone or inside an expression beside table columns. The in-process harness has no session, so the fixed oracle does not compare it; HTTP and prepared execution need separate checks.",
       "evidence": [
         "crates/pintail-wire/src/server.rs:2033"
       ],
@@ -1847,7 +1848,7 @@
     },
     "VERSION": {
       "status": "partial",
-      "note": "Handled by selected wire compatibility-query text patterns, not general scalar expression binding. Composition, projection aliases, HTTP and prepared execution need separate checks.",
+      "note": "Answered from the session by the server, alone or inside an expression beside table columns. The in-process harness has no session, so the fixed oracle does not compare it; HTTP and prepared execution need separate checks.",
       "evidence": [
         "crates/pintail-wire/src/server.rs:2033"
       ],
@@ -1855,147 +1856,140 @@
       "priority": "P1"
     },
     "SOUNDEX": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle, including the SOUNDS LIKE spelling. Non-ASCII letters and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "ACOS": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "ASIN": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "ATAN": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "ATAN2": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "COS": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "COT": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "SIN": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "TAN": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "DEGREES": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "RADIANS": {
-      "status": "gap",
-      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "status": "implemented-unverified",
+      "note": "Bound as a scalar function and compared with MySQL in the fixed oracle over literals. Domain edges, NULL propagation over stored columns and result metadata have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs",
-        "docs/limitations.md:53"
+        "crates/pintail-sql/src/binder/function.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "JSON_ARRAY_APPEND": {
-      "status": "gap",
-      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "status": "partial",
+      "note": "Bound and compared with MySQL in the fixed oracle. A DECIMAL written into a document loses trailing zeros, as docs/limitations.md records for the JSON modification family.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs"
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "JSON_ARRAY_INSERT": {
-      "status": "gap",
-      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "status": "partial",
+      "note": "Bound and compared with MySQL in the fixed oracle. A DECIMAL written into a document loses trailing zeros, as docs/limitations.md records for the JSON modification family.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs"
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "JSON_MERGE": {
-      "status": "gap",
-      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "status": "partial",
+      "note": "Bound and compared with MySQL in the fixed oracle. A DECIMAL written into a document loses trailing zeros, as docs/limitations.md records for the JSON modification family.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs"
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
       ],
       "scope": "analytics",
       "priority": "P1"
     },
     "JSON_MERGE_PRESERVE": {
-      "status": "gap",
-      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "status": "partial",
+      "note": "Bound and compared with MySQL in the fixed oracle. A DECIMAL written into a document loses trailing zeros, as docs/limitations.md records for the JSON modification family.",
       "evidence": [
-        "crates/pintail-sql/src/binder/function.rs"
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
       ],
       "scope": "analytics",
       "priority": "P1"
@@ -2534,12 +2528,101 @@
       ],
       "scope": "analytics",
       "priority": "P1"
+    },
+    "COLLATION": {
+      "status": "partial",
+      "note": "Answers for expressions whose collation rule is modelled and refuses the rest by name; the refused forms are listed in docs/limitations.md.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/collation_identity.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "CHARSET": {
+      "status": "partial",
+      "note": "Answers for expressions whose collation rule is modelled and refuses the rest by name; the refused forms are listed in docs/limitations.md.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/collation_identity.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "COERCIBILITY": {
+      "status": "partial",
+      "note": "Answers for expressions whose collation rule is modelled and refuses the rest by name; the refused forms are listed in docs/limitations.md.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/collation_identity.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "WEIGHT_STRING": {
+      "status": "partial",
+      "note": "Returns MySQL's weight bytes for the four replicated collations, their utf8mb3 namesakes and byte strings; every other collation and non-string argument is refused (docs/limitations.md).",
+      "evidence": [
+        "crates/pintail-exec/src/collation/weight_string.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "GET_FORMAT": {
+      "status": "partial",
+      "note": "Bound and compared with MySQL in the fixed oracle; the format name must be a constant.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "CURRENT_ROLE": {
+      "status": "partial",
+      "note": "Always NONE: there are no roles.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "client",
+      "priority": "P1"
+    },
+    "LAST_INSERT_ID": {
+      "status": "partial",
+      "note": "Always 0, because no statement generates a key; the one-argument form is refused.",
+      "evidence": [
+        "crates/pintail-sql/src/repeatable.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "client",
+      "priority": "P1"
+    },
+    "ROW_COUNT": {
+      "status": "implemented-unverified",
+      "note": "Answered for the connection. No differential gate compares it.",
+      "evidence": [
+        "crates/pintail-wire/src/diagnostics.rs"
+      ],
+      "scope": "client",
+      "priority": "P1"
+    },
+    "GROUPING": {
+      "status": "partial",
+      "note": "Accepted in the select list and HAVING of a WITH ROLLUP query and compared with MySQL in the fixed oracle; refused in ORDER BY (docs/limitations.md).",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
     }
   },
   "operators": {
     "operator:function_match": {
       "status": "gap",
-      "note": "No matching full-text/SOUNDEX execution support has been established; inspect the unsupported expression path.",
+      "note": "Full-text search is not implemented: MATCH ... AGAINST is refused as an unsupported expression (docs/limitations.md).",
       "evidence": [
         "crates/pintail-sql/src/binder/mod.rs",
         "docs/limitations.md"
@@ -2968,11 +3051,10 @@
       "priority": "P1"
     },
     "operator:operator_sounds-like": {
-      "status": "gap",
-      "note": "No matching full-text/SOUNDEX execution support has been established; inspect the unsupported expression path.",
+      "status": "implemented-unverified",
+      "note": "Read as an operator and bound as a comparison of the two SOUNDEX codes; compared with MySQL in the fixed oracle. Non-ASCII letters have not had the full acceptance pass.",
       "evidence": [
-        "crates/pintail-sql/src/binder/mod.rs",
-        "docs/limitations.md"
+        "crates/pintail-sql/src/binder/mod.rs"
       ],
       "scope": "analytics",
       "priority": "P1"
