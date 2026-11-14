@@ -383,10 +383,17 @@ fn json_wildcard_misses_and_single_target_refusals() {
             "0".to_owned(),
         ]]
     );
-    // Single-target functions refuse multi-target paths, as MySQL does.
-    let directory = tempfile::tempdir().expect("temporary table");
-    drop(directory);
-    let result = std::panic::catch_unwind(|| run("SELECT JSON_VALUE('{\"a\":1}','$.*')"));
+    // JSON_VALUE answers the one value a multi-target path reaches, and
+    // NULL for none or several. The other single-target functions refuse
+    // such a path, as MySQL does.
+    let rows = run("SELECT JSON_VALUE('{\"a\":1}','$.*'), \
+                JSON_VALUE('{\"a\":1,\"b\":2}','$.*') IS NULL, \
+                JSON_VALUE('{}','$.*') IS NULL");
+    assert_eq!(
+        rows,
+        vec![vec!["1".to_owned(), "1".to_owned(), "1".to_owned()]]
+    );
+    let result = std::panic::catch_unwind(|| run("SELECT JSON_KEYS('{\"a\":1}','$.*')"));
     assert!(result.is_err());
 }
 

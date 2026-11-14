@@ -5537,14 +5537,25 @@ fn evaluate_eager_scalar_inner(
             // to a CAST around this, so the extraction stays one job.
             let document = parse_json_argument(&values[0])?;
             let path = scalar_string(&values[1])?;
-            Ok(
-                // The JSON null literal is the SQL NULL here, not its text.
-                json_path_lookup(&document, &path)?.map_or(Value::Null, |found| match found {
-                    serde_json::Value::Null => Value::Null,
-                    serde_json::Value::String(text) => Value::Utf8(text.clone()),
-                    other => Value::Utf8(mysql_json_text(other)),
-                }),
-            )
+            let steps = json_path_steps(&path)?;
+            // A path that can reach several values answers the one it
+            // reaches; none is NULL, and so is more than one, which is the
+            // error JSON_VALUE turns into NULL unless told otherwise.
+            let found = if steps.iter().any(JsonStep::multi) {
+                let mut found = Vec::new();
+                collect_json_matches(&document, &steps, &mut found);
+                // A descent can reach one value along two routes.
+                let first = found.first().copied();
+                first.filter(|first| found.iter().all(|other| std::ptr::eq(*other, *first)))
+            } else {
+                json_path_lookup(&document, &path)?
+            };
+            // The JSON null literal is the SQL NULL here, not its text.
+            Ok(found.map_or(Value::Null, |found| match found {
+                serde_json::Value::Null => Value::Null,
+                serde_json::Value::String(text) => Value::Utf8(text.clone()),
+                other => Value::Utf8(mysql_json_text(other)),
+            }))
         }
         ScalarFunction::JsonSearch => {
             let document = parse_json_argument(&values[0])?;

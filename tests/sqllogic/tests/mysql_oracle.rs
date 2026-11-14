@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4313;
+const EXPECTED_CASES: usize = 4315;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5763,6 +5763,27 @@ fn engine_error_cases() -> Vec<OracleCase> {
                     TRUNCATE(1.5e300, -309), TRUNCATE(1.5e300, -31), TRUNCATE(123.456e0, 400), \
                     TRUNCATE(-98765.4321e0, -3), TRUNCATE(1e22, 31), TRUNCATE(5e-324, 320), \
                     TRUNCATE(2.5e15, -15), TRUNCATE(9.87e20, -19)",
+        ),
+        // JSON_VALUE over a path that can reach several values answers the
+        // one it reaches, and NULL when it reaches none or more than one.
+        ordered(
+            "json_value over paths that reach several values",
+            "SELECT JSON_VALUE('[{\"k\": 1},\"bar\"]', '$[*][0]'), JSON_VALUE('[\"k\"]', '$**[0]'), \
+                    JSON_VALUE('{\"a\":[1,2]}', '$.a[*]'), JSON_VALUE('{\"a\":[1]}', '$.a[*]'), \
+                    JSON_VALUE('[[10,20],[30,40]]', '$[0 to 1][0]'), \
+                    JSON_VALUE('[[10,20]]', '$[0 to 1][0]'), JSON_VALUE('[[10,20]]', '$[*][5]'), \
+                    JSON_VALUE('{\"a\":{\"b\":7},\"c\":{\"b\":8}}', '$**.b'), \
+                    JSON_VALUE('{\"a\":{\"b\":7}}', '$**.b'), JSON_VALUE('{\"a\":{\"b\":7}}', '$.*'), \
+                    JSON_VALUE('[1,2,3]', '$[1 to 2]'), JSON_VALUE('[1,2,3]', '$[1 to 1]'), \
+                    JSON_VALUE('[[5]]', '$[*][0]' RETURNING SIGNED), \
+                    JSON_VALUE('[[{\"x\":1}]]', '$[*][0]')",
+        ),
+        ordered(
+            "json_value over paths that reach several values",
+            "SELECT id, JSON_VALUE(JSON_ARRAY(JSON_ARRAY(id, status)), '$[*][1]'), \
+                    JSON_VALUE(JSON_ARRAY(id, total), '$[*]'), \
+                    JSON_VALUE(JSON_OBJECT('a', JSON_OBJECT('n', id)), '$**.n') \
+             FROM orders ORDER BY id",
         ),
     ]
 }
