@@ -450,6 +450,9 @@ type AddedCase = {
   session?: string[]
   /// One or more `ALTER TABLE` bodies, run back to back.
   alters: string[]
+  /// Whole statements run after them as written, `{t}` the table: for
+  /// the shapes a body after `ALTER TABLE t` cannot spell.
+  statements?: string[]
   /// Compared columns; the table starts as `(id, d)`.
   projection: string
   inPlace: boolean
@@ -615,6 +618,29 @@ const addedCases: AddedCase[] = [
     alters: ['ADD COLUMN half INT AS (d DIV 2) VIRTUAL'],
     projection: 'id, d, half',
     inPlace: false,
+  },
+  // A migration tool tags its statements and wraps them as it likes; the
+  // source logs them as sent.
+  {
+    name: 'a statement led by a comment',
+    alters: [],
+    statements: ['/* step 4 */ ALTER TABLE {t} ADD COLUMN extra INT NULL'],
+    projection: 'id, d, extra',
+    inPlace: true,
+  },
+  {
+    name: 'a comment between the opening words',
+    alters: [],
+    statements: ['alter /* tool */ table {t} add column extra int null'],
+    projection: 'id, d, extra',
+    inPlace: true,
+  },
+  {
+    name: 'a line break between the opening words',
+    alters: [],
+    statements: ['ALTER\r\n  TABLE {t}\r\n  ADD COLUMN extra INT NULL -- last'],
+    projection: 'id, d, extra',
+    inPlace: true,
   },
   {
     name: 'a nullable column beside ALGORITHM',
@@ -1191,6 +1217,7 @@ async function main() {
     untouched.set(table, [1, 3])
     for (const statement of added.session ?? []) await sql(statement)
     for (const alter of added.alters) await sql(`ALTER TABLE ${table} ${alter}`)
+    for (const statement of added.statements ?? []) await sql(statement.replaceAll('{t}', table))
     if (added.session) await sql("SET time_zone = '+00:00'")
     await sql(`INSERT INTO ${table} (id, d) VALUES (90, 900)`)
     await sql(`UPDATE ${table} SET d = 21 WHERE id = 2`)

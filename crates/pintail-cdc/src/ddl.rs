@@ -577,8 +577,119 @@ fn parse_source_ddl(statement: &str) -> Result<Vec<Statement>, CdcError> {
     Ok(statements)
 }
 
+/// `statement` as the classification below reads it: comments gone, and its
+/// opening words one space apart.
+///
+/// The source logs a statement as it was sent. A migration tool that tags
+/// its statements - `/* step 4 */ ALTER TABLE t ...`, `alter /* tool */
+/// table t ...` - or breaks the line after `ALTER` sent one that began with
+/// none of the words looked for here, so it was read as no schema change
+/// at all and the table's declaration moved without the mirror following.
+/// A `/*! ... */` comment is not one to the source: its text is kept.
+fn readable_ddl(statement: &str) -> String {
+    let mut text = String::with_capacity(statement.len());
+    let mut chars = statement.chars().peekable();
+    let mut quote = None;
+    while let Some(character) = chars.next() {
+        if let Some(open) = quote {
+            text.push(character);
+            if character == '\\' && open != '`' {
+                text.extend(chars.next());
+            } else if character == open {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' | '`' => {
+                quote = Some(character);
+                text.push(character);
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let kept = chars.peek() == Some(&'!');
+                if kept {
+                    chars.next();
+                    while chars.peek().is_some_and(char::is_ascii_digit) {
+                        chars.next();
+                    }
+                }
+                text.push(' ');
+                while let Some(inner) = chars.next() {
+                    if inner == '*' && chars.peek() == Some(&'/') {
+                        chars.next();
+                        break;
+                    }
+                    if kept {
+                        text.push(inner);
+                    }
+                }
+                text.push(' ');
+            }
+            '#' => {
+                for inner in chars.by_ref() {
+                    if inner == '\n' {
+                        break;
+                    }
+                }
+                text.push(' ');
+            }
+            '-' if chars.peek() == Some(&'-') => {
+                let mut ahead = chars.clone();
+                ahead.next();
+                if ahead.peek().is_none_or(|next| next.is_whitespace()) {
+                    for inner in chars.by_ref() {
+                        if inner == '\n' {
+                            break;
+                        }
+                    }
+                    text.push(' ');
+                } else {
+                    text.push(character);
+                }
+            }
+            _ => text.push(character),
+        }
+    }
+    opening_words_spaced(&text)
+}
+
+/// `text` with the words up to and including TABLE one space apart.
+/// `ONLINE` and `IGNORE` between ALTER and TABLE change how the source
+/// works, not what the statement does, and are dropped.
+fn opening_words_spaced(text: &str) -> String {
+    let rest = text.trim_start();
+    let mut head = Vec::new();
+    let mut remaining = rest;
+    for _ in 0..4 {
+        let trimmed = remaining.trim_start();
+        let end = trimmed
+            .find(|character: char| !character.is_ascii_alphabetic())
+            .unwrap_or(trimmed.len());
+        if end == 0 {
+            break;
+        }
+        let word = &trimmed[..end];
+        remaining = &trimmed[end..];
+        let table = word.eq_ignore_ascii_case("TABLE");
+        if !(word.eq_ignore_ascii_case("ONLINE") || word.eq_ignore_ascii_case("IGNORE"))
+            || !head
+                .first()
+                .is_some_and(|first: &&str| first.eq_ignore_ascii_case("ALTER"))
+        {
+            head.push(word);
+        }
+        if table {
+            return format!("{}{remaining}", head.join(" "));
+        }
+    }
+    rest.to_owned()
+}
+
 #[allow(clippy::too_many_lines)] // linear DDL-statement classification table
 pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, CdcError> {
+    let statement = readable_ddl(statement);
+    let statement = statement.as_str();
     let normalized = statement.trim_start().to_ascii_uppercase();
     if ![
         "ALTER TABLE",
@@ -998,6 +1109,39 @@ mod tests {
                     dropped: Vec::new(),
                 },
             }]
+        );
+    }
+
+    /// A comment or a line break in a statement's opening words does not
+    /// hide the statement.
+    #[test]
+    fn a_tagged_or_wrapped_statement_is_still_read() {
+        let added = vec![DdlAction::Alter {
+            table: "events".to_owned(),
+            kind: AlterKind::AddOrDropColumns {
+                added: vec!["extra".to_owned()],
+                dropped: Vec::new(),
+            },
+        }];
+        for statement in [
+            "/* step 4 */ ALTER TABLE events ADD COLUMN extra INT NULL",
+            "alter /* tool */ table events add column extra int null",
+            "ALTER\r\n  TABLE events ADD COLUMN extra INT NULL",
+            "-- step 4\nALTER  TABLE events ADD COLUMN extra INT NULL",
+            "# step 4\nALTER TABLE events ADD COLUMN extra INT NULL -- done",
+            "ALTER IGNORE TABLE events ADD COLUMN extra INT NULL",
+            "ALTER TABLE events /*!50700 ADD COLUMN extra INT NULL */",
+        ] {
+            assert_eq!(parse_ddl(statement, "app").unwrap().actions, added, "{statement}");
+        }
+        // Comment marks inside a string or a name are the string or name.
+        assert_eq!(
+            super::readable_ddl("ALTER TABLE `a#b` COMMENT '/* kept */ -- kept'"),
+            "ALTER TABLE `a#b` COMMENT '/* kept */ -- kept'"
+        );
+        assert_eq!(
+            parse_ddl("/* gone */ DROP  TABLE events", "app").unwrap().actions,
+            vec![DdlAction::Drop { table: "events".to_owned() }]
         );
     }
 
