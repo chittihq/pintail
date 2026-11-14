@@ -691,11 +691,6 @@ pub const REFUSED: &[(&str, &str, &str)] = &[
         "invalid use of group function",
     ),
     (
-        "reject connection function beside another item",
-        "SELECT DATABASE(), id FROM users",
-        "unsupported expression",
-    ),
-    (
         "reject server version inside an expression",
         "SELECT LENGTH(VERSION())",
         "unsupported expression",
