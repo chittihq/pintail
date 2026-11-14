@@ -1,10 +1,10 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-10-27T13:41:04.877Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-11-14T04:01:59.222Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: ece0e0103038407db77081f32e02c5103fb50cc5; source dirty: false. Binary SHA-256: a404f6680309508aa7ee7fb764db027f9ef72d8995ae8c686ec04e452bad00eb.
+Replay mode: local. Source commit: 4a82f3c84ce3f64ba9ef12f3637b43a6095bec10; source dirty: false. Binary SHA-256: f565fae7beb4f5dce2e953416a381a4f4a2b1e5a67ced9fa32ba8f315c196f94.
 
-**10,101 of 10,227 compared SELECTs match MySQL byte-for-byte** (98.8%), **out of 23,119 SELECTs replayed** - 12,892 never reached a comparison, so this is a share of what could be compared and not of the suite. 123 differ in rows, 3 in column names only. 4,297 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
+**10,100 of 10,227 compared SELECTs match MySQL byte-for-byte** (98.8%), **out of 23,119 SELECTs replayed** - 12,892 never reached a comparison, so this is a share of what could be compared and not of the suite. 124 differ in rows, 3 in column names only. 4,297 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -628,7 +628,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | window_functions_in2exists | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 8 |
 | window_functions_in2exists_hypergraph | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 | 8 |
 | window_functions_interesting_orders | 31 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 6 | 0 | 19 |
-| window_jsonaggs | 93 | 15 | 0 | 0 | 31 | 2 | 0 | 38 | 0 | 2 | 0 | 5 |
+| window_jsonaggs | 93 | 14 | 1 | 0 | 31 | 2 | 0 | 38 | 0 | 2 | 0 | 5 |
 | window_min_max | 295 | 73 | 0 | 0 | 4 | 43 | 3 | 125 | 0 | 31 | 5 | 8 |
 | window_std_var | 277 | 68 | 0 | 0 | 4 | 26 | 2 | 125 | 0 | 27 | 6 | 16 |
 | window_std_var_optimized | 277 | 68 | 0 | 0 | 4 | 26 | 2 | 125 | 0 | 27 | 6 | 16 |
@@ -676,4 +676,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 47 | Error: numeric expression overflow |
 | 45 | INSERT: Error: Incorrect value _ for column _: expected a datetime |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mvqq916e-156807/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwfvlst2-660643/diffs/` (not committed).

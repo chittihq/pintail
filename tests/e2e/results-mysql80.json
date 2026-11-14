@@ -1235,6 +1235,41 @@
     "status": "PASS"
   },
   {
+    "phase": "snapshot",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "service:snapshot:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "orm-compat",
     "check": "sequelize:metadata:result",
     "status": "PASS"
@@ -2590,6 +2625,41 @@
     "status": "PASS"
   },
   {
+    "phase": "orm-compat",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "service:orm-compat:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "crud",
     "check": "converge:Dim",
     "status": "PASS"
@@ -3825,6 +3895,41 @@
     "status": "PASS"
   },
   {
+    "phase": "crud",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "service:crud:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "composite-keys",
     "check": "converge:Dim",
     "status": "PASS"
@@ -5060,6 +5165,41 @@
     "status": "PASS"
   },
   {
+    "phase": "composite-keys",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "service:composite-keys:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "type-edges",
     "check": "converge:Dim",
     "status": "PASS"
@@ -6292,6 +6432,41 @@
   {
     "phase": "type-edges",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "service:type-edges:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -7555,6 +7730,41 @@
     "status": "PASS"
   },
   {
+    "phase": "ddl",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "service:ddl:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "schema-drift-minimal",
     "check": "converge:Dim",
     "status": "PASS"
@@ -8800,6 +9010,41 @@
     "status": "PASS"
   },
   {
+    "phase": "schema-drift-minimal",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "service:schema-drift-minimal:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "schema-drift-unseen",
     "check": "converge:Dim",
     "status": "PASS"
@@ -10042,6 +10287,41 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "service:schema-drift-unseen:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -11320,6 +11600,41 @@
     "status": "PASS"
   },
   {
+    "phase": "churn",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "service:churn:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "contention",
     "check": "converge:Dim",
     "status": "PASS"
@@ -12562,6 +12877,41 @@
   {
     "phase": "contention",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "service:contention:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -13832,6 +14182,41 @@
   {
     "phase": "execution-budget",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "service:execution-budget:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -15205,6 +15590,41 @@
     "status": "PASS"
   },
   {
+    "phase": "connection-collation",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "connection-collation",
+    "check": "service:connection-collation:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "spill",
     "check": "forced-spill:sort",
     "status": "PASS"
@@ -16470,6 +16890,41 @@
     "status": "PASS"
   },
   {
+    "phase": "spill",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "service:spill:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "pooling",
     "check": "wire:multi-statement-setup-and-results",
     "status": "PASS"
@@ -17732,6 +18187,41 @@
   {
     "phase": "pooling",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "service:pooling:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -19075,6 +19565,41 @@
     "status": "PASS"
   },
   {
+    "phase": "local-database",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "service:local-database:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "restart",
     "check": "local:rows survive a SIGKILL",
     "status": "PASS"
@@ -20325,10 +20850,45 @@
     "status": "PASS"
   },
   {
+    "phase": "restart",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "service:restart:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150023 sync_runs rows for db_f21194cf90eb84a72940668ad087072c"
+    "detail": "150024 sync_runs rows for db_3f359b74e2e4b6726313406a4a6a4e34"
   },
   {
     "phase": "activity-history",
@@ -20340,25 +20900,25 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 2ms p95 2ms over 150000 rows"
+    "detail": "p50 1ms p95 3ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 2ms p95 3ms"
+    "detail": "p50 1ms p95 4ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 18ms p99 30ms"
+    "detail": "p50 11ms p99 28ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 24ms"
+    "detail": "health p95 15ms"
   },
   {
     "phase": "activity-history",
@@ -21603,31 +22163,66 @@
   {
     "phase": "activity-history",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "service:activity-history:no table left service unexpectedly",
     "status": "PASS"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4900"
+    "detail": "0 failed of 4800"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4900 requests: p50 2ms p99 7ms"
+    "detail": "4800 requests: p50 3ms p99 14ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 2ms"
+    "detail": "health p99 17ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 8661 vs source 8661"
+    "detail": "orders replica 3357 vs source 3357"
   },
   {
     "phase": "poll-storm",
@@ -22872,6 +23467,41 @@
   {
     "phase": "poll-storm",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "service:poll-storm:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -24230,6 +24860,41 @@
     "status": "PASS"
   },
   {
+    "phase": "control-plane",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "service:control-plane:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "snapshot-ddl-window",
     "check": "a table created just before a forced snapshot is still adopted",
     "status": "PASS"
@@ -25482,6 +26147,41 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "service:snapshot-ddl-window:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -26761,6 +27461,41 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-table-cdc",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "service:drop-table-cdc:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "drop-table-recreate",
     "check": "recreate:first generation replicates",
     "status": "PASS"
@@ -28026,6 +28761,41 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-table-recreate",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "service:drop-table-recreate:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "drop-table-polling",
     "check": "polling:fixtures replicate before the mode switch",
     "status": "PASS"
@@ -28044,7 +28814,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_f21194cf90eb84a72940668ad087072c\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-10-27T15:41:23.665173352+00:00\",\"updated_at\":\"2026-10-27T15:45:05.176999562+00:00\"},\"tables\":30,\"rows\":12574}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_3f359b74e2e4b6726313406a4a6a4e34\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-11-14T04:13:20.354989925+00:00\",\"updated_at\":\"2026-11-14T04:16:49.367761021+00:00\"},\"tables\":30,\"rows\":7270}"
   },
   {
     "phase": "drop-table-polling",
@@ -29299,6 +30069,41 @@
   {
     "phase": "drop-table-polling",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "service:drop-table-polling:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -30570,6 +31375,41 @@
   {
     "phase": "restart-during-snapshot",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "service:restart-during-snapshot:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -31855,6 +32695,41 @@
     "status": "PASS"
   },
   {
+    "phase": "restart-during-resync",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "service:restart-during-resync:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "memory-pressure",
     "check": "memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling",
     "status": "PASS",
@@ -31864,7 +32739,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 99 ok, dashboards 106 ok; no errors"
+    "detail": "wire 240 ok, http 85 ok, dashboards 86 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -31876,31 +32751,31 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 99"
+    "detail": "wire 240 of 240, http 85"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 184ms p99 1161ms over 240 queries"
+    "detail": "wire p50 169ms p99 824ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 12ms over 8 samples"
+    "detail": "health p99 11ms over 6 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 145MB with a 256MB budget"
+    "detail": "peak RSS 165MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 200800 vs source 200800"
+    "detail": "big 200600 vs source 200600"
   },
   {
     "phase": "memory-pressure",
@@ -33159,6 +34034,41 @@
     "status": "PASS"
   },
   {
+    "phase": "memory-pressure",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "service:memory-pressure:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:the source holds the large child table",
     "status": "PASS",
@@ -33186,7 +34096,7 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 122MB before, peak 421MB during (margin 768MB)"
+    "detail": "RSS 65MB before, peak 391MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
@@ -34436,6 +35346,41 @@
   {
     "phase": "reconcile-memory",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "service:reconcile-memory:no table left service unexpectedly",
     "status": "PASS"
   },
   {
@@ -35730,6 +36675,41 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-database",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "service:drop-database:no table left service unexpectedly",
+    "status": "PASS"
+  },
+  {
     "phase": "ddl-documented-gaps",
     "check": "converge:Dim",
     "status": "PASS"
@@ -35859,8 +36839,7 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "converge:information_schema.columns",
-    "status": "WARN",
-    "detail": "row 20:\n  mysql   audit_history | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | \n  pintail audit_log | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | "
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",
@@ -36980,6 +37959,41 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:grouped left join counts over the unpaired row",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:row compared with an aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:row compared with an aggregating subquery over no rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:row compared with a correlated aggregating subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:the session database beside a table",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "service:ddl-documented-gaps:no table left service unexpectedly",
     "status": "PASS"
   }
 ]
