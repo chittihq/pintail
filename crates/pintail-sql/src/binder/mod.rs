@@ -11393,6 +11393,39 @@ mod tests {
 
     /// `MySQL` names an unaliased output column by the text the user typed:
     /// case, spacing and all. A string literal is named by its value.
+    /// `MySQL` merges numeric types left to right, and not symmetrically.
+    #[test]
+    fn a_float_stays_single_only_where_the_ordered_merge_keeps_it() {
+        use DataType::{Float32, Float64, Int8, Int16, Int32, Int64, UInt64, Year};
+        for types in [
+            &[Float32, Int64][..],
+            &[Float32, UInt64],
+            &[Float32, Int16],
+            &[Int16, Float32],
+            &[Int8, Float32, Int64],
+            &[Year, Float32],
+            &[Float32, Float32],
+        ] {
+            assert!(super::float_stays_single(types), "{types:?}");
+        }
+        let decimal = DataType::Decimal {
+            precision: 10,
+            scale: 2,
+        };
+        for types in [
+            &[Int64, Float32][..],
+            &[UInt64, Float32],
+            &[Float32, Int32],
+            &[Int32, Float32],
+            &[Float32, Float64],
+            &[Float32, decimal],
+            &[Int16, Int64, Float32],
+            &[Int16, Int64],
+        ] {
+            assert!(!super::float_stays_single(types), "{types:?}");
+        }
+    }
+
     /// `MySQL` names an unaliased NULL literal `NULL` whatever its case.
     #[test]
     fn an_unaliased_null_literal_is_named_in_capitals() {

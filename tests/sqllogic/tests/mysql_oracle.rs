@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4055;
+const EXPECTED_CASES: usize = 4067;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5697,6 +5697,54 @@ fn conversion_edge_cases() -> Vec<OracleCase> {
         ordered(
             "time beside a date",
             "SELECT TIME'10:20:30' IN (102030, TIME'10:20:31', TIMESTAMP'2001-01-01 10:20:32'), TIME'10:20:30' IN (TIME'10:20:31', TIMESTAMP'2001-01-01 10:20:30')",
+        ),
+        ordered(
+            "convert_tz as a datetime",
+            "SELECT CONVERT_TZ('2001-03-21','+00:00','+01:00'), CONVERT_TZ('2001-03-21','+00:00','+01:00') + 0, CONVERT_TZ('2001-03-21','+00:00','+01:00') MOD 4, CONVERT_TZ('2001-03-21 10:00:00.5','+00:00','+01:00'), CONVERT_TZ(20010321101112,'+00:00','+01:00'), CONVERT_TZ(20010321101112.5,'+00:00','+01:00')",
+        ),
+        ordered(
+            "convert_tz as a datetime",
+            "SELECT id, CONVERT_TZ(dt0,'+00:00','+01:00'), CONVERT_TZ(dt3,'+00:00','+01:00') + 0, CONVERT_TZ(day,'+00:00','+01:00'), ROUND(CONVERT_TZ(dt3,'+00:00','+01:00')), LENGTH(CONVERT_TZ(dt0,'+00:00','+01:00')) FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "temporal arguments of numeric functions",
+            "SELECT id, ROUND(dt0), ROUND(dt3), ROUND(dt3, 1), CEIL(dt3), FLOOR(dt3), ROUND(day), ROUND(clock), SIGN(clock), CEIL(day), ROUND(dt0, -2) FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "temporal arguments of numeric functions",
+            "SELECT ROUND(TIMESTAMP'2001-01-01 10:20:30.5'), ROUND(DATE'2001-01-01'), ROUND(TIME'10:20:30.5'), ROUND(GREATEST('1', CAST('2020-12-12' AS DATE))), SQRT(DATE'2001-01-01'), ROUND(TIME'10:20:30.5', 1), TRUNCATE(TIME'10:20:30.999', 2)",
+        ),
+        ordered(
+            "mixed conditional and extremum types",
+            "SELECT id, IF(id > 4, dt0, 1), IFNULL(day, 1.5), COALESCE(dt3, n), CASE WHEN id < 3 THEN clock ELSE 2 END, IF(id > 4, 1, day) FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "mixed conditional and extremum types",
+            "SELECT id, LEAST(dt0, day), GREATEST(dt3, day), GREATEST(dt6, dt0), GREATEST(n, day), GREATEST(txt, day), GREATEST(20240101, day), GREATEST('2024-06-01 10:00:00', dt0), GREATEST(clock, day) >= day FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "a cte named like a table",
+            "WITH RECURSIVE users AS (SELECT id FROM events WHERE id = 3 UNION SELECT e.id FROM users, events e WHERE users.id + 1 = e.id AND e.id < 9) SELECT * FROM users ORDER BY id",
+        ),
+        ordered(
+            "a cte named like a table",
+            "WITH RECURSIVE users AS (SELECT id FROM events WHERE id = 3) SELECT COUNT(*) FROM users",
+        ),
+        ordered(
+            "json null and numbers",
+            "SELECT id, JSON_ARRAYAGG(score > 10), JSON_OBJECTAGG(name, note IS NULL), JSON_ARRAYAGG(TRUE), JSON_OBJECTAGG(name, FALSE) FROM events GROUP BY id ORDER BY id",
+        ),
+        ordered(
+            "text beside a calendar value",
+            "SELECT id FROM bounds WHERE CONCAT('2024-02-28 23:59:59.9999999', LEFT(txt, 0)) = day OR CONCAT('2024-03-30 23:59:59.9999999', LEFT(txt, 0)) = dt0 ORDER BY id",
+        ),
+        ordered(
+            "text beside a calendar value",
+            "SELECT id, CONCAT('2024-03-31 10:00:00', LEFT(txt, 0)) = day, CONCAT('2024-03-31 10:00:00', LEFT(txt, 0)) = dt0, CONCAT('2024-03-31 10:00:00', LEFT(txt, 0)) = DATE'2024-03-31', CONCAT('2024-03-31', LEFT(txt, 0)) < day FROM bounds ORDER BY id",
+        ),
+        ordered(
+            "fractional numbers as dates and times",
+            "SELECT CAST(20001231235959.9999999 AS DATE), CAST(20001231235959.9999999 AS TIME), CAST(20001231235959.9999999 AS TIME(6)), HOUR(20001231235959.9999999), MINUTE(20001231235959.9999999), SECOND(20001231235959.9999999), TIME_TO_SEC(20001231235959.9999999), CAST(20001231235959.9999994 AS DATE), HOUR(235959.9999999), CAST(20001231235959.5 AS DATE)",
         ),
         ordered(
             "time beside a date",
