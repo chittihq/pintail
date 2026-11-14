@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4053;
+const EXPECTED_CASES: usize = 4055;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -7981,7 +7981,10 @@ fn orders_schema() -> Result<TableSchema, String> {
 }
 
 fn order_rows() -> Vec<StoredRow> {
-    // Canonical carriers must match the MySQL INSERT seed above.
+    // Canonical carriers must match the MySQL INSERT seed above. A JSON
+    // column holds the text MySQL stores, not the text that was inserted:
+    // members ordered by key length and then bytes, a space after every
+    // colon and comma.
     [
         order_row(
             1,
@@ -7989,7 +7992,7 @@ fn order_rows() -> Vec<StoredRow> {
             "10.50",
             "2024-01-15 10:00:00",
             "shipped",
-            Some(r#"{"tags":["premium"],"score":1.5,"items":[1,2,3,4]}"#),
+            Some(r#"{"tags": ["premium"], "items": [1, 2, 3, 4], "score": 1.5}"#),
         ),
         order_row(
             2,
@@ -7997,7 +8000,7 @@ fn order_rows() -> Vec<StoredRow> {
             "198.82",
             "2024-02-29 12:34:56",
             "shipped",
-            Some(r#"{"tags":["bulk"],"score":2.0,"items":[1]}"#),
+            Some(r#"{"tags": ["bulk"], "items": [1], "score": 2.0}"#),
         ),
         order_row(3, 2, "0.01", "2024-03-01 00:00:00", "pending", None),
         order_row(
@@ -8006,7 +8009,7 @@ fn order_rows() -> Vec<StoredRow> {
             "99999999.99",
             "2024-03-08 06:30:00",
             "cancelled",
-            Some(r#"{"tags":[],"score":0,"items":[]}"#),
+            Some(r#"{"tags": [], "items": [], "score": 0}"#),
         ),
         order_row(
             5,
@@ -8014,7 +8017,7 @@ fn order_rows() -> Vec<StoredRow> {
             "12.35",
             "2024-06-15 18:00:00",
             "shipped",
-            Some(r#"{"tags":["premium","rush"],"score":9.9,"items":[1,2,3,4,5]}"#),
+            Some(r#"{"tags": ["premium", "rush"], "items": [1, 2, 3, 4, 5], "score": 9.9}"#),
         ),
         order_row(
             6,
@@ -8022,7 +8025,7 @@ fn order_rows() -> Vec<StoredRow> {
             "50.00",
             "2024-07-04 09:15:00",
             "pending",
-            Some(r#"{"tags":["gift"],"score":3,"items":[7,8]}"#),
+            Some(r#"{"tags": ["gift"], "items": [7, 8], "score": 3}"#),
         ),
         order_row(7, 4, "7.00", "2024-11-01 01:30:00", "shipped", None),
         order_row(
@@ -8031,7 +8034,7 @@ fn order_rows() -> Vec<StoredRow> {
             "100.00",
             "2025-01-01 00:00:00",
             "delivered",
-            Some(r#"{"tags":["premium"],"score":1,"items":[1,2]}"#),
+            Some(r#"{"tags": ["premium"], "items": [1, 2], "score": 1}"#),
         ),
         order_row(
             9,
@@ -8039,7 +8042,7 @@ fn order_rows() -> Vec<StoredRow> {
             "25.25",
             "2025-02-01 12:00:00",
             "pending",
-            Some(r#"{"tags":["orphan"],"score":0.5,"items":[9]}"#),
+            Some(r#"{"tags": ["orphan"], "items": [9], "score": 0.5}"#),
         ),
         order_row(10, 1, "0.00", "2025-02-28 23:59:59", "cancelled", None),
         order_row(
@@ -8048,7 +8051,7 @@ fn order_rows() -> Vec<StoredRow> {
             "33.33",
             "2025-03-01 08:00:00",
             "shipped",
-            Some(r#"{"tags":["a"],"score":4.25,"items":[1,2,3]}"#),
+            Some(r#"{"tags": ["a"], "items": [1, 2, 3], "score": 4.25}"#),
         ),
         order_row(
             12,
@@ -8056,7 +8059,7 @@ fn order_rows() -> Vec<StoredRow> {
             "64.00",
             "2025-04-01 16:45:00",
             "delivered",
-            Some(r#"{"tags":["premium"],"score":8,"items":[2,4,6,8]}"#),
+            Some(r#"{"tags": ["premium"], "items": [2, 4, 6, 8], "score": 8}"#),
         ),
         order_row(
             13,
@@ -8064,7 +8067,7 @@ fn order_rows() -> Vec<StoredRow> {
             "949.86",
             "2025-05-01 12:00:00",
             "processing",
-            Some(r#"{"tags":["rounding"],"score":9.5,"items":[5]}"#),
+            Some(r#"{"tags": ["rounding"], "items": [5], "score": 9.5}"#),
         ),
     ]
     .into()

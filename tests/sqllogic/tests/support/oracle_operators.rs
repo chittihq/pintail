@@ -453,6 +453,11 @@ const EXISTS_OVER_SEVERAL_COLUMNS: &[&str] = &[
     r#"SELECT active, COUNT(*) FROM events GROUP BY active HAVING EXISTS (SELECT * FROM orders WHERE total > 900) ORDER BY active"#,
 ];
 
+const STORED_JSON_AS_TEXT: &[&str] = &[
+    r#"SELECT id, meta FROM orders ORDER BY id"#,
+    r#"SELECT id, SHA(meta), MD5(meta), CONCAT(meta, ''), CAST(meta AS CHAR), LENGTH(meta), CHAR_LENGTH(meta), UPPER(meta), LEFT(meta, 12), meta LIKE '%"tags": [%' FROM orders ORDER BY id"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -471,6 +476,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("stored json as text", STORED_JSON_AS_TEXT),
         ("exists over several columns", EXISTS_OVER_SEVERAL_COLUMNS),
         ("json ranges over empty arrays", JSON_RANGES_OVER_EMPTY_ARRAYS),
         ("regexp with a null pattern", REGEXP_WITH_A_NULL_PATTERN),
