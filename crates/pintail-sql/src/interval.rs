@@ -210,7 +210,9 @@ fn name_range_function(tokens: &mut [TokenWithSpan]) {
         let mut depth = 0_usize;
         let mut list = false;
         let mut closed = false;
+        let mut looked = 0_usize;
         for &index in &significant[at + 1..] {
+            looked += 1;
             match tokens[index].token {
                 Token::LParen => depth += 1,
                 Token::RParen => {
@@ -224,6 +226,7 @@ fn name_range_function(tokens: &mut [TokenWithSpan]) {
                 _ => {}
             }
         }
+        crate::count_preparse_work(looked);
         if list && closed {
             tokens[keyword].token = word_token(RANGE_FUNCTION);
         }
@@ -291,10 +294,15 @@ fn wrap_expressions(tokens: &mut Vec<TokenWithSpan>) {
         }
         let mut depth = 0_usize;
         for &index in &significant[at + 1..] {
+            crate::count_preparse_work(1);
             match &tokens[index].token {
                 Token::LParen => depth += 1,
                 Token::RParen | Token::Comma | Token::SemiColon | Token::EOF if depth == 0 => break,
                 Token::RParen => depth -= 1,
+                // Another interval starts its own amount: this one has no
+                // qualifier of its own to find beyond it. Without the
+                // stop, a run of them each read to the statement's end.
+                token if depth == 0 && is_interval(token) => break,
                 token if depth == 0 => {
                     if let Some(unit) = compound_unit(token) {
                         wraps.push((keyword, index, unit));

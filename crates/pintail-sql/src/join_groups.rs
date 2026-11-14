@@ -75,42 +75,94 @@ pub(crate) fn rewrite(tokens: &mut Vec<TokenWithSpan>) {
     }
 }
 
+/// What is known about the run of opening parentheses ending at `end`:
+/// how many of them, counted outward from the innermost, were asked about,
+/// and how many of those hold a query (`None` when the innermost does not
+/// start one).
+#[derive(Default)]
+struct QueryRun {
+    start: usize,
+    end: usize,
+    asked: usize,
+    held: Option<usize>,
+}
+
 /// Whether the parentheses opening at `open` hold a query rather than
 /// table references: a query starts with its keyword, or with a
 /// parenthesized query that the rest of the group continues.
-fn holds_query(tokens: &[TokenWithSpan], significant: &[usize], open: usize) -> bool {
+///
+/// A run of opening parentheses is settled in one pass from its innermost
+/// outward and remembered, so a statement that nests them is read once and
+/// no call stands on another.
+fn holds_query(
+    tokens: &[TokenWithSpan],
+    significant: &[usize],
+    open: usize,
+    run: &mut QueryRun,
+) -> bool {
     let token = |position: usize| significant.get(position).map(|&index| &tokens[index].token);
-    match token(open + 1) {
-        Some(Token::Word(word)) if word.quote_style.is_none() => {
-            ["SELECT", "WITH", "VALUES", "TABLE"]
-                .iter()
-                .any(|keyword| word.value.eq_ignore_ascii_case(keyword))
+    let end = if (run.start..run.end).contains(&open) {
+        run.end
+    } else {
+        let mut end = open + 1;
+        while token(end) == Some(&Token::LParen) {
+            end += 1;
         }
-        Some(Token::LParen) if holds_query(tokens, significant, open + 1) => {
-            let mut depth = 0_usize;
-            let mut at = open + 1;
+        crate::count_preparse_work(end - open);
+        end
+    };
+    // The innermost parenthesis is level 0; `open` is this many outside it.
+    let level = end - 1 - open;
+    if run.end != end || run.asked < level {
+        let starts_query = matches!(
+            token(end),
+            Some(Token::Word(word)) if word.quote_style.is_none()
+                && ["SELECT", "WITH", "VALUES", "TABLE"]
+                    .iter()
+                    .any(|keyword| word.value.eq_ignore_ascii_case(keyword))
+        );
+        let mut held = 0_usize;
+        if starts_query && level > 0 {
+            // Each level holds a query when the one inside it does and is
+            // followed by its closing parenthesis or by more of a query.
+            let mut depth = 1_usize;
+            let mut at = end;
             while let Some(inner) = token(at) {
                 match inner {
                     Token::LParen => depth += 1,
                     Token::RParen => {
                         depth -= 1;
                         if depth == 0 {
-                            break;
+                            let continues = token(at + 1).is_some_and(|next| {
+                                next == &Token::RParen
+                                    || ["UNION", "EXCEPT", "INTERSECT", "ORDER", "LIMIT"]
+                                        .iter()
+                                        .any(|keyword| is_word(next, keyword))
+                            });
+                            if !continues {
+                                break;
+                            }
+                            held += 1;
+                            if held >= level {
+                                break;
+                            }
+                            depth = 1;
                         }
                     }
                     _ => {}
                 }
                 at += 1;
             }
-            token(at + 1).is_some_and(|next| {
-                next == &Token::RParen
-                    || ["UNION", "EXCEPT", "INTERSECT", "ORDER", "LIMIT"]
-                        .iter()
-                        .any(|keyword| is_word(next, keyword))
-            })
+            crate::count_preparse_work(at - end);
         }
-        _ => false,
+        *run = QueryRun {
+            start: open,
+            end,
+            asked: level,
+            held: starts_query.then_some(held),
+        };
     }
+    run.held.is_some_and(|held| level <= held)
 }
 
 #[allow(clippy::too_many_lines)] // one pass over the tokens, one arm per token kind
@@ -130,6 +182,7 @@ fn groupings(tokens: &[TokenWithSpan], significant: &[usize]) -> Edits {
         "LOCK",
     ];
     let mut edits = Edits::default();
+    let mut run = QueryRun::default();
     let mut frames = vec![Frame::Other {
         select: false,
         from: None,
@@ -146,7 +199,7 @@ fn groupings(tokens: &[TokenWithSpan], significant: &[usize]) -> Edits {
             .is_some_and(|chain| std::mem::take(&mut chain.expects_table));
         match token {
             Token::LParen => {
-                if expects_table && !holds_query(tokens, significant, at) {
+                if expects_table && !holds_query(tokens, significant, at, &mut run) {
                     let member = significant.get(at + 1).copied().unwrap_or(index);
                     frames.push(Frame::Tables(
                         Group {

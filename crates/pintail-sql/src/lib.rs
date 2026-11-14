@@ -19,6 +19,8 @@ pub use text_charset::{
 mod call_forms;
 mod interval;
 mod join_groups;
+#[cfg(test)]
+mod preparse_bounds;
 pub use interval::CompoundUnit;
 mod spatial;
 pub use spatial::{GeometryKind, SpatialFunction};
@@ -277,6 +279,9 @@ pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
             }
         }
     }
+    // The passes below read the tokens before the grammar does, so the
+    // grammar's own depth limit has not been applied yet.
+    refuse_deep_nesting(&tokens)?;
     combine_prefixed_strings(&mut tokens, dialect.1);
     read_bit_literals(&mut tokens);
     interval::rewrite(&mut tokens);
@@ -298,6 +303,55 @@ pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
         debug_assert!(flow.is_continue());
     }
     Ok(statements)
+}
+
+/// Parentheses nested deeper than this are refused before any token is
+/// respelled. The grammar refuses nesting far shallower than this, so no
+/// statement it reads is turned away here; the bound exists because the
+/// passes that respell tokens run before the grammar and do work in
+/// proportion to the nesting they meet.
+pub(crate) const MAX_PAREN_DEPTH: usize = 256;
+
+/// The error the grammar gives for nesting past its limit, for a statement
+/// nested past [`MAX_PAREN_DEPTH`].
+fn refuse_deep_nesting(tokens: &[sqlparser::tokenizer::TokenWithSpan]) -> Result<(), ParserError> {
+    use sqlparser::tokenizer::Token;
+    let mut depth = 0_usize;
+    for token in tokens {
+        match token.token {
+            Token::LParen => {
+                depth += 1;
+                if depth > MAX_PAREN_DEPTH {
+                    return Err(ParserError::RecursionLimitExceeded);
+                }
+            }
+            Token::RParen => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+thread_local! {
+    /// Tokens looked at by the passes that respell a statement before it
+    /// is parsed, on this thread. Tests read it to hold those passes to
+    /// work in proportion to the statement.
+    static PREPARSE_WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Records `tokens` more tokens looked at by a respelling pass.
+pub(crate) fn count_preparse_work(tokens: usize) {
+    PREPARSE_WORK.set(
+        PREPARSE_WORK
+            .get()
+            .saturating_add(u64::try_from(tokens).unwrap_or(u64::MAX)),
+    );
+}
+
+/// The work recorded since the last call, which it resets.
+#[cfg(test)]
+pub(crate) fn take_preparse_work() -> u64 {
+    PREPARSE_WORK.replace(0)
 }
 
 /// `0b0101` is a bit literal, the same value as `b'0101'`. The tokenizer
@@ -340,6 +394,10 @@ fn combine_prefixed_strings(
         Token::DoubleQuotedString(text) if !mode.ansi_quotes => Some(text.clone()),
         _ => None,
     };
+    // The pieces a combined literal absorbed, as (first, last) positions:
+    // they are dropped in one rebuild, since removing each run where it
+    // stands moves every later token once per run.
+    let mut absorbed: Vec<(usize, usize)> = Vec::new();
     let mut at = 0;
     while at < tokens.len() {
         if !matches!(&tokens[at].token, Token::Word(word) if word.quote_style.is_none() && word.value.starts_with('_'))
@@ -373,9 +431,22 @@ fn combine_prefixed_strings(
             } else {
                 Token::SingleQuotedString(text)
             };
-            tokens.drain(first + 1..=last);
+            absorbed.push((first + 1, last));
         }
-        at = first + 1;
+        at = last + 1;
+    }
+    if absorbed.is_empty() {
+        return;
+    }
+    let mut runs = absorbed.into_iter().peekable();
+    let original = std::mem::take(tokens);
+    for (index, token) in original.into_iter().enumerate() {
+        while runs.peek().is_some_and(|&(_, last)| last < index) {
+            runs.next();
+        }
+        if runs.peek().is_none_or(|&(first, _)| index < first) {
+            tokens.push(token);
+        }
     }
 }
 

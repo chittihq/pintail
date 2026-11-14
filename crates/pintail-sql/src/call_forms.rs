@@ -102,12 +102,14 @@ fn closing(tokens: &[TokenWithSpan], significant: &[usize], open: usize) -> Opti
             Token::RParen => {
                 depth = depth.checked_sub(1)?;
                 if depth == 0 {
+                    crate::count_preparse_work(at - open);
                     return Some(at);
                 }
             }
             _ => {}
         }
     }
+    crate::count_preparse_work(significant.len().saturating_sub(open));
     None
 }
 
@@ -122,6 +124,7 @@ fn last_inside(
 ) -> Option<usize> {
     let mut depth = 0_usize;
     let mut found = None;
+    crate::count_preparse_work(close.saturating_sub(open));
     for at in open + 1..close {
         let token = &tokens[significant[at]].token;
         match token {
@@ -196,6 +199,22 @@ fn call_form(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: 
     if token(at + 1) != Some(&Token::LParen) {
         return;
     }
+    if is_word(head, "TRIM") {
+        if token(at + 2).is_some_and(|side| is_any_word(side, &["BOTH", "LEADING", "TRAILING"]))
+            && token(at + 3).is_some_and(|from| is_word(from, "FROM"))
+        {
+            edits.before(
+                significant[at + 3],
+                [Token::SingleQuotedString(" ".to_owned())],
+            );
+        }
+        return;
+    }
+    // Only these names have a form to respell; the closing parenthesis of
+    // any other call is never looked for.
+    if !is_any_word(head, &["MID", "WEIGHT_STRING", "CHAR", "CAST", "CONVERT"]) {
+        return;
+    }
     let Some(close) = closing(tokens, significant, at + 1) else {
         return;
     };
@@ -213,14 +232,6 @@ fn call_form(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: 
         char_using(tokens, significant, at, close, edits);
     } else if is_word(head, "CAST") || is_word(head, "CONVERT") {
         cast_type(tokens, significant, at, close, edits);
-    } else if is_word(head, "TRIM")
-        && token(at + 2).is_some_and(|side| is_any_word(side, &["BOTH", "LEADING", "TRAILING"]))
-        && token(at + 3).is_some_and(|from| is_word(from, "FROM"))
-    {
-        edits.before(
-            significant[at + 3],
-            [Token::SingleQuotedString(" ".to_owned())],
-        );
     }
 }
 
