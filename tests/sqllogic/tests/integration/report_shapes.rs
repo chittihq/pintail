@@ -486,6 +486,11 @@ fn report_shapes_answer_the_same_under_every_ceiling_and_spill_under_the_tight_o
         .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
         .env(REPORT_CHILD, "1")
         .env("PINTAIL_DISABLE_SETTLED_MEMO", "1")
+        // The reports join up to a dozen tables, and in an unoptimized
+        // build each plan node takes about 140 KiB of stack to build: the
+        // child's test thread gets the 8 MiB a server worker has, not the
+        // 2 MiB default.
+        .env("RUST_MIN_STACK", "8388608")
         .output()
         .expect("spawn the report child");
     assert!(

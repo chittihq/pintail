@@ -282,17 +282,33 @@ fn fanout(on: &str) -> String {
     )
 }
 
+/// Runs `work` on a thread with the stack the server gives a parallel
+/// worker. Building an operator recurses once per plan node, and in an
+/// unoptimized build each level of it takes about 140 KiB - ten times an
+/// optimized build's - so the ten joins below, with the aggregates, filters
+/// and projections around them, do not fit a test thread's default 2 MiB.
+fn on_a_worker_stack(work: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(8 << 20)
+        .spawn(work)
+        .expect("thread")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+}
+
 #[test]
 fn folded_branch_matches_the_join_as_written() {
-    let fixture = fixture(40, 40, 6, 4);
-    let (folded, _, profile) = fixture.run(&fanout("m.person_id"));
-    let (written, _, _) = fixture.run(&fanout("m.person_id + 0"));
-    assert_ne!(folded, [] as [std::string::String; 0]);
-    assert_eq!(folded, written);
-    assert!(
-        profile.matches("HashAggregate").count() >= 2,
-        "the entries branch folds before its join:\n{profile}"
-    );
+    on_a_worker_stack(|| {
+        let fixture = fixture(40, 40, 6, 4);
+        let (folded, _, profile) = fixture.run(&fanout("m.person_id"));
+        let (written, _, _) = fixture.run(&fanout("m.person_id + 0"));
+        assert_ne!(folded, [] as [std::string::String; 0]);
+        assert_eq!(folded, written);
+        assert!(
+            profile.matches("HashAggregate").count() >= 2,
+            "the entries branch folds before its join:\n{profile}"
+        );
+    });
 }
 
 #[test]
