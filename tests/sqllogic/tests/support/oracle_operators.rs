@@ -458,6 +458,15 @@ const STORED_JSON_AS_TEXT: &[&str] = &[
     r#"SELECT id, SHA(meta), MD5(meta), CONCAT(meta, ''), CAST(meta AS CHAR), LENGTH(meta), CHAR_LENGTH(meta), UPPER(meta), LEFT(meta, 12), meta LIKE '%"tags": [%' FROM orders ORDER BY id"#,
 ];
 
+const FRACTIONAL_DIGIT_COUNTS: &[&str] = &[
+    "SELECT ROUND(1.23456, 1.5), ROUND(1.23456, 2.5), ROUND(1.23456, 1.5e0), ROUND(1.23456, 2.5e0), ROUND(1.23456, '1.5'), ROUND(1.23456, '2'), ROUND(12.3456, -0.5), ROUND(15.5, -1.5)",
+    "SELECT TRUNCATE(1.23456, 1.5), TRUNCATE(1.23456, 2.5e0), TRUNCATE(1.23456, '1.5'), FORMAT(1234.5678, 1.5), FORMAT(1234.5678, 2.5e0), FORMAT(1234.5678, '1.5'), FORMAT(1234.5678, 0.5), FORMAT(1234.5678, 0.5e0)",
+    "SELECT ROUND(1.5e0, 1.5), ROUND(2.345e0, '1.5'), TRUNCATE(2.345e0, 1.5), ROUND(12345, -1.5), ROUND(12345, '-2'), ROUND(1.23456, NULL), ROUND(1.23456, 1.4), ROUND(1.23456, 30.5), ROUND(1.23456, 0.5)",
+    "SELECT ROUND(1.23456, -0.5), ROUND(15.5, -1.5e0), ROUND(1.23456, ' 2x'), ROUND(1.23456, 'x'), ROUND(1.23456, '-1'), TRUNCATE(155.55, -1.5), FORMAT(1.5, '2'), ROUND(1.23456, 1e30), ROUND(1.23456, 99999999999999999999.5), ROUND(2.5, 0.4), ROUND(2.5, -0.4)",
+    "SELECT id, ROUND(total / 3, 1.5), ROUND(total / 3, id / 2), TRUNCATE(total / 3, id / 2), ROUND(total * 1.0e0 / 3, 1.5), FORMAT(total / 3, id / 4) FROM orders ORDER BY id",
+    "SELECT id, ROUND(frac, 1.5), ROUND(approx, 0.5), TRUNCATE(frac, id / 3), ROUND(frac, approx), ROUND(whole, -1.5) FROM bounds ORDER BY id",
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -476,6 +485,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("fractional digit counts", FRACTIONAL_DIGIT_COUNTS),
         ("stored json as text", STORED_JSON_AS_TEXT),
         ("exists over several columns", EXISTS_OVER_SEVERAL_COLUMNS),
         (

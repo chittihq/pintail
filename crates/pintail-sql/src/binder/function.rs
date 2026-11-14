@@ -36,6 +36,67 @@ fn signed_integer_constant(expression: &BoundExpr) -> Option<i64> {
     }
 }
 
+/// The integer `MySQL` reads from a constant that is not one, where it wants
+/// a count: an exact decimal rounds half away from zero, a double rounds to
+/// nearest with ties to even, and a string gives its leading integer.
+/// `None` for an integer constant, which needs nothing, and for anything
+/// that is not a constant.
+fn constant_as_count(expression: &BoundExpr) -> Option<i64> {
+    let (negative, literal) = match &expression.kind {
+        BoundExprKind::Unary {
+            op: UnaryOp::Minus,
+            expr,
+        } => (true, expr.as_ref()),
+        BoundExprKind::Unary {
+            op: UnaryOp::Plus,
+            expr,
+        } => (false, expr.as_ref()),
+        _ => (false, expression),
+    };
+    let magnitude = match (&literal.kind, literal.data_type) {
+        (BoundExprKind::Literal(Value::Float64(number)), _) => {
+            let rounded = if negative {
+                -number.get()
+            } else {
+                number.get()
+            }
+            .round_ties_even();
+            // Past the range every such count behaves like the extreme.
+            #[allow(clippy::cast_possible_truncation)] // clamped to the range first
+            return Some(rounded.clamp(-1.0e18, 1.0e18) as i64);
+        }
+        (BoundExprKind::Literal(Value::Utf8(text)), Some(DataType::Decimal { .. })) => {
+            let unsigned = text.trim_start_matches(['-', '+']);
+            let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+            let whole = whole.parse::<i64>().unwrap_or(i64::MAX / 2);
+            let up = fraction.bytes().next().is_some_and(|digit| digit >= b'5');
+            let magnitude = whole.saturating_add(i64::from(up));
+            if text.starts_with('-') {
+                -magnitude
+            } else {
+                magnitude
+            }
+        }
+        (BoundExprKind::Literal(Value::Utf8(text)), Some(DataType::Utf8)) => {
+            let text = text.trim_start();
+            let unsigned = text.trim_start_matches(['-', '+']);
+            let digits = unsigned.bytes().take_while(u8::is_ascii_digit).count();
+            let magnitude = unsigned[..digits].parse::<i64>().unwrap_or(if digits == 0 {
+                0
+            } else {
+                i64::MAX / 2
+            });
+            if text.starts_with('-') {
+                -magnitude
+            } else {
+                magnitude
+            }
+        }
+        _ => return None,
+    };
+    Some(if negative { -magnitude } else { magnitude })
+}
+
 pub(super) fn typed_temporal_precision(text: &str, time: bool) -> Option<u64> {
     let (prefix, fraction) = text.trim().rsplit_once('.')?;
     let groups = prefix
@@ -3107,6 +3168,27 @@ pub(super) fn bind_scalar(
             *argument = bind_scalar(
                 ScalarFunction::Round { decimal: false },
                 vec![argument.clone()],
+            )?;
+        }
+    }
+    // The digit count of ROUND, TRUNCATE and FORMAT is an integer too, and
+    // a constant one decides the result's scale, so it becomes the integer
+    // here: ROUND(x, 1.5) rounds to two places and is typed with two.
+    if matches!(
+        function,
+        ScalarFunction::Round { .. } | ScalarFunction::Truncate { .. } | ScalarFunction::Format
+    ) && let Some(digits) = args.get_mut(1)
+    {
+        if let Some(count) = constant_as_count(digits) {
+            *digits = BoundExpr {
+                kind: BoundExprKind::Literal(Value::Int64(count)),
+                data_type: Some(DataType::Int64),
+                nullable: false,
+            };
+        } else if matches!(digits.data_type, Some(DataType::Decimal { .. })) {
+            *digits = bind_scalar(
+                ScalarFunction::Round { decimal: false },
+                vec![digits.clone()],
             )?;
         }
     }
