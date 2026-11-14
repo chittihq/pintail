@@ -3134,7 +3134,7 @@ pub(super) fn bind_scalar(
         function,
         ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. }
     ) {
-        extremum_operands(args)
+        extremum_operands(args, matches!(function, ScalarFunction::Greatest { .. }))
     } else {
         args
     };
@@ -3971,7 +3971,38 @@ fn coerce_decimal_branches(
 /// when a string meets a number, and as numbers otherwise. Each argument is
 /// cast into that domain, so `GREATEST('11', 5, 2)` is `'5'` and
 /// `LEAST(DATE '2005-05-05', 20010101)` is `2001-01-01`.
-fn extremum_operands(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+/// A number or text GREATEST reads beside a date, as that date. One no
+/// date can be read from is the zero date, which GREATEST therefore never
+/// answers; NULL stays NULL.
+fn greatest_date_operand(written: BoundExpr, target: DataType) -> BoundExpr {
+    let zero = super::cast_to(
+        BoundExpr {
+            kind: BoundExprKind::Literal(Value::Utf8("0000-00-00".to_owned())),
+            data_type: Some(DataType::Utf8),
+            nullable: false,
+        },
+        target,
+    );
+    let read = super::cast_to(written.clone(), target);
+    let missing = BoundExpr {
+        data_type: Some(DataType::Boolean),
+        nullable: false,
+        kind: BoundExprKind::IsNull {
+            expr: Box::new(written),
+            negated: false,
+        },
+    };
+    let null = BoundExpr {
+        kind: BoundExprKind::Literal(Value::Null),
+        data_type: Some(target),
+        nullable: true,
+    };
+    bind_scalar(ScalarFunction::Coalesce, vec![read.clone(), zero])
+        .and_then(|unread| bind_scalar(ScalarFunction::If, vec![missing, null, unread]))
+        .unwrap_or(read)
+}
+
+fn extremum_operands(args: Vec<BoundExpr>, greatest: bool) -> Vec<BoundExpr> {
     let types = args
         .iter()
         .filter_map(|argument| argument.data_type)
@@ -3997,7 +4028,15 @@ fn extremum_operands(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
     {
         return args;
     } else if let Some(fsp) = fsp {
-        DataType::DateTime64 { fsp }
+        // Text and numbers bring their own fraction digits: six for a
+        // column of text, a literal's or a DECIMAL's own.
+        DataType::DateTime64 {
+            fsp: args
+                .iter()
+                .filter(|argument| argument.data_type != Some(DataType::Date32))
+                .map(temporal_argument_precision)
+                .fold(fsp, u8::max),
+        }
     } else if types.contains(&DataType::Date32) {
         DataType::Date32
     } else if types.contains(&DataType::Utf8) && types.iter().any(numeric) {
@@ -4012,6 +4051,14 @@ fn extremum_operands(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
                 .is_none_or(|data_type| data_type == target)
             {
                 argument
+            } else if greatest
+                && target != DataType::Utf8
+                && !matches!(
+                    argument.data_type,
+                    Some(DataType::Date32 | DataType::DateTime64 { .. })
+                )
+            {
+                greatest_date_operand(argument, target)
             } else {
                 super::cast_to(argument, target)
             }
@@ -4024,15 +4071,42 @@ fn extremum_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindErro
         .iter()
         .filter(|arg| matches!(arg.data_type, Some(DataType::Time64 { .. })))
         .count();
-    if time_count > 0
-        && args.iter().any(|arg| {
-            arg.data_type.is_some() && !matches!(arg.data_type, Some(DataType::Time64 { .. }))
-        })
+    let temporal = |data_type: Option<DataType>| {
+        matches!(
+            data_type,
+            Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. })
+        )
+    };
+    // Temporal values of different kinds meet as DATETIMEs, a TIME on the
+    // current date.
+    if args
+        .iter()
+        .all(|arg| arg.data_type.is_none() || temporal(arg.data_type))
+        && args.iter().any(|arg| arg.data_type.is_some())
     {
-        return Ok(Some(DataType::Utf8));
+        return conditional_result_type(args);
     }
     if time_count > 0 {
-        return conditional_result_type(args);
+        return Ok(Some(DataType::Utf8));
+    }
+    // A number or text beside a DATE or DATETIME is read as one: the
+    // extremum is found among dates and answered as a date.
+    if args.iter().any(|arg| temporal(arg.data_type)) {
+        let dates_only = args
+            .iter()
+            .filter(|arg| temporal(arg.data_type))
+            .all(|arg| arg.data_type == Some(DataType::Date32));
+        return Ok(Some(if dates_only {
+            DataType::Date32
+        } else {
+            DataType::DateTime64 {
+                fsp: args
+                    .iter()
+                    .map(temporal_argument_precision)
+                    .max()
+                    .unwrap_or(0),
+            }
+        }));
     }
     let types = args
         .iter()
