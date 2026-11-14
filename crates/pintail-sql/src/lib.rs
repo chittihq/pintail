@@ -635,6 +635,54 @@ mod tests {
 #[derive(Debug)]
 struct PintailDialect(MySqlDialect, ParseMode);
 
+/// An operator written as a word that the grammar does not read as one.
+enum WordOperator {
+    /// `a MOD b`, the remainder, binding as `%` does.
+    Modulo,
+    /// `a SOUNDS LIKE b`: whether the two sound alike, binding as `=` does.
+    SoundsLike,
+}
+
+/// The word operator the parser stands at, after a complete operand.
+fn word_operator(parser: &Parser) -> Option<WordOperator> {
+    use sqlparser::tokenizer::Token;
+    let Token::Word(word) = &parser.peek_token_ref().token else {
+        return None;
+    };
+    if word.quote_style.is_some() {
+        return None;
+    }
+    if word.value.eq_ignore_ascii_case("MOD") {
+        return Some(WordOperator::Modulo);
+    }
+    (word.value.eq_ignore_ascii_case("SOUNDS")
+        && matches!(&parser.peek_nth_token_ref(1).token, Token::Word(next)
+            if next.quote_style.is_none() && next.value.eq_ignore_ascii_case("LIKE")))
+    .then_some(WordOperator::SoundsLike)
+}
+
+/// `SOUNDEX(operand)`, which `SOUNDS LIKE` compares on both sides.
+fn sound_of(operand: sqlparser::ast::Expr) -> sqlparser::ast::Expr {
+    use sqlparser::ast::{
+        Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments,
+        Ident, ObjectName,
+    };
+    Expr::Function(Function {
+        name: ObjectName::from(vec![Ident::new("SOUNDEX")]),
+        uses_odbc_syntax: false,
+        parameters: FunctionArguments::None,
+        args: FunctionArguments::List(FunctionArgumentList {
+            duplicate_treatment: None,
+            args: vec![FunctionArg::Unnamed(FunctionArgExpr::Expr(operand))],
+            clauses: Vec::new(),
+        }),
+        filter: None,
+        null_treatment: None,
+        over: None,
+        within_group: Vec::new(),
+    })
+}
+
 impl Dialect for PintailDialect {
     fn dialect(&self) -> std::any::TypeId {
         self.0.dialect()
@@ -716,6 +764,12 @@ impl Dialect for PintailDialect {
         if parser.peek_token().token == sqlparser::tokenizer::Token::Caret {
             return Some(Ok(44));
         }
+        if let Some(operator) = word_operator(parser) {
+            return Some(Ok(self.prec_value(match operator {
+                WordOperator::Modulo => sqlparser::dialect::Precedence::MulDivModOp,
+                WordOperator::SoundsLike => sqlparser::dialect::Precedence::Eq,
+            })));
+        }
         (self.1.pipes_as_concat
             && parser.peek_token().token == sqlparser::tokenizer::Token::StringConcat)
             .then_some(Ok(45))
@@ -726,7 +780,30 @@ impl Dialect for PintailDialect {
         expr: &sqlparser::ast::Expr,
         precedence: u8,
     ) -> Option<Result<sqlparser::ast::Expr, sqlparser::parser::ParserError>> {
-        self.0.parse_infix(parser, expr, precedence)
+        use sqlparser::ast::{BinaryOperator, Expr};
+        let Some(operator) = word_operator(parser) else {
+            return self.0.parse_infix(parser, expr, precedence);
+        };
+        let _ = parser.next_token();
+        if matches!(operator, WordOperator::SoundsLike) {
+            let _ = parser.next_token();
+        }
+        Some(
+            parser
+                .parse_subexpr(precedence)
+                .map(|right| match operator {
+                    WordOperator::Modulo => Expr::BinaryOp {
+                        left: Box::new(expr.clone()),
+                        op: BinaryOperator::Modulo,
+                        right: Box::new(right),
+                    },
+                    WordOperator::SoundsLike => Expr::BinaryOp {
+                        left: Box::new(sound_of(expr.clone())),
+                        op: BinaryOperator::Eq,
+                        right: Box::new(sound_of(right)),
+                    },
+                }),
+        )
     }
     fn parse_statement(
         &self,

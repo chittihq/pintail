@@ -46,7 +46,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3167;
+const EXPECTED_CASES: usize = 3171;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5562,6 +5562,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
     .chain(diversify_cases())
     .chain(relational_edge_cases())
     .chain(format_locale_cases())
+    .chain(written_form_cases())
     .collect()
 }
 
@@ -6122,6 +6123,35 @@ fn diversify_cases() -> Vec<OracleCase> {
         ordered(
             "collation expression interactions",
             "SELECT id, CASE WHEN note = 'ALPHA' THEN LOWER(note) ELSE UPPER(note) END FROM events ORDER BY id",
+        ),
+    ]
+}
+
+/// Forms that are another way to write something the engine already runs.
+#[allow(clippy::too_many_lines)]
+fn written_form_cases() -> Vec<OracleCase> {
+    let ordered = |family, sql: &str| OracleCase {
+        sql_mode: "",
+        family,
+        sql: sql.to_owned(),
+        ordered: true,
+    };
+    vec![
+        ordered(
+            "mod written as a word",
+            "SELECT id, score MOD 7, score MOD -7, id MOD 3 MOD 2, 2 * id MOD 4, id MOD 4 * 2, 1 + id MOD 4, score MOD NULL, (score MOD 0) IS NULL, 0xFF ^ 0xF0 MOD 0x20 FROM events ORDER BY id",
+        ),
+        ordered(
+            "mod written as a word",
+            "SELECT id, total MOD 7, total MOD 2.5, -total MOD 4, user_id MOD -2 FROM orders WHERE total MOD 2 < 1 ORDER BY id",
+        ),
+        ordered(
+            "sounds like",
+            "SELECT id, name SOUNDS LIKE 'evant-01', note SOUNDS LIKE 'alfa', note SOUNDS LIKE NULL, tag SOUNDS LIKE 'reed' = 1 FROM events ORDER BY id",
+        ),
+        ordered(
+            "sounds like",
+            "SELECT e.id, f.id FROM events e JOIN events f ON e.note SOUNDS LIKE f.note AND e.id < f.id ORDER BY 1, 2",
         ),
     ]
 }
