@@ -3814,7 +3814,11 @@ fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<
         }));
     }
     if is_numeric(left) && is_numeric(right) && (is_float(left) || is_float(right)) {
-        return Some(Some(DataType::Float64));
+        return Some(Some(if float_stays_single(&[left, right]) {
+            DataType::Float32
+        } else {
+            DataType::Float64
+        }));
     }
     // Calendar values keep the finer of the two precisions, and a DATE
     // beside a DATETIME becomes one at midnight, as MySQL types the union.
@@ -8648,6 +8652,49 @@ fn time_column_beside_constant(left: &BoundExpr, right: &BoundExpr) -> bool {
     }
     let column = |expr: &BoundExpr| is_time(expr) && matches!(expr.kind, BoundExprKind::Column(_));
     (column(left) && constant(right)) || (column(right) && constant(left))
+}
+
+/// Whether numeric types that meet in this order - branches of a
+/// conditional, arms of a UNION - make a FLOAT rather than a DOUBLE.
+///
+/// `MySQL` merges the types left to right, and the merge is not symmetric:
+/// a FLOAT absorbs a BIGINT that follows it (every whole-number literal is
+/// one) and becomes a DOUBLE when it follows one. The integers narrower
+/// than INT join a FLOAT from either side; an INT, a DECIMAL or a DOUBLE
+/// anywhere makes a DOUBLE.
+pub(super) fn float_stays_single(types: &[DataType]) -> bool {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Merged {
+        Narrow,
+        Big,
+        Single,
+        Double,
+    }
+    let class = |data_type: &DataType| match data_type {
+        DataType::Float32 => Merged::Single,
+        DataType::Boolean
+        | DataType::Int8
+        | DataType::Int16
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::Year => Merged::Narrow,
+        DataType::Int64 | DataType::UInt64 => Merged::Big,
+        _ => Merged::Double,
+    };
+    let mut merged: Option<Merged> = None;
+    for data_type in types {
+        let next = class(data_type);
+        merged = Some(match (merged, next) {
+            (None, next) => next,
+            (Some(Merged::Double), _)
+            | (_, Merged::Double)
+            | (Some(Merged::Big), Merged::Single) => Merged::Double,
+            (Some(Merged::Single), _) | (Some(Merged::Narrow), Merged::Single) => Merged::Single,
+            (Some(Merged::Big), _) | (_, Merged::Big) => Merged::Big,
+            (Some(Merged::Narrow), Merged::Narrow) => Merged::Narrow,
+        });
+    }
+    merged == Some(Merged::Single)
 }
 
 /// Two DATETIME operands read at one type: as they are where the types

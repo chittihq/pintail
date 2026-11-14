@@ -4139,7 +4139,11 @@ fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError>
             .iter()
             .any(|data_type| matches!(data_type, DataType::Float32 | DataType::Float64))
         {
-            Ok(Some(DataType::Float64))
+            Ok(Some(if super::float_stays_single(&types) {
+                DataType::Float32
+            } else {
+                DataType::Float64
+            }))
         } else if types
             .iter()
             .any(|data_type| matches!(data_type, DataType::Decimal { .. }))
