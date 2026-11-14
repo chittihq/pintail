@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4297;
+const EXPECTED_CASES: usize = 4301;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5599,7 +5599,44 @@ fn hand_written_cases() -> Vec<OracleCase> {
     .chain(wide_conversion_cases())
     .chain(weight_string_width_cases())
     .chain(weight_string_default_cases())
+    .chain(engine_error_cases())
     .collect()
+}
+
+/// Statements that once ended in an engine error where `MySQL` answers.
+fn engine_error_cases() -> Vec<OracleCase> {
+    let ordered = |family, sql: &str| OracleCase {
+        sql_mode: "",
+        family,
+        sql: sql.to_owned(),
+        ordered: true,
+    };
+    vec![
+        // A DISTINCT aggregate grouped by its own argument merges one state
+        // per group, and a merge reads the distinct keys back as values.
+        ordered(
+            "distinct aggregate grouped by its argument",
+            "SELECT total, SUM(DISTINCT total), AVG(DISTINCT total), MIN(DISTINCT total), \
+                    MAX(DISTINCT total), COUNT(DISTINCT total) \
+             FROM orders GROUP BY total ORDER BY total",
+        ),
+        ordered(
+            "distinct aggregate grouped by its argument",
+            "SELECT SUM(DISTINCT total), AVG(DISTINCT total) FROM orders GROUP BY total \
+             HAVING total IN (AVG(1), 1 + total, 12.5) ORDER BY 1",
+        ),
+        ordered(
+            "distinct aggregate grouped by its argument",
+            "SELECT status, MIN(DISTINCT status), MAX(DISTINCT status), SUM(DISTINCT total), \
+                    AVG(DISTINCT total) \
+             FROM orders GROUP BY status ORDER BY status",
+        ),
+        ordered(
+            "distinct aggregate grouped by its argument",
+            "SELECT MAX(DISTINCT tag), MIN(DISTINCT name), SUM(DISTINCT CONCAT(score, '.50')) \
+             FROM events GROUP BY tag, name, score ORDER BY 1, 2, 3",
+        ),
+    ]
 }
 
 /// Conversions an operator applies to an operand before it works: a

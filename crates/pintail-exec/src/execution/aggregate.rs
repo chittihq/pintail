@@ -234,6 +234,12 @@ struct BitmapSeen {
 /// keys by collation weight (`Texts`). Any other mix of keys migrates
 /// whichever form is active to normalized Values.
 ///
+/// A set whose keys are read back as the values they stand for - every
+/// DISTINCT aggregate but COUNT replays them when two states merge or a
+/// spilled state returns - cannot key text by its weight alone: the weight
+/// of `'1.50'` is not a number and not the text. Such a set keeps the value
+/// it first met under each normalized key (`Spelled`).
+///
 /// Under a [`KeyDomain`] with `units`, the integer keys are a DECIMAL or
 /// temporal column's packed units and stand for the canonical text those
 /// units format to.
@@ -244,6 +250,8 @@ enum DistinctSeen {
     /// Boxed for the same reason as [`IntsSeen`].
     Texts(Box<TextKeys>),
     Values(HashSet<Value>),
+    /// Normalized key to the value first met under it.
+    Spelled(HashMap<Value, Value>),
 }
 
 /// How a DISTINCT set reads its keys: the collation text compares under,
@@ -253,6 +261,8 @@ struct KeyDomain {
     collation: Collation,
     /// `Some` when integer keys are a column's packed units.
     units: Option<UnitKind>,
+    /// Whether the keys are read back as values (see [`replays_keys`]).
+    replays: bool,
 }
 
 impl KeyDomain {
@@ -421,6 +431,13 @@ fn distinct_unit_kind(aggregate: &CompiledAggregate) -> Option<UnitKind> {
     UnitKind::of_type(aggregate.input_type?)
 }
 
+/// Whether a DISTINCT aggregate reads the keys of its set back as values:
+/// a merge of two states, or a spilled state returning, replays each key
+/// through the update. COUNT only counts them.
+fn replays_keys(aggregate: &CompiledAggregate) -> bool {
+    aggregate.distinct && aggregate.function != AggregateFunction::Count
+}
+
 fn int_key_value(key: i128) -> Value {
     i64::try_from(key).map_or_else(
         |_| Value::UInt64(u64::try_from(key).expect("distinct int keys fit u64")),
@@ -437,6 +454,15 @@ impl DistinctSeen {
         memory: &MemoryTracker,
         domain: KeyDomain,
     ) -> Result<bool, ExecError> {
+        if domain.replays
+            && (matches!(self, Self::Spelled(_))
+                || matches!(
+                    value,
+                    Value::Utf8(_) | Value::Enum { .. } | Value::DecimalAverage(_)
+                ))
+        {
+            return self.insert_spelled(value, memory, domain);
+        }
         if let Some(kind) = domain.units {
             // A unit-keyed column's value arriving as text - a row the
             // store has not packed - keys by the same units when it is
@@ -509,6 +535,56 @@ impl DistinctSeen {
             Self::Texts(keys) => keys.insert(text, collation, memory).map(Some),
             _ => Ok(None),
         }
+    }
+
+    /// Inserts `value` under its normalized key, keeping the value itself:
+    /// the first one met stands for every later value equal to it.
+    fn insert_spelled(
+        &mut self,
+        value: &Value,
+        memory: &MemoryTracker,
+        domain: KeyDomain,
+    ) -> Result<bool, ExecError> {
+        if !matches!(self, Self::Spelled(_)) {
+            let held: Vec<Value> = match std::mem::replace(self, Self::Spelled(HashMap::new())) {
+                Self::Ints(ints) => ints.set.into_iter().map(int_key_value).collect(),
+                Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits)
+                    .map(int_key_value)
+                    .collect(),
+                Self::Values(set) => set.into_iter().collect(),
+                Self::Texts(_) => {
+                    return Err(ExecError::InvalidPhysicalPlan(
+                        "a distinct set that replays its keys held text weights",
+                    ));
+                }
+                Self::Spelled(_) => Vec::new(),
+            };
+            memory.reserve(
+                held.len()
+                    .saturating_mul(size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD)),
+            )?;
+            if let Self::Spelled(map) = self {
+                map.extend(held.into_iter().map(|key| (key.clone(), key)));
+            }
+        }
+        let Self::Spelled(map) = self else {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "a spelled distinct key needs a spelled set",
+            ));
+        };
+        let key = normalized_hash_key(value.clone(), domain.collation).unwrap_or(Value::Null);
+        if map.contains_key(&key) {
+            return Ok(false);
+        }
+        memory.reserve(
+            2_usize
+                .saturating_mul(size_of::<Value>())
+                .saturating_add(HASH_ENTRY_OVERHEAD)
+                .saturating_add(key.heap_bytes())
+                .saturating_add(value.heap_bytes()),
+        )?;
+        map.insert(key, value.clone());
+        Ok(true)
     }
 
     /// Inserts an already normalized key into a set of values.
@@ -616,6 +692,7 @@ impl DistinctSeen {
                 self.insert_int(key, memory, domain)
             }
             Self::Values(_) => self.insert_normalized(domain.normalized_int(key)?, memory),
+            Self::Spelled(_) => self.insert_spelled(&int_key_value(key), memory, domain),
         }
     }
 
@@ -727,6 +804,9 @@ impl DistinctSeen {
         if let Some(int) = int_distinct_key(&key) {
             return self.insert_int(int, memory, domain);
         }
+        if matches!(self, Self::Spelled(_)) {
+            return self.insert_spelled(&key, memory, domain);
+        }
         self.migrate_to_values(memory, domain)?;
         self.insert_normalized(key, memory)
     }
@@ -751,7 +831,7 @@ impl DistinctSeen {
                 .into_normalized(domain.collation)
                 .map(Value::Utf8)
                 .collect(),
-            Self::Values(_) => return Ok(()),
+            Self::Values(_) | Self::Spelled(_) => return Ok(()),
         };
         let mut set = HashSet::with_capacity(keys.len());
         memory.reserve(
@@ -790,7 +870,9 @@ impl DistinctSeen {
                 _ => Ok(Err(Self::Texts(theirs))),
             };
         }
-        if matches!(self, Self::Values(_) | Self::Texts(_)) || matches!(other, Self::Values(_)) {
+        if matches!(self, Self::Values(_) | Self::Texts(_) | Self::Spelled(_))
+            || matches!(other, Self::Values(_) | Self::Spelled(_))
+        {
             return Ok(Err(other));
         }
         if let (Self::Bitmap(mine), Self::Bitmap(theirs)) = (&mut *self, &other)
@@ -829,7 +911,7 @@ impl DistinctSeen {
         let members: Box<dyn Iterator<Item = i128> + '_> = match &other {
             Self::Ints(ints) => Box::new(ints.set.iter().copied()),
             Self::Bitmap(bitmap) => Box::new(bitmap_members(bitmap.min, &bitmap.bits)),
-            Self::Values(_) | Self::Texts(_) => unreachable!("checked above"),
+            Self::Values(_) | Self::Texts(_) | Self::Spelled(_) => unreachable!("checked above"),
         };
         let mut added = 0_u64;
         for key in members {
@@ -850,6 +932,7 @@ impl DistinctSeen {
                 .map(int_key_value)
                 .collect(),
             Self::Values(set) => set.into_iter().collect(),
+            Self::Spelled(map) => map.into_values().collect(),
         }
     }
 }
@@ -1255,9 +1338,15 @@ impl AggregateState {
         let Some(seen) = &mut self.seen else {
             return self.update(aggregate, key, memory);
         };
+        // A replayed key is the value itself, and takes the same path a
+        // row's value does.
+        if replays_keys(aggregate) {
+            return self.update(aggregate, key, memory);
+        }
         let domain = KeyDomain {
             collation: self.collation,
             units: self.units,
+            replays: false,
         };
         if !seen.absorb(key.clone(), memory, domain)? {
             return Ok(());
@@ -1324,6 +1413,7 @@ impl AggregateState {
                 KeyDomain {
                     collation: self.collation,
                     units: self.units,
+                    replays: replays_keys(aggregate),
                 },
             )?
         {
@@ -1342,7 +1432,13 @@ impl AggregateState {
                 Value::Boolean(flag) => ExactUnits::from_int(i128::from(*flag), scale),
                 Value::Int64(signed) => ExactUnits::from_int(i128::from(*signed), scale),
                 Value::UInt64(unsigned) => ExactUnits::from_int(i128::from(*unsigned), scale),
-                _ => None,
+                _ => {
+                    eprintln!(
+                        "DBG sum value {value:?} number {number:?} units {:?}",
+                        self.units
+                    );
+                    None
+                }
             }
             .ok_or(ExecError::NumericOverflow)?;
             return self.update_decimal_sum_exact(units, scale, false);
@@ -1567,6 +1663,7 @@ impl AggregateState {
                     let domain = KeyDomain {
                         collation: self.collation,
                         units: self.units,
+                        replays: false,
                     };
                     match mine.union_ints(seen, memory, domain)? {
                         Ok(added) => {
@@ -2104,6 +2201,7 @@ impl AggregateState {
                 KeyDomain {
                     collation: self.collation,
                     units: self.units,
+                    replays: false,
                 },
             )?
         {
@@ -2221,6 +2319,7 @@ impl AggregateState {
         let domain = KeyDomain {
             collation: self.collation,
             units: self.units,
+            replays: false,
         };
         let Some(seen) = &mut self.seen else {
             return Err(ExecError::InvalidPhysicalPlan(
@@ -2253,6 +2352,7 @@ impl AggregateState {
         let domain = KeyDomain {
             collation: self.collation,
             units: self.units,
+            replays: false,
         };
         let (Some(seen), AggregateValue::Count(count)) = (&mut self.seen, &mut self.value) else {
             return Err(ExecError::InvalidPhysicalPlan(
@@ -8517,6 +8617,7 @@ mod distinct_bitmap_tests {
     const PLAIN: KeyDomain = KeyDomain {
         collation: Collation::Utf8mb40900AiCi,
         units: None,
+        replays: false,
     };
 
     fn ints() -> DistinctSeen {
@@ -8538,6 +8639,7 @@ mod distinct_bitmap_tests {
             KeyDomain {
                 collation: Collation::Utf8mb40900AiCi,
                 units: Some(super::UnitKind::DateTime { fsp: 0 }),
+                replays: false,
             },
         ] {
             let mut seen = ints();
