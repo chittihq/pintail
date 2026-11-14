@@ -43,23 +43,30 @@ const MAX_COMPILE_WORK: usize = 1 << 20;
 /// stretch between two checks, so counted singly a pattern would never
 /// reach one.
 const COMPILE_STEP: usize = 64;
-/// The most saved alternatives the stack may hold at once. Every program
-/// is charged this much of its query's memory before it runs, so the
-/// ceiling is what a query of many patterns can afford; a run of single
-/// characters takes one entry however long it is.
-const MAX_STACK: usize = 4_096;
+/// The most saved alternatives the stack may hold at once. A loop over one
+/// character, or over a fixed run of them, holds one however long the text
+/// it takes; a loop over anything else holds one for every turn, so this
+/// is how many turns such a loop may take.
+const MAX_STACK: usize = 8_000;
+/// The most assignments the capture log may hold to undo. A turn of a loop
+/// around a capturing group logs about five.
+const MAX_TRAIL: usize = 40_000;
+/// The most registers the loops of a pattern may count and mark in.
+const MAX_REGISTERS: usize = 2_000;
+/// The longest fixed run of characters a loop is taken over as one unit.
+const MAX_RUN: usize = 64;
 /// The most alternatives one search may save in total.
 const MAX_SAVES: usize = 4_000_000;
 /// The longest text a look-behind may need to read back over.
 const MAX_LOOK_BEHIND: usize = 1_000;
 
 /// Bytes one search can hold at its ceilings: the stack and the capture
-/// log, each at twice its ceiling for the room a growing vector takes, and
-/// the capture slots and loop registers. A statement is charged this for
+/// log, which never grow past them, and the capture slots and loop
+/// registers with the stamp each carries. A statement is charged this for
 /// every program before it runs one.
-pub(in crate::expression) const WORKSPACE: usize =
-    2 * MAX_STACK * (size_of::<Frame>() + 2 * size_of::<(u32, usize)>())
-        + (3 * (MAX_GROUPS + 1) + MAX_PROGRAM) * size_of::<usize>();
+pub(in crate::expression) const WORKSPACE: usize = MAX_STACK * size_of::<Frame>()
+    + MAX_TRAIL * size_of::<Undo>()
+    + (3 * (MAX_GROUPS + 1) + MAX_REGISTERS) * 2 * size_of::<u32>();
 
 // A pattern that is not a literal is charged the automaton's ceilings, so
 // this machine has to fit inside them: its search in the workspace, its
@@ -348,11 +355,27 @@ impl Parser<'_> {
         while self.eat('|') {
             branches.push(self.concatenation(flags)?);
         }
-        Ok(if branches.len() == 1 {
-            branches.pop().unwrap_or(Node::Empty)
-        } else {
-            Node::Alternate(branches)
-        })
+        if branches.len() == 1 {
+            return Ok(branches.pop().unwrap_or(Node::Empty));
+        }
+        // Alternatives that each take one character are one set: the same
+        // characters match, with no alternative to save and come back to.
+        let sets = branches
+            .iter()
+            .map(|branch| match branch {
+                Node::Set(set) => Some(*set),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>();
+        if let Some(sets) = sets {
+            let ranges = sets
+                .into_iter()
+                .flat_map(|set| self.sets.table[set as usize].iter().copied())
+                .collect::<Vec<_>>();
+            self.literal = None;
+            return self.set(ranges, false, false);
+        }
+        Ok(Node::Alternate(branches))
     }
 
     fn concatenation(&mut self, flags: &mut Flags) -> Result<Node, ExecError> {
@@ -1043,10 +1066,17 @@ enum Inst {
     CountTurn {
         counter: u32,
     },
-    /// As many characters of set `.0` as there are, giving them back one at
-    /// a time; `u32::MAX` stands for any character but a line ending and
-    /// `u32::MAX - 1` for any character.
-    Star(u32),
+    /// A loop over a fixed run of characters, taken whole: as many turns
+    /// of the `len` sets from `seq` in the run table as there are, `max` at
+    /// most, failing under `min`, and given back a turn at a time. One
+    /// saved alternative serves the whole loop.
+    Run {
+        seq: u32,
+        len: u32,
+        min: u32,
+        /// `u32::MAX` for no upper bound.
+        max: u32,
+    },
     /// The instructions up to the matching `End` as an assertion.
     Look {
         behind: bool,
@@ -1065,12 +1095,17 @@ enum Inst {
 const ANY_BUT_LINE_END: u32 = u32::MAX;
 const ANY: u32 = u32::MAX - 1;
 
+/// What a position that is not one is written as.
+const NONE: u32 = u32::MAX;
+
 pub(super) struct Program {
     /// Operands compilation visited, kept for the tests that bound it.
     #[cfg_attr(not(test), allow(dead_code))]
     work: usize,
     insts: Vec<Inst>,
     sets: Vec<Box<[(char, char)]>>,
+    /// The sets of every [`Inst::Run`], one after another.
+    runs: Vec<u32>,
     word: Box<[(char, char)]>,
     groups: usize,
     registers: usize,
@@ -1080,6 +1115,7 @@ pub(super) struct Program {
 
 struct Compiler<'steps> {
     insts: Vec<Inst>,
+    runs: Vec<u32>,
     registers: usize,
     groups: usize,
     names: Vec<(String, usize)>,
@@ -1103,9 +1139,39 @@ impl Compiler<'_> {
     }
 
     fn register(&mut self) -> Result<u32, ExecError> {
+        if self.registers >= MAX_REGISTERS {
+            return Err(SYNTAX);
+        }
         let register = u32::try_from(self.registers).map_err(|_| SYNTAX)?;
         self.registers += 1;
         Ok(register)
+    }
+
+    /// The sets `node` takes one character of each from, in order, when it
+    /// is a fixed run of characters and nothing else: no group that
+    /// captures, no choice, nothing of variable length.
+    fn run_of(node: &Node, out: &mut Vec<u32>) -> bool {
+        match node {
+            Node::Set(set) => out.push(*set),
+            Node::Any { dot_all: true } => out.push(ANY),
+            Node::Any { dot_all: false } => out.push(ANY_BUT_LINE_END),
+            Node::Group(None, node) => return Self::run_of(node, out),
+            Node::Concat(nodes) => return nodes.iter().all(|node| Self::run_of(node, out)),
+            Node::Repeat {
+                node,
+                min,
+                max: Some(max),
+                ..
+            } if min == max && (*min as usize) <= MAX_RUN => {
+                for _ in 0..*min {
+                    if !Self::run_of(node, out) || out.len() > MAX_RUN {
+                        return false;
+                    }
+                }
+            }
+            _ => return false,
+        }
+        out.len() <= MAX_RUN
     }
 
     fn group(&self, group: usize) -> Result<u32, ExecError> {
@@ -1251,6 +1317,25 @@ impl Compiler<'_> {
             self.insts[atomic as usize] = Inst::Atomic { after: self.here() };
             return Ok(());
         }
+        // A greedy loop over a fixed run of characters is one instruction:
+        // it takes its turns without saving an alternative for each, and
+        // gives them back from the end.
+        let mut run = Vec::new();
+        if greed == Greed::Greedy && Self::run_of(node, &mut run) && !run.is_empty() {
+            let seq = u32::try_from(self.runs.len()).map_err(|_| SYNTAX)?;
+            let len = u32::try_from(run.len()).map_err(|_| SYNTAX)?;
+            if self.runs.len() + run.len() > MAX_PROGRAM {
+                return Err(SYNTAX);
+            }
+            self.runs.extend(run);
+            self.push(Inst::Run {
+                seq,
+                len,
+                min,
+                max: max.unwrap_or(u32::MAX),
+            })?;
+            return Ok(());
+        }
         // A count is a loop around one copy of the operand, so compiling
         // costs the same whatever the count is.
         match (min, max) {
@@ -1270,20 +1355,6 @@ impl Compiler<'_> {
             }
         };
         let Some(max) = max else {
-            // One character at a time needs no saved alternative per
-            // character: the run is taken whole and given back from its end.
-            if greed == Greed::Greedy {
-                let single = match node {
-                    Node::Set(set) => Some(*set),
-                    Node::Any { dot_all: true } => Some(ANY),
-                    Node::Any { dot_all: false } => Some(ANY_BUT_LINE_END),
-                    _ => None,
-                };
-                if let Some(single) = single {
-                    self.push(Inst::Star(single))?;
-                    return Ok(());
-                }
-            }
             let start = self.push(Inst::Split(0, 0))?;
             let nullable = node.nullable();
             let register = if nullable { self.register()? } else { 0 };
@@ -1389,6 +1460,7 @@ impl Program {
         } = parser;
         let mut compiler = Compiler {
             insts: Vec::new(),
+            runs: Vec::new(),
             registers: 0,
             groups,
             names,
@@ -1400,6 +1472,7 @@ impl Program {
         Ok(Self {
             work: compiler.work,
             insts: compiler.insts,
+            runs: compiler.runs,
             sets: sets.table,
             word,
             groups: compiler.groups + 1,
@@ -1425,11 +1498,20 @@ impl Program {
         from: usize,
         steps: &mut InterruptCounter,
     ) -> Result<Option<Box<[usize]>>, ExecError> {
+        // Positions are held in thirty-two bits; no text the engine passes
+        // here is longer.
+        if u32::try_from(text.len()).map_or(true, |length| length == NONE) {
+            return Err(SYNTAX);
+        }
+        let variables = 3 * self.groups + self.registers;
         let mut machine = Machine {
             program: self,
             text,
             from,
-            vars: vec![usize::MAX; 3 * self.groups + self.registers],
+            vars: vec![NONE; variables],
+            stamps: vec![0; variables],
+            clock: 0,
+            floor: 0,
             trail: Vec::new(),
             stack: Vec::new(),
             saves: 0,
@@ -1437,12 +1519,25 @@ impl Program {
         };
         let mut start = from;
         loop {
-            machine.vars.fill(usize::MAX);
+            machine.vars.fill(NONE);
+            machine.stamps.fill(0);
+            machine.clock = 0;
+            machine.floor = 0;
             machine.trail.clear();
             machine.stack.clear();
             if machine.run(0, start, None)?.is_some() {
-                machine.vars.truncate(2 * self.groups);
-                return Ok(Some(machine.vars.into_boxed_slice()));
+                return Ok(Some(
+                    machine.vars[..2 * self.groups]
+                        .iter()
+                        .map(|slot| {
+                            if *slot == NONE {
+                                usize::MAX
+                            } else {
+                                *slot as usize
+                            }
+                        })
+                        .collect(),
+                ));
             }
             let Some(character) = text[start..].chars().next() else {
                 return Ok(None);
@@ -1452,17 +1547,30 @@ impl Program {
     }
 }
 
+/// A saved alternative: where to resume, and how much of the capture log
+/// was written when it was saved.
 #[derive(Clone, Copy)]
-enum Frame {
-    /// Resume at `pc` and `pos`.
-    Retry { pc: u32, pos: usize, trail: usize },
-    /// Resume at `pc` one character before `pos`, down to `min`.
-    Shrink {
-        pc: u32,
-        min: usize,
-        pos: usize,
-        trail: usize,
-    },
+struct Frame {
+    pc: u32,
+    pos: u32,
+    trail: u32,
+    /// The clock when it was saved; what was assigned since need not be
+    /// logged again.
+    born: u32,
+    /// For a loop taken whole: the characters one turn takes, and the
+    /// position its fewest turns end at. Resuming gives one turn back and
+    /// keeps the alternative while more can be given. Zero for a plain
+    /// alternative, which resumes once.
+    step: u32,
+    least: u32,
+}
+
+/// One assignment to undo: the variable, and the value and stamp it had.
+#[derive(Clone, Copy)]
+struct Undo {
+    index: u32,
+    value: u32,
+    stamp: u32,
 }
 
 struct Machine<'a, 'steps> {
@@ -1471,9 +1579,18 @@ struct Machine<'a, 'steps> {
     from: usize,
     /// Two capture slots per group, then the position each open group
     /// started at, then the loop registers.
-    vars: Vec<usize>,
-    /// What each assignment to `vars` replaced, undone on backtracking.
-    trail: Vec<(u32, usize)>,
+    vars: Vec<u32>,
+    /// When each variable was last assigned, by the clock.
+    stamps: Vec<u32>,
+    /// Counts the alternatives saved and the nested searches begun.
+    clock: u32,
+    /// The clock when the innermost nested search began: it undoes what it
+    /// assigned when it fails, as a saved alternative does.
+    floor: u32,
+    /// What assignments replaced, undone on backtracking. An assignment is
+    /// logged only when an alternative saved since the last one could come
+    /// back to the old value.
+    trail: Vec<Undo>,
     stack: Vec<Frame>,
     saves: usize,
     steps: &'steps mut InterruptCounter,
@@ -1510,31 +1627,96 @@ fn in_set(set: &[(char, char)], character: char) -> bool {
     .is_ok()
 }
 
+/// Appends to a vector that must not hold more than `ceiling` items, and
+/// so must not reserve room for more either.
+fn push_within<T>(items: &mut Vec<T>, item: T, ceiling: usize) -> Result<(), ExecError> {
+    if items.len() >= ceiling {
+        return Err(STACK);
+    }
+    if items.len() == items.capacity() {
+        items.reserve_exact(items.len().clamp(64, ceiling - items.len()));
+    }
+    items.push(item);
+    Ok(())
+}
+
 impl Machine<'_, '_> {
-    fn assign(&mut self, index: usize, value: usize) {
-        self.trail
-            .push((u32::try_from(index).unwrap_or(u32::MAX), self.vars[index]));
+    fn assign(&mut self, index: usize, value: usize) -> Result<(), ExecError> {
+        let value = u32::try_from(value).map_err(|_| SYNTAX)?;
+        // Nothing saved since the variable was last assigned can come back
+        // to the value it has now: only then is it left unlogged.
+        let newest = self
+            .stack
+            .last()
+            .map_or(0, |frame| frame.born)
+            .max(self.floor);
+        if self.stamps[index] < newest {
+            push_within(
+                &mut self.trail,
+                Undo {
+                    index: u32::try_from(index).map_err(|_| SYNTAX)?,
+                    value: self.vars[index],
+                    stamp: self.stamps[index],
+                },
+                MAX_TRAIL,
+            )?;
+        }
         self.vars[index] = value;
+        self.stamps[index] = self.clock;
+        Ok(())
+    }
+
+    fn var(&self, index: usize) -> Option<usize> {
+        let value = self.vars[index];
+        (value != NONE).then_some(value as usize)
     }
 
     fn undo(&mut self, mark: usize) {
         while self.trail.len() > mark {
-            if let Some((index, value)) = self.trail.pop() {
-                self.vars[index as usize] = value;
+            if let Some(undo) = self.trail.pop() {
+                self.vars[undo.index as usize] = undo.value;
+                self.stamps[undo.index as usize] = undo.stamp;
             }
         }
     }
 
-    fn save(&mut self, frame: Frame) -> Result<(), ExecError> {
+    /// Saves an alternative to resume at `pc` and `pos`. `step` and
+    /// `least` are those of a loop taken whole, zero otherwise.
+    fn save(&mut self, pc: u32, pos: usize, step: u32, least: usize) -> Result<(), ExecError> {
         self.saves += 1;
         if self.saves > MAX_SAVES {
             return Err(TIMEOUT);
         }
-        if self.stack.len() >= MAX_STACK || self.trail.len() >= 2 * MAX_STACK {
-            return Err(STACK);
+        self.clock = self.clock.checked_add(1).ok_or(TIMEOUT)?;
+        let position = |at: usize| u32::try_from(at).map_err(|_| SYNTAX);
+        push_within(
+            &mut self.stack,
+            Frame {
+                pc,
+                pos: position(pos)?,
+                trail: position(self.trail.len())?,
+                born: self.clock,
+                step,
+                least: position(least)?,
+            },
+            MAX_STACK,
+        )
+    }
+
+    /// Where the fixed run `seq` ends when it starts at `pos`, if every
+    /// one of its sets finds its character.
+    fn run_end(&self, seq: u32, len: u32, pos: usize) -> Option<usize> {
+        let sets = &self.program.runs[seq as usize..(seq + len) as usize];
+        let mut characters = self.text[pos..].chars();
+        let mut end = pos;
+        for set in sets {
+            let character = characters.next()?;
+            if !self.single(*set, character) {
+                return None;
+            }
+            end += character.len_utf8();
         }
-        self.stack.push(frame);
-        Ok(())
+        Some(end)
     }
 
     fn line_ending(&self, character: char) -> bool {
@@ -1611,12 +1793,9 @@ impl Machine<'_, '_> {
     /// The end of what group `group` captured, matched again at `pos`.
     fn repeated(&self, group: u32, case_insensitive: bool, pos: usize) -> Option<usize> {
         let (start, end) = (
-            self.vars[2 * group as usize],
-            self.vars[2 * group as usize + 1],
+            self.var(2 * group as usize)?,
+            self.var(2 * group as usize + 1)?,
         );
-        if start == usize::MAX || end == usize::MAX {
-            return None;
-        }
         let captured = &self.text[start..end];
         let rest = &self.text[pos..];
         if !case_insensitive {
@@ -1640,8 +1819,8 @@ impl Machine<'_, '_> {
     /// Runs from `pc` at `pos` to the `End` that closes this stretch of the
     /// program, answering where it ended. With `target`, only an end at
     /// that position counts. Alternatives saved on the way are dropped once
-    /// an end is reached: the caller takes this first answer or none.
-    #[allow(clippy::too_many_lines)]
+    /// an end is reached: the caller takes this first answer or none. What
+    /// a run that finds no end assigned is undone.
     fn run(
         &mut self,
         pc: u32,
@@ -1650,6 +1829,31 @@ impl Machine<'_, '_> {
     ) -> Result<Option<usize>, ExecError> {
         let base = self.stack.len();
         let entry = self.trail.len();
+        self.clock = self.clock.checked_add(1).ok_or(TIMEOUT)?;
+        let floor = std::mem::replace(&mut self.floor, self.clock);
+        let found = self.run_from(pc, pos, target, base);
+        self.floor = floor;
+        match found {
+            Ok(Some(end)) => {
+                self.stack.truncate(base);
+                Ok(Some(end))
+            }
+            Ok(None) => {
+                self.undo(entry);
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn run_from(
+        &mut self,
+        pc: u32,
+        pos: usize,
+        target: Option<usize>,
+        base: usize,
+    ) -> Result<Option<usize>, ExecError> {
         let groups = self.program.groups;
         let (mut pc, mut pos) = (pc, pos);
         loop {
@@ -1677,11 +1881,7 @@ impl Machine<'_, '_> {
                     self.holds(assertion, pos)
                 }
                 Inst::Split(first, second) => {
-                    self.save(Frame::Retry {
-                        pc: second,
-                        pos,
-                        trail: self.trail.len(),
-                    })?;
+                    self.save(second, pos, 0, 0)?;
                     pc = first;
                     true
                 }
@@ -1690,14 +1890,14 @@ impl Machine<'_, '_> {
                     true
                 }
                 Inst::Open(group) => {
-                    self.assign(2 * groups + group as usize, pos);
+                    self.assign(2 * groups + group as usize, pos)?;
                     pc += 1;
                     true
                 }
                 Inst::Close(group) => {
-                    let start = self.vars[2 * groups + group as usize];
-                    self.assign(2 * group as usize, start);
-                    self.assign(2 * group as usize + 1, pos);
+                    let start = self.vars[2 * groups + group as usize] as usize;
+                    self.assign(2 * group as usize, start)?;
+                    self.assign(2 * group as usize + 1, pos)?;
                     pc += 1;
                     true
                 }
@@ -1713,12 +1913,12 @@ impl Machine<'_, '_> {
                     None => false,
                 },
                 Inst::Mark(register) => {
-                    self.assign(3 * groups + register as usize, pos);
+                    self.assign(3 * groups + register as usize, pos)?;
                     pc += 1;
                     true
                 }
                 Inst::Progress { register, exit } => {
-                    pc = if self.vars[3 * groups + register as usize] == pos {
+                    pc = if self.var(3 * groups + register as usize) == Some(pos) {
                         exit
                     } else {
                         pc + 1
@@ -1726,7 +1926,7 @@ impl Machine<'_, '_> {
                     true
                 }
                 Inst::CountStart { counter } => {
-                    self.assign(3 * groups + counter as usize, 0);
+                    self.assign(3 * groups + counter as usize, 0)?;
                     pc += 1;
                     true
                 }
@@ -1741,58 +1941,60 @@ impl Machine<'_, '_> {
                     let turns = self.vars[3 * groups + counter as usize];
                     // A turn that consumed nothing leaves every later turn
                     // nothing to consume either: the loop is over.
-                    let stalled = turns > 0 && self.vars[3 * groups + mark as usize] == pos;
-                    if stalled || turns >= max as usize {
+                    let stalled = turns > 0 && self.var(3 * groups + mark as usize) == Some(pos);
+                    if stalled || turns >= max {
                         pc = exit;
-                    } else if turns < min as usize {
+                    } else if turns < min {
                         pc += 1;
                     } else if lazy {
-                        self.save(Frame::Retry {
-                            pc: pc + 1,
-                            pos,
-                            trail: self.trail.len(),
-                        })?;
+                        self.save(pc + 1, pos, 0, 0)?;
                         pc = exit;
                     } else {
-                        self.save(Frame::Retry {
-                            pc: exit,
-                            pos,
-                            trail: self.trail.len(),
-                        })?;
+                        self.save(exit, pos, 0, 0)?;
                         pc += 1;
                     }
                     true
                 }
                 Inst::CountEnter { mark } => {
-                    self.assign(3 * groups + mark as usize, pos);
+                    self.assign(3 * groups + mark as usize, pos)?;
                     pc += 1;
                     true
                 }
                 Inst::CountTurn { counter } => {
                     let turns = self.vars[3 * groups + counter as usize];
-                    self.assign(3 * groups + counter as usize, turns.saturating_add(1));
+                    self.assign(
+                        3 * groups + counter as usize,
+                        turns.saturating_add(1) as usize,
+                    )?;
                     pc += 1;
                     true
                 }
-                Inst::Star(set) => {
+                Inst::Run { seq, len, min, max } => {
                     let start = pos;
-                    for character in self.text[start..].chars() {
-                        if !self.single(set, character) {
-                            break;
+                    let mut turns = 0_u32;
+                    // Where the fewest turns end: nothing before it is
+                    // given back.
+                    let mut least = (min == 0).then_some(pos);
+                    while turns < max
+                        && let Some(end) = self.run_end(seq, len, pos)
+                    {
+                        pos = end;
+                        turns += 1;
+                        if turns == min {
+                            least = Some(pos);
                         }
-                        pos += character.len_utf8();
                     }
                     self.steps.steps(pos - start)?;
                     pc += 1;
-                    if pos > start {
-                        self.save(Frame::Shrink {
-                            pc,
-                            min: start,
-                            pos,
-                            trail: self.trail.len(),
-                        })?;
+                    match least {
+                        None => false,
+                        Some(least) => {
+                            if pos > least {
+                                self.save(pc, pos, len, least)?;
+                            }
+                            true
+                        }
                     }
-                    true
                 }
                 Inst::Look {
                     behind,
@@ -1840,7 +2042,6 @@ impl Machine<'_, '_> {
                 },
                 Inst::End => {
                     if target.is_none_or(|target| target == pos) {
-                        self.stack.truncate(base);
                         return Ok(Some(pos));
                     }
                     false
@@ -1850,43 +2051,29 @@ impl Machine<'_, '_> {
                 continue;
             }
             if self.stack.len() <= base {
-                self.undo(entry);
                 return Ok(None);
             }
-            match self.stack.pop() {
-                Some(Frame::Retry {
-                    pc: saved,
-                    pos: at,
-                    trail,
-                }) => {
-                    self.undo(trail);
-                    pc = saved;
-                    pos = at;
-                }
-                Some(Frame::Shrink {
-                    pc: saved,
-                    min,
-                    pos: at,
-                    trail,
-                }) => {
-                    self.undo(trail);
-                    let width = self.text[..at]
+            let Some(frame) = self.stack.pop() else {
+                return Ok(None);
+            };
+            self.undo(frame.trail as usize);
+            pc = frame.pc;
+            pos = frame.pos as usize;
+            if frame.step > 0 {
+                // One turn of the loop is given back, and the alternative
+                // stays while another can be.
+                for _ in 0..frame.step {
+                    pos -= self.text[..pos]
                         .chars()
                         .next_back()
                         .map_or(0, char::len_utf8);
-                    let at = at - width;
-                    if at > min {
-                        self.stack.push(Frame::Shrink {
-                            pc: saved,
-                            min,
-                            pos: at,
-                            trail,
-                        });
-                    }
-                    pc = saved;
-                    pos = at;
                 }
-                None => return Ok(None),
+                if pos > frame.least as usize {
+                    self.stack.push(Frame {
+                        pos: u32::try_from(pos).map_err(|_| SYNTAX)?,
+                        ..frame
+                    });
+                }
             }
         }
     }
@@ -2013,6 +2200,65 @@ mod tests {
             program.captures_at(&text, 0, &mut InterruptCounter::unchecked()),
             Err(ExecError::Regex(RegexError::StackOverflow))
         );
+    }
+
+    /// A loop that takes a character, or a fixed run of them, each turn
+    /// holds one saved alternative however long the text: a match that
+    /// only reads forward is never short of stack.
+    #[test]
+    fn a_loop_over_a_fixed_run_holds_one_alternative() {
+        for (pattern, unit, insensitive) in [
+            ("(?=a)a+", "a", true),
+            ("(?=a)a+", "a", false),
+            ("(?=a)(?:a)+$", "a", true),
+            ("(?=a)(?:a|b)+$", "ab", true),
+            ("(?=a)(?:ab)+$", "ab", true),
+            ("(?=a)(?:(?:a[b-c]){2})*$", "abac", false),
+            ("(?=a)[a-c]{3,}$", "abc", false),
+            ("(?=a).*c$", "abc", false),
+            ("(?=a)(?:..c)++$", "abc", false),
+            ("(?=a)a{2,2000000}$", "a", true),
+        ] {
+            let program = Program::new(pattern, insensitive, false, false, LineEndings::Unicode)
+                .unwrap_or_else(|error| panic!("{pattern}: {error}"));
+            assert!(
+                program
+                    .insts
+                    .iter()
+                    .any(|inst| matches!(inst, super::Inst::Run { .. })),
+                "{pattern} compiles to a loop taken whole"
+            );
+            for length in [5_000, 100_000, 1_000_000] {
+                let text = unit.repeat(length / unit.len());
+                let found = program
+                    .captures_at(&text, 0, &mut InterruptCounter::unchecked())
+                    .unwrap_or_else(|error| panic!("{pattern} over {length}: {error}"));
+                assert_eq!(
+                    found.map(|slots| (slots[0], slots[1])),
+                    Some((0, text.len())),
+                    "{pattern} over {length}"
+                );
+            }
+        }
+    }
+
+    /// Giving a loop back turn by turn finds what a loop that saved every
+    /// turn found, captures included.
+    #[test]
+    fn a_loop_taken_whole_gives_its_turns_back() {
+        assert_eq!(find("(?=a)a+ab", "aaaab"), Some((0, 5)));
+        assert_eq!(find("(?=a)(?:ab)+abc", "abababc"), Some((0, 7)));
+        assert_eq!(find("(?=a)(?:ab){2,}ab$", "abab"), None);
+        assert_eq!(find("(?=a)(?:ab){2,}ab$", "ababab"), Some((0, 6)));
+        assert_eq!(find("(?=a)a{2,3}a", "aaa"), Some((0, 3)));
+        assert_eq!(find("(?=a)a{2,3}a", "aa"), None);
+        assert_eq!(find("(?=a)a{2,3}+a", "aaa"), None);
+        assert_eq!(find("(?=x)(x*)(x*)y", "xxxy"), Some((0, 4)));
+        assert_eq!(find(r"(?=a)(a+)b\1", "aabaa"), Some((0, 5)));
+        assert_eq!(find(r"(?=a)(a+)\1$", "aaaa"), Some((0, 4)));
+        assert_eq!(find(r"(?!(a)b)a\1", "aca"), None);
+        assert_eq!(find(r"(?:(?=(a))a|b)\1", "ba"), None);
+        assert_eq!(find("(?=é)(?:é.)+é$", "éaébé"), Some((0, 8)));
     }
 
     #[test]

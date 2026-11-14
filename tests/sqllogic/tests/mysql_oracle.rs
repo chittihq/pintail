@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4388;
+const EXPECTED_CASES: usize = 4394;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6026,6 +6026,35 @@ fn engine_error_cases() -> Vec<OracleCase> {
             "regex counted repetition",
             "SELECT id, REGEXP_LIKE(name, '(?=e)(?:[a-z]{2,3}){2}-\\\\d{1,50000}$'), \
                     REGEXP_SUBSTR(name, '(?<=-)\\\\d{2,1000}') FROM events ORDER BY id",
+        ),
+        // A loop over a character or a fixed run of them reads a long text
+        // without a saved alternative for every turn.
+        ordered(
+            "regex loops over long subjects",
+            "SELECT REGEXP_LIKE(REPEAT('a', 5000), '(?=a)a+'), \
+                    REGEXP_LIKE(REPEAT('a', 100000), '(?=a)a+'), \
+                    REGEXP_LIKE(REPEAT('a', 5000), '(?=a)(?:a)+$', 'c')",
+        ),
+        ordered(
+            "regex loops over long subjects",
+            "SELECT REGEXP_LIKE(REPEAT('ab', 50000), '(?=a)(?:ab)+$')",
+        ),
+        ordered(
+            "regex loops over long subjects",
+            "SELECT REGEXP_LIKE(REPEAT('ab', 50000), '(?=a)(?:a|b)+$')",
+        ),
+        ordered(
+            "regex loops over long subjects",
+            "SELECT REGEXP_INSTR(CONCAT(REPEAT('ab', 30000), 'c'), '(?<=b)c'), \
+                    LENGTH(REGEXP_SUBSTR(REPEAT('ab', 20000), '(?=a)(?:ab){2,}'))",
+        ),
+        ordered(
+            "regex loops over long subjects",
+            "SELECT REGEXP_LIKE(REPEAT('abc', 100000), '(?=a)[a-c]+$')",
+        ),
+        ordered(
+            "regex loops over long subjects",
+            "SELECT REGEXP_LIKE(REPEAT('abc', 100000), '(?=a).*c$')",
         ),
     ]
 }
