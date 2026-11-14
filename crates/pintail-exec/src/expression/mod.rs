@@ -1715,6 +1715,7 @@ impl CompiledExpr {
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
                     | ScalarFunction::Utf8Prefix
+                    | ScalarFunction::WidePrefix(_)
                     | ScalarFunction::BitNot
                     | ScalarFunction::Reverse
                     | ScalarFunction::Unhex
@@ -2058,6 +2059,7 @@ impl CompiledExpr {
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
                     | ScalarFunction::Utf8Prefix
+                    | ScalarFunction::WidePrefix(_)
                     | ScalarFunction::BitNot
                     | ScalarFunction::Reverse
                     | ScalarFunction::Unhex
@@ -2967,6 +2969,10 @@ fn evaluate_eager_scalar_inner(
                 _ => Err(ExecError::InvalidExpressionType),
             }
         }
+        ScalarFunction::WidePrefix(charset) => match &values[0] {
+            Value::Binary(bytes) => Ok(Value::Binary(charset.valid_wide_prefix(bytes))),
+            _ => Err(ExecError::InvalidExpressionType),
+        },
         ScalarFunction::Utf8Prefix => match &values[0] {
             Value::Binary(bytes) => Ok(Value::Binary(pintail_types::utf8_prefix(bytes).to_vec())),
             _ => Err(ExecError::InvalidExpressionType),

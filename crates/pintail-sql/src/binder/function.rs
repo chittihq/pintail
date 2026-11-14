@@ -2899,8 +2899,24 @@ pub(super) fn bind_convert(
                 encoding,
                 pintail_types::CharacterSet::Utf8Mb4 | pintail_types::CharacterSet::Utf8Mb3
             );
-            let argument = if utf8 && !crate::session_parse_mode().strict {
+            let argument = if crate::session_parse_mode().strict {
+                argument
+            } else if utf8 {
                 crate::text_charset::wrap(argument, ScalarFunction::Utf8Prefix, DataType::Binary)
+            } else if matches!(
+                encoding,
+                pintail_types::CharacterSet::Utf16
+                    | pintail_types::CharacterSet::Utf16Le
+                    | pintail_types::CharacterSet::Utf32
+            ) {
+                // A conversion that is not strict keeps the characters
+                // before the first unit that is not one, where a strict
+                // one is NULL.
+                crate::text_charset::wrap(
+                    argument,
+                    ScalarFunction::WidePrefix(encoding),
+                    DataType::Binary,
+                )
             } else {
                 argument
             };
@@ -3533,7 +3549,7 @@ pub(super) fn bind_scalar(
         // the declared precision - typing it Time64 cost the fraction, which
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
         ScalarFunction::Collate { .. } | ScalarFunction::BitNot | ScalarFunction::PlainText => (args[0].data_type, args[0].nullable),
-        ScalarFunction::EncodedCase { .. } | ScalarFunction::Utf8Prefix | ScalarFunction::BitBytes(_) | ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey | ScalarFunction::WeightString { .. } => (Some(DataType::Binary), args[0].nullable),
+        ScalarFunction::EncodedCase { .. } | ScalarFunction::Utf8Prefix | ScalarFunction::WidePrefix(_) | ScalarFunction::BitBytes(_) | ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey | ScalarFunction::WeightString { .. } => (Some(DataType::Binary), args[0].nullable),
         // SHA2's width argument, an invalid IPv4 string, and an
         // out-of-range address number all answer NULL, so these stay
         // nullable regardless of their inputs.

@@ -1357,6 +1357,9 @@ pub enum ScalarFunction {
     BitBytes(u8),
     /// Retain complete UTF-8 before the first malformed byte sequence.
     Utf8Prefix,
+    /// Retain the complete characters of a wide encoding before the first
+    /// malformed unit, after padding the first unit in front.
+    WidePrefix(pintail_types::CharacterSet),
     /// Normalize Unicode into a SQL character set and retain its identity.
     TextCharset(pintail_types::CharacterSet, NamedCollation),
     /// Raw result bytes interpreted in a declared encoding for character consumers.

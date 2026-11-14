@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4100;
+const EXPECTED_CASES: usize = 4105;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5596,6 +5596,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
     .chain(collation_report_cases())
     .chain(weight_string_cases())
     .chain(regex_fold_cases())
+    .chain(wide_conversion_cases())
     .collect()
 }
 
@@ -6256,6 +6257,29 @@ fn regex_fold_cases() -> Vec<OracleCase> {
     .map(|sql| OracleCase {
         sql_mode: "",
         family: "regex case folds",
+        sql: sql.to_owned(),
+        ordered: true,
+    })
+    .collect()
+}
+
+/// A conversion into a character set of wide units that meets a unit which
+/// is no character: NULL when the session is strict, the characters before
+/// it when it is not.
+fn wide_conversion_cases() -> Vec<OracleCase> {
+    const LOOSE: &str = "NO_ENGINE_SUBSTITUTION";
+    const STRICT: &str = "STRICT_TRANS_TABLES";
+    [
+        (LOOSE, "SELECT HEX(CONVERT(0x0000004101020304 USING utf32)), HEX(CONVERT(0x0102030400000041 USING utf32)), HEX(CONVERT(0x000000410000 USING utf32)), HEX(CONVERT(0x41 USING utf32)), HEX(CONVERT(0x0000004100110000 USING utf32)), HEX(CONVERT(0x000000410000D80000000042 USING utf32))"),
+        (LOOSE, "SELECT HEX(CONVERT(0x0041D800 USING utf16)), HEX(CONVERT(0xD8000041 USING utf16)), HEX(CONVERT(0x004100 USING utf16)), HEX(CONVERT(0x0041DC000042 USING utf16)), HEX(CONVERT(0x0041D800DC00 USING utf16)), HEX(CONVERT(0x410000D8 USING utf16le)), HEX(CONVERT(0x4100DC USING utf16le)), HEX(CONVERT(0x004100 USING ucs2))"),
+        (LOOSE, "SELECT HEX(CHAR(0x01020304 USING utf32)), HEX(CHAR(0x0000004101020304 USING utf32)), HEX(CHAR(65, 0x01020304 USING utf32)), HEX(CHAR(0x0041D800 USING utf16)), HEX(CHAR(0x41FF USING utf8mb4)), HEX(CHAR(0xFF41 USING utf8mb4))"),
+        (LOOSE, "SELECT CHAR(0x01020304 USING utf32) IS NULL, CONVERT(0x01020304 USING utf32) IS NULL, CHAR(NULL USING utf32) IS NULL, LENGTH(CHAR(0x01020304 USING utf32)), HEX(CAST(0x0000004101020304 AS CHAR CHARACTER SET utf32))"),
+        (STRICT, "SELECT HEX(CHAR(0x01020304 USING utf32)), HEX(CONVERT(0x0000004101020304 USING utf32)), HEX(CHAR(65, 0x01020304 USING utf32)), HEX(CAST(0x0000004101020304 AS CHAR CHARACTER SET utf32)), HEX(CONVERT(0x0041D800 USING utf16)), HEX(CONVERT(0x41 USING utf32)), HEX(CONVERT(0x004100 USING ucs2)), HEX(CHAR(0x0010FFFF USING utf32))"),
+    ]
+    .into_iter()
+    .map(|(sql_mode, sql)| OracleCase {
+        sql_mode,
+        family: "wide conversions",
         sql: sql.to_owned(),
         ordered: true,
     })

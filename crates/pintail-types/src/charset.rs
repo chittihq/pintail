@@ -187,6 +187,60 @@ impl CharacterSet {
         Some(bytes)
     }
 
+    /// The bytes of the complete, valid characters `bytes` starts with in
+    /// a character set of two- or four-byte units, after the padding in
+    /// front that fills its first unit: what a conversion keeps when it
+    /// is not strict. Other character sets come back whole.
+    #[must_use]
+    pub fn valid_wide_prefix(self, bytes: &[u8]) -> Vec<u8> {
+        let width = self.minimum_width();
+        let padding = (width - bytes.len() % width) % width;
+        let mut padded = vec![0; padding];
+        padded.extend_from_slice(bytes);
+        let unit = |at: usize| {
+            let pair = [padded[at], padded[at + 1]];
+            if self == Self::Utf16Le {
+                u16::from_le_bytes(pair)
+            } else {
+                u16::from_be_bytes(pair)
+            }
+        };
+        let mut kept = 0;
+        match self {
+            Self::Utf32 => {
+                while kept + 4 <= padded.len()
+                    && char::from_u32(u32::from_be_bytes([
+                        padded[kept],
+                        padded[kept + 1],
+                        padded[kept + 2],
+                        padded[kept + 3],
+                    ]))
+                    .is_some()
+                {
+                    kept += 4;
+                }
+            }
+            Self::Utf16 | Self::Utf16Le => {
+                while kept + 2 <= padded.len() {
+                    let step = match unit(kept) {
+                        0xd800..=0xdbff
+                            if kept + 4 <= padded.len()
+                                && matches!(unit(kept + 2), 0xdc00..=0xdfff) =>
+                        {
+                            4
+                        }
+                        0xd800..=0xdfff => break,
+                        _ => 2,
+                    };
+                    kept += step;
+                }
+            }
+            _ => kept = padded.len(),
+        }
+        padded.truncate(kept);
+        padded
+    }
+
     /// Decode the complete leading characters of a raw result buffer.
     /// Byte consumers can retain the original buffer independently.
     #[must_use]
