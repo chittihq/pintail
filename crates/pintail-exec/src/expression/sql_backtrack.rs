@@ -13,6 +13,8 @@
 //! with an error at a fixed ceiling of each, as `MySQL` does with its own
 //! step and stack limits; the statement's interruption is checked as well.
 
+use std::collections::HashMap;
+
 use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, HirKind};
 
 use super::sql_regex::LineEndings;
@@ -28,6 +30,19 @@ const MAX_PROGRAM: usize = 16_000;
 const MAX_SET_RANGES: usize = 48_000;
 /// The most groups a pattern may capture.
 const MAX_GROUPS: usize = 1_000;
+/// The largest count a `{n,m}` repetition may name; `MySQL` refuses the
+/// next one up.
+pub(super) const MAX_COUNT: u64 = 0x00ff_ffff;
+/// The most operands compilation may visit. A counted repetition compiles
+/// to a loop around one copy of its operand, so a pattern is visited about
+/// once; the ceiling is a guard, not a budget patterns come near.
+const MAX_COMPILE_WORK: usize = 1 << 20;
+/// What reading or compiling one operand counts for on the statement's
+/// interrupt counter, in steps of a search: it builds sets and tables where
+/// a search step reads a character, and a pattern is far shorter than the
+/// stretch between two checks, so counted singly a pattern would never
+/// reach one.
+const COMPILE_STEP: usize = 64;
 /// The most saved alternatives the stack may hold at once. Every program
 /// is charged this much of its query's memory before it runs, so the
 /// ceiling is what a query of many patterns can afford; a run of single
@@ -60,6 +75,7 @@ const STACK: ExecError = ExecError::Regex(RegexError::StackOverflow);
 const SYNTAX: ExecError = ExecError::Regex(RegexError::IllegalArgument);
 const LOOK_BEHIND: ExecError = ExecError::Regex(RegexError::LookBehindLimit);
 const BACK_REFERENCE: ExecError = ExecError::Regex(RegexError::InvalidBackReference);
+const NUMBER_TOO_BIG: ExecError = ExecError::Regex(RegexError::NumberTooBig);
 
 /// The switches a pattern can set for itself, each on its own.
 #[allow(clippy::struct_excessive_bools)]
@@ -99,8 +115,8 @@ enum Greed {
 
 enum Node {
     Empty,
-    /// One character out of a set, as sorted ranges.
-    Set(Box<[(char, char)]>),
+    /// One character out of the set with this number in the parser's table.
+    Set(u32),
     /// `.`: any character, or any but a line ending.
     Any {
         dot_all: bool,
@@ -131,12 +147,72 @@ enum Node {
     Atomic(Box<Node>),
 }
 
-struct Parser {
+/// The distinct character sets of a pattern, each kept once however often
+/// it is written, and what was computed to find them.
+#[derive(Default)]
+struct Sets {
+    table: Vec<Ranges>,
+    numbers: HashMap<Ranges, u32>,
+    /// The ranges held by `sets` between them.
+    ranges: usize,
+    /// The ranges an escape or a named class stands for, by its spelling.
+    fragments: HashMap<String, Vec<(char, char)>>,
+    /// The finished form of raw ranges: folded and negated as asked.
+    finished: HashMap<Unfinished, Ranges>,
+}
+
+impl Sets {
+    fn class_ranges(&mut self, fragment: &str) -> Result<Vec<(char, char)>, ExecError> {
+        if let Some(ranges) = self.fragments.get(fragment) {
+            return Ok(ranges.clone());
+        }
+        let ranges = class_ranges(fragment)?;
+        self.fragments.insert(fragment.to_owned(), ranges.clone());
+        Ok(ranges)
+    }
+
+    fn finish(
+        &mut self,
+        ranges: Vec<(char, char)>,
+        case_insensitive: bool,
+        negate: bool,
+    ) -> Box<[(char, char)]> {
+        let key = (ranges, case_insensitive, negate);
+        if let Some(finished) = self.finished.get(&key) {
+            return finished.clone();
+        }
+        let finished = finish_set(key.0.clone(), case_insensitive, negate);
+        self.finished.insert(key, finished.clone());
+        finished
+    }
+
+    /// The number of `set` in the table, adding it when it is new. A
+    /// pattern whose sets hold more ranges between them than the compiled
+    /// size allows is refused here, before it holds them.
+    fn number(&mut self, set: Box<[(char, char)]>) -> Result<u32, ExecError> {
+        if let Some(number) = self.numbers.get(&set) {
+            return Ok(*number);
+        }
+        self.ranges += set.len();
+        if self.ranges > MAX_SET_RANGES {
+            return Err(SYNTAX);
+        }
+        let number = u32::try_from(self.table.len()).map_err(|_| SYNTAX)?;
+        self.table.push(set.clone());
+        self.numbers.insert(set, number);
+        Ok(number)
+    }
+}
+
+struct Parser<'steps> {
     chars: Vec<char>,
     at: usize,
     groups: usize,
     names: Vec<(String, usize)>,
     depth: usize,
+    sets: Sets,
+    /// The statement's interruption, asked as the pattern is read.
+    steps: &'steps mut InterruptCounter,
     /// The character the last operand was written as, when it was one
     /// literal character.
     literal: Option<char>,
@@ -205,7 +281,18 @@ enum Item {
     Ranges(Vec<(char, char)>),
 }
 
-impl Parser {
+impl Parser<'_> {
+    /// The operand matching one character of `ranges`.
+    fn set(
+        &mut self,
+        ranges: Vec<(char, char)>,
+        case_insensitive: bool,
+        negate: bool,
+    ) -> Result<Node, ExecError> {
+        let finished = self.sets.finish(ranges, case_insensitive, negate);
+        self.sets.number(finished).map(Node::Set)
+    }
+
     fn peek(&self) -> Option<char> {
         self.chars.get(self.at).copied()
     }
@@ -355,23 +442,25 @@ impl Parser {
             return Ok(());
         }
         run.clear();
-        let mut reader = Self {
-            chars: spelled.chars().collect(),
-            at: 0,
-            groups: 0,
-            names: Vec::new(),
-            depth: self.depth,
-            literal: None,
-            fold_budget: 0,
-        };
+        // The spelling is read by this parser in place of the pattern, with
+        // no further spelling out, and holds no groups of its own.
+        let pattern = std::mem::replace(&mut self.chars, spelled.chars().collect());
+        let at = std::mem::replace(&mut self.at, 0);
+        let budget = std::mem::replace(&mut self.fold_budget, 0);
         let mut flags = Flags {
             case_insensitive: true,
             multi_line: false,
             dot_all: false,
             extended: false,
         };
-        let node = reader.alternation(&mut flags)?;
-        if reader.at != reader.chars.len() {
+        let node = self.alternation(&mut flags);
+        let read = self.at == self.chars.len();
+        self.chars = pattern;
+        self.at = at;
+        self.fold_budget = budget;
+        self.literal = None;
+        let node = node?;
+        if !read {
             return Err(SYNTAX);
         }
         items.push(Node::Group(None, Box::new(node)));
@@ -386,7 +475,7 @@ impl Parser {
             Some('?') => (0, Some(1)),
             Some('{') => {
                 self.at += 1;
-                let Some(bounds) = self.bounds() else {
+                let Some(bounds) = self.bounds()? else {
                     self.at = saved;
                     return Ok(atom);
                 };
@@ -420,31 +509,50 @@ impl Parser {
 
     /// `n}`, `n,}` or `n,m}` after a `{`, leaving the position past the
     /// brace; `None` when the brace does not open a count.
-    fn bounds(&mut self) -> Option<(u32, Option<u32>)> {
+    ///
+    /// A count past [`MAX_COUNT`] is refused, as `MySQL` refuses it: no
+    /// loop anywhere runs a number of times the pattern could not have
+    /// been matched against.
+    fn bounds(&mut self) -> Result<Option<(u32, Option<u32>)>, ExecError> {
         let number = |parser: &mut Self| {
             let start = parser.at;
-            let mut value = 0_u32;
+            let mut value = 0_u64;
             while let Some(digit) = parser.peek().and_then(|character| character.to_digit(10)) {
-                value = value.checked_mul(10)?.checked_add(digit)?;
+                value = value.saturating_mul(10).saturating_add(u64::from(digit));
                 parser.at += 1;
             }
             (parser.at > start).then_some(value)
         };
-        let min = number(self)?;
+        let Some(min) = number(self) else {
+            return Ok(None);
+        };
         let max = if self.eat(',') {
             if self.peek() == Some('}') {
                 None
             } else {
-                Some(number(self)?)
+                let Some(max) = number(self) else {
+                    return Ok(None);
+                };
+                Some(max)
             }
         } else {
             Some(min)
         };
-        self.eat('}').then_some((min, max))
+        if !self.eat('}') {
+            return Ok(None);
+        }
+        let count = |value: u64| {
+            u32::try_from(value)
+                .ok()
+                .filter(|_| value <= MAX_COUNT)
+                .ok_or(NUMBER_TOO_BIG)
+        };
+        Ok(Some((count(min)?, max.map(count).transpose()?)))
     }
 
     /// One operand. `None` when what was read only changed the flags.
     fn atom(&mut self, flags: &mut Flags) -> Result<Option<Node>, ExecError> {
+        self.steps.steps(COMPILE_STEP)?;
         let Some(character) = self.peek() else {
             return Err(SYNTAX);
         };
@@ -456,7 +564,10 @@ impl Parser {
                 self.literal = None;
                 return group;
             }
-            '[' => Node::Set(self.class(*flags)?),
+            '[' => {
+                let set = self.class(*flags)?;
+                Node::Set(self.sets.number(set)?)
+            }
             '.' => Node::Any {
                 dot_all: flags.dot_all,
             },
@@ -474,11 +585,7 @@ impl Parser {
             '*' | '+' | '?' => return Err(SYNTAX),
             literal => {
                 self.literal = Some(literal);
-                Node::Set(finish_set(
-                    vec![(literal, literal)],
-                    flags.case_insensitive,
-                    false,
-                ))
+                self.set(vec![(literal, literal)], flags.case_insensitive, false)?
             }
         }))
     }
@@ -591,7 +698,7 @@ impl Parser {
     fn escaped_item(&mut self, escape: char) -> Result<Item, ExecError> {
         Ok(match escape {
             'd' | 'D' | 'w' | 'W' | 's' | 'S' => {
-                Item::Ranges(class_ranges(&format!("\\{escape}"))?)
+                Item::Ranges(self.sets.class_ranges(&format!("\\{escape}"))?)
             }
             'p' | 'P' => {
                 let mut fragment = format!("\\{escape}");
@@ -609,7 +716,7 @@ impl Parser {
                     fragment.push(self.peek().ok_or(SYNTAX)?);
                     self.at += 1;
                 }
-                Item::Ranges(class_ranges(&fragment)?)
+                Item::Ranges(self.sets.class_ranges(&fragment)?)
             }
             'x' => Item::Char(if self.eat('{') {
                 let mut value = 0_u32;
@@ -650,7 +757,7 @@ impl Parser {
             },
             // Horizontal and vertical white space, and a line break.
             'h' | 'H' => Item::Ranges(
-                finish_set(class_ranges(r"[\t\p{Zs}]")?, false, escape == 'H').into_vec(),
+                finish_set(self.sets.class_ranges(r"[\t\p{Zs}]")?, false, escape == 'H').into_vec(),
             ),
             'v' | 'V' | 'R' => Item::Ranges(
                 finish_set(
@@ -722,11 +829,12 @@ impl Parser {
                 while self.peek().is_some() && !self.looking_at("\\E") {
                     let literal = self.chars[self.at];
                     self.at += 1;
-                    quoted.push(Node::Set(finish_set(
+                    self.steps.steps(COMPILE_STEP)?;
+                    quoted.push(self.set(
                         vec![(literal, literal)],
                         flags.case_insensitive,
                         false,
-                    )));
+                    )?);
                 }
                 if self.looking_at("\\E") {
                     self.at += 2;
@@ -735,14 +843,10 @@ impl Parser {
             }
             'E' => Node::Empty,
             other => match self.escaped_item(other)? {
-                Item::Char(literal) => Node::Set(finish_set(
-                    vec![(literal, literal)],
-                    flags.case_insensitive,
-                    false,
-                )),
-                Item::Ranges(ranges) => {
-                    Node::Set(finish_set(ranges, flags.case_insensitive, false))
+                Item::Char(literal) => {
+                    self.set(vec![(literal, literal)], flags.case_insensitive, false)?
                 }
+                Item::Ranges(ranges) => self.set(ranges, flags.case_insensitive, false)?,
             },
         })
     }
@@ -775,7 +879,7 @@ impl Parser {
                         }
                     }
                     fragment.push(']');
-                    Item::Ranges(class_ranges(&fragment)?)
+                    Item::Ranges(self.sets.class_ranges(&fragment)?)
                 }
                 '[' => Item::Ranges(
                     self.class(Flags {
@@ -829,7 +933,7 @@ impl Parser {
             }
         }
         self.depth -= 1;
-        Ok(finish_set(ranges, flags.case_insensitive, negate))
+        Ok(self.sets.finish(ranges, flags.case_insensitive, negate))
     }
 }
 
@@ -914,6 +1018,31 @@ enum Inst {
         register: u32,
         exit: u32,
     },
+    /// Starts a counted loop: no turn taken yet.
+    CountStart {
+        counter: u32,
+    },
+    /// The head of a counted loop, reached before every turn: leaves for
+    /// `exit` when the count is full or the last turn consumed nothing,
+    /// takes another turn while the count is short of `min`, and between
+    /// the two prefers another turn, or leaving when `lazy`.
+    CountCheck {
+        counter: u32,
+        mark: u32,
+        min: u32,
+        /// `u32::MAX` for no upper bound.
+        max: u32,
+        exit: u32,
+        lazy: bool,
+    },
+    /// Enters a turn of a counted loop, remembering where it began.
+    CountEnter {
+        mark: u32,
+    },
+    /// Ends a turn of a counted loop.
+    CountTurn {
+        counter: u32,
+    },
     /// As many characters of set `.0` as there are, giving them back one at
     /// a time; `u32::MAX` stands for any character but a line ending and
     /// `u32::MAX - 1` for any character.
@@ -937,6 +1066,9 @@ const ANY_BUT_LINE_END: u32 = u32::MAX;
 const ANY: u32 = u32::MAX - 1;
 
 pub(super) struct Program {
+    /// Operands compilation visited, kept for the tests that bound it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    work: usize,
     insts: Vec<Inst>,
     sets: Vec<Box<[(char, char)]>>,
     word: Box<[(char, char)]>,
@@ -946,16 +1078,18 @@ pub(super) struct Program {
     line_endings: LineEndings,
 }
 
-struct Compiler {
+struct Compiler<'steps> {
     insts: Vec<Inst>,
-    sets: Vec<Box<[(char, char)]>>,
-    set_ranges: usize,
     registers: usize,
     groups: usize,
     names: Vec<(String, usize)>,
+    /// Operands visited so far.
+    work: usize,
+    /// The statement's interruption, asked at every operand.
+    steps: &'steps mut InterruptCounter,
 }
 
-impl Compiler {
+impl Compiler<'_> {
     fn push(&mut self, inst: Inst) -> Result<u32, ExecError> {
         if self.insts.len() >= MAX_PROGRAM {
             return Err(SYNTAX);
@@ -968,16 +1102,10 @@ impl Compiler {
         u32::try_from(self.insts.len()).unwrap_or(u32::MAX)
     }
 
-    fn set(&mut self, ranges: &[(char, char)]) -> Result<u32, ExecError> {
-        if let Some(index) = self.sets.iter().position(|set| **set == *ranges) {
-            return u32::try_from(index).map_err(|_| SYNTAX);
-        }
-        self.set_ranges += ranges.len();
-        if self.set_ranges > MAX_SET_RANGES {
-            return Err(SYNTAX);
-        }
-        self.sets.push(ranges.into());
-        u32::try_from(self.sets.len() - 1).map_err(|_| SYNTAX)
+    fn register(&mut self) -> Result<u32, ExecError> {
+        let register = u32::try_from(self.registers).map_err(|_| SYNTAX)?;
+        self.registers += 1;
+        Ok(register)
     }
 
     fn group(&self, group: usize) -> Result<u32, ExecError> {
@@ -989,11 +1117,19 @@ impl Compiler {
 
     #[allow(clippy::too_many_lines)]
     fn emit(&mut self, node: &Node) -> Result<(), ExecError> {
+        // Every operand is visited a bounded number of times - a counted
+        // repetition does not copy its operand - so this ceiling is not
+        // reached by a pattern of the size the engine accepts; it and the
+        // interruption check make the bound hold whatever is compiled.
+        self.work += 1;
+        if self.work > MAX_COMPILE_WORK {
+            return Err(SYNTAX);
+        }
+        self.steps.steps(COMPILE_STEP)?;
         match node {
             Node::Empty => {}
-            Node::Set(ranges) => {
-                let set = self.set(ranges)?;
-                self.push(Inst::Set(set))?;
+            Node::Set(set) => {
+                self.push(Inst::Set(*set))?;
             }
             Node::Any { dot_all } => {
                 self.push(Inst::Any { dot_all: *dot_all })?;
@@ -1115,7 +1251,15 @@ impl Compiler {
             self.insts[atomic as usize] = Inst::Atomic { after: self.here() };
             return Ok(());
         }
-        for _ in 0..min {
+        // A count is a loop around one copy of the operand, so compiling
+        // costs the same whatever the count is.
+        match (min, max) {
+            (0, Some(0)) => return Ok(()),
+            (1, Some(1)) => return self.emit(node),
+            (0 | 1, None) | (0, Some(1)) => {}
+            _ => return self.counted(node, min, max, greed == Greed::Lazy),
+        }
+        if min == 1 {
             self.emit(node)?;
         }
         let split = |first: u32, second: u32| {
@@ -1130,7 +1274,7 @@ impl Compiler {
             // character: the run is taken whole and given back from its end.
             if greed == Greed::Greedy {
                 let single = match node {
-                    Node::Set(ranges) => Some(self.set(ranges)?),
+                    Node::Set(set) => Some(*set),
                     Node::Any { dot_all: true } => Some(ANY),
                     Node::Any { dot_all: false } => Some(ANY_BUT_LINE_END),
                     _ => None,
@@ -1142,9 +1286,8 @@ impl Compiler {
             }
             let start = self.push(Inst::Split(0, 0))?;
             let nullable = node.nullable();
-            let register = u32::try_from(self.registers).map_err(|_| SYNTAX)?;
+            let register = if nullable { self.register()? } else { 0 };
             if nullable {
-                self.registers += 1;
                 self.push(Inst::Mark(register))?;
             }
             self.emit(node)?;
@@ -1161,15 +1304,46 @@ impl Compiler {
             }
             return Ok(());
         };
-        let mut splits = Vec::new();
-        for _ in min..max {
-            splits.push(self.push(Inst::Split(0, 0))?);
-            self.emit(node)?;
-        }
+        // What is left is `{0,1}`: the operand, or nothing.
+        let _ = max;
+        let optional = self.push(Inst::Split(0, 0))?;
+        self.emit(node)?;
         let exit = self.here();
-        for at in splits {
-            self.insts[at as usize] = split(at + 1, exit);
+        self.insts[optional as usize] = split(optional + 1, exit);
+        Ok(())
+    }
+
+    /// `node{min,max}` as a loop that counts its turns: the operand is
+    /// compiled once, and the count lives in a register of the search.
+    fn counted(
+        &mut self,
+        node: &Node,
+        min: u32,
+        max: Option<u32>,
+        lazy: bool,
+    ) -> Result<(), ExecError> {
+        let before = self.insts.len();
+        let (counter, mark) = (self.register()?, self.register()?);
+        self.push(Inst::CountStart { counter })?;
+        let head = self.push(Inst::End)?;
+        self.push(Inst::CountEnter { mark })?;
+        let body = self.insts.len();
+        self.emit(node)?;
+        if self.insts.len() == body {
+            // Nothing to repeat: any number of turns of nothing is nothing.
+            self.insts.truncate(before);
+            return Ok(());
         }
+        self.push(Inst::CountTurn { counter })?;
+        self.push(Inst::Jump(head))?;
+        self.insts[head as usize] = Inst::CountCheck {
+            counter,
+            mark,
+            min,
+            max: max.unwrap_or(u32::MAX),
+            exit: self.here(),
+            lazy,
+        };
         Ok(())
     }
 }
@@ -1182,6 +1356,9 @@ impl Program {
         dot_all: bool,
         line_endings: LineEndings,
     ) -> Result<Self, ExecError> {
+        // Reading and compiling a pattern is work of the statement, and
+        // stops when the statement does.
+        let mut steps = InterruptCounter::checked();
         let word = finish_set(class_ranges("\\w")?, false, false);
         let mut parser = Parser {
             chars: pattern.chars().collect(),
@@ -1189,6 +1366,8 @@ impl Program {
             groups: 0,
             names: Vec::new(),
             depth: 0,
+            sets: Sets::default(),
+            steps: &mut steps,
             literal: None,
             fold_budget: 256,
         };
@@ -1202,19 +1381,26 @@ impl Program {
         if parser.at != parser.chars.len() || parser.groups > MAX_GROUPS {
             return Err(SYNTAX);
         }
+        let Parser {
+            groups,
+            names,
+            sets,
+            ..
+        } = parser;
         let mut compiler = Compiler {
             insts: Vec::new(),
-            sets: Vec::new(),
-            set_ranges: 0,
             registers: 0,
-            groups: parser.groups,
-            names: parser.names,
+            groups,
+            names,
+            work: 0,
+            steps: &mut steps,
         };
         compiler.emit(&Node::Group(Some(0), Box::new(tree)))?;
         compiler.push(Inst::End)?;
         Ok(Self {
+            work: compiler.work,
             insts: compiler.insts,
-            sets: compiler.sets,
+            sets: sets.table,
             word,
             groups: compiler.groups + 1,
             registers: compiler.registers,
@@ -1539,6 +1725,55 @@ impl Machine<'_, '_> {
                     };
                     true
                 }
+                Inst::CountStart { counter } => {
+                    self.assign(3 * groups + counter as usize, 0);
+                    pc += 1;
+                    true
+                }
+                Inst::CountCheck {
+                    counter,
+                    mark,
+                    min,
+                    max,
+                    exit,
+                    lazy,
+                } => {
+                    let turns = self.vars[3 * groups + counter as usize];
+                    // A turn that consumed nothing leaves every later turn
+                    // nothing to consume either: the loop is over.
+                    let stalled = turns > 0 && self.vars[3 * groups + mark as usize] == pos;
+                    if stalled || turns >= max as usize {
+                        pc = exit;
+                    } else if turns < min as usize {
+                        pc += 1;
+                    } else if lazy {
+                        self.save(Frame::Retry {
+                            pc: pc + 1,
+                            pos,
+                            trail: self.trail.len(),
+                        })?;
+                        pc = exit;
+                    } else {
+                        self.save(Frame::Retry {
+                            pc: exit,
+                            pos,
+                            trail: self.trail.len(),
+                        })?;
+                        pc += 1;
+                    }
+                    true
+                }
+                Inst::CountEnter { mark } => {
+                    self.assign(3 * groups + mark as usize, pos);
+                    pc += 1;
+                    true
+                }
+                Inst::CountTurn { counter } => {
+                    let turns = self.vars[3 * groups + counter as usize];
+                    self.assign(3 * groups + counter as usize, turns.saturating_add(1));
+                    pc += 1;
+                    true
+                }
                 Inst::Star(set) => {
                     let start = pos;
                     for character in self.text[start..].chars() {
@@ -1788,8 +2023,6 @@ mod tests {
                 Err(ExecError::Regex(RegexError::IllegalArgument))
             )
         };
-        // Counted repetition copies its operand.
-        assert!(refused(r"(?=a)(?:abcdefgh){5000}"));
         assert!(refused(&format!(
             "(?=a){}",
             "(a)".repeat(super::MAX_GROUPS + 1)
@@ -1801,6 +2034,78 @@ mod tests {
             write!(sets, r"[\p{{L}}\x{{{:x}}}]", 0x2190 + index).expect("writes to a string");
         }
         assert!(refused(&format!("(?=a){sets}")));
-        assert!(!refused(r"(?=a)(?:abcdefgh){50}"));
+        // The same large set written often is one set.
+        assert!(!refused(&format!("(?=a){}", r"\w".repeat(5_000))));
+    }
+
+    /// Compiling costs what the pattern's text costs, whatever counts it
+    /// names: a count is a loop around one copy of its operand, and a
+    /// count `MySQL` refuses is refused before anything is compiled.
+    #[test]
+    fn compiling_a_count_does_not_run_it() {
+        let compile =
+            |pattern: &str| Program::new(pattern, false, false, false, LineEndings::Unicode);
+        for pattern in [
+            "(?=a)(?:(?:){2000000000}){2000000000}",
+            "(?=a)a{16777216}",
+            "(?=a)a{0,2000000000}",
+            "(?=a)(?:b|(?:a{1,99999999999999999999})*)",
+        ] {
+            assert!(
+                matches!(
+                    compile(pattern),
+                    Err(ExecError::Regex(RegexError::NumberTooBig))
+                ),
+                "{pattern}"
+            );
+        }
+        for (pattern, text, matches) in [
+            ("(?=a)(?:(?:){16777215}){16777215}", "a", true),
+            ("(?=a)(?:(?:a?){16777215}){16777215}b", "ab", true),
+            (
+                "(?=a)(?:(?:(?:(?:a{1000}){1000}){1000}){1000}){1000}",
+                "a",
+                false,
+            ),
+            ("(?=a)(?:a{3,5}){2,}$", "aaaaaaa", true),
+            ("(?=a)(?:a{3,5}){2,}$", "aaaaa", false),
+            ("(?=a)a{1,100000}", "a", true),
+            ("(?=a)(?:a|b){0,50000}?c", "abbac", true),
+            ("(?=a)(a\\1?){4}$", "aaaaaaaaaa", true),
+            ("(?=a)(?:ab){2}+a", "ababa", true),
+            ("(?=a)(?:ab){2,3}+ab", "ababab", false),
+        ] {
+            let program = compile(pattern).unwrap_or_else(|error| panic!("{pattern}: {error}"));
+            assert!(
+                program.work <= 64 && program.insts.len() <= 64,
+                "{pattern} visited {} operands for {} instructions",
+                program.work,
+                program.insts.len()
+            );
+            let found = program
+                .captures_at(text, 0, &mut InterruptCounter::unchecked())
+                .unwrap_or_else(|error| panic!("{pattern} over {text}: {error}"));
+            assert_eq!(found.is_some(), matches, "{pattern} over {text}");
+        }
+    }
+
+    /// A statement that is cancelled or past its deadline stops while its
+    /// pattern is still being read and compiled.
+    #[test]
+    fn an_interrupted_statement_stops_inside_compilation() {
+        let pattern = format!("(?=a){}", "a".repeat(10_000));
+        let compile =
+            || Program::new(&pattern, false, false, false, LineEndings::Unicode).map(|_| ());
+        assert_eq!(compile(), Ok(()));
+        let cancelled = crate::ExecutionCancellation::new();
+        cancelled.cancel();
+        crate::with_execution_cancellation(cancelled, || {
+            assert_eq!(compile(), Err(ExecError::QueryCancelled));
+        });
+        let late = crate::ExecutionCancellation::new();
+        late.limit_to(std::time::Instant::now());
+        crate::with_execution_cancellation(late, || {
+            assert_eq!(compile(), Err(ExecError::QueryTimedOut));
+        });
     }
 }

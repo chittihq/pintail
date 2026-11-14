@@ -341,6 +341,8 @@ pub enum ErrorKind {
     ErRegexpStackOverflow = 3698,
     /// 3699: a regular expression match ran out of steps.
     ErRegexpTimeOut = 3699,
+    /// 4007: a regular expression names a count larger than it may.
+    ErRegexpNumberTooBig = 4007,
     /// 3686: a replacement names a numbered group the pattern lacks.
     ErRegexpIndexOutofboundsError = 3686,
     /// 3887: a replacement names no group, or one the pattern lacks.
@@ -402,6 +404,7 @@ impl ErrorKind {
             | Self::ErRegexpLookBehindLimit
             | Self::ErRegexpStackOverflow
             | Self::ErRegexpTimeOut
+            | Self::ErRegexpNumberTooBig
             | Self::ErRegexpIndexOutofboundsError
             | Self::ErRegexpInvalidCaptureGroupName
             | Self::ErCannotConvertString => b"HY000",

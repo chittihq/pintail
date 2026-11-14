@@ -9007,7 +9007,12 @@ pub(crate) fn bound_regex_memory_upper_bound(expr: &BoundExpr) -> usize {
                     ));
                     // A pattern for the backtracking machine also holds
                     // that machine's stack and capture log while it runs.
-                    let search = if sql_regex::needs_backtracking(&unicode_posix_classes(pattern)) {
+                    // One the automaton may refuse for its counts runs
+                    // there too, and is charged as if it will.
+                    let translated = unicode_posix_classes(pattern);
+                    let search = if sql_regex::needs_backtracking(&translated)
+                        || sql_regex::largest_count(&translated) > sql_regex::AUTOMATON_COUNT
+                    {
                         sql_backtrack::WORKSPACE
                     } else {
                         0

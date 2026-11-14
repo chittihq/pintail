@@ -42,6 +42,8 @@ pub enum RegexError {
     StackOverflow,
     /// 3699: the match took more steps than a match may.
     Timeout,
+    /// 4007: a `{n,m}` count larger than a pattern may name.
+    NumberTooBig,
     /// 3686: a replacement names a numbered group the pattern does not have.
     IndexOutOfBounds,
     /// 3887: a replacement's `$` starts no group reference, or names a
@@ -61,6 +63,7 @@ impl RegexError {
             }
             Self::StackOverflow => "Overflow in the regular expression backtrack stack.",
             Self::Timeout => "Timeout exceeded in regular expression match.",
+            Self::NumberTooBig => "Decimal number in regular expression is too large.",
             Self::IndexOutOfBounds => "Index out of bounds in regular expression search.",
             Self::InvalidCaptureGroupName => "A capture group has an invalid name.",
         }

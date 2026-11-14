@@ -4452,6 +4452,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
                 RegexError::LookBehindLimit => ErrorKind::ErRegexpLookBehindLimit,
                 RegexError::StackOverflow => ErrorKind::ErRegexpStackOverflow,
                 RegexError::Timeout => ErrorKind::ErRegexpTimeOut,
+                RegexError::NumberTooBig => ErrorKind::ErRegexpNumberTooBig,
                 RegexError::IndexOutOfBounds => ErrorKind::ErRegexpIndexOutofboundsError,
                 RegexError::InvalidCaptureGroupName => ErrorKind::ErRegexpInvalidCaptureGroupName,
             },
@@ -6055,6 +6056,11 @@ mod tests {
             (
                 SqlRejection::Regex(pintail_exec::RegexError::Timeout),
                 3699,
+                *b"HY000",
+            ),
+            (
+                SqlRejection::Regex(pintail_exec::RegexError::NumberTooBig),
+                4007,
                 *b"HY000",
             ),
             (SqlRejection::IncorrectValue, 1525, *b"HY000"),

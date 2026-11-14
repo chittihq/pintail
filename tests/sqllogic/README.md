@@ -1,6 +1,6 @@
 # SQL logic corpus
 
-The ignored `mysql_oracle` integration test runs 4,337 deterministic queries
+The ignored `mysql_oracle` integration test runs 4,340 deterministic queries
 against MySQL 8.4 and Pintail over pinned storage snapshots. It compares
 normalized rows in query order when ordering is specified, and as multisets
 otherwise. Exact values compare byte-for-byte; floating-point results use the

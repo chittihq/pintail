@@ -68,10 +68,22 @@ impl Program {
             super::sql_backtrack::Program::new(pattern, case, multiline, dotall, line_endings)
                 .map(Self::Backtrack)
         };
+        // A count no pattern may name is refused whichever matcher would
+        // have run it.
+        let largest = largest_count(pattern);
+        if largest > super::sql_backtrack::MAX_COUNT {
+            return Err(ExecError::Regex(crate::execution::RegexError::NumberTooBig));
+        }
         if needs_backtracking(pattern) {
             return backtrack();
         }
-        Self::automaton(pattern, case, multiline, dotall, line_endings)
+        // The automaton copies an operand once per count and refuses a
+        // pattern that grows past its size; the other machine counts, so a
+        // pattern refused for its counts runs there.
+        match Self::automaton(pattern, case, multiline, dotall, line_endings) {
+            Err(_) if largest > AUTOMATON_COUNT => backtrack(),
+            compiled => compiled,
+        }
     }
 
     fn automaton(
@@ -393,6 +405,60 @@ impl Program {
             Self::Backtrack(program) => program.group_index(name),
         }
     }
+}
+
+/// A count above which a pattern the automaton refuses is tried on the
+/// machine that counts.
+pub(super) const AUTOMATON_COUNT: u64 = 255;
+
+/// The largest number a `{n}`, `{n,}` or `{n,m}` of `pattern` names, zero
+/// when it has none. Braces in a bracketed set, after a backslash or inside
+/// `\Q...\E` are not counts.
+pub(super) fn largest_count(pattern: &str) -> u64 {
+    let bytes = pattern.as_bytes();
+    let mut largest = 0_u64;
+    let mut depth = 0_usize;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'\\' if bytes.get(at + 1) == Some(&b'Q') => {
+                at = pattern[at..]
+                    .find("\\E")
+                    .map_or(bytes.len(), |end| at + end + 2);
+                continue;
+            }
+            b'\\' => at += 1,
+            b'[' => depth += 1,
+            b']' => depth = depth.saturating_sub(1),
+            b'{' if depth == 0 => {
+                let mut numbers = Vec::with_capacity(2);
+                let mut number = None::<u64>;
+                let mut next = at + 1;
+                while let Some(&byte) = bytes.get(next) {
+                    if byte.is_ascii_digit() {
+                        number = Some(
+                            number
+                                .unwrap_or(0)
+                                .saturating_mul(10)
+                                .saturating_add(u64::from(byte - b'0')),
+                        );
+                    } else if byte == b',' && numbers.is_empty() && number.is_some() {
+                        numbers.extend(number.take());
+                    } else {
+                        break;
+                    }
+                    next += 1;
+                }
+                numbers.extend(number);
+                if bytes.get(next) == Some(&b'}') {
+                    largest = numbers.into_iter().fold(largest, u64::max);
+                }
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    largest
 }
 
 /// Whether `pattern` runs on the backtracking machine. Only a pattern the

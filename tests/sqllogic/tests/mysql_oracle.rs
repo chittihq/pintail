@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4385;
+const EXPECTED_CASES: usize = 4388;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6010,6 +6010,23 @@ fn engine_error_cases() -> Vec<OracleCase> {
             "SELECT REGEXP_REPLACE('Straße STRASSE', '(?<= )strasse|stra(?=ß)', '_'), \
                     REGEXP_INSTR('xxß', '(?!x)ss'), REGEXP_REPLACE('ßass', '(?=.)ss', '[$0]')",
         ),
+        // A counted repetition is a loop that counts, so its count costs
+        // nothing to compile; a count past 16,777,215 is refused.
+        ordered(
+            "regex counted repetition",
+            "SELECT REGEXP_LIKE('a', '(?=a)a{1,100000}'), REGEXP_LIKE('a', '(?=a)(?:a|b){0,50000}'), \
+                    REGEXP_LIKE('aaaaaaa', '(?=a)(?:a{3,5}){2,}$')",
+        ),
+        ordered(
+            "regex counted repetition",
+            "SELECT REGEXP_LIKE('a', '(?:a{1000}){1000}'), REGEXP_LIKE('a', '(a){70000}'), \
+                    REGEXP_LIKE('a', 'a{16777215}')",
+        ),
+        ordered(
+            "regex counted repetition",
+            "SELECT id, REGEXP_LIKE(name, '(?=e)(?:[a-z]{2,3}){2}-\\\\d{1,50000}$'), \
+                    REGEXP_SUBSTR(name, '(?<=-)\\\\d{2,1000}') FROM events ORDER BY id",
+        ),
     ]
 }
 
@@ -8301,6 +8318,22 @@ fn documented_rejects_stay_explicit() {
 #[allow(clippy::too_many_lines)] // one table of shapes
 fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
+        (
+            // A count no pattern may name, whichever matcher would run it.
+            "reject regex count past the limit",
+            "SELECT REGEXP_LIKE('a', '(?=a)(?:(?:){2000000000}){2000000000}')",
+            "decimal number in regular expression is too large",
+        ),
+        (
+            "reject regex count past the limit",
+            "SELECT REGEXP_LIKE(name, 'a{16777216}') FROM events",
+            "decimal number in regular expression is too large",
+        ),
+        (
+            "reject regex count past the limit",
+            "SELECT REGEXP_LIKE(name, '^{0,2000000000}a') FROM events",
+            "decimal number in regular expression is too large",
+        ),
         (
             // Past the range once rounded to microseconds.
             "reject time literal past the range",
