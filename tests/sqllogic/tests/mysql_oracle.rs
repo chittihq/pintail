@@ -46,7 +46,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3191;
+const EXPECTED_CASES: usize = 3196;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5556,6 +5556,29 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "dates compared as text",
             "SELECT id, STRCMP(d, '2024-02-29'), STRCMP(d, dt), STRCMP(dt, d), STRCMP(ts, dt), STRCMP(ts, '2024-03-10 02:30:00'), STRCMP(d, d) FROM calendar_edges ORDER BY id",
+        ),
+        // A subquery with no FROM is one row, and an aggregate in it is
+        // taken over that row: COUNT(*) is 1 whatever the query outside
+        // reads.
+        ordered(
+            "aggregate in a subquery with no FROM",
+            "SELECT id, (SELECT COUNT(*)), (SELECT MAX(7)), (SELECT SUM(2) + COUNT(*)) FROM users ORDER BY id",
+        ),
+        ordered(
+            "aggregate in a subquery with no FROM",
+            "SELECT id FROM users WHERE 1 = (SELECT COUNT(*)) ORDER BY id",
+        ),
+        ordered(
+            "aggregate in a subquery with no FROM",
+            "SELECT id FROM users WHERE (1, 7) = (SELECT COUNT(*), 7) ORDER BY id",
+        ),
+        ordered(
+            "aggregate in a subquery with no FROM",
+            "SELECT id FROM users WHERE (0, 7) = (SELECT COUNT(*), 7 FROM orders WHERE 1 = 0) ORDER BY id",
+        ),
+        ordered(
+            "aggregate in a subquery with no FROM",
+            "SELECT id FROM users WHERE (2, 7) = (SELECT COUNT(*), 7) ORDER BY id",
         ),
     ]
     .into_iter()
