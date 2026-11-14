@@ -1203,11 +1203,26 @@ pub(super) fn date_interval_column(
     // declines must leave that warning to the path that reads each row.
     let amount = crate::execution::without_new_warnings(|| {
         if unit == IntervalUnit::Second
-            && crate::expression::interval_second_micros(amount).ok()? % 1_000_000 != 0
+            && crate::expression::interval_second_micros(amount, None).ok()? % 1_000_000 != 0
         {
             return None;
         }
-        crate::expression::mysql_i64(amount).ok()
+        // Only an amount every reading agrees on: a fraction, an exponent
+        // or a number out of range is the row path's to read.
+        match amount {
+            Value::Utf8(text) => text.parse::<i64>().ok(),
+            Value::Boolean(_) | Value::Int64(_) | Value::UInt64(_) => {
+                crate::expression::mysql_i64(amount).ok()
+            }
+            // A week or quarter count arrives as a whole double.
+            Value::Float64(number)
+                if number.get().fract() == 0.0 && number.get().abs() < 9.0e15 =>
+            {
+                #[allow(clippy::cast_possible_truncation)]
+                Some(number.get() as i64)
+            }
+            _ => None,
+        }
     })??;
     let Operand::Column(input) = operand(batch, argument, effects)? else {
         return None;

@@ -2270,7 +2270,12 @@ impl CompiledExpr {
             Value::Null => Some(0),
             Value::Int64(count) => Some(count),
             Value::UInt64(count) => Some(i64::try_from(count).unwrap_or(i64::MAX)),
-            _ => None,
+            // Any other number or text counts as the function will read it,
+            // give or take the one an exact number's rounding adds.
+            other => crate::execution::without_new_warnings(|| {
+                lenient_i64(&other, None, PastSigned::Stop).ok()
+            })?
+            .map(|count| count.saturating_add(1)),
         }
     }
 }
@@ -2751,10 +2756,35 @@ fn evaluate_scalar(
             )
         }
         _ => {
-            let values = args
+            let mut values = args
                 .iter()
                 .map(|argument| argument.evaluate(batch, row))
                 .collect::<Result<Vec<_>, _>>()?;
+            // Text read as an integer past the signed range stops there
+            // when it is a stored column and wraps when an expression
+            // computed it. The two functions that show the difference get
+            // the integer here, where the argument's expression is known.
+            let integer_text = match function {
+                ScalarFunction::MakeTime => Some(0),
+                ScalarFunction::DateInterval { unit, .. } if unit != IntervalUnit::Second => {
+                    Some(1)
+                }
+                _ => None,
+            };
+            if let Some(index) = integer_text
+                && !matches!(
+                    argument_types.get(index),
+                    Some(Some(DataType::Decimal { .. }))
+                )
+                && integer_text_past_signed(&values[index])
+            {
+                let past = if matches!(args.get(index), Some(CompiledExpr::Column(_))) {
+                    PastSigned::Stop
+                } else {
+                    PastSigned::Wrap
+                };
+                values[index] = Value::Int64(lenient_i64(&values[index], None, past)?);
+            }
             evaluate_eager_scalar_typed(
                 function,
                 &values,
@@ -3822,7 +3852,11 @@ fn evaluate_eager_scalar_inner(
         )),
         ScalarFunction::Repeat => {
             let text = scalar_string(&values[0])?;
-            Ok(mysql_repeat("repeat", &text, count_argument(&values[1])?))
+            Ok(mysql_repeat(
+                "repeat",
+                &text,
+                count_argument(&values[1], argument_types.get(1).copied().flatten())?,
+            ))
         }
         ScalarFunction::Insert => {
             // The subject determines the charset. The initial position check
@@ -3889,7 +3923,11 @@ fn evaluate_eager_scalar_inner(
             result.extend(&characters[end..]);
             Ok(result_value(result))
         }
-        ScalarFunction::Space => Ok(mysql_repeat("space", " ", count_argument(&values[0])?)),
+        ScalarFunction::Space => Ok(mysql_repeat(
+            "space",
+            " ",
+            count_argument(&values[0], argument_types.first().copied().flatten())?,
+        )),
         ScalarFunction::Lpad | ScalarFunction::Rpad => {
             // The subject determines whether lengths count bytes or characters.
             let binary = matches!(values[0], Value::Binary(_));
@@ -3897,7 +3935,7 @@ fn evaluate_eager_scalar_inner(
                 if binary { byte_text } else { scalar_string };
             let padded = mysql_pad(
                 &text(&values[0])?,
-                count_argument(&values[1])?,
+                count_argument(&values[1], argument_types.get(1).copied().flatten())?,
                 &text(&values[2])?,
                 matches!(function, ScalarFunction::Lpad),
                 pad_character_width(&values[0], collation),
@@ -4692,9 +4730,14 @@ fn evaluate_eager_scalar_inner(
                     _ => return Ok(Value::Null),
                 };
                 let amount = if unit == IntervalUnit::Second {
-                    interval_second_micros(&values[1])?
+                    interval_second_micros(&values[1], argument_types.get(1).copied().flatten())?
                 } else {
-                    i128::from(mysql_i64(&values[1])?) * seconds * 1_000_000
+                    i128::from(lenient_i64(
+                        &values[1],
+                        argument_types.get(1).copied().flatten(),
+                        PastSigned::Ask,
+                    )?) * seconds
+                        * 1_000_000
                 };
                 let total = time.micros + if subtract { -amount } else { amount };
                 // Interval arithmetic rejects an out-of-range TIME; ADDTIME
@@ -4743,7 +4786,11 @@ fn evaluate_eager_scalar_inner(
                 };
                 return Ok(month_interval_of_fields(
                     fields,
-                    mysql_i64(&values[1])?,
+                    lenient_i64(
+                        &values[1],
+                        argument_types.get(1).copied().flatten(),
+                        PastSigned::Ask,
+                    )?,
                     unit == IntervalUnit::Year,
                     subtract,
                     date_only,
@@ -4756,12 +4803,22 @@ fn evaluate_eager_scalar_inner(
                 parse_mysql_datetime(&input)?
             };
             let shifted = if unit == IntervalUnit::Second {
-                let amount = interval_second_micros(&values[1])?;
+                let amount =
+                    interval_second_micros(&values[1], argument_types.get(1).copied().flatten())?;
                 let signed = if subtract { -amount } else { amount };
                 let micros = i64::try_from(signed).map_err(|_| ExecError::InvalidDateTime)?;
                 original.checked_add_signed(chrono::Duration::microseconds(micros))
             } else {
-                temporal::shift_interval(original, mysql_i64(&values[1])?, unit, subtract)?
+                temporal::shift_interval(
+                    original,
+                    lenient_i64(
+                        &values[1],
+                        argument_types.get(1).copied().flatten(),
+                        PastSigned::Ask,
+                    )?,
+                    unit,
+                    subtract,
+                )?
             };
             let mut value = shifted.ok_or(ExecError::InvalidDateTime)?;
             // Days and clock units count on MySQL's day numbers, in which
@@ -5108,7 +5165,19 @@ fn evaluate_eager_scalar_inner(
                 }
                 _ => None,
             };
-            let seconds = mysql_i64(&values[0])?;
+            // A count no integer holds is past the clamp on its own side.
+            let seconds = match mysql_i64(&values[0]) {
+                Err(ExecError::NumericOverflow) => {
+                    let negative = match &values[0] {
+                        Value::Float64(number) => number.get() < 0.0,
+                        other => other
+                            .text()
+                            .is_some_and(|text| text.trim_start().starts_with('-')),
+                    };
+                    if negative { i64::MIN } else { i64::MAX }
+                }
+                seconds => seconds?,
+            };
             // MySQL clamps TIME to +/- 838:59:59.
             let clamped = seconds.clamp(-3_020_399, 3_020_399);
             let magnitude = clamped.unsigned_abs();
@@ -5122,15 +5191,23 @@ fn evaluate_eager_scalar_inner(
             )))
         }
         ScalarFunction::MakeDate => {
-            let year = mysql_i64(&values[0])?;
+            let year = lenient_i64(
+                &values[0],
+                argument_types.first().copied().flatten(),
+                PastSigned::Stop,
+            )?;
             // A year below 100 takes the nearest century, as a two-digit year does.
             let year = match year {
                 0..=69 => year + 2000,
                 70..=99 => year + 1900,
                 _ => year,
             };
-            let day_of_year = mysql_i64(&values[1])?;
-            if day_of_year < 1 {
+            let day_of_year = lenient_i64(
+                &values[1],
+                argument_types.get(1).copied().flatten(),
+                PastSigned::Stop,
+            )?;
+            if day_of_year < 1 || year < 0 {
                 return Ok(Value::Null);
             }
             let Ok(year) = i32::try_from(year) else {
@@ -5397,8 +5474,22 @@ fn evaluate_eager_scalar_inner(
             Ok(conv_base(&subject, from, to).map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::MakeTime => {
-            let hour = mysql_i64(&values[0])?;
-            let minute = mysql_i64(&values[1])?;
+            // Hours out of range clamp on their own side; text past the
+            // unsigned range reads as the signed integer of the same bits.
+            let hour = lenient_i64(
+                &values[0],
+                argument_types.first().copied().flatten(),
+                if matches!(values[0], Value::UInt64(_)) {
+                    PastSigned::Stop
+                } else {
+                    PastSigned::Ask
+                },
+            )?;
+            let minute = lenient_i64(
+                &values[1],
+                argument_types.get(1).copied().flatten(),
+                PastSigned::Stop,
+            )?;
             let truncate = matches!(values.get(3), Some(Value::Boolean(true)));
             Ok(make_time(
                 hour,
@@ -7914,11 +8005,124 @@ fn json_text_result(function: &str, text: String) -> Value {
 
 /// A count argument as `REPEAT`, `SPACE` and the pads read it: an unsigned
 /// value past the signed range is a very large count, not an error.
-fn count_argument(value: &Value) -> Result<i64, ExecError> {
-    match value {
-        Value::UInt64(count) => Ok(i64::try_from(*count).unwrap_or(i64::MAX)),
-        other => mysql_i64(other),
+fn count_argument(value: &Value, argument_type: Option<DataType>) -> Result<i64, ExecError> {
+    lenient_i64(value, argument_type, PastSigned::Stop)
+}
+
+/// Whether `value` is text whose leading integer is past the signed range:
+/// the one reading on which stored and computed text differ.
+fn integer_text_past_signed(value: &Value) -> bool {
+    let text = match value {
+        Value::Utf8(text) => text.as_str(),
+        Value::Binary(bytes) => numeric_bytes_text(bytes),
+        _ => return false,
+    };
+    let trimmed = text.trim_start();
+    let (negative, digits) = match trimmed.as_bytes().first() {
+        Some(b'-') => (true, &trimmed[1..]),
+        Some(b'+') => (false, &trimmed[1..]),
+        _ => (false, trimmed),
+    };
+    let magnitude = digits
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0_u128, |total, digit| {
+            total
+                .saturating_mul(10)
+                .saturating_add(u128::from(digit - b'0'))
+        });
+    magnitude > u128::from(i64::MAX.unsigned_abs()) + u128::from(negative)
+}
+
+/// What [`lenient_i64`] answers for an unsigned integer, or the digits of a
+/// text, past the signed range.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PastSigned {
+    /// The top of the signed range.
+    Stop,
+    /// The signed integer of the same 64 bits, digits past the unsigned
+    /// range first stopping at its top. This is how text an expression
+    /// computed reads, and how an interval reads an unsigned amount.
+    Wrap,
+    /// As `Wrap` for an unsigned integer, and no answer for text: a stored
+    /// text column stops where computed text wraps, and only the caller
+    /// that still holds the argument's expression knows which this is.
+    Ask,
+}
+
+/// The integer `MySQL` reads from an argument of a function that takes
+/// whatever 64 bits the argument holds rather than refusing one out of
+/// range: a count, a calendar field, an interval amount.
+///
+/// A number past either end stops at that end. Text gives the integer it
+/// starts with, read no further than its digits, so `'1e30'` is 1. `past`
+/// says what an unsigned integer or a text's digits past the signed range
+/// read as: an interval of `'99999999999999999999'` days, written as a
+/// literal, moves a date back by one.
+fn lenient_i64(
+    value: &Value,
+    argument_type: Option<DataType>,
+    past: PastSigned,
+) -> Result<i64, ExecError> {
+    let unsigned = |number: u64| {
+        if past == PastSigned::Stop {
+            i64::try_from(number).unwrap_or(i64::MAX)
+        } else {
+            number.cast_signed()
+        }
+    };
+    let text = match value {
+        Value::Null => return Err(ExecError::InvalidExpressionType),
+        Value::Boolean(flag) => return Ok(i64::from(*flag)),
+        Value::Int64(number) => return Ok(*number),
+        Value::UInt64(number) => return Ok(unsigned(*number)),
+        Value::Enum { index, .. } => return Ok(unsigned(*index)),
+        Value::Float64(number) => {
+            let rounded = number.get().round_ties_even();
+            // The cast saturates, and reads a NaN as zero.
+            #[allow(clippy::cast_possible_truncation)]
+            return Ok(rounded as i64);
+        }
+        Value::DecimalAverage(average) => std::borrow::Cow::Owned(average.canonical()),
+        Value::Utf8(text) => std::borrow::Cow::Borrowed(text.as_str()),
+        Value::Binary(bytes) => std::borrow::Cow::Borrowed(numeric_bytes_text(bytes)),
+    };
+    let exact = matches!(value, Value::DecimalAverage(_))
+        || matches!(argument_type, Some(DataType::Decimal { .. }));
+    let trimmed = text.trim_start();
+    let (negative, digits) = match trimmed.as_bytes().first() {
+        Some(b'-') => (true, &trimmed[1..]),
+        Some(b'+') => (false, &trimmed[1..]),
+        _ => (false, trimmed),
+    };
+    let whole = digits.bytes().take_while(u8::is_ascii_digit).count();
+    let mut magnitude = digits[..whole].bytes().fold(0_u128, |total, digit| {
+        total
+            .saturating_mul(10)
+            .saturating_add(u128::from(digit - b'0'))
+    });
+    if exact {
+        // An exact number rounds half away from zero and stays signed.
+        if digits[whole..]
+            .strip_prefix('.')
+            .is_some_and(|fraction| matches!(fraction.bytes().next(), Some(b'5'..=b'9')))
+        {
+            magnitude = magnitude.saturating_add(1);
+        }
+        let magnitude = i128::try_from(magnitude).unwrap_or(i128::MAX);
+        let signed = if negative { -magnitude } else { magnitude };
+        return Ok(i64::try_from(signed).unwrap_or(if negative { i64::MIN } else { i64::MAX }));
     }
+    note_numeric_truncation("INTEGER", &text);
+    let signed = i128::try_from(magnitude)
+        .ok()
+        .and_then(|magnitude| i64::try_from(if negative { -magnitude } else { magnitude }).ok());
+    Ok(match signed {
+        Some(signed) => signed,
+        None if past == PastSigned::Ask => return Err(ExecError::NumericOverflow),
+        None if negative => i64::MIN,
+        None => unsigned(u64::try_from(magnitude).unwrap_or(u64::MAX)),
+    })
 }
 
 /// `REPEAT(text, count)`: its size is known before anything is built, so a
@@ -8921,12 +9125,19 @@ fn conv_base(subject: &str, from: i64, to: i64) -> Option<String> {
     ))
 }
 
-fn interval_second_micros(value: &Value) -> Result<i128, ExecError> {
-    let text = scalar_string(value)?;
-    if let Some(micros) = pintail_types::parse_decimal_rounded(&text, 6) {
-        return Ok(micros);
+fn interval_second_micros(
+    value: &Value,
+    argument_type: Option<DataType>,
+) -> Result<i128, ExecError> {
+    // An unsigned count past the signed range is the signed integer of the
+    // same bits, as for every other unit.
+    if !matches!(value, Value::UInt64(number) if i64::try_from(*number).is_err()) {
+        let text = scalar_string(value)?;
+        if let Some(micros) = pintail_types::parse_decimal_rounded(&text, 6) {
+            return Ok(micros);
+        }
     }
-    Ok(i128::from(mysql_i64(value)?) * 1_000_000)
+    Ok(i128::from(lenient_i64(value, argument_type, PastSigned::Wrap)?) * 1_000_000)
 }
 
 /// `MySQL` `MAKETIME`. Built by formatting rather than through a clock type:

@@ -364,20 +364,29 @@ pub(super) fn shift_interval(
     unit: IntervalUnit,
     subtract: bool,
 ) -> Result<Option<NaiveDateTime>, ExecError> {
+    // An amount no calendar field holds leaves no date to answer.
     let amount = if subtract {
-        amount.checked_neg().ok_or(ExecError::NumericOverflow)?
+        let Some(amount) = amount.checked_neg() else {
+            return Ok(None);
+        };
+        amount
     } else {
         amount
     };
     Ok(match unit {
         IntervalUnit::Year | IntervalUnit::Month => {
             let months = if unit == IntervalUnit::Year {
-                amount.checked_mul(12).ok_or(ExecError::NumericOverflow)?
+                amount.checked_mul(12)
             } else {
-                amount
+                Some(amount)
             };
-            let magnitude =
-                u32::try_from(months.unsigned_abs()).map_err(|_| ExecError::NumericOverflow)?;
+            let Some((months, magnitude)) = months.and_then(|months| {
+                u32::try_from(months.unsigned_abs())
+                    .ok()
+                    .map(|magnitude| (months, magnitude))
+            }) else {
+                return Ok(None);
+            };
             if months < 0 {
                 value.checked_sub_months(Months::new(magnitude))
             } else {

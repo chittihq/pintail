@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4301;
+const EXPECTED_CASES: usize = 4308;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5604,6 +5604,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
 }
 
 /// Statements that once ended in an engine error where `MySQL` answers.
+#[allow(clippy::too_many_lines)]
 fn engine_error_cases() -> Vec<OracleCase> {
     let ordered = |family, sql: &str| OracleCase {
         sql_mode: "",
@@ -5634,7 +5635,83 @@ fn engine_error_cases() -> Vec<OracleCase> {
         ordered(
             "distinct aggregate grouped by its argument",
             "SELECT MAX(DISTINCT tag), MIN(DISTINCT name), SUM(DISTINCT CONCAT(score, '.50')) \
-             FROM events GROUP BY tag, name, score ORDER BY 1, 2, 3",
+             FROM events GROUP BY tag, name, score ORDER BY 2",
+        ),
+        // An integer argument past the 64-bit range clamps, wraps or
+        // answers NULL as each function defines; none fails the statement.
+        ordered(
+            "integer arguments past the 64-bit range",
+            "SELECT MAKETIME(CAST(-1 AS UNSIGNED), 0, 0), MAKETIME(18446744073709551615, 59, 59), \
+                    MAKETIME(1e30, 0, 0), MAKETIME('99999999999999999999', 0, 0), \
+                    MAKETIME('-99999999999999999999', 0, 0), MAKETIME(99999999999999999999.5, 0, 0), \
+                    MAKETIME(1, 18446744073709551615, 0), MAKETIME(1, 1e30, 0), MAKETIME('1e30', 0, 0)",
+        ),
+        ordered(
+            "integer arguments past the 64-bit range",
+            "SELECT SEC_TO_TIME(CAST(-1 AS UNSIGNED)), SEC_TO_TIME('99999999999999999999999999999'), \
+                    SEC_TO_TIME('-99999999999999999999999999999'), SEC_TO_TIME(1e300), \
+                    SEC_TO_TIME(99999999999999999999999999999.5), SEC_TO_TIME(9223372036854775808), \
+                    SEC_TO_TIME('1e30')",
+        ),
+        ordered(
+            "integer arguments past the 64-bit range",
+            "SELECT MAKEDATE(1, 8.381922e+307), MAKEDATE(18446744073709551615, 1), \
+                    MAKEDATE(2024, 18446744073709551615), MAKEDATE(1e300, 1), \
+                    MAKEDATE('99999999999999999999', 1), MAKEDATE(2024, '99999999999999999999'), \
+                    MAKEDATE(99999999999999999999.5, 1), MAKEDATE('1e2', 5), MAKEDATE(2000, 1.5e0)",
+        ),
+        ordered(
+            "integer arguments past the 64-bit range",
+            "SELECT LPAD('a', -9223372036854775809, 'x'), LPAD('a', 18446744073709551616, 'x'), \
+                    RPAD('a', -9223372036854775809, 'x'), RPAD('a', 18446744073709551616, 'x'), \
+                    RPAD('abc', '99999999999999999999', 'x'), LPAD('abc', 1e30, 'x'), \
+                    LPAD('abc', 2.5, 'x'), RPAD('abc', '1e1', 'x'), \
+                    REPEAT('a', 18446744073709551616), REPEAT('a', -9223372036854775809), \
+                    SPACE(18446744073709551616) IS NULL",
+        ),
+        ordered(
+            "interval amounts past the 64-bit range",
+            "SELECT TIMESTAMPADD(YEAR, 1.212208e+308, '1995-01-05 06:32:20.859724'), \
+                    TIMESTAMPADD(QUARTER, 1.212208e+308, '1995-01-05 06:32:20.859724'), \
+                    TIMESTAMPADD(MONTH, 1.212208e+308, '1995-01-05 06:32:20.859724'), \
+                    TIMESTAMPADD(WEEK, 1.212208e+308, '1995-01-05 06:32:20.859724'), \
+                    TIMESTAMPADD(SECOND, 1.212208e+308, '1995-01-05 06:32:20.859724'), \
+                    TIMESTAMPADD(SECOND, 18446744073709551615, '1995-01-05'), \
+                    TIMESTAMPADD(MONTH, 18446744073709551615, '1995-01-05'), \
+                    TIMESTAMPADD(YEAR, 18446744073709551615, '1995-01-05'), \
+                    TIMESTAMPADD(DAY, 18446744073709551615, '1995-01-05'), \
+                    TIMESTAMPADD(DAY, 9223372036854775808, '1995-01-05'), \
+                    TIMESTAMPADD(HOUR, 18446744073709551615, '1995-01-05'), \
+                    TIMESTAMPADD(WEEK, 18446744073709551615, '1995-01-05'), \
+                    TIMESTAMPADD(DAY, '99999999999999999999', '1995-01-05'), \
+                    TIMESTAMPADD(WEEK, 1.5, '1995-01-05'), TIMESTAMPADD(QUARTER, '2', '1995-01-05')",
+        ),
+        ordered(
+            "interval amounts past the 64-bit range",
+            "SELECT DATE_ADD('1995-01-05', INTERVAL '9223372036854775808-02' DAY), \
+                    DATE_ADD('1995-01-05', INTERVAL '9223372036854775808-02' WEEK), \
+                    DATE_ADD('1995-01-05', INTERVAL '9223372036854775808-02' SECOND), \
+                    DATE_ADD('1995-01-05', INTERVAL '9223372036854775808-02' MONTH), \
+                    DATE_ADD('1995-01-05', INTERVAL '9223372036854775808-02' YEAR), \
+                    DATE_ADD('1995-01-05', INTERVAL '9223372036854775808-02' HOUR), \
+                    DATE_SUB('1995-01-05', INTERVAL '9223372036854775808' DAY), \
+                    DATE_ADD('1995-01-05', INTERVAL '9223372036854775807' WEEK), \
+                    DATE_ADD('1995-01-05', INTERVAL '18446744073709551616' DAY), \
+                    DATE_ADD('1995-01-05', INTERVAL '-99999999999999999999' DAY), \
+                    DATE_ADD('1995-01-05', INTERVAL 18446744073709551615 DAY), \
+                    DATE_ADD('1995-01-05', INTERVAL 18446744073709551615 SECOND), \
+                    DATE_ADD('1995-01-05', INTERVAL 1e30 SECOND), \
+                    DATE_ADD('1995-01-05', INTERVAL 1e30 MONTH), \
+                    DATE_ADD('1995-01-05', INTERVAL '1e30' DAY), \
+                    ADDDATE('2024-06-20', REPEAT('1', 32)), ADDDATE('2024-06-20', 18446744073709551615)",
+        ),
+        ordered(
+            "interval amounts past the 64-bit range",
+            "SELECT id, DATE_ADD(placed_at, INTERVAL REPEAT(id, 24) DAY), \
+                    DATE_ADD(placed_at, INTERVAL CONCAT(id, 'e9') DAY), \
+                    DATE_SUB(placed_at, INTERVAL CONCAT('-', REPEAT('9', 15 + id)) HOUR), \
+                    MAKETIME(REPEAT('7', 15 + id), 0, 0), MAKETIME(REPEAT('1', id + 2), id, 0) \
+             FROM orders ORDER BY id",
         ),
     ]
 }

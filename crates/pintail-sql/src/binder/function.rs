@@ -2211,17 +2211,23 @@ fn scaled_amount(amount: BoundExpr, factor: i64) -> Result<BoundExpr, BindError>
     }
     let nullable = amount.nullable;
     let amount = bind_scalar(ScalarFunction::Cast(DataType::Int64), vec![amount])?;
+    // Counted as a double: a product past the integer range is an amount no
+    // date reaches, which the interval answers with NULL, where an integer
+    // product would fail the statement. Every amount a date can move by is
+    // far inside the range a double counts exactly.
+    #[allow(clippy::cast_precision_loss)]
+    let factor = Value::float64(factor as f64);
     Ok(BoundExpr {
         kind: BoundExprKind::Binary {
             op: BinaryOp::Multiply,
             left: Box::new(amount),
             right: Box::new(BoundExpr {
-                kind: BoundExprKind::Literal(Value::Int64(factor)),
-                data_type: Some(DataType::Int64),
+                kind: BoundExprKind::Literal(factor),
+                data_type: Some(DataType::Float64),
                 nullable: false,
             }),
         },
-        data_type: Some(DataType::Int64),
+        data_type: Some(DataType::Float64),
         nullable,
     })
 }
