@@ -334,7 +334,17 @@ impl<'catalog> Binder<'catalog> {
                 // Under WITH RECURSIVE, a CTE that fails to bind normally
                 // (its body references itself) binds as a recursive
                 // fixpoint instead.
-                let bound = match self.bind_query(&cte.query, &ctes) {
+                // A body that reads the CTE's own name is the fixpoint even
+                // when a table of that name exists: under RECURSIVE the name
+                // is the CTE's inside its own body, and binding it normally
+                // read the table instead.
+                let normally = if with.recursive && reads_own_name(cte) {
+                    self.bind_recursive_cte(cte, &ctes)
+                        .or_else(|_| self.bind_query(&cte.query, &ctes))
+                } else {
+                    self.bind_query(&cte.query, &ctes)
+                };
+                let bound = match normally {
                     Ok(bound) => bound,
                     Err(error) if with.recursive => {
                         self.bind_recursive_cte(cte, &ctes).map_err(|_| error)?
@@ -8652,6 +8662,23 @@ fn time_column_beside_constant(left: &BoundExpr, right: &BoundExpr) -> bool {
     }
     let column = |expr: &BoundExpr| is_time(expr) && matches!(expr.kind, BoundExprKind::Column(_));
     (column(left) && constant(right)) || (column(right) && constant(left))
+}
+
+/// Whether a CTE's body names the CTE itself as a relation.
+fn reads_own_name(cte: &sqlparser::ast::Cte) -> bool {
+    let own_name = &cte.alias.name.value;
+    let mut found = false;
+    let _ = sqlparser::ast::visit_relations(&cte.query, |relation| {
+        if let [part] = relation.0.as_slice()
+            && part
+                .as_ident()
+                .is_some_and(|ident| ident.value.eq_ignore_ascii_case(own_name))
+        {
+            found = true;
+        }
+        std::ops::ControlFlow::<()>::Continue(())
+    });
+    found
 }
 
 /// Whether numeric types that meet in this order - branches of a
