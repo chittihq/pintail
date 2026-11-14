@@ -212,9 +212,9 @@ claims to satisfy:
 
 | profile | stages | claims |
 |---|---|---|
-| `development` | fmt, typecheck, unit | it compiles, lints, typechecks, and passes its unit tests |
-| `rc` | + parser-corpus, oracle, parity-replay, mtr, mtr-replica, e2e, e2e-mysql80, migrations, browser, compose, bi-clients | rc correctness gates passed, on both MySQL majors the release covers |
-| `stable` | + recovery, bench, accept | the same, with the measured evidence regenerated |
+| `development` | fmt, typecheck, unit, parser-corpus (four stages) | it compiles, lints, typechecks, and passes its unit tests |
+| `rc` | + oracle, parity-replay, mtr, mtr-replica, e2e, e2e-mysql80, migrations, browser, compose, bi-clients (fourteen stages) | rc correctness gates passed, on both MySQL majors the release covers, schema migrations included |
+| `stable` | the rc stages without migrations, + recovery, bench, accept (sixteen stages) | the same, with the measured evidence regenerated |
 
 `--profile rc` is the release-candidate gate; the bare command is
 `--profile stable`. `--stages=…` still runs any subset, but a subset
