@@ -591,7 +591,18 @@ pub(super) fn plan(
     let mut held = Held { memory, bytes: 0 };
     // What the keys and values hold outside the indexes' own slots.
     let mut outside = 0_usize;
-    while let Some(batch) = right.next_batch(memory)? {
+    loop {
+        // The indexes share the budget with the scan that feeds them: one
+        // grown until the scan has no room for its next batch does not fit.
+        if memory
+            .ensure_transient(right.scan_transient_floor())
+            .is_err()
+        {
+            return Ok(None);
+        }
+        let Some(batch) = right.next_batch(memory)? else {
+            break;
+        };
         memory.check_interruption()?;
         'rows: for row in batch.selection().selected_rows() {
             for conjunct in &right_only {
@@ -639,7 +650,18 @@ pub(super) fn plan(
     let mut totals = vec![0_u64; pairings.len()];
     let mut reserved = 0_usize;
     let mut pairs = 0_u64;
-    while let Some(batch) = left.next_batch(memory)? {
+    loop {
+        // Nor do they fit where they leave the left side no room to be read.
+        if memory
+            .ensure_transient(left.scan_transient_floor())
+            .is_err()
+        {
+            memory.release(reserved);
+            return Ok(None);
+        }
+        let Some(batch) = left.next_batch(memory)? else {
+            break;
+        };
         memory.check_interruption()?;
         'rows: for row in batch.selection().selected_rows() {
             let mut reaches = true;

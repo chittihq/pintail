@@ -17,8 +17,13 @@ use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchem
 
 const ROWS: u64 = 40_000;
 const LABEL_BYTES: usize = 500;
-/// Few enough that the join can be run pair by pair.
-const FEW_ROWS: u64 = 4_000;
+/// Few enough that the join can be run pair by pair: run as written it
+/// holds every pair with both labels, and spills what the budget cannot.
+const FEW_ROWS: u64 = 600;
+/// Rows a block of the table holds. A scan decodes a block at once, so a
+/// budget has to hold one whatever path the join takes: blocks are kept
+/// far smaller than the index, which holds every row.
+const BLOCK_ROWS: usize = 64;
 
 fn schema() -> TableSchema {
     TableSchema::new(
@@ -43,8 +48,15 @@ fn label(id: u64) -> String {
 /// run, and the query's peak.
 fn count_unequal_pairs(rows: u64, limit: usize) -> Result<(Vec<Value>, u64, usize), String> {
     let directory = tempfile::tempdir().expect("directory");
-    let mut table =
-        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("table");
+    let mut table = TableStore::open(
+        directory.path(),
+        schema(),
+        StoreOptions {
+            block_rows: BLOCK_ROWS,
+            ..StoreOptions::default()
+        },
+    )
+    .expect("table");
     table
         .bulk_ingest_snapshot(
             (0..rows)
