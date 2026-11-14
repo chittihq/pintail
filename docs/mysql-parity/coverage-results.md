@@ -4,7 +4,7 @@ The expanded differential coverage is implemented and gating. It does not
 claim full MySQL compatibility: case counts measure the corpus, not the
 feature surface.
 
-The fixed corpus has 4,346 cases: typed result comparison, a boundary
+The fixed corpus has 4,347 cases: typed result comparison, a boundary
 fixture across integer, decimal, float, string, binary and temporal limits,
 seven reviewed candidate queries and 15 seed-minimized regressions. All
 data and SQL are invented test fixtures. Each run writes
@@ -13,7 +13,7 @@ hash, session settings and code commit.
 
 | Run | Matching | Known failures | Other |
 |---|---:|---:|---|
-| Fixed corpus, MySQL 8.4 | 4,346 | 0 | none |
+| Fixed corpus, MySQL 8.4 | 4,347 | 0 | none |
 | Fixed corpus, MySQL 8.0 | 4,336 | 0 | 1 version difference, below |
 | Seeded sweep, MySQL 8.4 | 400 | 0 | 383 unique queries, default seed |
 | Storage layouts and spill | all | 0 warnings | memtable, persisted, mixed, compacted, reopened |

@@ -55,8 +55,18 @@ const MAX_TRAIL: usize = 40_000;
 const MAX_REGISTERS: usize = 2_000;
 /// The longest fixed run of characters a loop is taken over as one unit.
 const MAX_RUN: usize = 64;
-/// The most alternatives one search may save in total.
-const MAX_SAVES: usize = 4_000_000;
+/// The most alternatives one search may save or come back to, the measure
+/// `MySQL` times a match by: its limit of thirty-two units is this many.
+/// Every saved alternative counts one, and so does every turn a loop taken
+/// whole gives back.
+const MAX_TICKS: u32 = 320_000;
+/// The most steps one search may take whatever it saves: this many, and
+/// [`WORK_PER_BYTE`] more for every byte of the text. A step is an
+/// instruction run or a character read. A match that reads its text a few
+/// times over is far inside it; one that reads it again from every
+/// position is not, however little it saves.
+const WORK_BASE: u64 = 16_000_000;
+const WORK_PER_BYTE: u64 = 64;
 /// The longest text a look-behind may need to read back over.
 const MAX_LOOK_BEHIND: usize = 1_000;
 
@@ -1498,10 +1508,16 @@ impl Program {
         from: usize,
         steps: &mut InterruptCounter,
     ) -> Result<Option<Box<[usize]>>, ExecError> {
+        self.search(text, from, steps).0
+    }
+
+    /// [`Self::captures_at`], with what the search cost: the alternatives
+    /// it saved or came back to, and the steps it took.
+    fn search(&self, text: &str, from: usize, steps: &mut InterruptCounter) -> (Found, u32, u64) {
         // Positions are held in thirty-two bits; no text the engine passes
         // here is longer.
         if u32::try_from(text.len()).map_or(true, |length| length == NONE) {
-            return Err(SYNTAX);
+            return (Err(SYNTAX), 0, 0);
         }
         let variables = 3 * self.groups + self.registers;
         let mut machine = Machine {
@@ -1514,36 +1530,13 @@ impl Program {
             floor: 0,
             trail: Vec::new(),
             stack: Vec::new(),
-            saves: 0,
+            ticks: 0,
+            work: 0,
+            work_limit: WORK_BASE.saturating_add(WORK_PER_BYTE.saturating_mul(text.len() as u64)),
             steps,
         };
-        let mut start = from;
-        loop {
-            machine.vars.fill(NONE);
-            machine.stamps.fill(0);
-            machine.clock = 0;
-            machine.floor = 0;
-            machine.trail.clear();
-            machine.stack.clear();
-            if machine.run(0, start, None)?.is_some() {
-                return Ok(Some(
-                    machine.vars[..2 * self.groups]
-                        .iter()
-                        .map(|slot| {
-                            if *slot == NONE {
-                                usize::MAX
-                            } else {
-                                *slot as usize
-                            }
-                        })
-                        .collect(),
-                ));
-            }
-            let Some(character) = text[start..].chars().next() else {
-                return Ok(None);
-            };
-            start += character.len_utf8();
-        }
+        let found = machine.find(from);
+        (found, machine.ticks, machine.work)
     }
 }
 
@@ -1592,7 +1585,12 @@ struct Machine<'a, 'steps> {
     /// back to the old value.
     trail: Vec<Undo>,
     stack: Vec<Frame>,
-    saves: usize,
+    /// Alternatives saved or come back to by this search, every start
+    /// position it has tried included.
+    ticks: u32,
+    /// Steps taken by this search, and the most it may take.
+    work: u64,
+    work_limit: u64,
     steps: &'steps mut InterruptCounter,
 }
 
@@ -1641,6 +1639,37 @@ fn push_within<T>(items: &mut Vec<T>, item: T, ceiling: usize) -> Result<(), Exe
 }
 
 impl Machine<'_, '_> {
+    /// The capture slots of the first match that starts at or after `from`.
+    fn find(&mut self, from: usize) -> Result<Option<Box<[usize]>>, ExecError> {
+        let mut start = from;
+        loop {
+            self.vars.fill(NONE);
+            self.stamps.fill(0);
+            self.clock = 0;
+            self.floor = 0;
+            self.trail.clear();
+            self.stack.clear();
+            if self.run(0, start, None)?.is_some() {
+                return Ok(Some(
+                    self.vars[..2 * self.program.groups]
+                        .iter()
+                        .map(|slot| {
+                            if *slot == NONE {
+                                usize::MAX
+                            } else {
+                                *slot as usize
+                            }
+                        })
+                        .collect(),
+                ));
+            }
+            let Some(character) = self.text[start..].chars().next() else {
+                return Ok(None);
+            };
+            start += character.len_utf8();
+        }
+    }
+
     fn assign(&mut self, index: usize, value: usize) -> Result<(), ExecError> {
         let value = u32::try_from(value).map_err(|_| SYNTAX)?;
         // Nothing saved since the variable was last assigned can come back
@@ -1680,13 +1709,31 @@ impl Machine<'_, '_> {
         }
     }
 
+    /// Counts an alternative saved or come back to. A search that passes
+    /// the limit stops with the error `MySQL` stops with.
+    fn tick(&mut self) -> Result<(), ExecError> {
+        self.ticks += 1;
+        if self.ticks >= MAX_TICKS {
+            return Err(TIMEOUT);
+        }
+        Ok(())
+    }
+
+    /// Counts `steps` steps of the search, on the statement's interrupt
+    /// counter and against the search's own limit.
+    fn spend(&mut self, steps: usize) -> Result<(), ExecError> {
+        self.steps.steps(steps)?;
+        self.work = self.work.saturating_add(steps as u64);
+        if self.work > self.work_limit {
+            return Err(TIMEOUT);
+        }
+        Ok(())
+    }
+
     /// Saves an alternative to resume at `pc` and `pos`. `step` and
     /// `least` are those of a loop taken whole, zero otherwise.
     fn save(&mut self, pc: u32, pos: usize, step: u32, least: usize) -> Result<(), ExecError> {
-        self.saves += 1;
-        if self.saves > MAX_SAVES {
-            return Err(TIMEOUT);
-        }
+        self.tick()?;
         self.clock = self.clock.checked_add(1).ok_or(TIMEOUT)?;
         let position = |at: usize| u32::try_from(at).map_err(|_| SYNTAX);
         push_within(
@@ -1857,7 +1904,7 @@ impl Machine<'_, '_> {
         let groups = self.program.groups;
         let (mut pc, mut pos) = (pc, pos);
         loop {
-            self.steps.steps(1)?;
+            self.spend(1)?;
             let next = self.text[pos..].chars().next();
             let advanced = match self.program.insts[pc as usize] {
                 Inst::Set(set) => match next {
@@ -1906,6 +1953,7 @@ impl Machine<'_, '_> {
                     case_insensitive,
                 } => match self.repeated(group, case_insensitive, pos) {
                     Some(end) => {
+                        self.spend(end - pos)?;
                         pos = end;
                         pc += 1;
                         true
@@ -1984,7 +2032,7 @@ impl Machine<'_, '_> {
                             least = Some(pos);
                         }
                     }
-                    self.steps.steps(pos - start)?;
+                    self.spend(pos - start)?;
                     pc += 1;
                     match least {
                         None => false,
@@ -2062,6 +2110,7 @@ impl Machine<'_, '_> {
             if frame.step > 0 {
                 // One turn of the loop is given back, and the alternative
                 // stays while another can be.
+                self.tick()?;
                 for _ in 0..frame.step {
                     pos -= self.text[..pos]
                         .chars()
@@ -2187,6 +2236,71 @@ mod tests {
                 Err(ExecError::QueryTimedOut)
             );
         });
+    }
+
+    /// What one search costs in the two measures it is limited by.
+    fn cost(pattern: &str, text: &str) -> (Result<bool, ExecError>, u32, u64) {
+        let program = Program::new(pattern, false, false, false, LineEndings::Unicode)
+            .unwrap_or_else(|error| panic!("{pattern} compiles: {error}"));
+        let mut steps = InterruptCounter::unchecked();
+        let (found, ticks, work) = program.search(text, 0, &mut steps);
+        (found.map(|slots| slots.is_some()), ticks, work)
+    }
+
+    /// A search stops on its own, with the timeout error, when it saves
+    /// and comes back as often as `MySQL` allows a match to - whatever the
+    /// statement's own time limit is.
+    #[test]
+    fn a_search_that_backtracks_too_often_times_out_on_its_own() {
+        // Measured against MySQL 8.4: the same patterns and texts time out
+        // there, and the shorter texts beside them answer.
+        for (pattern, unit, answers, times_out) in [
+            ("(?=x)x+y", "x", 700, 2_000),
+            ("(?=x).*y", "x", 700, 2_000),
+            ("^(?=x)x*x*x*y", "x", 60, 1_000),
+            ("^(?=x)(x+x+)+y", "x", 12, 30),
+            ("(?=x)(?:xy)*z", "xy", 300, 1_000),
+            ("^(?=x)(?:x|z)+?y", "x", 100_000, 400_000),
+        ] {
+            let (found, ticks, _) = cost(pattern, &unit.repeat(answers));
+            assert_eq!(found, Ok(false), "{pattern} over {answers}: {ticks} ticks");
+            let (found, ticks, _) = cost(pattern, &unit.repeat(times_out));
+            assert_eq!(
+                found,
+                Err(ExecError::Regex(RegexError::Timeout)),
+                "{pattern} over {times_out}"
+            );
+            assert_eq!(ticks, super::MAX_TICKS, "{pattern} over {times_out}");
+        }
+    }
+
+    /// A search that saves little but reads its text again from every
+    /// position stops by the steps it has taken, which are bounded by the
+    /// length of the text.
+    #[test]
+    fn a_search_that_reads_too_much_times_out_on_its_own() {
+        let text = "x".repeat(200_000);
+        // An atomic loop drops what it saved, at every start position.
+        let (found, ticks, work) = cost("(?>x*)y", &text);
+        assert_eq!(found, Err(ExecError::Regex(RegexError::Timeout)));
+        assert!(ticks < super::MAX_TICKS, "{ticks} ticks");
+        let limit = super::WORK_BASE + super::WORK_PER_BYTE * text.len() as u64;
+        assert!(
+            work > limit && work <= limit + text.len() as u64 + 1,
+            "{work} steps"
+        );
+        // The same pattern over a text it reads through once is far inside.
+        let (found, _, work) = cost("^(?>x*)y", &text);
+        assert_eq!(found, Ok(false));
+        assert!(work < 4 * text.len() as u64, "{work} steps");
+        // A match that reads forward is not short of steps on a long text.
+        let long = "abc".repeat(1_000_000);
+        let (found, ticks, work) = cost("(?=a).*c$", &long);
+        assert_eq!(found, Ok(true));
+        assert!(
+            ticks < 8 && work < 2 * long.len() as u64,
+            "{ticks} ticks, {work} steps"
+        );
     }
 
     /// A repetition that saves an alternative for every turn stops at the

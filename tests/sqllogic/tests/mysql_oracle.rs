@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4394;
+const EXPECTED_CASES: usize = 4395;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6056,6 +6056,14 @@ fn engine_error_cases() -> Vec<OracleCase> {
             "regex loops over long subjects",
             "SELECT REGEXP_LIKE(REPEAT('abc', 100000), '(?=a).*c$')",
         ),
+        // A search that fails after backtracking less often than the limit
+        // answers; the same search over a longer text is in the rejects.
+        ordered(
+            "regex searches inside the backtracking limit",
+            "SELECT REGEXP_LIKE(REPEAT('x', 700), '(?=x)x+y'), \
+                    REGEXP_LIKE(REPEAT('x', 60), '^(?=x)x*x*x*y'), \
+                    REGEXP_LIKE(REPEAT('x', 12), '^(?=x)(x+x+)+y')",
+        ),
     ]
 }
 
@@ -8347,6 +8355,23 @@ fn documented_rejects_stay_explicit() {
 #[allow(clippy::too_many_lines)] // one table of shapes
 fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
+        (
+            // Saved and resumed alternatives past the limit, as in MySQL.
+            "reject regex search past the backtracking limit",
+            "SELECT REGEXP_LIKE(REPEAT('x', 2000), '(?=x)x+y')",
+            "timeout exceeded in regular expression match",
+        ),
+        (
+            "reject regex search past the backtracking limit",
+            "SELECT REGEXP_LIKE(REPEAT('x', 1000), '^(?=x)x*x*x*y')",
+            "timeout exceeded in regular expression match",
+        ),
+        (
+            // Little saved, but the text read again from every position.
+            "reject regex search past the step limit",
+            "SELECT REGEXP_LIKE(REPEAT('x', 200000), '(?>x*)y')",
+            "timeout exceeded in regular expression match",
+        ),
         (
             // A count no pattern may name, whichever matcher would run it.
             "reject regex count past the limit",

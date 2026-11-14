@@ -176,10 +176,17 @@ stays readable as a list of things to fix.
   properties and character/POSIX classes, back-references, look-ahead,
   bounded look-behind, atomic groups, comment groups and `\G`. The
   grapheme-cluster escape `\X` and named characters `\N{...}` reject. A
-  backtracking match stops with MySQL's timeout or stack-overflow error at
-  a fixed ceiling of saved alternatives rather than at MySQL's
-  `regexp_time_limit` and `regexp_stack_limit`, so a pattern near either
-  limit can finish in one engine and stop in the other. Other
+  backtracking match stops with MySQL's timeout error (3699) after 320,000
+  saved or resumed alternatives, MySQL's own default limit, counted
+  slightly differently: a loop over single characters saves nothing as it
+  reads, so `(?=a)a+` over a million characters answers where MySQL times
+  out. It also stops with 3699 after 16 million steps plus 64 per byte of
+  the text, where MySQL has no such limit and keeps reading. A loop around
+  a capturing group or a choice of unequal lengths saves an alternative
+  every turn and stops with the stack error (3698) after about 8,000
+  turns, where MySQL's `regexp_stack_limit` allows some hundreds of
+  thousands. `regexp_time_limit` and `regexp_stack_limit` are not
+  settable. Other
   ICU syntax and same-spelling semantic edges are not claimed. Binary-string
   operands reject, patterns are limited to 64 KiB, compiled
   programs to 1 MiB, and literal programs are owned and reused by the compiled
