@@ -4047,13 +4047,14 @@ fn resolve_expr_subqueries(
             }
         }
         BoundExprKind::ExistsSubquery { query, negated } => {
-            let values = materialize_subquery(
+            let values = materialize_subquery_rows(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
                 deadline,
                 Some(1),
                 collation,
+                true,
             )?;
             let exists = !values.is_empty();
             expression.kind = BoundExprKind::Literal(Value::Boolean(exists != *negated));
@@ -5201,10 +5202,34 @@ fn materialize_subquery(
     maximum_rows: Option<usize>,
     collation: Collation,
 ) -> Result<Vec<Value>, ExecError> {
+    materialize_subquery_rows(
+        query,
+        provider,
+        memory_limit,
+        deadline,
+        maximum_rows,
+        collation,
+        false,
+    )
+}
+
+/// The first column of a subquery's rows. `any_width` is EXISTS, which asks
+/// only whether a row is there and so accepts a select list of any length;
+/// a scalar or IN subquery is one column by definition.
+fn materialize_subquery_rows(
+    query: pintail_sql::BoundQuery,
+    provider: &dyn ScanProvider,
+    memory_limit: usize,
+    deadline: Option<Instant>,
+    maximum_rows: Option<usize>,
+    collation: Collation,
+    any_width: bool,
+) -> Result<Vec<Value>, ExecError> {
     DEPENDENT_SUBQUERY_EXECUTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let logical = Optimizer::optimize(LogicalPlanner::plan(query));
     let physical = PhysicalPlanner::plan(logical, collation)?;
-    if physical.output_fields().len() != 1 {
+    let width = physical.output_fields().len();
+    if width == 0 || (width != 1 && !any_width) {
         return Err(ExecError::InvalidPhysicalPlan(
             "scalar or IN subquery must produce exactly one column",
         ));

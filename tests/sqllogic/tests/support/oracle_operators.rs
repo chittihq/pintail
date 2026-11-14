@@ -445,6 +445,14 @@ const JSON_RANGES_OVER_EMPTY_ARRAYS: &[&str] = &[
     r#"SELECT id, meta->'$.items[0 to 1]', meta->'$.items[1 to 9]', meta->'$.tags[0 to 0]', meta->'$.tags[*]', meta->'$.items[last to last]' FROM orders ORDER BY id"#,
 ];
 
+const EXISTS_OVER_SEVERAL_COLUMNS: &[&str] = &[
+    r#"SELECT EXISTS (SELECT * FROM users), EXISTS (SELECT * FROM users WHERE id > 100), NOT EXISTS (SELECT id, name FROM users), EXISTS (SELECT 1, 2), EXISTS (TABLE users), EXISTS (SELECT * FROM users LIMIT 0), EXISTS (SELECT id, name FROM users UNION SELECT id, name FROM users)"#,
+    r#"SELECT id FROM users u WHERE EXISTS (TABLE events) ORDER BY id"#,
+    r#"SELECT id FROM users u WHERE NOT EXISTS (SELECT * FROM orders) OR EXISTS (SELECT id, total FROM orders WHERE total > 900) ORDER BY id"#,
+    r#"SELECT id, EXISTS (SELECT * FROM orders o WHERE o.user_id = u.id), EXISTS (SELECT o.id, o.total FROM orders o WHERE o.user_id = u.id AND o.total > 100) FROM users u ORDER BY id"#,
+    r#"SELECT active, COUNT(*) FROM events GROUP BY active HAVING EXISTS (SELECT * FROM orders WHERE total > 900) ORDER BY active"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -463,6 +471,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("exists over several columns", EXISTS_OVER_SEVERAL_COLUMNS),
         ("json ranges over empty arrays", JSON_RANGES_OVER_EMPTY_ARRAYS),
         ("regexp with a null pattern", REGEXP_WITH_A_NULL_PATTERN),
         ("bare utc clocks", BARE_UTC_CLOCKS),
