@@ -1,8 +1,8 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-11-14T11:23:19.175Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-11-14T12:39:08.602Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: 8e56ca285d43a156cbe6911508490de19318df28; source dirty: false. Binary SHA-256: a099ed4327421891c3b337805620b496acaaed658ed697d14b25dcb031e35da7.
+Replay mode: local. Source commit: 858d050d26d78c8101016f5d12c5d5ffcc9a41c9; source dirty: false. Binary SHA-256: 6b732e63091bab90dc5e42caf79a2588aec553c6c6af5540cc4f78fac03e1426.
 
 **10,573 of 10,665 compared SELECTs match MySQL byte-for-byte** (99.1%; the 496 session-diverged SELECTs are not in that percentage: counted as mismatches it is 94.7%), **out of 23,119 SELECTs replayed** - 12,454 never reached a comparison, so this is a share of what could be compared and not of the suite. 92 differ in rows, 0 in column names only. 3,363 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. 496 did not match after Pintail and MySQL disagreed on a session statement, and say nothing while the sessions differ. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
@@ -676,4 +676,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 43 | INSERT: Error: Column _ cannot be null |
 | 43 | DDL: Error: character set utf32 is not supported on a local table |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwgbd9af-199849/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwge2gex-64991/diffs/` (not committed).
