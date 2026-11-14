@@ -5595,8 +5595,8 @@ mod tests {
     #[test]
     fn an_unreadable_statement_names_the_tables_it_mentions() {
         use super::statement_names_table;
-        let create = "CREATE TABLE \"CertificateTemplate\" (\"id\" INT)";
-        assert!(statement_names_table(create, "CertificateTemplate"));
+        let create = "CREATE TABLE \"LedgerTemplate\" (\"id\" INT)";
+        assert!(statement_names_table(create, "LedgerTemplate"));
         assert!(statement_names_table(create, "certificatetemplate"));
         // A different table of similar spelling is not named.
         assert!(!statement_names_table(create, "Certificate"));

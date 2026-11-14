@@ -1141,7 +1141,7 @@ async function phaseSchemaDriftUnseen() {
   // A schema change the CDC stream never sees as DDL.
   //
   // Production hit this three days running: a hand-written
-  // `ALTER TABLE Payment ADD COLUMN` landed, and the next INSERT arrived as a
+  // `ALTER TABLE ... ADD COLUMN` landed, and the next INSERT arrived as a
   // row image one column wider than the probed schema. The decoder refused
   // the row - correctly, since it cannot know which column is which - and
   // marked the whole table for a full resnapshot. Every such row was dropped
@@ -2052,7 +2052,7 @@ async function phasePollStorm() {
 /// at boot so partial data never answers as healthy - that part is by
 /// design. What this phase demands is the other half: that the database
 /// itself is not left behind. A production instance sat in 'snapshotting'
-/// for over a day after exactly this, with 108 tables quarantined and 134
+/// for over a day after exactly this, with many tables quarantined and more
 /// never copied, because a database in that state is never scheduled and
 /// so never reaches the repair that would have drained them. Nobody clicks
 /// anything here; recovery has to happen on its own.
@@ -3505,9 +3505,9 @@ async function phaseControlPlane() {
     await sql(`CREATE TABLE drift_messages (
       id BIGINT PRIMARY KEY AUTO_INCREMENT,
       body VARCHAR(200) NOT NULL,
-      sentByAdminId BIGINT NULL
+      sentByOperatorId BIGINT NULL
     )`)
-    await sql(`INSERT INTO drift_messages (body, sentByAdminId) VALUES ('one', 7), ('two', NULL)`)
+    await sql(`INSERT INTO drift_messages (body, sentByOperatorId) VALUES ('one', 7), ('two', NULL)`)
     try {
       // Adopt the new table into the mirror. The accepted snapshot runs
       // asynchronously and the database state reads 'streaming' until the
@@ -3530,7 +3530,7 @@ async function phaseControlPlane() {
 
       // Downtime: pause, migrate, and lose the binlog history of it.
       await api(`/api/databases/${databaseId}/mode`, { method: 'POST', body: { mode: 'paused' } })
-      await sql(`ALTER TABLE drift_messages DROP COLUMN sentByAdminId`)
+      await sql(`ALTER TABLE drift_messages DROP COLUMN sentByOperatorId`)
       await sql(`INSERT INTO drift_messages (body) VALUES ('three')`)
       await sql(`FLUSH BINARY LOGS`)
       await sql(`FLUSH BINARY LOGS`)

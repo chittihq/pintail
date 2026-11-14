@@ -1068,7 +1068,7 @@ mod tests {
     #[test]
     fn a_source_using_ansi_quotes_has_its_identifiers_read_as_identifiers() {
         let created = parse_ddl(
-            "CREATE TABLE \"CertificateTemplate\" (\"id\" INT NOT NULL, \"name\" VARCHAR(64))",
+            "CREATE TABLE \"LedgerTemplate\" (\"id\" INT NOT NULL, \"name\" VARCHAR(64))",
             "app",
         )
         .expect("a double-quoted identifier parses");
