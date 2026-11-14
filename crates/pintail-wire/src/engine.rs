@@ -2542,6 +2542,9 @@ fn query_execution_error(error: ExecError) -> QueryError {
             rejection: SqlRejection::Spatial(kind),
             message,
         },
+        // A statement the table function refuses is the statement's fault,
+        // never an internal one.
+        ExecError::JsonTable(message) => QueryError::Invalid(message),
         error => QueryError::Internal(error.to_string()),
     }
 }

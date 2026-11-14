@@ -182,6 +182,150 @@ pub struct BoundTable {
     /// bound as outer columns; the table is evaluated once per distinct
     /// tuple of them rather than once for the statement.
     pub lateral: bool,
+    /// The table function whose rows this relation is, for a `JSON_TABLE`.
+    ///
+    /// Such a relation carries a placeholder `input` naming its own columns,
+    /// so everything that asks "is this a stored table" answers no; its rows
+    /// come from this description and never from that query.
+    pub json_table: Option<std::sync::Arc<BoundJsonTable>>,
+}
+
+/// A bound `JSON_TABLE(document, path COLUMNS (...))`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundJsonTable {
+    /// The document. It may read columns of relations written before the
+    /// table function in the same `FROM`; it never reads an enclosing query.
+    pub document: BoundExpr,
+    /// The path whose matches are the rows.
+    pub path: String,
+    /// The column list as written, nested lists included.
+    pub columns: Vec<JsonTableColumn>,
+    /// How many columns a row has across every nesting level.
+    pub width: usize,
+}
+
+/// One entry of a `JSON_TABLE` column list.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JsonTableColumn {
+    /// `name FOR ORDINALITY`: the 1-based position of the row among the
+    /// matches of the path that owns the list.
+    Ordinality {
+        /// Position of the column in a row.
+        output: usize,
+    },
+    /// `name type PATH path [ON EMPTY] [ON ERROR]`.
+    Value {
+        /// Position of the column in a row.
+        output: usize,
+        /// The column's name, for error messages.
+        name: String,
+        /// What the matched value is stored as.
+        target: JsonTableType,
+        /// Path evaluated against the row's value.
+        path: String,
+        /// What a path with no match yields.
+        on_empty: JsonTableFallback,
+        /// What a value that cannot be stored yields.
+        on_error: JsonTableFallback,
+    },
+    /// `name type EXISTS PATH path`: 1 when the path has a match, else 0.
+    Exists {
+        /// Position of the column in a row.
+        output: usize,
+        /// The column's name, for error messages.
+        name: String,
+        /// What the 1 or 0 is stored as.
+        target: JsonTableType,
+        /// Path evaluated against the row's value.
+        path: String,
+    },
+    /// `NESTED [PATH] path COLUMNS (...)`: one row per match of `path`
+    /// under the row's value, beside the row's own columns.
+    Nested {
+        /// Path evaluated against the row's value.
+        path: String,
+        /// The nested column list.
+        columns: Vec<Self>,
+    },
+}
+
+/// What a `JSON_TABLE` column yields in place of a value it does not have.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JsonTableFallback {
+    /// `NULL ON ...`, which is also what an absent clause means.
+    Null,
+    /// `ERROR ON ...`: the statement fails.
+    Error,
+    /// `DEFAULT 'json' ON ...`: the JSON text, stored as a value would be.
+    Default(String),
+}
+
+/// The declared type of a `JSON_TABLE` column, as far as storing a JSON
+/// value into it needs to know.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JsonTableType {
+    /// An integer type with its inclusive range.
+    Integer {
+        /// Smallest value: zero for an unsigned type.
+        min: i64,
+        /// Largest value.
+        max: u64,
+    },
+    /// `DECIMAL(precision, scale)`.
+    Decimal {
+        /// Total digits.
+        precision: u8,
+        /// Fraction digits.
+        scale: u8,
+    },
+    /// Single-precision `FLOAT`.
+    Float,
+    /// `DOUBLE`.
+    Double,
+    /// A character type and what it holds at most.
+    Text {
+        /// Characters, for `CHAR(n)` and `VARCHAR(n)`.
+        max_chars: Option<u64>,
+        /// Bytes, for the `TEXT` family.
+        max_bytes: Option<u64>,
+    },
+    /// `JSON`: the matched value as a document.
+    Json,
+    /// `DATE`.
+    Date,
+    /// `DATETIME(fsp)`.
+    DateTime {
+        /// Fractional-second digits.
+        fsp: u8,
+    },
+}
+
+impl JsonTableType {
+    /// The engine type a column of this declared type carries.
+    #[must_use]
+    pub const fn data_type(self) -> DataType {
+        match self {
+            Self::Integer { min: 0, max } => match max {
+                0..=0xff => DataType::UInt8,
+                0x100..=0xffff => DataType::UInt16,
+                0x1_0000..=0xffff_ffff => DataType::UInt32,
+                _ => DataType::UInt64,
+            },
+            Self::Integer { max, .. } => match max {
+                0..=0x7f => DataType::Int8,
+                0x80..=0x7fff => DataType::Int16,
+                0x8000..=0x7fff_ffff => DataType::Int32,
+                _ => DataType::Int64,
+            },
+            Self::Decimal { precision, scale } => DataType::Decimal { precision, scale },
+            Self::Float => DataType::Float32,
+            Self::Double => DataType::Float64,
+            Self::Text { .. } => DataType::Utf8,
+            Self::Json => DataType::Json,
+            Self::Date => DataType::Date32,
+            Self::DateTime { fsp } => DataType::DateTime64 { fsp },
+        }
+    }
 }
 
 /// A column made unambiguous against one catalog snapshot.

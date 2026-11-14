@@ -233,6 +233,20 @@ fn write_plan(
             )?;
             write_plan(input, depth + 1, output, provider)
         }
+        PhysicalPlan::JsonTable { input, apply } => {
+            writeln!(
+                output,
+                "JsonTable{} columns=[{}]",
+                if apply.outer { " outer" } else { "" },
+                apply
+                    .columns
+                    .iter()
+                    .map(|column| column.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )?;
+            write_plan(input, depth + 1, output, provider)
+        }
         PhysicalPlan::CrossJoin {
             inputs,
             estimated_rows,

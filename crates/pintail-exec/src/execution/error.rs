@@ -66,6 +66,10 @@ pub enum ExecError {
         /// Character offset the error names.
         position: usize,
     },
+    /// A `JSON_TABLE` could not produce its rows: a document that is not
+    /// JSON, a `DEFAULT` its column cannot hold, or a column whose `ERROR
+    /// ON EMPTY` or `ERROR ON ERROR` clause applied. Carries `MySQL`'s text.
+    JsonTable(String),
     /// A value left its type's range; `MySQL`'s message names the expression.
     OutOfRange(String),
     /// A spatial function refused its arguments; `MySQL`'s message.
@@ -182,6 +186,7 @@ impl fmt::Display for ExecError {
                 formatter,
                 "Invalid JSON path expression. The error is around character position {position}."
             ),
+            Self::JsonTable(message) => formatter.write_str(message),
             Self::OutOfRange(message) | Self::Spatial { message, .. } => {
                 formatter.write_str(message)
             }

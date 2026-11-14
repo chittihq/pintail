@@ -52,10 +52,11 @@ pub use sqlparser::ast::Statement;
 pub use binder::{BindError, Binder, CALENDAR_COPY_CHECK, with_source_indexes};
 pub use bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundFrameBound, BoundFrameOffset, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit,
-    BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable,
-    BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_DIV_PRECISION_INCREMENT,
-    DEFAULT_TEXT_COLLATION, DatePart, IntervalUnit, JSON_TEXT_COLLATION, MembershipError,
+    BoundFrameBound, BoundFrameOffset, BoundFrom, BoundJoin, BoundJoinKind, BoundJsonTable,
+    BoundLimit, BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind,
+    BoundTable, BoundWindow, BoundWindowFrame, BoundWindowOrderKey,
+    DEFAULT_DIV_PRECISION_INCREMENT, DEFAULT_TEXT_COLLATION, DatePart, IntervalUnit,
+    JSON_TEXT_COLLATION, JsonTableColumn, JsonTableFallback, JsonTableType, MembershipError,
     MembershipLookup, OrderValueKind, OuterSetKind, OuterSetQuery, OuterSetRelation,
     PreparedMembership, ROW_MEMBERS_RELATION, SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp,
     WindowFunction, aggregate_column_collations, comparison_collation, session_default_collation,

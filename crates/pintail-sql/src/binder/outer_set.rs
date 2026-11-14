@@ -357,6 +357,7 @@ impl Binder<'_> {
                     column_statistics: None,
                     input: None,
                     lateral: false,
+                    json_table: None,
                 }),
             });
             factors.push(TableFactor::Table {

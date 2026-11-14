@@ -68,7 +68,8 @@ pub(crate) fn expected_rows(plan: &LogicalPlan) -> Option<u64> {
         }
         LogicalPlan::Project { input, .. }
         | LogicalPlan::Sort { input, .. }
-        | LogicalPlan::Derived { input, .. } => expected_rows(input),
+        | LogicalPlan::Derived { input, .. }
+        | LogicalPlan::JsonTable { input, .. } => expected_rows(input),
         LogicalPlan::Limit { input, limit } => Some(
             expected_rows(input)?
                 .saturating_sub(limit.offset)

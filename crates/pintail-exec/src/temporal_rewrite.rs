@@ -60,6 +60,10 @@ pub(crate) fn rewrite_temporal_predicates(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(rewrite_temporal_predicates(*input)),
             columns,
         },
+        LogicalPlan::JsonTable { input, apply } => LogicalPlan::JsonTable {
+            input: Box::new(rewrite_temporal_predicates(*input)),
+            apply,
+        },
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs
                 .into_iter()

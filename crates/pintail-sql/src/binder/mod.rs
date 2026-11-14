@@ -5,6 +5,7 @@ mod dependency;
 mod function;
 mod index_read;
 pub use index_read::with_source_indexes;
+mod json_table;
 mod keyed_branch;
 mod outer_aggregate;
 mod outer_set;
@@ -144,6 +145,7 @@ impl<'catalog> Binder<'catalog> {
                 column_statistics: None,
                 input: None,
                 lateral: false,
+                json_table: None,
             });
         }
         self.bind_subquery(query, ctes, &scope)
@@ -451,6 +453,7 @@ impl<'catalog> Binder<'catalog> {
             column_statistics: None,
             input: None,
             lateral: false,
+            json_table: None,
         };
         let mut scope = ctes.to_vec();
         scope.push(BoundCte {
@@ -2740,6 +2743,7 @@ impl<'catalog> Binder<'catalog> {
             column_statistics: None,
             input: Some(Box::new(input)),
             lateral: false,
+            json_table: None,
         };
         Ok(BoundJoinRelation {
             table,
@@ -2837,6 +2841,11 @@ impl<'catalog> Binder<'catalog> {
         ctes: &[BoundCte],
         preceding: &[BoundTable],
     ) -> Result<BoundTable, BindError> {
+        // A table function reads the relations written before it as plain
+        // columns of its input, not as outer references.
+        if matches!(factor, TableFactor::JsonTable { .. }) {
+            return self.bind_json_table(factor, preceding);
+        }
         let TableFactor::Derived {
             lateral: true,
             subquery,
@@ -3041,6 +3050,7 @@ impl<'catalog> Binder<'catalog> {
             column_statistics: table.column_statistics().cloned(),
             input: None,
             lateral: false,
+            json_table: None,
         })
     }
 
@@ -3128,6 +3138,7 @@ impl<'catalog> Binder<'catalog> {
             column_statistics: None,
             input: Some(Box::new(input)),
             lateral: false,
+            json_table: None,
         }
     }
 

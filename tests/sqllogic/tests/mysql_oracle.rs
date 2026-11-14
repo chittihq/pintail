@@ -6988,10 +6988,63 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "SELECT ROW_NUMBER() OVER (PARTITION BY JSON_EXTRACT(note, '$.a')) FROM events",
             "json|invalid",
         ),
+        // A table function reads the relations before it, never one after
+        // it and never an enclosing query; a column type no JSON value is
+        // stored into here is refused by name.
         (
-            "reject json table",
-            "SELECT * FROM JSON_TABLE('[1,2]', '$[*]' COLUMNS (v INT PATH '$')) AS jt",
-            "unsupported|json_table|parse|bind|table",
+            "reject json table reading a later relation",
+            "SELECT * FROM JSON_TABLE(o.meta, '$.items[*]' COLUMNS (v INT PATH '$')) AS jt, orders o",
+            "unknown|column|relation",
+        ),
+        (
+            "reject json table reading an enclosing query",
+            "SELECT o.id, (SELECT SUM(v) FROM JSON_TABLE(o.meta, '$.items[*]' COLUMNS (v INT PATH '$')) AS jt) FROM orders o",
+            "json_table",
+        ),
+        (
+            "reject json table column type",
+            "SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (t TIME PATH '$')) AS jt",
+            "json_table",
+        ),
+        (
+            "reject json table without an alias",
+            "SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (v INT PATH '$'))",
+            "json_table",
+        ),
+        (
+            "reject json table over a number",
+            "SELECT * FROM JSON_TABLE(5, '$' COLUMNS (v INT PATH '$')) AS jt",
+            "json_table",
+        ),
+        (
+            "reject json table duplicate column",
+            "SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (a INT PATH '$', NESTED PATH '$' COLUMNS (A INT PATH '$'))) AS jt",
+            "json_table",
+        ),
+        (
+            "reject json table invalid document",
+            "SELECT * FROM JSON_TABLE('oops', '$' COLUMNS (v INT PATH '$')) AS jt",
+            "json",
+        ),
+        (
+            "reject json table invalid path",
+            "SELECT * FROM JSON_TABLE('[1]', '$[' COLUMNS (v INT PATH '$')) AS jt",
+            "json path",
+        ),
+        (
+            "reject json table error on empty",
+            "SELECT * FROM JSON_TABLE('[{}]', '$[*]' COLUMNS (v INT PATH '$.a' ERROR ON EMPTY)) AS jt",
+            "missing value for json_table column",
+        ),
+        (
+            "reject json table error on error",
+            "SELECT * FROM JSON_TABLE('[\"x\"]', '$[*]' COLUMNS (v INT PATH '$' ERROR ON ERROR)) AS jt",
+            "invalid json value for cast to integer",
+        ),
+        (
+            "reject json table default that is not json",
+            "SELECT * FROM JSON_TABLE('[1]', '$[*]' COLUMNS (v VARCHAR(9) PATH '$.a' DEFAULT 'q' ON EMPTY)) AS jt",
+            "invalid json text",
         ),
         (
             "reject recursive with aggregate",

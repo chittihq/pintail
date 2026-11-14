@@ -1,4 +1,6 @@
 mod address;
+mod json_table;
+pub(crate) use json_table::JsonTableRows;
 mod selection;
 pub(crate) use selection::{SignedUnits, pair_column_ranges, signed_slice_range_mask};
 mod spatial;

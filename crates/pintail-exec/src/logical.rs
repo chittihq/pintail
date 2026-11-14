@@ -37,6 +37,21 @@ impl Scan {
     }
 }
 
+/// A `JSON_TABLE` applied to each row of an input.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JsonTableApply {
+    /// The bound table function. Its document reads the input's columns.
+    pub table: std::sync::Arc<pintail_sql::BoundJsonTable>,
+    /// The function's columns, appended after the input's.
+    pub columns: Vec<BoundColumn>,
+    /// `LEFT JOIN`: an input row left with no row of the function is kept
+    /// once, its function columns NULL.
+    pub outer: bool,
+    /// The `LEFT JOIN`'s `ON`, tested on each produced pair before the
+    /// input row is judged to have none.
+    pub condition: Option<BoundExpr>,
+}
+
 /// Logical relational operators before physical implementation choices.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LogicalPlan {
@@ -73,6 +88,17 @@ pub enum LogicalPlan {
         /// The join's ON condition, read over the input's and the derived
         /// table's columns.
         condition: Option<BoundExpr>,
+    },
+    /// The rows of a `JSON_TABLE`, each beside the input row its document
+    /// was computed from. A constant document reads the one-row input, and
+    /// the node is then a relation like any other.
+    JsonTable {
+        /// The relations the document reads, joined.
+        input: Box<LogicalPlan>,
+        /// The table function and how its rows meet the input's. Boxed: it
+        /// carries expressions, and a plan node is moved through every
+        /// planning pass.
+        apply: Box<JsonTableApply>,
     },
     /// Cartesian product of two or more inputs.
     CrossJoin {
@@ -218,7 +244,10 @@ impl LogicalPlan {
                     left.estimated_rows()
                 }
             },
-            Self::Derived { input, .. }
+            // How many rows a document yields is not known before it is
+            // read; one per input row is the planning guess.
+            Self::JsonTable { input, .. }
+            | Self::Derived { input, .. }
             | Self::Filter { input, .. }
             | Self::Window { input, .. }
             | Self::Distinct { input, .. }
@@ -593,19 +622,61 @@ fn lateral_source_plan(from: Vec<BoundFrom>) -> LogicalPlan {
             condition,
         }
     }
+    // A table function whose document reads columns: the same input, its
+    // rows expanded beside each input row. A LEFT JOIN keeps its ON
+    // inside the node; an inner join's is a filter above it.
+    fn json_table(
+        inputs: &mut Vec<LogicalPlan>,
+        mut apply: Box<JsonTableApply>,
+        outer: bool,
+        condition: Option<BoundExpr>,
+    ) -> LogicalPlan {
+        let input = Box::new(collapse(inputs));
+        if outer {
+            apply.outer = true;
+            apply.condition = condition;
+            return LogicalPlan::JsonTable { input, apply };
+        }
+        let plan = LogicalPlan::JsonTable { input, apply };
+        match condition {
+            Some(predicate) => LogicalPlan::Filter {
+                input: Box::new(plan),
+                predicate,
+            },
+            None => plan,
+        }
+    }
     let mut inputs: Vec<LogicalPlan> = Vec::new();
-    for source in from {
+    for mut source in from {
         let base = if source.base.lateral {
             lateral(&mut inputs, source.base, false, None)
+        } else if let Some(apply) = lateral_json_table(&mut source.base) {
+            json_table(&mut inputs, apply, false, None)
         } else {
             relation_plan(source.base)
         };
         inputs.push(base);
-        for join in source.joins {
+        for mut join in source.joins {
+            // A table function is applied per input row only under the join
+            // kinds a statement can write for it; any other kind keeps the
+            // ordinary join, where its document's columns do not resolve.
+            let applied = matches!(
+                join.kind,
+                BoundJoinKind::Inner | BoundJoinKind::Cross | BoundJoinKind::Left
+            )
+            .then(|| lateral_json_table(&mut join.table))
+            .flatten();
             let joined = if join.table.lateral {
                 lateral(
                     &mut inputs,
                     join.table,
+                    join.kind == BoundJoinKind::Left,
+                    join.condition,
+                )
+            } else if let Some(apply) = applied {
+                json_table(
+                    &mut inputs,
+                    apply,
                     join.kind == BoundJoinKind::Left,
                     join.condition,
                 )
@@ -624,10 +695,9 @@ fn lateral_source_plan(from: Vec<BoundFrom>) -> LogicalPlan {
 }
 
 fn source_plan(from: Vec<BoundFrom>) -> LogicalPlan {
-    if from
-        .iter()
-        .any(|source| source.base.lateral || source.joins.iter().any(|join| join.table.lateral))
-    {
+    if from.iter().any(|source| {
+        reads_its_left(&source.base) || source.joins.iter().any(|join| reads_its_left(&join.table))
+    }) {
         return lateral_source_plan(from);
     }
     let mut inputs = from
@@ -653,7 +723,66 @@ fn source_plan(from: Vec<BoundFrom>) -> LogicalPlan {
     }
 }
 
+/// Whether `table` is computed from the relations written before it: a
+/// `LATERAL` derived table, or a table function whose document reads a
+/// column.
+fn reads_its_left(table: &BoundTable) -> bool {
+    table.lateral
+        || table
+            .json_table
+            .as_ref()
+            .is_some_and(|json| reads_a_column(&json.document))
+}
+
+/// Takes the table function out of `table` when its document reads a
+/// column, which only a relation written before it can supply.
+fn lateral_json_table(table: &mut BoundTable) -> Option<Box<JsonTableApply>> {
+    if !table
+        .json_table
+        .as_ref()
+        .is_some_and(|json| reads_a_column(&json.document))
+    {
+        return None;
+    }
+    Some(Box::new(JsonTableApply {
+        table: table.json_table.take()?,
+        columns: std::mem::take(&mut table.columns),
+        outer: false,
+        condition: None,
+    }))
+}
+
+fn reads_a_column(expr: &BoundExpr) -> bool {
+    match &expr.kind {
+        BoundExprKind::Column(_) => true,
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. }
+        | BoundExprKind::InSubquery { expr, .. } => reads_a_column(expr),
+        BoundExprKind::Binary { left, right, .. } => reads_a_column(left) || reads_a_column(right),
+        BoundExprKind::Scalar { args, .. } => args.iter().any(reads_a_column),
+        BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_)
+        | BoundExprKind::Literal(_)
+        | BoundExprKind::ScalarSubquery(_)
+        | BoundExprKind::ExistsSubquery { .. } => false,
+    }
+}
+
 fn relation_plan(mut table: BoundTable) -> LogicalPlan {
+    // A table function over a constant document is a relation of its own.
+    if let Some(json) = table.json_table.take() {
+        return LogicalPlan::JsonTable {
+            input: Box::new(LogicalPlan::OneRow),
+            apply: Box::new(JsonTableApply {
+                table: json,
+                columns: table.columns,
+                outer: false,
+                condition: None,
+            }),
+        };
+    }
     if let Some(input) = table.input.take() {
         return LogicalPlan::Derived {
             input: Box::new(LogicalPlanner::plan(*input)),

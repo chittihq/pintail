@@ -55,7 +55,7 @@ pub use explain::{
     ExplainError, explain_analyze_statement, explain_analyze_statement_with_deadline,
     explain_statement, format_physical_plan, format_physical_plan_with_stats,
 };
-pub use logical::{LogicalPlan, LogicalPlanner, Scan};
+pub use logical::{JsonTableApply, LogicalPlan, LogicalPlanner, Scan};
 pub use optimizer::{
     Optimizer, session_default_week_format, session_statement_date, session_time_zone_key,
     session_timestamp_micros, set_session_default_week_format, set_session_time_zone,

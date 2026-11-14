@@ -12,6 +12,7 @@ mod fused_join_fold;
 pub(crate) mod gather;
 mod join;
 pub(crate) use join::{PROBE_PREFETCH_BUILD_RATIO, PROBE_PREFETCH_ROWS};
+mod json_table;
 mod key_lookup;
 mod lateral;
 pub(crate) mod membership;
@@ -574,6 +575,14 @@ pub enum PhysicalPlan {
         /// The ON condition over input and derived columns.
         condition: Option<BoundExpr>,
     },
+    /// Expands each input row into the rows of a `JSON_TABLE` computed from
+    /// it, the function's columns after the input's.
+    JsonTable {
+        /// Rows the document is computed from.
+        input: Box<Self>,
+        /// The table function and how its rows meet the input's.
+        apply: Box<crate::JsonTableApply>,
+    },
     /// Guarded Cartesian product.
     CrossJoin {
         /// Inputs in physical execution order.
@@ -881,6 +890,17 @@ impl PhysicalPlan {
                 }));
                 fields
             }
+            Self::JsonTable { input, apply } => {
+                let mut fields = input.output_fields();
+                fields.extend(apply.columns.iter().map(|column| OutputField {
+                    name: column.name.clone(),
+                    data_type: Some(column.data_type),
+                    nullable: column.nullable,
+                    geometry: false,
+                    timestamp: false,
+                }));
+                fields
+            }
             Self::Empty | Self::OneRow => Vec::new(),
         }
     }
@@ -923,6 +943,10 @@ impl PhysicalPlanner {
                     condition,
                 })
             }
+            LogicalPlan::JsonTable { input, apply } => Ok(PhysicalPlan::JsonTable {
+                input: Box::new(Self::plan(*input, collation)?),
+                apply,
+            }),
             LogicalPlan::Filter { input, predicate } => Ok(PhysicalPlan::Filter {
                 input: Box::new(Self::plan(*input, collation)?),
                 predicate,
@@ -1812,6 +1836,16 @@ fn collect_logical_tables(plan: &LogicalPlan, tables: &mut BTreeSet<RelationKey>
                 ));
             }
         }
+        LogicalPlan::JsonTable { input, apply } => {
+            for column in &apply.columns {
+                tables.insert((
+                    column.database_id,
+                    column.table_id,
+                    column.relation_name.to_ascii_lowercase(),
+                ));
+            }
+            collect_logical_tables(input, tables);
+        }
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Window { input, .. }
@@ -2488,6 +2522,9 @@ fn plan_label(plan: &PhysicalPlan) -> String {
         PhysicalPlan::Derived { .. } => "Derived".to_owned(),
         PhysicalPlan::Lateral { preserve_input, .. } => {
             format!("Lateral preserve_input={preserve_input}")
+        }
+        PhysicalPlan::JsonTable { apply, .. } => {
+            format!("JsonTable columns={}", apply.columns.len())
         }
         PhysicalPlan::CrossJoin { inputs, .. } => format!("CrossJoin inputs={}", inputs.len()),
         PhysicalPlan::UnionAll { inputs } => format!("UnionAll inputs={}", inputs.len()),
@@ -3380,6 +3417,14 @@ fn plan_regex_memory_upper_bound(plan: &PhysicalPlan) -> usize {
         PhysicalPlan::Filter { input, predicate } => {
             nested(input).saturating_add(bound_regex_memory_upper_bound(predicate))
         }
+        PhysicalPlan::JsonTable { input, apply } => nested(input)
+            .saturating_add(bound_regex_memory_upper_bound(&apply.table.document))
+            .saturating_add(
+                apply
+                    .condition
+                    .as_ref()
+                    .map_or(0, bound_regex_memory_upper_bound),
+            ),
         PhysicalPlan::HashAggregate {
             input,
             group_by,
@@ -3853,6 +3898,29 @@ fn resolve_plan_subqueries(
                 collation,
                 query_spill,
             )?;
+        }
+        PhysicalPlan::JsonTable { input, apply } => {
+            resolve_plan_subqueries(
+                input,
+                provider,
+                memory_limit,
+                deadline,
+                retained_bytes,
+                collation,
+                query_spill,
+            )?;
+            // The document holds no subquery; a LEFT JOIN's ON may.
+            if let Some(condition) = &mut apply.condition {
+                resolve_expr_subqueries(
+                    condition,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                    collation,
+                    query_spill,
+                )?;
+            }
         }
         PhysicalPlan::HashAggregate {
             input,
@@ -5330,6 +5398,8 @@ enum PullOperator {
         cursor: usize,
         column_types: Vec<DataType>,
     },
+    /// Each input row beside the rows of a `JSON_TABLE` computed from it.
+    JsonTable(Box<json_table::JsonTableOperator>),
     Sort {
         input: Box<Self>,
         keys: Vec<BoundOrderKey>,
@@ -5379,6 +5449,7 @@ impl PullOperator {
             | Self::Rows { .. }
             | Self::KeyLookupJoin(_) => {}
             Self::KeyMembership(membership) => membership.release(memory),
+            Self::JsonTable(operator) => operator.release(memory),
             Self::CrossJoin { inputs, .. } | Self::UnionAll { inputs, .. } => {
                 for input in inputs {
                     input.release_reservations(memory);
@@ -6291,6 +6362,7 @@ impl PullOperator {
                 };
                 project_batch(expressions, batch, memory).map(Some)
             }
+            Self::JsonTable(operator) => operator.next_batch(memory),
             Self::Rows {
                 rows,
                 cursor,
@@ -6819,6 +6891,9 @@ fn build_operator_inner(
                 },
                 output_columns,
             ))
+        }
+        PhysicalPlan::JsonTable { input, apply } => {
+            json_table::build(input, apply, provider, memory, collation)
         }
         PhysicalPlan::CrossJoin {
             inputs,

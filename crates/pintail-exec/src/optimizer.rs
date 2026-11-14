@@ -127,7 +127,8 @@ fn push_top_k_below_left_joins(plan: &mut LogicalPlan) {
             push_top_k_below_left_joins(anchor);
             push_top_k_below_left_joins(member);
         }
-        LogicalPlan::Derived { input, .. }
+        LogicalPlan::JsonTable { input, .. }
+        | LogicalPlan::Derived { input, .. }
         | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input, .. }
@@ -165,7 +166,8 @@ fn sink_semi_joins(plan: &mut LogicalPlan) {
             sink_semi_joins(anchor);
             sink_semi_joins(member);
         }
-        LogicalPlan::Derived { input, .. }
+        LogicalPlan::JsonTable { input, .. }
+        | LogicalPlan::Derived { input, .. }
         | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input, .. }
@@ -274,7 +276,8 @@ fn nest_outer_join_bridges(plan: &mut LogicalPlan) {
             nest_outer_join_bridges(anchor);
             nest_outer_join_bridges(member);
         }
-        LogicalPlan::Derived { input, .. }
+        LogicalPlan::JsonTable { input, .. }
+        | LogicalPlan::Derived { input, .. }
         | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input, .. }
@@ -333,6 +336,10 @@ fn plan_tables(plan: &LogicalPlan, out: &mut BTreeSet<TableKey>) {
         }
         LogicalPlan::Derived { columns, .. } => {
             out.extend(columns.iter().map(column_table_key));
+        }
+        LogicalPlan::JsonTable { input, apply } => {
+            out.extend(apply.columns.iter().map(column_table_key));
+            plan_tables(input, out);
         }
         LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
             for input in inputs {
@@ -958,7 +965,9 @@ fn trim_derived_columns(
         LogicalPlan::Project { input, .. } | LogicalPlan::Aggregate { input, .. } => {
             trim_derived_columns(input, required, true)
         }
-        LogicalPlan::Filter { input, .. } | LogicalPlan::Window { input, .. } => {
+        LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Window { input, .. }
+        | LogicalPlan::JsonTable { input, .. } => {
             trim_derived_columns(input, required, by_reference)
         }
         LogicalPlan::Join { left, right, .. } => {
@@ -1034,6 +1043,10 @@ fn push_aggregates_through_identity_joins(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
             input: Box::new(push_aggregates_through_identity_joins(*input)),
             columns,
+        },
+        LogicalPlan::JsonTable { input, apply } => LogicalPlan::JsonTable {
+            input: Box::new(push_aggregates_through_identity_joins(*input)),
+            apply,
         },
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs
@@ -1190,6 +1203,10 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(replace_metadata_counts(*input)),
             columns,
         },
+        LogicalPlan::JsonTable { input, apply } => LogicalPlan::JsonTable {
+            input: Box::new(replace_metadata_counts(*input)),
+            apply,
+        },
         LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
             inputs: inputs.into_iter().map(replace_metadata_counts).collect(),
         },
@@ -1290,6 +1307,18 @@ fn fold_constants(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(fold_constants(*input)),
             columns,
         },
+        LogicalPlan::JsonTable { input, mut apply } => {
+            // The document and the ON condition are evaluated per row; they
+            // fold as every other expression of the statement does, so a
+            // statement-time function reads the statement's one instant.
+            let table = std::sync::Arc::make_mut(&mut apply.table);
+            table.document = fold_expr(table.document.clone());
+            apply.condition = apply.condition.take().map(fold_expr);
+            LogicalPlan::JsonTable {
+                input: Box::new(fold_constants(*input)),
+                apply,
+            }
+        }
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(fold_constants).collect(),
         },
@@ -2244,6 +2273,10 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(push_predicates(*input)),
             columns,
         },
+        LogicalPlan::JsonTable { input, apply } => LogicalPlan::JsonTable {
+            input: Box::new(push_predicates(*input)),
+            apply,
+        },
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(push_predicates).collect(),
         },
@@ -2306,7 +2339,11 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
             }
         }
         LogicalPlan::Filter { input, predicate } => {
-            let mut input = push_predicates(*input);
+            let (input, predicate) = sink_below_json_table(*input, predicate);
+            let mut input = push_predicates(input);
+            let Some(predicate) = predicate else {
+                return input;
+            };
             for conjunct in conjuncts_of(&predicate) {
                 reject_null_extension(&mut input, &null_rejected_tables(conjunct));
             }
@@ -2363,6 +2400,56 @@ fn push_predicates(plan: LogicalPlan) -> LogicalPlan {
             limit,
         },
     }
+}
+
+/// Moves the conjuncts of a filter over a table function that read only the
+/// function's input onto that input, and answers what is left of the filter.
+///
+/// The function computes rows beside each input row and never changes one,
+/// so a test of input columns alone keeps the same input rows on either
+/// side of it - for a LEFT JOIN too, whose kept row is an input row. Below,
+/// a conjunct linking two of the input's relations can become their join
+/// condition, where above it would be tested on every expanded pair.
+fn sink_below_json_table(
+    input: LogicalPlan,
+    predicate: BoundExpr,
+) -> (LogicalPlan, Option<BoundExpr>) {
+    let LogicalPlan::JsonTable {
+        input: source,
+        apply,
+    } = input
+    else {
+        return (input, Some(predicate));
+    };
+    let own: BTreeSet<TableKey> = apply.columns.iter().map(column_table_key).collect();
+    let mut below = Vec::new();
+    let mut above = Vec::new();
+    for conjunct in split_conjunction(predicate) {
+        let tables = referenced_tables(&conjunct);
+        if tables.is_empty()
+            || !tables.is_disjoint(&own)
+            || expression_contains_subquery(&conjunct)
+            || is_volatile(&conjunct)
+        {
+            above.push(conjunct);
+        } else {
+            below.push(conjunct);
+        }
+    }
+    let source = match below.into_iter().reduce(and_expr) {
+        Some(predicate) => Box::new(LogicalPlan::Filter {
+            input: source,
+            predicate,
+        }),
+        None => source,
+    };
+    (
+        LogicalPlan::JsonTable {
+            input: source,
+            apply,
+        },
+        above.into_iter().reduce(and_expr),
+    )
 }
 
 /// Turns a LEFT join into an inner one when a predicate above it rejects
@@ -2753,6 +2840,13 @@ fn push_conjunct(plan: &mut LogicalPlan, predicate: &BoundExpr) -> bool {
             }
             true
         }
+        // A predicate on one relation of a table function's input keeps
+        // the same input rows whether it runs before or after the function
+        // expands them, LEFT JOIN included: the function adds rows beside
+        // an input row and never changes it.
+        LogicalPlan::JsonTable { input, .. } if contains_table(input, table) => {
+            push_conjunct(input, predicate)
+        }
         _ => false,
     }
 }
@@ -2779,6 +2873,11 @@ fn lateral_input_columns(plan: &LogicalPlan, out: &mut Vec<BoundColumn>) -> bool
         LogicalPlan::Lateral { input, columns, .. } => {
             let known = lateral_input_columns(input, out);
             out.extend(columns.iter().cloned());
+            known
+        }
+        LogicalPlan::JsonTable { input, apply } => {
+            let known = lateral_input_columns(input, out);
+            out.extend(apply.columns.iter().cloned());
             known
         }
         LogicalPlan::Filter { input, .. } => lateral_input_columns(input, out),
@@ -2833,6 +2932,13 @@ fn contains_table(plan: &LogicalPlan, table: &TableKey) -> bool {
         }
         LogicalPlan::Derived { input, columns } => {
             columns
+                .iter()
+                .any(|column| column_table_key(column) == *table)
+                || contains_table(input, table)
+        }
+        LogicalPlan::JsonTable { input, apply } => {
+            apply
+                .columns
                 .iter()
                 .any(|column| column_table_key(column) == *table)
                 || contains_table(input, table)
@@ -3401,6 +3507,10 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(reorder_cross_joins(*input)),
             columns,
         },
+        LogicalPlan::JsonTable { input, apply } => LogicalPlan::JsonTable {
+            input: Box::new(reorder_cross_joins(*input)),
+            apply,
+        },
         LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
             inputs: inputs.into_iter().map(reorder_cross_joins).collect(),
         },
@@ -3558,7 +3668,8 @@ fn trim_predicate_payloads(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey
             trim_predicate_payloads(right, required, true);
         }
         LogicalPlan::Filter { input, .. } => trim_predicate_payloads(input, required, in_join),
-        LogicalPlan::Derived { input, .. }
+        LogicalPlan::JsonTable { input, .. }
+        | LogicalPlan::Derived { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Window { input, .. }
@@ -3639,6 +3750,15 @@ fn collect_columns(
         }
         LogicalPlan::Filter { input, predicate } => {
             collect_expr_columns(predicate, required);
+            collect_columns(input, required, scan_predicates, readers_only);
+        }
+        LogicalPlan::JsonTable { input, apply } => {
+            // The document reads its input by column, and so does the ON
+            // condition of a LEFT JOIN: pruning must leave both in place.
+            collect_expr_columns(&apply.table.document, required);
+            if let Some(condition) = &apply.condition {
+                collect_expr_columns(condition, required);
+            }
             collect_columns(input, required, scan_predicates, readers_only);
         }
         LogicalPlan::Window { input, windows, .. } => {
@@ -3765,7 +3885,8 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ScanColumnKey>
             prune_scan_columns(left, required);
             prune_scan_columns(right, required);
         }
-        LogicalPlan::Derived { input, .. }
+        LogicalPlan::JsonTable { input, .. }
+        | LogicalPlan::Derived { input, .. }
         | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Aggregate { input, .. }
         | LogicalPlan::Window { input, .. }
@@ -3798,7 +3919,8 @@ fn push_limits(plan: &mut LogicalPlan) {
             push_limits(anchor);
             push_limits(member);
         }
-        LogicalPlan::Derived { input, .. }
+        LogicalPlan::JsonTable { input, .. }
+        | LogicalPlan::Derived { input, .. }
         | LogicalPlan::Filter { input, .. }
         | LogicalPlan::Project { input, .. }
         | LogicalPlan::Distinct { input, .. }
@@ -3841,6 +3963,7 @@ fn set_input_limit(plan: &mut LogicalPlan, rows: u64) {
         | LogicalPlan::Window { .. }
         | LogicalPlan::Distinct { .. }
         | LogicalPlan::Sort { .. }
+        | LogicalPlan::JsonTable { .. }
         | LogicalPlan::Derived { .. }
         | LogicalPlan::Lateral { .. }
         | LogicalPlan::Limit { .. } => {}
@@ -4018,6 +4141,10 @@ fn propagate_join_constants(plan: LogicalPlan) -> LogicalPlan {
         LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
             input: Box::new(propagate_join_constants(*input)),
             columns,
+        },
+        LogicalPlan::JsonTable { input, apply } => LogicalPlan::JsonTable {
+            input: Box::new(propagate_join_constants(*input)),
+            apply,
         },
         LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
             inputs: inputs.into_iter().map(propagate_join_constants).collect(),
@@ -4235,6 +4362,7 @@ fn collect_constants(plan: &LogicalPlan, out: &mut BTreeMap<ColumnKey, Value>) {
         | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. }
+        | LogicalPlan::JsonTable { input, .. }
         | LogicalPlan::Derived { input, .. } => collect_constants(input, out),
         _ => {}
     }
@@ -4432,6 +4560,7 @@ mod tests {
             | LogicalPlan::Distinct { input, .. }
             | LogicalPlan::Sort { input, .. }
             | LogicalPlan::Limit { input, .. }
+            | LogicalPlan::JsonTable { input, .. }
             | LogicalPlan::Derived { input, .. } => cross_joined(input),
             _ => 0,
         }
@@ -4476,6 +4605,7 @@ mod tests {
                 | LogicalPlan::Distinct { input, .. }
                 | LogicalPlan::Sort { input, .. }
                 | LogicalPlan::Limit { input, .. }
+                | LogicalPlan::JsonTable { input, .. }
                 | LogicalPlan::Derived { input, .. } => walk(input, found),
                 LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
                     for input in inputs {
@@ -4507,6 +4637,7 @@ mod tests {
                 | LogicalPlan::Distinct { input, .. }
                 | LogicalPlan::Sort { input, .. }
                 | LogicalPlan::Limit { input, .. }
+                | LogicalPlan::JsonTable { input, .. }
                 | LogicalPlan::Derived { input, .. } => walk(input, found),
                 LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
                     for input in inputs {
@@ -4739,6 +4870,7 @@ mod tests {
                 | LogicalPlan::Project { input, .. }
                 | LogicalPlan::Aggregate { input, .. }
                 | LogicalPlan::Distinct { input, .. }
+                | LogicalPlan::JsonTable { input, .. }
                 | LogicalPlan::Derived { input, .. } => projected(input, table, found),
                 _ => {}
             }
