@@ -10059,6 +10059,10 @@ fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> S
     while let Expr::Nested(nested) = inner {
         inner = nested;
     }
+    // A bare NULL is named in capitals however it was typed or wrapped.
+    if matches!(inner, Expr::Value(value) if matches!(value.value, SqlValue::Null)) {
+        return "NULL".to_owned();
+    }
     let expr = if matches!(inner, Expr::Identifier(_) | Expr::CompoundIdentifier(_)) {
         inner
     } else {
@@ -11020,7 +11024,7 @@ mod tests {
     /// case, spacing and all. A string literal is named by its value.
     #[test]
     fn unaliased_output_columns_are_named_by_their_source_text() {
-        let sql = "SELECT floor(5.5), round(5.64,1), 'abc', 1 +  1, CONCAT('a', 'b') AS joined, _utf8mb4'12', N'xyz'";
+        let sql = "SELECT floor(5.5), round(5.64,1), 'abc', 1 +  1, CONCAT('a', 'b') AS joined, _utf8mb4'12', N'xyz', null, (Null), -null";
         let catalog = catalog();
         let statement = parse_statement(sql).expect("parse");
         let query = Binder::new(&catalog, Some("analytics"))
@@ -11041,7 +11045,10 @@ mod tests {
                 "1 +  1",
                 "joined",
                 "12",
-                "xyz"
+                "xyz",
+                "NULL",
+                "NULL",
+                "-null"
             ]
         );
 
