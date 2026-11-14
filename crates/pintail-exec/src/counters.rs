@@ -94,6 +94,14 @@ pub struct ExecCounters {
     /// Pairs of an inner equality join a `COUNT(*)` counted from how many
     /// build rows each key holds, without producing them.
     pub join_pairs_counted: u64,
+    /// Left rows of a join with no hashable equality key whose candidate
+    /// right rows came from a search of the sorted right input.
+    pub range_join_searches: u64,
+    /// Of those, left rows a second inequality over another right column
+    /// narrowed further.
+    pub range_join_second_bounds: u64,
+    /// Candidate pairs such a join tested against its condition.
+    pub range_join_pairs_tested: u64,
 }
 
 thread_local! {
@@ -130,6 +138,9 @@ thread_local! {
             membership_probe_builds: 0,
             membership_probes: 0,
             join_pairs_counted: 0,
+            range_join_searches: 0,
+            range_join_second_bounds: 0,
+            range_join_pairs_tested: 0,
         })
     };
 }

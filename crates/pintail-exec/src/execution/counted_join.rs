@@ -515,8 +515,13 @@ pub(super) fn plan(
         (false, conjuncts)
             if conjuncts.len() == ranges.len()
                 && conjuncts.iter().all(|conjunct| {
-                    let BoundExprKind::Binary { op, left, right } = &conjunct.kind else {
-                        return false;
+                    let (op, left, right) = match &conjunct.kind {
+                        BoundExprKind::Binary { op, left, right } => (op, &**left, &**right),
+                        BoundExprKind::Scalar {
+                            function: pintail_sql::ScalarFunction::DecimalComparison { op },
+                            args,
+                        } if args.len() == 2 => (op, &args[0], &args[1]),
+                        _ => return false,
                     };
                     let turned = match op {
                         BinaryOp::Less => BinaryOp::Greater,
@@ -526,10 +531,8 @@ pub(super) fn plan(
                         _ => return false,
                     };
                     ranges.iter().any(|range| {
-                        (range.op == *op && range.left == **left && range.right == **right)
-                            || (range.op == turned
-                                && range.left == **right
-                                && range.right == **left)
+                        (range.op == *op && range.left == *left && range.right == *right)
+                            || (range.op == turned && range.left == *right && range.right == *left)
                     })
                 }) =>
         {

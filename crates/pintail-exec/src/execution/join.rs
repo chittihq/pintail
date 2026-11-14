@@ -4522,6 +4522,7 @@ pub(super) fn execute_nested_loop_join(
         Some(_) => None,
     };
     let mut range_values: Vec<Option<RangeValue>> = Vec::new();
+    let mut second_values: Vec<Option<RangeValue>> = Vec::new();
     let mut right_rows = LoopRows::new();
     // Each in-memory right row's key, in row order. A right side that
     // spills is replayed whole instead, so its keys are dropped.
@@ -4530,15 +4531,34 @@ pub(super) fn execute_nested_loop_join(
     while let Some(batch) = right_input.next_batch(memory)? {
         for row in batch.selection().selected_rows() {
             right_rows.push(batch_row(&batch, row)?, memory)?;
-            if let Some(index) = &range_index {
-                if right_rows.writer.is_some() {
-                    range_index = None;
-                    range_values = Vec::new();
-                } else if let Ok(value) = index.domain.value(index.right.evaluate(&batch, row)?) {
+            if let Some(index) = &mut range_index {
+                let value = if right_rows.writer.is_some() {
+                    Err(())
+                } else {
+                    index.domain.value(index.right.evaluate(&batch, row)?)
+                };
+                if let Ok(value) = value {
                     range_values.push(value);
+                    // A second bound whose right side leaves its domain is
+                    // given up alone; the sorted side still narrows.
+                    let second = match &index.second {
+                        Some(second) => {
+                            Some(second.domain.value(second.right.evaluate(&batch, row)?))
+                        }
+                        None => None,
+                    };
+                    match second {
+                        Some(Ok(value)) => second_values.push(value),
+                        Some(Err(())) => {
+                            index.second = None;
+                            second_values = Vec::new();
+                        }
+                        None => {}
+                    }
                 } else {
                     range_index = None;
                     range_values = Vec::new();
+                    second_values = Vec::new();
                 }
             }
             let Some(loop_keys) = &loop_keys else {
@@ -4563,24 +4583,52 @@ pub(super) fn execute_nested_loop_join(
         if right_rows.run.is_some() {
             range_index = None;
         } else {
+            // A row whose value is NULL on either bounded side matches no
+            // left row, so it is left out of the sorted run.
+            let seconded = index.second.is_some();
             let mut sorted = range_values
                 .drain(..)
                 .enumerate()
                 .filter_map(|(row, value)| value.map(|value| (value, row)))
+                .filter(|(_, row)| {
+                    !seconded || second_values.get(*row).is_some_and(Option::is_some)
+                })
                 .collect::<Vec<_>>();
+            let domain = index.domain;
             sorted.sort_by(|(left, left_row), (right, right_row)| {
-                left.cmp(right).then(left_row.cmp(right_row))
+                domain.compare(left, right).then(left_row.cmp(right_row))
             });
-            let bytes = sorted.len().saturating_mul(
-                std::mem::size_of::<(RangeValue, usize)>() + std::mem::size_of::<usize>(),
+            // The slots, and the text a value holds outside its slot.
+            let mut bytes = sorted.iter().fold(
+                sorted.len().saturating_mul(
+                    std::mem::size_of::<(RangeValue, usize)>() + std::mem::size_of::<usize>(),
+                ),
+                |bytes, (value, _)| bytes.saturating_add(value.heap_bytes()),
             );
-            memory.reserve(bytes)?;
-            keys_reserved = keys_reserved.saturating_add(bytes);
-            index.rows = sorted.iter().map(|(_, row)| *row).collect();
-            index.sorted = sorted;
+            if let Some(second) = &mut index.second {
+                second.values = sorted
+                    .iter()
+                    .filter_map(|(_, row)| second_values.get_mut(*row).and_then(Option::take))
+                    .collect();
+                second.seal();
+                bytes = bytes.saturating_add(second.bytes());
+            }
+            if memory.reserve(bytes).is_ok() {
+                keys_reserved = keys_reserved.saturating_add(bytes);
+                index.rows = sorted.iter().map(|(_, row)| *row).collect();
+                index.sorted = sorted;
+            } else {
+                // No room for the sorted run: every pair is tested, as it
+                // is for a right side that spills.
+                range_index = None;
+            }
         }
     }
     let mut range_candidates: Vec<usize> = Vec::new();
+    let mut range_positions: Vec<usize> = Vec::new();
+    // What a join with no hashable key did: left rows whose candidates came
+    // from the sorted side, those a second bound narrowed, and pairs tested.
+    let (mut searches, mut second_bounds, mut pairs_tested) = (0_u64, 0_u64, 0_u64);
     let buckets = match &loop_keys {
         Some(_) if right_rows.run.is_none() => {
             let mut buckets: HashMap<JoinHashKey, Vec<usize>> = HashMap::new();
@@ -4631,30 +4679,46 @@ pub(super) fn execute_nested_loop_join(
                         .map_or(&[][..], Vec::as_slice),
                 ),
                 (None, None) => match &range_index {
-                    Some(index) => match index.span(&left_batch, row)? {
+                    Some(index) => {
                         // One match decides a semi or anti join, so any order
-                        // will do and the span is read where it lies.
-                        Some((lo, hi))
-                            if matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) =>
-                        {
-                            Some(index.rows.get(lo..hi).unwrap_or(&[]))
-                        }
-                        // Every other kind emits pairs in the right input's
-                        // order, so the span is copied and put back in it.
-                        Some((lo, hi)) => {
-                            range_candidates.clear();
-                            if let Some(span) = index.rows.get(lo..hi) {
-                                range_candidates.extend_from_slice(span);
-                                range_candidates.sort_unstable();
+                        // will do; every other kind emits pairs in the right
+                        // input's order, so its candidates are put back in it.
+                        let any_order = matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti);
+                        match index.reach(&left_batch, row, &mut range_positions)? {
+                            RangeReach::Unknown => None,
+                            RangeReach::Span(lo, hi) if any_order => {
+                                Some(index.rows.get(lo..hi).unwrap_or(&[]))
                             }
-                            Some(range_candidates.as_slice())
+                            RangeReach::Span(lo, hi) => {
+                                range_candidates.clear();
+                                if let Some(span) = index.rows.get(lo..hi) {
+                                    range_candidates.extend_from_slice(span);
+                                    range_candidates.sort_unstable();
+                                }
+                                Some(range_candidates.as_slice())
+                            }
+                            RangeReach::Positions => {
+                                second_bounds += 1;
+                                range_candidates.clear();
+                                range_candidates.extend(
+                                    range_positions
+                                        .iter()
+                                        .filter_map(|position| index.rows.get(*position)),
+                                );
+                                if !any_order {
+                                    range_candidates.sort_unstable();
+                                }
+                                Some(range_candidates.as_slice())
+                            }
                         }
-                        None => None,
-                    },
+                    }
                     None => None,
                 },
                 _ => None,
             };
+            if loop_keys.is_none() && bucket.is_some() {
+                searches += 1;
+            }
             let mut replay = match bucket {
                 Some(_) => None,
                 None => Some(right_rows.reader()?),
@@ -4677,6 +4741,7 @@ pub(super) fn execute_nested_loop_join(
                     }
                     (None, None) => unreachable!("an unbucketed row replays the right side"),
                 };
+                pairs_tested += 1;
                 memory.ensure_transient(
                     estimated_row_payload_bytes(&left)
                         .saturating_add(estimated_row_payload_bytes(&right)),
@@ -4781,6 +4846,17 @@ pub(super) fn execute_nested_loop_join(
         memory.release(batch_bytes);
     }
     super::record_dependent_memo(memo.finish(memory));
+    if loop_keys.is_none() {
+        crate::counters::count(|counters| {
+            counters.range_join_searches = counters.range_join_searches.saturating_add(searches);
+            counters.range_join_second_bounds = counters
+                .range_join_second_bounds
+                .saturating_add(second_bounds);
+            counters.range_join_pairs_tested = counters
+                .range_join_pairs_tested
+                .saturating_add(pairs_tested);
+        });
+    }
     let retained = right_rows.reserved;
     drop(buckets);
     drop(right_rows);
@@ -4831,22 +4907,55 @@ pub struct RangeKey {
     pub op: pintail_sql::BinaryOp,
     /// The right input's side.
     pub right: BoundExpr,
+    /// The domain the two sides order in.
+    pub domain: RangeDomain,
+}
+
+/// How a join condition's inequality compares its sides, which decides the
+/// domains it can be searched in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RangeComparison {
+    /// The general comparison: text under this collation, or under the
+    /// execution's own where the comparison names none.
+    General(Option<Collation>),
+    /// The exact comparison of decimals and integers.
+    ExactDecimal,
 }
 
 /// A domain two sides of an inequality order the same way in as they do
 /// under SQL comparison, so the right side can be sorted once and searched
-/// per left row: integers with integers, doubles with doubles, and dates or
-/// same-precision date-times - fixed-width canonical text - with their own
-/// kind when both sides are plain columns.
+/// per left row. A value that does not read in its domain - a date-time of
+/// another width, a decimal past the domain's digits, a number where text
+/// was declared - is never ordered: the join tests every pair instead.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RangeDomain {
+    /// Integers with integers.
     Integer,
+    /// Doubles with doubles.
     Float,
-    Text,
+    /// Dates with dates, or date-times of one precision with each other:
+    /// canonical text of this many bytes, which orders as time does.
+    Calendar {
+        /// Bytes of the canonical text.
+        width: u8,
+    },
+    /// Decimals with decimals or integers under the exact comparison, as
+    /// whole units of this many fraction digits.
+    Decimal {
+        /// Fraction digits of a unit.
+        scale: u8,
+    },
+    /// Text with text under the collation the comparison resolved; `None`
+    /// until the execution settles it as its own.
+    Text(Option<Collation>),
 }
 
 impl RangeDomain {
-    pub(super) fn of(left: Option<DataType>, right: Option<DataType>) -> Option<Self> {
+    pub(super) fn of(
+        left: Option<DataType>,
+        right: Option<DataType>,
+        comparison: RangeComparison,
+    ) -> Option<Self> {
         let integer = |data_type| {
             matches!(
                 data_type,
@@ -4864,34 +4973,128 @@ impl RangeDomain {
             )
         };
         let float = |data_type| matches!(data_type, Some(DataType::Float32 | DataType::Float64));
+        let collation = match comparison {
+            RangeComparison::ExactDecimal => {
+                let scale = |data_type| match data_type {
+                    Some(DataType::Decimal { scale, .. }) => Some(scale),
+                    _ if integer(data_type) => Some(0),
+                    _ => None,
+                };
+                return Some(Self::Decimal {
+                    scale: scale(left)?.max(scale(right)?),
+                });
+            }
+            RangeComparison::General(collation) => collation,
+        };
         match (left, right) {
             _ if integer(left) && integer(right) => Some(Self::Integer),
             _ if float(left) && float(right) => Some(Self::Float),
-            (Some(DataType::Date32), Some(DataType::Date32)) => Some(Self::Text),
+            (Some(DataType::Date32), Some(DataType::Date32)) => Some(Self::Calendar { width: 10 }),
             (
                 Some(DataType::DateTime64 { fsp: left }),
                 Some(DataType::DateTime64 { fsp: right }),
-            ) if left == right => Some(Self::Text),
+            ) if left == right && left <= 6 => Some(Self::Calendar {
+                width: if left == 0 { 19 } else { 20 + left },
+            }),
+            // JSON text orders by its values, which is not an order two
+            // arbitrary texts are guaranteed to share.
+            (Some(DataType::Utf8), Some(DataType::Utf8)) if collation != Some(Collation::Json) => {
+                Some(Self::Text(collation))
+            }
             _ => None,
         }
     }
 
+    /// The domain two inequalities over one sorted side are both read in:
+    /// their own when they agree, the finer unit when both are decimal.
+    fn joined(self, other: Self) -> Option<Self> {
+        match (self, other) {
+            (Self::Decimal { scale: left }, Self::Decimal { scale: right }) => {
+                Some(Self::Decimal {
+                    scale: left.max(right),
+                })
+            }
+            _ if self == other => Some(self),
+            _ => None,
+        }
+    }
+
+    /// This domain for an execution under `collation`: text whose
+    /// comparison named no collation orders under the execution's, as the
+    /// compiled comparison does. `None` where that order is JSON's.
+    fn settled(self, collation: Collation) -> Option<Self> {
+        match self {
+            Self::Text(None) if collation == Collation::Json => None,
+            Self::Text(None) => Some(Self::Text(Some(collation))),
+            other => Some(other),
+        }
+    }
+
     /// The value in this domain; `None` for NULL, which no inequality
-    /// accepts. An unexpected carrier is an error the caller answers by not
-    /// narrowing.
+    /// accepts. A value the domain does not read is an error the caller
+    /// answers by not narrowing.
     fn value(self, value: Value) -> Result<Option<RangeValue>, ()> {
         Ok(Some(match (self, value) {
             (_, Value::Null) => return Ok(None),
             (Self::Integer, Value::Int64(number)) => RangeValue::Integer(i128::from(number)),
             (Self::Integer, Value::UInt64(number)) => RangeValue::Integer(i128::from(number)),
-            (Self::Float, Value::Float64(number)) => RangeValue::Float(number.get()),
-            (Self::Text, Value::Utf8(text)) => RangeValue::Text(text),
+            // Adding zero turns a negative zero into the zero it equals.
+            (Self::Float, Value::Float64(number)) => RangeValue::Float(number.get() + 0.0),
+            (Self::Calendar { width }, Value::Utf8(text))
+                if is_calendar_text(&text, usize::from(width)) =>
+            {
+                RangeValue::Text(text)
+            }
+            (Self::Decimal { scale }, Value::Int64(number)) => RangeValue::Integer(
+                10_i128
+                    .checked_pow(u32::from(scale))
+                    .and_then(|unit| unit.checked_mul(i128::from(number)))
+                    .ok_or(())?,
+            ),
+            (Self::Decimal { scale }, Value::UInt64(number)) => RangeValue::Integer(
+                10_i128
+                    .checked_pow(u32::from(scale))
+                    .and_then(|unit| unit.checked_mul(i128::from(number)))
+                    .ok_or(())?,
+            ),
+            (Self::Decimal { scale }, Value::Utf8(text)) => {
+                RangeValue::Integer(pintail_types::parse_decimal_scaled(&text, scale).ok_or(())?)
+            }
+            (Self::Text(_), Value::Utf8(text)) => RangeValue::Text(text),
             _ => return Err(()),
         }))
     }
+
+    /// Orders two values of this domain as the comparison orders them.
+    fn compare(self, left: &RangeValue, right: &RangeValue) -> Ordering {
+        match (left, right) {
+            (RangeValue::Integer(left), RangeValue::Integer(right)) => left.cmp(right),
+            (RangeValue::Float(left), RangeValue::Float(right)) => left.total_cmp(right),
+            (RangeValue::Text(left), RangeValue::Text(right)) => match self {
+                Self::Text(Some(collation)) => compare_collated_text(left, right, collation),
+                _ => left.cmp(right),
+            },
+            _ => Ordering::Equal,
+        }
+    }
 }
 
-/// A value of a [`RangeDomain`], ordered as SQL compares it.
+/// Whether `text` is a canonical date (`YYYY-MM-DD`, 10 bytes) or date-time
+/// (`YYYY-MM-DD HH:MM:SS[.f...]`) of exactly `width` bytes: digits around
+/// fixed punctuation, so two such texts order bytewise as their instants.
+fn is_calendar_text(text: &str, width: usize) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == width
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 => *byte == b'-',
+            10 => *byte == b' ',
+            13 | 16 => *byte == b':',
+            19 => *byte == b'.',
+            _ => byte.is_ascii_digit(),
+        })
+}
+
+/// A value of a [`RangeDomain`], ordered by [`RangeDomain::compare`].
 #[derive(Clone, Debug)]
 enum RangeValue {
     Integer(i128),
@@ -4900,14 +5103,121 @@ enum RangeValue {
 }
 
 impl RangeValue {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (Self::Integer(left), Self::Integer(right)) => left.cmp(right),
-            (Self::Float(left), Self::Float(right)) => left.total_cmp(right),
-            (Self::Text(left), Self::Text(right)) => left.cmp(right),
-            _ => Ordering::Equal,
+    /// Bytes held outside the value's own slot.
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::Text(text) => text.capacity(),
+            Self::Integer(_) | Self::Float(_) => 0,
         }
     }
+}
+
+/// An inequality over a second right-side expression, `left op right`: the
+/// rows the sorted side's own bounds reach are narrowed to those it accepts
+/// without visiting the rest. A tree over the sorted rows keeps the
+/// position of each stretch's extreme value - the greatest where the left
+/// value must lie below, the least where it must lie above - so a stretch
+/// whose extreme the left value does not pass is skipped whole.
+struct SecondBound {
+    domain: RangeDomain,
+    op: pintail_sql::BinaryOp,
+    left: CompiledExpr,
+    right: CompiledExpr,
+    /// The right side's value at each sorted position.
+    values: Vec<RangeValue>,
+    /// A complete binary tree over the sorted positions, leaves after
+    /// `leaves - 1` internal nodes: the position of the extreme value
+    /// beneath each node, `usize::MAX` beneath none.
+    tree: Vec<usize>,
+    leaves: usize,
+}
+
+impl SecondBound {
+    /// Whether the value this bound prefers of two positions is `first`'s.
+    fn prefers(&self, first: usize, second: usize) -> bool {
+        use pintail_sql::BinaryOp;
+        let order = self
+            .domain
+            .compare(&self.values[first], &self.values[second]);
+        match self.op {
+            // left below right: the greatest right value decides a stretch.
+            BinaryOp::Less | BinaryOp::LessOrEqual => order != Ordering::Less,
+            _ => order != Ordering::Greater,
+        }
+    }
+
+    /// Whether `left op` the value at `position` holds.
+    fn accepts(&self, value: &RangeValue, position: usize) -> bool {
+        use pintail_sql::BinaryOp;
+        let order = self.domain.compare(value, &self.values[position]);
+        match self.op {
+            BinaryOp::Less => order == Ordering::Less,
+            BinaryOp::LessOrEqual => order != Ordering::Greater,
+            BinaryOp::Greater => order == Ordering::Greater,
+            BinaryOp::GreaterOrEqual => order != Ordering::Less,
+            _ => true,
+        }
+    }
+
+    /// Builds the tree once `values` holds every sorted position's value.
+    fn seal(&mut self) {
+        self.leaves = self.values.len().next_power_of_two().max(1);
+        self.tree = vec![usize::MAX; self.leaves * 2 - 1];
+        for position in 0..self.values.len() {
+            self.tree[self.leaves - 1 + position] = position;
+        }
+        for node in (0..self.leaves - 1).rev() {
+            let (first, second) = (self.tree[node * 2 + 1], self.tree[node * 2 + 2]);
+            let extreme = match (first, second) {
+                (usize::MAX, other) | (other, usize::MAX) => other,
+                (first, second) if self.prefers(first, second) => first,
+                (_, second) => second,
+            };
+            self.tree[node] = extreme;
+        }
+    }
+
+    /// Bytes the tree and the values hold.
+    fn bytes(&self) -> usize {
+        self.tree
+            .len()
+            .saturating_mul(size_of::<usize>())
+            .saturating_add(self.values.len().saturating_mul(size_of::<RangeValue>()))
+            .saturating_add(self.values.iter().map(RangeValue::heap_bytes).sum())
+    }
+
+    /// Appends to `out` the sorted positions within `low..high` whose value
+    /// `value` accepts.
+    fn collect(&self, value: &RangeValue, low: usize, high: usize, out: &mut Vec<usize>) {
+        // (node, the positions it spans)
+        let mut pending = vec![(0_usize, 0_usize, self.leaves)];
+        while let Some((node, start, end)) = pending.pop() {
+            if start >= high || end <= low {
+                continue;
+            }
+            let extreme = self.tree[node];
+            if extreme == usize::MAX || !self.accepts(value, extreme) {
+                continue;
+            }
+            if end - start == 1 {
+                out.push(start);
+                continue;
+            }
+            let middle = start + (end - start) / 2;
+            pending.push((node * 2 + 2, middle, end));
+            pending.push((node * 2 + 1, start, middle));
+        }
+    }
+}
+
+/// What a left row's bounds leave of the sorted right input.
+enum RangeReach {
+    /// A bound's value is not one its domain reads: every pair is tested.
+    Unknown,
+    /// The sorted positions `low..high`.
+    Span(usize, usize),
+    /// The sorted positions listed, a second bound having narrowed a span.
+    Positions,
 }
 
 /// The right input sorted by one range key's right side, and the bounds of
@@ -4923,6 +5233,8 @@ struct RangeIndex {
     /// needs only one match, so it reads a span of these in place rather
     /// than copying the span and sorting it back into input order.
     rows: Vec<usize>,
+    /// An inequality over another right-side expression, when there is one.
+    second: Option<Box<SecondBound>>,
 }
 
 impl RangeIndex {
@@ -4935,15 +5247,20 @@ impl RangeIndex {
         let Some(first) = ranges.first() else {
             return Ok(None);
         };
-        let Some(domain) = RangeDomain::of(first.left.data_type, first.right.data_type) else {
+        // Every inequality over the first one's right side that shares its
+        // domain bounds the sorted side.
+        let Some(mut domain) = first.domain.settled(collation) else {
             return Ok(None);
         };
-        let plain = |expr: &BoundExpr| matches!(expr.kind, pintail_sql::BoundExprKind::Column(_));
+        let settled = |range: &RangeKey| range.domain.settled(collation);
+        for range in ranges.iter().filter(|range| range.right == first.right) {
+            domain = settled(range)
+                .and_then(|other| domain.joined(other))
+                .unwrap_or(domain);
+        }
         let mut bounds = Vec::new();
         for range in ranges.iter().filter(|range| range.right == first.right) {
-            if RangeDomain::of(range.left.data_type, range.right.data_type) != Some(domain)
-                || (domain == RangeDomain::Text && !(plain(&range.left) && plain(&range.right)))
-            {
+            if settled(range).and_then(|other| domain.joined(other)) != Some(domain) {
                 continue;
             }
             bounds.push((
@@ -4954,18 +5271,32 @@ impl RangeIndex {
         if bounds.is_empty() {
             return Ok(None);
         }
+        let second = ranges
+            .iter()
+            .filter(|range| range.right != first.right)
+            .find_map(|range| settled(range).map(|domain| (range, domain)))
+            .map(|(range, domain)| {
+                Ok::<_, ExecError>(Box::new(SecondBound {
+                    domain,
+                    op: range.op,
+                    left: CompiledExpr::compile(&range.left, left_columns, collation)?,
+                    right: CompiledExpr::compile(&range.right, right_columns, collation)?,
+                    values: Vec::new(),
+                    tree: Vec::new(),
+                    leaves: 0,
+                }))
+            })
+            .transpose()?;
         Ok(Some(Self {
             domain,
             bounds,
             right: CompiledExpr::compile(&first.right, right_columns, collation)?,
             sorted: Vec::new(),
             rows: Vec::new(),
+            second,
         }))
     }
 
-    /// The right rows a left row's bounds reach, in right-input order;
-    /// `None` when a bound's value is not one the domain reads, so every
-    /// row is tested instead.
     /// The span of `sorted` (and `rows`) the left row's bounds reach; an
     /// empty span for a NULL bound, `None` when a bound falls outside the
     /// domain and the row must test every pair.
@@ -4981,7 +5312,7 @@ impl RangeIndex {
             };
             let position = |strict: bool| {
                 self.sorted.partition_point(|(right, _)| {
-                    let order = right.cmp(&value);
+                    let order = self.domain.compare(right, &value);
                     order == Ordering::Less || (!strict && order == Ordering::Equal)
                 })
             };
@@ -4996,6 +5327,34 @@ impl RangeIndex {
             }
         }
         Ok(Some((lo, hi.max(lo))))
+    }
+
+    /// What the left row's bounds leave of the sorted side. Where a second
+    /// bound narrows the span, the sorted positions it keeps are written to
+    /// `positions`.
+    fn reach(
+        &self,
+        batch: &RecordBatch,
+        row: usize,
+        positions: &mut Vec<usize>,
+    ) -> Result<RangeReach, ExecError> {
+        let Some((low, high)) = self.span(batch, row)? else {
+            return Ok(RangeReach::Unknown);
+        };
+        let Some(second) = &self.second else {
+            return Ok(RangeReach::Span(low, high));
+        };
+        match second.domain.value(second.left.evaluate(batch, row)?) {
+            // Not a value the second domain reads: the span stands.
+            Err(()) => Ok(RangeReach::Span(low, high)),
+            // NULL is on neither side of the second inequality.
+            Ok(None) => Ok(RangeReach::Span(low, low)),
+            Ok(Some(value)) => {
+                positions.clear();
+                second.collect(&value, low, high, positions);
+                Ok(RangeReach::Positions)
+            }
+        }
     }
 }
 
@@ -5017,7 +5376,7 @@ impl RangeCounter {
     ) -> Result<Option<Self>, ExecError> {
         Ok(
             RangeIndex::compile(ranges, left_columns, right_columns, collation)?
-                .filter(|index| index.bounds.len() == ranges.len())
+                .filter(|index| index.bounds.len() == ranges.len() && index.second.is_none())
                 .map(|index| Self { index }),
         )
     }
@@ -5036,10 +5395,7 @@ impl RangeCounter {
             .value(self.index.right.evaluate(batch, row)?)
         {
             Ok(Some(value)) => {
-                let bytes = match &value {
-                    RangeValue::Text(text) => text.capacity(),
-                    RangeValue::Integer(_) | RangeValue::Float(_) => 0,
-                };
+                let bytes = value.heap_bytes();
                 self.index.sorted.push((value, 0));
                 Ok(Some(bytes))
             }
@@ -5051,9 +5407,10 @@ impl RangeCounter {
 
     /// Orders the rows taken; no row is taken after it.
     pub(super) fn seal(&mut self) {
+        let domain = self.index.domain;
         self.index
             .sorted
-            .sort_by(|left, right| left.0.cmp(&right.0));
+            .sort_by(|left, right| domain.compare(&left.0, &right.0));
     }
 
     /// Right rows taken so far.

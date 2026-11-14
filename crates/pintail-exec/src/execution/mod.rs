@@ -1117,40 +1117,44 @@ fn range_join_keys(
     let right_tables = logical_tables(right);
     let mut conjuncts = Vec::new();
     and_conjuncts(condition, &mut conjuncts);
-    // `v BETWEEN lo AND hi` holds only where `v >= lo` and `v <= hi` do.
-    let comparison = |op, left: &BoundExpr, right: &BoundExpr| BoundExpr {
-        data_type: Some(DataType::Boolean),
-        nullable: true,
-        kind: BoundExprKind::Binary {
-            op,
-            left: Box::new(left.clone()),
-            right: Box::new(right.clone()),
-        },
+    // Text compares under the collation its own comparison resolved, which
+    // for `BETWEEN` is the one its three operands share; one that names
+    // none compares under the execution's, settled when the join starts.
+    let general = |comparison: &BoundExpr| {
+        join::RangeComparison::General(
+            comparison
+                .text_collation()
+                .and_then(Collation::from_mysql_name),
+        )
     };
-    let conjuncts = conjuncts
-        .into_iter()
-        .flat_map(|conjunct| match &conjunct.kind {
+    // (op, first side, second side, how the two compare)
+    let mut comparisons = Vec::new();
+    for conjunct in &conjuncts {
+        match &conjunct.kind {
+            // `v BETWEEN lo AND hi` holds only where `v >= lo` and `v <= hi` do.
             BoundExprKind::Scalar {
                 function: ScalarFunction::Between { negated: false },
                 args,
-            } if args.len() == 3 => vec![
-                comparison(BinaryOp::GreaterOrEqual, &args[0], &args[1]),
-                comparison(BinaryOp::LessOrEqual, &args[0], &args[2]),
-            ],
-            _ => vec![conjunct],
-        })
-        .collect::<Vec<_>>();
-    conjuncts
-        .iter()
-        .filter_map(|conjunct| {
-            let BoundExprKind::Binary {
-                op,
-                left: first,
-                right: second,
-            } = &conjunct.kind
-            else {
-                return None;
-            };
+            } if args.len() == 3 => {
+                let comparison = general(conjunct);
+                comparisons.push((BinaryOp::GreaterOrEqual, &args[0], &args[1], comparison));
+                comparisons.push((BinaryOp::LessOrEqual, &args[0], &args[2], comparison));
+            }
+            BoundExprKind::Scalar {
+                function: ScalarFunction::DecimalComparison { op },
+                args,
+            } if args.len() == 2 => {
+                comparisons.push((*op, &args[0], &args[1], join::RangeComparison::ExactDecimal));
+            }
+            BoundExprKind::Binary { op, left, right } => {
+                comparisons.push((*op, &**left, &**right, general(conjunct)));
+            }
+            _ => {}
+        }
+    }
+    comparisons
+        .into_iter()
+        .filter_map(|(op, first, second, comparison)| {
             let flipped = match op {
                 BinaryOp::Less => BinaryOp::Greater,
                 BinaryOp::LessOrEqual => BinaryOp::GreaterOrEqual,
@@ -1158,22 +1162,29 @@ fn range_join_keys(
                 BinaryOp::GreaterOrEqual => BinaryOp::LessOrEqual,
                 _ => return None,
             };
-            join::RangeDomain::of(first.data_type, second.data_type)?;
+            // A side holding a subquery is not a value the sorted search
+            // can compile; the condition answers it.
+            if expression_has_subquery(first) || expression_has_subquery(second) {
+                return None;
+            }
+            let domain = join::RangeDomain::of(first.data_type, second.data_type, comparison)?;
             if expression_belongs_to(first, &left_tables)
                 && expression_belongs_to(second, &right_tables)
             {
                 Some(join::RangeKey {
-                    left: first.as_ref().clone(),
-                    op: *op,
-                    right: second.as_ref().clone(),
+                    left: first.clone(),
+                    op,
+                    right: second.clone(),
+                    domain,
                 })
             } else if expression_belongs_to(first, &right_tables)
                 && expression_belongs_to(second, &left_tables)
             {
                 Some(join::RangeKey {
-                    left: second.as_ref().clone(),
+                    left: second.clone(),
                     op: flipped,
-                    right: first.as_ref().clone(),
+                    right: first.clone(),
+                    domain,
                 })
             } else {
                 None

@@ -44,7 +44,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 2987;
+const EXPECTED_CASES: usize = 3022;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6482,6 +6482,150 @@ fn relational_edge_cases() -> Vec<OracleCase> {
         ordered(
             "numeric and temporal null propagation",
             "SELECT id, TIMESTAMPDIFF(SECOND, placed_at, DATE_ADD(placed_at, INTERVAL 1 DAY)), DATEDIFF(DATE_ADD(placed_at, INTERVAL 1 DAY), placed_at) FROM orders ORDER BY id",
+        ),
+        // A join whose only link is an inequality sorts its right side and
+        // searches it: decimals, date-times of unlike precision, text under
+        // each collation, two bounded right columns, NULLs and duplicates
+        // on both sides, a right side with no rows.
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.frac > x.frac AND y.frac <= x.frac + 2.5 ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x LEFT JOIN bounds y ON y.frac BETWEEN x.frac - 0.01 AND x.frac + 0.01 ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.frac > x.n AND y.frac <= x.u ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.whole < x.frac AND y.whole >= x.frac - 3 ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x LEFT JOIN bounds y ON y.whole > x.whole AND y.whole <= x.whole + 2 ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.frac >= x.whole ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT o.id, p.id FROM orders o JOIN orders p ON p.total > o.total AND p.total < o.total * 2 ORDER BY o.id, p.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.dt3 >= x.dt0 AND y.dt3 < x.dt0 + INTERVAL 1 DAY ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x LEFT JOIN bounds y ON y.dt6 > x.dt3 AND y.dt6 <= x.dt3 + INTERVAL 1 SECOND ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.dt0 >= x.day AND y.dt0 < x.day + INTERVAL 400 DAY ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.day > x.day AND y.day <= x.day + INTERVAL 1 YEAR ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.dt3 > x.dt6 ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.stamp >= x.dt6 AND y.stamp < x.dt6 + INTERVAL 1 DAY ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT o.id, p.id FROM orders o JOIN orders p ON p.placed_at > o.placed_at AND p.placed_at <= o.placed_at + INTERVAL 45 DAY ORDER BY o.id, p.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.txt > x.txt AND y.txt <= CONCAT(x.txt, 'z') ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x LEFT JOIN bounds y ON y.txt >= x.txt AND y.txt <= x.txt AND y.id <> x.id ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.fixed > x.fixed ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM events x JOIN events y ON y.tag >= x.tag AND y.tag <= x.tag AND y.id <> x.id ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM events x JOIN events y ON y.label > x.label AND y.label <= CONCAT(x.label, 'z') ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM events x LEFT JOIN events y ON y.note > x.note AND y.name < x.name ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM events x JOIN events y ON y.note BETWEEN x.note AND CONCAT(x.note, 'a') AND y.id > x.id ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON x.frac BETWEEN y.frac - 1 AND y.frac + 1 ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x LEFT JOIN bounds y ON x.n BETWEEN y.n AND y.u ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON x.dt3 BETWEEN y.dt0 AND y.dt6 ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN bounds y ON y.n < x.n AND y.frac > x.frac ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x LEFT JOIN bounds y ON y.txt < x.txt AND y.day > x.day ORDER BY x.id, y.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x LEFT JOIN (SELECT id, frac FROM bounds WHERE id > 100) y ON y.frac >= x.frac AND y.frac < x.frac + 1 ORDER BY x.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, y.id FROM bounds x JOIN (SELECT id, dt3 FROM bounds WHERE id > 100) y ON y.dt3 >= x.dt0 ORDER BY x.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id FROM bounds x WHERE EXISTS (SELECT 1 FROM bounds y WHERE y.frac > x.frac AND y.frac < x.frac + 1) ORDER BY x.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id FROM bounds x WHERE NOT EXISTS (SELECT 1 FROM bounds y WHERE y.dt3 > x.dt0 AND y.dt3 < x.dt0 + INTERVAL 300 DAY) ORDER BY x.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id FROM events x WHERE NOT EXISTS (SELECT 1 FROM events y WHERE y.note > x.note) ORDER BY x.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT COUNT(*) FROM bounds x JOIN bounds y ON y.frac > x.frac AND y.frac <= x.frac + 2.5",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, COUNT(y.id), COUNT(*) FROM bounds x LEFT JOIN bounds y ON y.frac >= x.frac GROUP BY x.id ORDER BY x.id",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT COUNT(*), COUNT(y.note) FROM events x JOIN events y ON y.tag > x.tag",
+        ),
+        ordered(
+            "inequality join sorted search",
+            "SELECT x.id, COUNT(y.id) FROM bounds x LEFT JOIN bounds y ON y.dt6 > x.dt6 GROUP BY x.id ORDER BY x.id",
         ),
     ]
 }
