@@ -10679,7 +10679,10 @@ fn source_label_end(
         // Qualified names use identifier lexing after the period, which
         // does not consume function-name lookahead whitespace.
         && !previous.is_some_and(|token| matches!(token.token, Token::Period))
-        && matches!(&last.token, Token::Word(word) if word.quote_style.is_none());
+        // `0b101` reaches here as a word, and is a number: no lookahead
+        // whitespace belongs to it.
+        && matches!(&last.token, Token::Word(word)
+            if word.quote_style.is_none() && !is_bit_literal_word(&word.value));
     let end = if keep_space {
         token_end
             + sql[token_end..boundary]
@@ -10691,6 +10694,12 @@ fn source_label_end(
         token_end
     };
     Some(end)
+}
+
+/// Whether an unquoted word is a bit literal written `0b101`.
+fn is_bit_literal_word(word: &str) -> bool {
+    word.strip_prefix("0b")
+        .is_some_and(|bits| !bits.is_empty() && bits.bytes().all(|bit| matches!(bit, b'0' | b'1')))
 }
 
 /// The exact text of `expr` inside `sql`: the item that contains the
@@ -11602,6 +11611,39 @@ mod tests {
                 assert_eq!(query.projection[0].name, "NULL");
             });
         }
+    }
+
+    #[test]
+    fn a_bit_literal_ending_an_item_keeps_no_trailing_space_under_ignore_space() {
+        let catalog = catalog();
+        // A client that announces IGNORE_SPACE gets the lookahead whitespace
+        // after a word in the name; `0b11` is a number, not a word.
+        crate::with_parse_mode(crate::ParseMode::from_sql_mode("IGNORE_SPACE"), || {
+            for (sql, names) in [
+                ("SELECT id + 0b11\nFROM users", vec!["id + 0b11"]),
+                (
+                    "SELECT 1 | 0b1011  , id + 0b1 \n FROM users",
+                    vec!["1 | 0b1011", "id + 0b1"],
+                ),
+                // A column that merely looks like one keeps its space.
+                ("SELECT 1 + id \nFROM users", vec!["1 + id \n"]),
+            ] {
+                let statement = parse_statement(sql).expect("parse");
+                let query = Binder::new(&catalog, Some("analytics"))
+                    .with_source(sql)
+                    .bind(&statement)
+                    .expect("bind");
+                assert_eq!(
+                    query
+                        .projection
+                        .iter()
+                        .map(|item| item.name.as_str())
+                        .collect::<Vec<_>>(),
+                    names,
+                    "{sql}"
+                );
+            }
+        });
     }
 
     #[test]
