@@ -46,7 +46,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 3171;
+const EXPECTED_CASES: usize = 3181;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -6153,6 +6153,43 @@ fn written_form_cases() -> Vec<OracleCase> {
             "sounds like",
             "SELECT e.id, f.id FROM events e JOIN events f ON e.note SOUNDS LIKE f.note AND e.id < f.id ORDER BY 1, 2",
         ),
+        ordered(
+            "char in a named character set",
+            "SELECT id, HEX(CHAR(64 + id USING latin1)), CHAR(64 + id, 97 USING utf8mb4), HEX(CHAR(65, 64 + id USING ucs2)), HEX(CHAR(id, 300 USING utf32)), HEX(CHAR(14990752 USING utf8mb4)) FROM events ORDER BY id",
+        ),
+        ordered(
+            "char over a hex literal",
+            "SELECT HEX(CHAR(0x41)), HEX(CHAR(0x4142, 67, b'1000100')), CHAR(0xE4BDA0 USING utf8mb4), HEX(CHAR(0x41 USING ucs2)), HEX(CHAR(0x0102 USING utf32))",
+        ),
+        ordered(
+            "cast to a character set",
+            "SELECT id, HEX(CAST(name AS CHAR CHARACTER SET latin1)), HEX(CAST(label AS CHAR(3) CHARSET utf8mb4)), HEX(CAST(name AS CHAR(2) ASCII)), HEX(CAST(label AS CHAR(4) CHARSET binary)), HEX(CAST(name AS CHAR CHARSET binary)), HEX(CAST(id AS CHAR(3) BYTE)) FROM events ORDER BY id",
+        ),
+        ordered(
+            "cast to a character set",
+            "SELECT id, CAST(note AS CHAR(4) BINARY) = 'ALPH', CAST(note AS CHAR(4)) = 'ALPH', CAST(note AS CHAR CHARACTER SET latin1 BINARY) = 'BETA', CONVERT(note, CHAR(2) BINARY) = 'al', CAST(tag AS CHAR CHARACTER SET utf8mb4 BINARY) = 'red' FROM events ORDER BY id",
+        ),
+        ordered(
+            "cast to a character set",
+            "SELECT id, HEX(CAST(name AS NCHAR)), HEX(CAST(label AS NATIONAL CHAR(2))), HEX(CONVERT(name, CHAR(3) UNICODE)), HEX(CAST(label AS CHAR UNICODE)) FROM events ORDER BY id",
+        ),
+        ordered(
+            "cast to a signed int",
+            "SELECT id, CAST(total / 3 AS SIGNED INT), CAST(user_id AS UNSIGNED INTEGER), CONVERT(total, SIGNED INT), CONVERT(user_id, UNSIGNED INT) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "trim with no remove string",
+            "SELECT id, CONCAT(':', TRIM(LEADING FROM CONCAT('  ', tag, '  ')), ':', TRIM(TRAILING FROM tag), ':', TRIM(BOTH FROM CONCAT(' ', note, ' ')), ':') FROM events ORDER BY id",
+        ),
+        ordered("table statement", "TABLE users ORDER BY id"),
+        ordered(
+            "table statement",
+            "SELECT d.id, f.name FROM (TABLE users) AS d JOIN (TABLE users) AS f ON f.id = d.id + 1 WHERE d.id IN (SELECT user_id FROM orders) ORDER BY d.id",
+        ),
+        ordered(
+            "table statement",
+            "SELECT 0, 'none' UNION ALL TABLE users ORDER BY 1",
+        ),
     ]
 }
 
@@ -6845,6 +6882,18 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "reject update statement",
             "UPDATE orders SET total = 0 WHERE id = 1",
             "unsupported|update|statement|parse|bind",
+        ),
+        (
+            // A weight string cut to a length is refused by the name the
+            // statement wrote.
+            "reject weight string cut to a length",
+            "SELECT HEX(WEIGHT_STRING(name AS CHAR(3))) FROM events",
+            "unsupported expression: WEIGHT_STRING(name AS CHAR(3))",
+        ),
+        (
+            "reject weight string cut to a length",
+            "SELECT HEX(WEIGHT_STRING(CAST(name AS CHAR) AS BINARY(5))) FROM events",
+            "unsupported expression: WEIGHT_STRING(CAST(name AS CHAR) AS BINARY(5))",
         ),
         (
             "reject aliased parenthesized join group",

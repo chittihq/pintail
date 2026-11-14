@@ -618,6 +618,21 @@ pub(super) fn bind_scalar_function(
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
     let function_name = name.to_ascii_uppercase();
+    // A weight string cut to a length is parsed under an internal name and
+    // refused under the one the statement wrote.
+    for (internal, written) in [
+        (crate::call_forms::WEIGHT_STRING_CHAR, "CHAR"),
+        (crate::call_forms::WEIGHT_STRING_BINARY, "BINARY"),
+    ] {
+        if function_name == internal
+            && let FunctionArguments::List(arguments) = &function.args
+            && let [value, length] = arguments.args.as_slice()
+        {
+            return Err(BindError::UnsupportedExpression(format!(
+                "WEIGHT_STRING({value} AS {written}({length}))"
+            )));
+        }
+    }
     // The SQL-standard clock names are written without parentheses as
     // often as with them; bare, they are the same zero-argument call.
     let no_arguments;
@@ -717,6 +732,10 @@ pub(super) fn bind_scalar_function(
         args.push(
             if of_numbers && super::unintroduced_bit_literal(expression) {
                 super::bit_literal_double(bound)
+            } else if function_name == "CHAR" && super::unintroduced_bit_literal(expression) {
+                // A hex or bit literal names a character by its number,
+                // as every other argument of CHAR does.
+                super::numeric_bit_input(bound, expression)?
             } else {
                 bound
             },
@@ -2475,7 +2494,13 @@ pub(super) fn bind_convert(
     {
         let argument = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
         return if argument.data_type == Some(DataType::Binary) {
-            let argument = if encoding.minimum_width() == 1 && !crate::session_parse_mode().strict {
+            // Only UTF-8 has byte sequences that are not characters; a
+            // single-byte character set reads every byte as one.
+            let utf8 = matches!(
+                encoding,
+                pintail_types::CharacterSet::Utf8Mb4 | pintail_types::CharacterSet::Utf8Mb3
+            );
+            let argument = if utf8 && !crate::session_parse_mode().strict {
                 crate::text_charset::wrap(argument, ScalarFunction::Utf8Prefix, DataType::Binary)
             } else {
                 argument

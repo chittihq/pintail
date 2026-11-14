@@ -230,7 +230,7 @@ fn name_range_function(tokens: &mut [TokenWithSpan]) {
     }
 }
 
-fn significant(tokens: &[TokenWithSpan]) -> Vec<usize> {
+pub(crate) fn significant(tokens: &[TokenWithSpan]) -> Vec<usize> {
     tokens
         .iter()
         .enumerate()
@@ -356,7 +356,7 @@ fn is_single_unit(word: &str) -> bool {
     .any(|unit| unit.eq_ignore_ascii_case(word))
 }
 
-fn word_token(value: &str) -> Token {
+pub(crate) fn word_token(value: &str) -> Token {
     Token::Word(Word {
         value: value.to_owned(),
         quote_style: None,

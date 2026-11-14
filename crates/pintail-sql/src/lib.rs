@@ -8,6 +8,7 @@ pub use text_charset::{
     session_binary_literals, session_character_set, session_client_character_set,
     set_session_binary_literals, set_session_character_set, set_session_client_character_set,
 };
+mod call_forms;
 mod interval;
 pub use interval::CompoundUnit;
 mod spatial;
@@ -269,6 +270,7 @@ pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
     combine_prefixed_strings(&mut tokens, dialect.1);
     read_bit_literals(&mut tokens);
     interval::rewrite(&mut tokens);
+    call_forms::rewrite(&mut tokens);
     let mut statements = Parser::new(&dialect)
         .with_tokens_with_locations(tokens)
         .parse_statements()
