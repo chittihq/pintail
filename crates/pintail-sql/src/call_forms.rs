@@ -17,6 +17,7 @@
 //! - `column -> 'path'` and `column ->> 'path'` are one operand, so they are
 //!   wrapped in parentheses: the grammar reads the arrow looser than the
 //!   operators around it;
+//! - `MID(s FROM n FOR m)` is `SUBSTRING(s FROM n FOR m)`;
 //! - `WEIGHT_STRING(x AS CHAR(n))` becomes a call under an internal name,
 //!   which the binder answers for by the name the statement wrote.
 use std::collections::BTreeMap;
@@ -136,6 +137,7 @@ pub(crate) fn rewrite(tokens: &mut Vec<TokenWithSpan>) {
     if !tokens.iter().any(|token| {
         is_any_word(&token.token, &TRIGGERS)
             || is_word(&token.token, WEIGHT)
+            || is_word(&token.token, "MID")
             || matches!(token.token, Token::Arrow | Token::LongArrow)
     }) {
         return;
@@ -174,7 +176,15 @@ fn call_form(tokens: &[TokenWithSpan], significant: &[usize], at: usize, edits: 
     let Some(close) = closing(tokens, significant, at + 1) else {
         return;
     };
-    if is_word(head, "WEIGHT_STRING") {
+    if is_word(head, "MID") {
+        if last_inside(tokens, significant, at + 1, close, |inner| {
+            is_word(inner, "FROM")
+        })
+        .is_some()
+        {
+            edits.replace(significant[at], [word_token("SUBSTRING")]);
+        }
+    } else if is_word(head, "WEIGHT_STRING") {
         weight_string(tokens, significant, at, close, edits);
     } else if is_word(head, "CHAR") {
         char_using(tokens, significant, at, close, edits);
@@ -525,6 +535,11 @@ mod tests {
             ),
             ("SELECT (j->'$.a') IS NULL", "SELECT (j -> '$.a') IS NULL"),
             ("SELECT f(j->'$.a')", "SELECT f(j -> '$.a')"),
+            (
+                "SELECT MID(a FROM 2 FOR 3)",
+                "SELECT SUBSTRING(a FROM 2 FOR 3)",
+            ),
+            ("SELECT MID(a, 2, 3)", "SELECT MID(a, 2, 3)"),
         ] {
             assert_eq!(respelled(sql), expected, "{sql}");
         }

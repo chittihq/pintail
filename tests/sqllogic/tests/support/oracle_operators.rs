@@ -423,6 +423,11 @@ const JSON_COMPARED_WITH_NULL: &[&str] = &[
     r#"SELECT id FROM orders WHERE NOT (meta <=> NULL) AND meta->'$.missing' <=> NULL ORDER BY id"#,
 ];
 
+const MID_WITH_FROM_AND_FOR: &[&str] = &[
+    r#"SELECT MID('abcdef' FROM 3), MID('abcdef' FROM 2 FOR 2), MID('abcdef' FROM -4 FOR 2), MID('abcdef' FROM 7), MID(NULL FROM 1), MID('日本語' FROM 2 FOR 1)"#,
+    r#"SELECT id, MID(name FROM 7), MID(name FROM id FOR 2), MID(note FROM -2) FROM events ORDER BY id"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -441,6 +446,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("mid with from and for", MID_WITH_FROM_AND_FOR),
         ("json compared with null", JSON_COMPARED_WITH_NULL),
         ("json path operands", JSON_PATH_OPERANDS),
         ("fractional positions and counts", FRACTIONAL_POSITIONS_AND_COUNTS),
