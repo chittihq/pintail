@@ -8437,6 +8437,12 @@ fn rewrite_json_comparison(left: BoundExpr, right: BoundExpr) -> (BoundExpr, Bou
             json_sort_key_expr(as_json(json_text_operand(left))),
             json_sort_key_expr(as_json(json_text_operand(right))),
         )
+    } else if json(left.data_type) && right.data_type.is_none() {
+        // Beside an untyped NULL only the JSON value's own NULL-ness
+        // matters, and its key keeps that.
+        (json_sort_key_expr(left), right)
+    } else if json(right.data_type) && left.data_type.is_none() {
+        (left, json_sort_key_expr(right))
     } else {
         (left, right)
     }

@@ -417,6 +417,12 @@ const JSON_PATH_OPERANDS: &[&str] = &[
     r#"SELECT id, CONCAT(meta->>'$.tags[0]', '-', id), meta->'$.items[0]' DIV 2, meta->'$.items[0]' % 2 = 1, CASE meta->>'$.tags[0]' WHEN 'premium' THEN 1 ELSE 0 END, meta->'$.score' <=> 1.5 FROM orders ORDER BY id"#,
 ];
 
+const JSON_COMPARED_WITH_NULL: &[&str] = &[
+    r#"SELECT id, meta <=> NULL, meta = NULL, NULL <=> meta, meta <> NULL, NULL = meta, meta->'$.score' <=> NULL, meta->'$.missing' <=> NULL, meta < NULL FROM orders ORDER BY id"#,
+    r#"SELECT id FROM orders WHERE meta <=> NULL ORDER BY id"#,
+    r#"SELECT id FROM orders WHERE NOT (meta <=> NULL) AND meta->'$.missing' <=> NULL ORDER BY id"#,
+];
+
 pub fn cases() -> Vec<OracleCase> {
     let mut cases = Vec::new();
     for (family, statements) in [
@@ -435,6 +441,7 @@ pub fn cases() -> Vec<OracleCase> {
         ("rollup and grouping", ROLLUP),
         ("table statements", TABLE_STATEMENT),
         ("values statements", VALUES_CONSTRUCTOR),
+        ("json compared with null", JSON_COMPARED_WITH_NULL),
         ("json path operands", JSON_PATH_OPERANDS),
         ("fractional positions and counts", FRACTIONAL_POSITIONS_AND_COUNTS),
         ("member of exact decimals", MEMBER_OF_EXACT_DECIMALS),
