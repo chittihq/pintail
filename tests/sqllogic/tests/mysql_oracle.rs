@@ -50,7 +50,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 4331;
+const EXPECTED_CASES: usize = 4333;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -5888,6 +5888,19 @@ fn engine_error_cases() -> Vec<OracleCase> {
                     REGEXP_REPLACE(label, '(?<!^)(?=[A-Z])', '_') \
             FROM events ORDER BY id",
         ),
+        // An unsigned constant negates exactly past the signed range; an
+        // unsigned value negates from its own range.
+        ordered(
+            "negated unsigned values",
+            "SELECT -~1, -~0, -(~1), -~-1, -~18446744073709551615, -CAST(5 AS UNSIGNED), \
+                    -CAST(18446744073709551615 AS UNSIGNED), -(1 << 63), -BIT_COUNT(7), \
+                    -(5 | 2), -(~0 >> 1), -((~0 >> 1) + 1), -((~0 >> 1) + 2), \
+                    -(-9223372036854775808), --9223372036854775808, ---9223372036854775808",
+        ),
+        ordered(
+            "negated unsigned values",
+            "SELECT id, -(u >> 1), -(u & 255), -BIT_COUNT(u) FROM bounds ORDER BY id",
+        ),
     ]
 }
 
@@ -8179,6 +8192,12 @@ fn documented_rejects_stay_explicit() {
 #[allow(clippy::too_many_lines)] // one table of shapes
 fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
+        (
+            // A column's negation is a BIGINT, and 2^64 - 1 has none.
+            "reject negated unsigned column past the signed range",
+            "SELECT id, -u FROM bounds",
+            "out of range",
+        ),
         (
             // A look-behind has to know how far back it may read.
             "reject unbounded regex look-behind",

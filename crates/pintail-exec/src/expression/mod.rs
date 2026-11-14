@@ -10445,10 +10445,17 @@ pub(crate) fn evaluate_unary(
         }
         UnaryOp::Minus => match data_type.map(DataType::storage_type) {
             Some(DataType::Float64) => Ok(Value::float64(-mysql_f64(value)?)),
-            Some(DataType::Int64) => mysql_i64(value)?
-                .checked_neg()
-                .map(Value::Int64)
-                .ok_or(ExecError::NumericOverflow),
+            // An unsigned operand negates from its own range: 2^63 is past
+            // BIGINT and its negation is BIGINT's lowest value.
+            Some(DataType::Int64) => match value {
+                Value::UInt64(unsigned) => i64::try_from(-i128::from(*unsigned))
+                    .map(Value::Int64)
+                    .map_err(|_| ExecError::NumericOverflow),
+                value => mysql_i64(value)?
+                    .checked_neg()
+                    .map(Value::Int64)
+                    .ok_or(ExecError::NumericOverflow),
+            },
             Some(DataType::UInt64) => Err(ExecError::NumericOverflow),
             None => Ok(Value::Null),
             Some(DataType::Boolean | DataType::Utf8 | DataType::Binary) => {

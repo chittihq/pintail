@@ -5695,6 +5695,7 @@ fn decimal_literal_digits<'a>(
     (std::borrow::Cow::Borrowed(digits), &fraction[..kept])
 }
 
+#[allow(clippy::too_many_lines)]
 fn bind_unary(
     operator: UnaryOperator,
     expr: &Expr,
@@ -5743,6 +5744,20 @@ fn bind_unary(
             kind: BoundExprKind::Literal(value),
         });
     }
+    // BIGINT's lowest value has no BIGINT negation, and a constant's is
+    // exact: --9223372036854775808 is 9223372036854775808.
+    if operator == UnaryOperator::Minus
+        && matches!(expr.kind, BoundExprKind::Literal(Value::Int64(i64::MIN)))
+    {
+        return Ok(BoundExpr {
+            nullable: false,
+            data_type: Some(DataType::Decimal {
+                precision: 19,
+                scale: 0,
+            }),
+            kind: BoundExprKind::Literal(Value::Utf8(i64::MIN.unsigned_abs().to_string())),
+        });
+    }
     // Negation is arithmetic, so its operand is read as a number: a truth
     // value and an unsigned integer negate as BIGINT; text, and an unintroduced hex
     // literal read as the integer its bytes spell, negate as a double.
@@ -5758,11 +5773,29 @@ fn bind_unary(
     };
     let (expr, negated_type) = match expr.data_type {
         _ if operator != UnaryOperator::Minus => (expr, None),
+        // An unsigned constant negates exactly, past the signed range: -~1
+        // is -18446744073709551614. A column's negation stays a BIGINT,
+        // and out of range where it does not fit.
+        Some(DataType::UInt64) if is_constant_number(&expr) => (
+            expr,
+            Some(DataType::Decimal {
+                precision: 20,
+                scale: 0,
+            }),
+        ),
         Some(DataType::Binary) if unintroduced_bit_literal(written) => {
             (numeric_bit_input(expr, written)?, Some(DataType::Float64))
         }
         Some(DataType::Utf8 | DataType::Binary) => (expr, Some(DataType::Float64)),
-        Some(DataType::Boolean | DataType::UInt64) => (expr, Some(DataType::Int64)),
+        // A truth value, a year and every unsigned integer negate as BIGINT.
+        Some(
+            DataType::Boolean
+            | DataType::Year
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64,
+        ) => (expr, Some(DataType::Int64)),
         data_type => (expr, data_type),
     };
     // `+x` is `x` in `MySQL`, whatever its type: text stays the text it was.
@@ -5792,6 +5825,28 @@ fn bind_unary(
             expr: Box::new(expr),
         },
     })
+}
+
+/// Whether `expr` is built from literals alone by operators and casts, so
+/// that `MySQL` knows its value when it types what is computed from it.
+fn is_constant_number(expr: &BoundExpr) -> bool {
+    match &expr.kind {
+        BoundExprKind::Literal(_) => true,
+        BoundExprKind::Unary { expr, .. } => is_constant_number(expr),
+        BoundExprKind::Binary { left, right, .. } => {
+            is_constant_number(left) && is_constant_number(right)
+        }
+        BoundExprKind::Scalar { function, args } => {
+            matches!(
+                function,
+                ScalarFunction::BitNot
+                    | ScalarFunction::BitCount
+                    | ScalarFunction::Cast(_)
+                    | ScalarFunction::DeclaredCast { .. }
+            ) && args.iter().all(is_constant_number)
+        }
+        _ => false,
+    }
 }
 
 #[allow(clippy::too_many_lines)]

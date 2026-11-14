@@ -391,6 +391,9 @@ stays readable as a list of things to fix.
 - `ROUND` or `TRUNCATE` of a DOUBLE whose result is past the double range
   (`TRUNCATE(1.7976931348623157E+308, -12)`) is refused as out of range.
   MySQL holds an infinity there, which it prints as `0`.
+- The negation of an unsigned constant is typed DECIMAL whatever its
+  value, where MySQL types it BIGINT when the value fits one
+  (`-CAST(5 AS UNSIGNED)`); the answer is the same number.
 - Text read as an integer amount by `MAKETIME` or an interval stops at the
   top of the signed range when it is a stored column and wraps past the
   unsigned range when an expression computed it, as in MySQL. A column of
