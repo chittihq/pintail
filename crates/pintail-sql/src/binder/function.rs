@@ -2991,6 +2991,31 @@ pub(super) fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
     }
 }
 
+/// A DATE, DATETIME or TIME handed to a numeric function is the number its
+/// digits spell - 20010203040506 for a DATETIME, 40506 for a TIME - and
+/// never the leading digits of its text. `MySQL` computes with it as a
+/// DOUBLE there; ABS alone keeps the fraction digits it shows.
+fn temporal_function_number(expr: BoundExpr, function: ScalarFunction) -> BoundExpr {
+    if !matches!(
+        expr.data_type,
+        Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. })
+    ) {
+        return expr;
+    }
+    let number = super::temporal_as_number(expr);
+    if matches!(function, ScalarFunction::Abs { .. }) {
+        return number;
+    }
+    BoundExpr {
+        nullable: number.nullable,
+        data_type: Some(DataType::Float64),
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::Cast(DataType::Float64),
+            args: vec![number],
+        },
+    }
+}
+
 #[allow(clippy::too_many_lines)] // a flat type-dispatch table reads best unsplit
 pub(super) fn bind_scalar(
     function: ScalarFunction,
@@ -3024,6 +3049,7 @@ pub(super) fn bind_scalar(
     ) {
         args.into_iter()
             .map(super::temporal_extremum_as_number)
+            .map(|arg| temporal_function_number(arg, function))
             .map(super::choice_as_number)
             .map(super::json_as_number)
             .collect()
