@@ -5334,7 +5334,19 @@ fn evaluate_eager_scalar_inner(
             for path in &values[1..] {
                 let steps = json_path_steps(&scalar_string(path)?)?;
                 wrap |= steps.iter().any(JsonStep::multi);
+                let before = found.len();
                 collect_json_matches(&parsed, &steps, &mut found);
+                // A descent reaches a scalar both as a cell and as itself
+                // read as a one-cell array; one path selects a value once.
+                if steps.contains(&JsonStep::Descent) {
+                    let mut seen = std::collections::HashSet::new();
+                    let mut position = 0_usize;
+                    found.retain(|value| {
+                        let keep = position < before || seen.insert(std::ptr::from_ref(*value));
+                        position += 1;
+                        keep
+                    });
+                }
             }
             if wrap {
                 return Ok(if found.is_empty() {
@@ -9098,18 +9110,29 @@ fn json_path_steps(path: &str) -> Result<Vec<JsonStep>, ExecError> {
                     continue;
                 }
                 let mut key = String::new();
-                if chars.next_if(|&(_, c)| c == '"').is_some() {
+                let quoted = chars.next_if(|&(_, c)| c == '"').is_some();
+                if quoted {
+                    // A quoted name is a JSON string: `\"` and `\uXXXX`
+                    // spell the characters they do in a document.
+                    let mut raw = String::from("\"");
                     let mut closed = false;
-                    for (_, inner) in chars.by_ref() {
+                    while let Some((_, inner)) = chars.next() {
                         if inner == '"' {
                             closed = true;
                             break;
                         }
-                        key.push(inner);
+                        raw.push(inner);
+                        if inner == '\\'
+                            && let Some((_, escaped)) = chars.next()
+                        {
+                            raw.push(escaped);
+                        }
                     }
                     if !closed {
                         return Err(invalid(end));
                     }
+                    raw.push('"');
+                    key = serde_json::from_str::<String>(&raw).map_err(|_| invalid(at + 1))?;
                 } else {
                     while let Some((_, next)) =
                         chars.next_if(|&(_, c)| !matches!(c, '.' | '[') && !c.is_whitespace())
@@ -9117,7 +9140,7 @@ fn json_path_steps(path: &str) -> Result<Vec<JsonStep>, ExecError> {
                         key.push(next);
                     }
                 }
-                if key.is_empty() || key.contains('*') {
+                if !quoted && (key.is_empty() || key.contains('*')) {
                     return Err(invalid(at + 1));
                 }
                 steps.push(JsonStep::Member(key));
