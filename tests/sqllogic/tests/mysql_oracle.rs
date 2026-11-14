@@ -7942,6 +7942,17 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
         ("reject icu_version", "SELECT ICU_VERSION()", "ICU_VERSION"),
         ("reject cot of zero", "SELECT COT(0)", "range|overflow"),
         (
+            // A language-specific collation has no approximation here.
+            "reject a language-specific collate",
+            "SELECT name FROM users ORDER BY name COLLATE latin2_czech_cs",
+            "collat",
+        ),
+        (
+            "reject comparing under a language-specific collate",
+            "SELECT STRCMP(name COLLATE cp1250_czech_cs, 'a') FROM users",
+            "collat",
+        ),
+        (
             "reject unknown collate",
             "SELECT name FROM users ORDER BY name COLLATE big5_chinese_ci",
             "collat",

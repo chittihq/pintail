@@ -5960,6 +5960,14 @@ mod tests {
             Ok(("latin1".to_owned(), "latin1_swedish_ci"))
         );
         assert!(set_names_target("latin1 collate utf8mb4_bin").is_err());
+        // A language-specific collation or a character set that is not
+        // carried leaves the connection as it was: the statement fails,
+        // and nothing after it compares under a stand-in.
+        assert!(set_names_target("latin2 collate latin2_czech_cs").is_err());
+        assert!(set_names_target("cp1250 collate cp1250_czech_cs").is_err());
+        assert!(set_names_target("cp1250").is_err());
+        assert!(connection_collation("latin2_czech_cs").is_err());
+        assert!(connection_collation("utf8mb4_czech_ci").is_err());
         assert!(set_names_target("utf8mb4 collate latin1_bin").is_err());
         assert_eq!(
             set_names_target("koi8r"),
