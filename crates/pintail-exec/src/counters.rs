@@ -123,6 +123,9 @@ pub struct ExecCounters {
     /// Rows a spilled window read back a batch at a time to evaluate its
     /// keys over columns.
     pub window_spill_rows_batched: u64,
+    /// Batches whose decimal `+`, `-` and `*` chain was computed on its
+    /// operands' scaled units, with no exact fraction built per row.
+    pub decimal_unit_batches: u64,
 }
 
 thread_local! {
@@ -169,6 +172,7 @@ thread_local! {
             json_documents_reused: 0,
             distinct_units_summed: 0,
             window_spill_rows_batched: 0,
+            decimal_unit_batches: 0,
         })
     };
 }

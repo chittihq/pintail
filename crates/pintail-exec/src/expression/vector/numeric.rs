@@ -628,95 +628,199 @@ fn exact(expr: &CompiledExpr, batch: &RecordBatch, effects: &mut Effects) -> Opt
     }
 }
 
-/// One `+`, `-` or `*` of two columns or constants whose exact answer has
-/// the declared scale - a sum or a difference at the wider operand's
-/// scale, a product at the two scales added - computed on the units
-/// themselves. That is every such step over whole numbers: an integer
-/// total plus one, times a count. No fraction is built per row, and the
-/// answer is the one the exact fractions give, since nothing is rounded.
-/// A row that leaves 128 bits is the general path's to answer.
-fn unit_step_column(
-    expr: &CompiledExpr,
-    batch: &RecordBatch,
-    own: DataType,
-    scale: u8,
-    effects: &mut Effects,
-) -> Option<ColumnVector> {
-    let CompiledExpr::Binary {
-        op: op @ (BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply),
-        left,
-        right,
-        ..
-    } = expr
-    else {
-        return None;
-    };
-    let leaf = |expr: &CompiledExpr| {
-        matches!(expr, CompiledExpr::Column(_))
-            || matches!(
-                expr,
-                CompiledExpr::Literal(Value::Int64(_) | Value::UInt64(_) | Value::Utf8(_))
-            )
-    };
-    if !leaf(left) || !leaf(right) {
-        return None;
+/// A decimal subtree's units at its own scale: one value for every row, or
+/// one per row with its validity.
+enum Lane {
+    Fixed(i128, u8),
+    Rows {
+        units: Vec<i128>,
+        valid: Vec<bool>,
+        scale: u8,
+    },
+}
+
+impl Lane {
+    const fn scale(&self) -> u8 {
+        match self {
+            Self::Fixed(_, scale) | Self::Rows { scale, .. } => *scale,
+        }
     }
-    let (left, right) = (
-        operand(batch, left, effects)?,
-        operand(batch, right, effects)?,
-    );
-    let (left, right) = (scaled(&left)?, scaled(&right)?);
+
+    #[inline]
+    fn at(&self, row: usize) -> Option<i128> {
+        match self {
+            Self::Fixed(units, _) => Some(*units),
+            Self::Rows { units, valid, .. } => valid[row].then(|| units[row]),
+        }
+    }
+
+    /// A column's units, read once into a lane.
+    fn read(scaled: &Scaled<'_>, rows: usize) -> Self {
+        let scale = match scaled {
+            Scaled::Decimal(_, scale, _) => *scale,
+            Scaled::Integers(Integers::Fixed(value)) => return Self::Fixed(*value, 0),
+            Scaled::Integers(_) => 0,
+            Scaled::Fixed(units, scale) => return Self::Fixed(*units, *scale),
+        };
+        let mut units = Vec::with_capacity(rows);
+        let mut valid = Vec::with_capacity(rows);
+        for row in 0..rows {
+            let value = scaled.at(row);
+            units.push(value.map_or(0, |(units, _)| units));
+            valid.push(value.is_some());
+        }
+        Self::Rows {
+            units,
+            valid,
+            scale,
+        }
+    }
+}
+
+/// `expr` as units at its declared scale, for a chain of decimal `+`, `-`,
+/// unary minus and `*` over columns and constants in which every step's
+/// exact answer has the scale the step declares: a sum or a difference at
+/// the wider operand's scale, a product at the two scales added. Each step
+/// is then exact on the units themselves, one widening multiply and one
+/// add or one multiply per row, and the answer is the one the exact
+/// fractions give, since nothing in such a chain is rounded. No fraction
+/// is built and no divisor sought per row.
+///
+/// `None` declines: a division, a step whose declared scale is not its
+/// exact one (a product past the scale cap rounds), or a selected row
+/// that leaves 128 bits. The exact fractions answer those.
+fn unit_lane(expr: &CompiledExpr, batch: &RecordBatch, effects: &mut Effects) -> Option<Lane> {
+    let rows = batch.row_count();
+    match expr {
+        CompiledExpr::Literal(value @ (Value::Int64(_) | Value::UInt64(_) | Value::Utf8(_))) => {
+            decimal_units_of(value).map(|(units, scale)| Lane::Fixed(units, scale))
+        }
+        CompiledExpr::Unary {
+            op: op @ (UnaryOp::Plus | UnaryOp::Minus),
+            expr: inner,
+            data_type: Some(DataType::Decimal { scale, .. }),
+            ..
+        } => {
+            let inner = unit_lane(inner, batch, effects)?;
+            if inner.scale() != *scale {
+                return None;
+            }
+            if *op == UnaryOp::Plus {
+                return Some(inner);
+            }
+            Some(match inner {
+                Lane::Fixed(units, scale) => Lane::Fixed(units.checked_neg()?, scale),
+                Lane::Rows {
+                    mut units,
+                    valid,
+                    scale,
+                } => {
+                    for (row, units) in units.iter_mut().enumerate() {
+                        // Only `i128::MIN` has no negation.
+                        *units = match units.checked_neg() {
+                            Some(negated) => negated,
+                            None if valid[row] && batch.selection().is_selected(row) => {
+                                return None;
+                            }
+                            None => 0,
+                        };
+                    }
+                    Lane::Rows {
+                        units,
+                        valid,
+                        scale,
+                    }
+                }
+            })
+        }
+        CompiledExpr::Binary {
+            op: op @ (BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply),
+            left,
+            right,
+            data_type: Some(DataType::Decimal { scale, .. }),
+            ..
+        } => {
+            let left = unit_lane(left, batch, effects)?;
+            let right = unit_lane(right, batch, effects)?;
+            unit_step(*op, &left, &right, *scale, batch)
+        }
+        CompiledExpr::Literal(_)
+        | CompiledExpr::Binary {
+            op: BinaryOp::Divide,
+            data_type: Some(DataType::Decimal { .. }),
+            ..
+        } => None,
+        // Anything else is read at its own answer's value, as the exact
+        // fractions read the boundary of their chain.
+        CompiledExpr::Column(index) => {
+            let leaf = Operand::Column(std::borrow::Cow::Borrowed(batch.column(*index)?));
+            Some(Lane::read(&scaled(&leaf)?, rows))
+        }
+        nested => {
+            let column = kernel(nested, batch, declared(nested), effects)?;
+            let leaf = Operand::Column(std::borrow::Cow::Owned(column));
+            Some(Lane::read(&scaled(&leaf)?, rows))
+        }
+    }
+}
+
+/// One step of [`unit_lane`]'s chain, at `scale`, or `None` when that is
+/// not the step's exact scale or a selected row overflows.
+fn unit_step(
+    op: BinaryOp,
+    left: &Lane,
+    right: &Lane,
+    scale: u8,
+    batch: &RecordBatch,
+) -> Option<Lane> {
+    let (left_scale, right_scale) = (left.scale(), right.scale());
+    // The factor each side is widened by; a product widens neither.
+    let (left_factor, right_factor) = if op == BinaryOp::Multiply {
+        if left_scale.checked_add(right_scale)? != scale {
+            return None;
+        }
+        (1, 1)
+    } else {
+        if left_scale.max(right_scale) != scale {
+            return None;
+        }
+        (
+            10_i128.checked_pow(u32::from(scale - left_scale))?,
+            10_i128.checked_pow(u32::from(scale - right_scale))?,
+        )
+    };
+    let step = |left: i128, right: i128| match op {
+        BinaryOp::Multiply => left.checked_mul(right),
+        BinaryOp::Add => left
+            .checked_mul(left_factor)?
+            .checked_add(right.checked_mul(right_factor)?),
+        _ => left
+            .checked_mul(left_factor)?
+            .checked_sub(right.checked_mul(right_factor)?),
+    };
+    if let (Lane::Fixed(left, _), Lane::Fixed(right, _)) = (left, right) {
+        return Some(Lane::Fixed(step(*left, *right)?, scale));
+    }
     let rows = batch.row_count();
     let mut units = Vec::with_capacity(rows);
     let mut valid = Vec::with_capacity(rows);
     for row in 0..rows {
-        let (Some((left, left_scale)), Some((right, right_scale))) = (left.at(row), right.at(row))
-        else {
-            units.push(0);
-            valid.push(false);
-            continue;
+        let answer = match (left.at(row), right.at(row)) {
+            (Some(left), Some(right)) => match step(left, right) {
+                Some(answer) => Some(answer),
+                None if batch.selection().is_selected(row) => return None,
+                None => None,
+            },
+            _ => None,
         };
-        let widened = |value: i128, from: u8| {
-            10_i128
-                .checked_pow(u32::from(scale.checked_sub(from)?))
-                .and_then(|factor| value.checked_mul(factor))
-        };
-        let answer = if *op == BinaryOp::Multiply {
-            if left_scale.checked_add(right_scale)? != scale {
-                return None;
-            }
-            left.checked_mul(right)
-        } else {
-            if left_scale.max(right_scale) != scale {
-                return None;
-            }
-            match (widened(left, left_scale), widened(right, right_scale)) {
-                (Some(left), Some(right)) if *op == BinaryOp::Add => left.checked_add(right),
-                (Some(left), Some(right)) => left.checked_sub(right),
-                _ => None,
-            }
-        };
-        match answer {
-            Some(answer) => {
-                units.push(answer);
-                valid.push(true);
-            }
-            None if batch.selection().is_selected(row) => return None,
-            None => {
-                units.push(0);
-                valid.push(false);
-            }
-        }
+        units.push(answer.unwrap_or(0));
+        valid.push(answer.is_some());
     }
-    Some(ColumnVector::from_typed(
-        own,
-        TypedValues::Decimal128 {
-            values: DecimalUnits::Wide(units),
-            scale,
-            text: LazyText::decimal(scale),
-        },
-        ValidityMask::from_bools(&valid),
-    ))
+    Some(Lane::Rows {
+        units,
+        valid,
+        scale,
+    })
 }
 
 /// Decimal `+`, `-`, `*` and `/`, evaluated exactly and rounded once to the
@@ -734,8 +838,27 @@ pub(super) fn decimal_chain_column(
     if data_type.is_some_and(|declared| declared != own) {
         return None;
     }
-    if let Some(column) = unit_step_column(expr, batch, own, scale, effects) {
-        return Some(column);
+    // What a declined attempt's nested kernels recorded is taken back, so
+    // the exact path below records it once.
+    let lane = super::attempt(effects, |effects| {
+        let Lane::Rows { units, valid, .. } = unit_lane(expr, batch, effects)? else {
+            return None;
+        };
+        crate::counters::count(|counters| {
+            counters.decimal_unit_batches = counters.decimal_unit_batches.saturating_add(1);
+        });
+        Some(ColumnVector::from_typed(
+            own,
+            TypedValues::Decimal128 {
+                values: DecimalUnits::Wide(units),
+                scale,
+                text: LazyText::decimal(scale),
+            },
+            ValidityMask::from_bools(&valid),
+        ))
+    });
+    if lane.is_some() {
+        return lane;
     }
     let Exact::Rows(values) = exact(expr, batch, effects)? else {
         return None;
@@ -1075,6 +1198,91 @@ mod tests {
         }
     }
 
+    /// Chains of `+`, `-`, unary minus and `*` whose every step keeps its
+    /// exact scale are answered on scaled units, and agree with row
+    /// evaluation; a product declared below its exact scale, a division
+    /// and a selected row past 128 bits take the exact fractions, and
+    /// agree too.
+    #[test]
+    fn exact_scale_chains_run_on_units() {
+        let batch = fixture();
+        let step = |op, left, right, scale| binary(op, left, right, decimal_type(scale));
+        let discounted = step(
+            BinaryOp::Multiply,
+            column(0),
+            step(BinaryOp::Subtract, literal(Value::Int64(1)), column(1), 4),
+            6,
+        );
+        let charged = step(
+            BinaryOp::Multiply,
+            discounted.clone(),
+            step(BinaryOp::Add, text("1.5"), column(1), 4),
+            10,
+        );
+        let negated = CompiledExpr::Unary {
+            op: UnaryOp::Minus,
+            expr: Box::new(discounted.clone()),
+            data_type: Some(decimal_type(6)),
+            overflow: None,
+        };
+        // Row 3, unselected, overflows the product of the integers.
+        let mixed = step(
+            BinaryOp::Add,
+            step(
+                BinaryOp::Multiply,
+                step(BinaryOp::Multiply, column(2), column(0), 2),
+                column(2),
+                2,
+            ),
+            negated.clone(),
+            6,
+        );
+        for (expression, scale) in [(discounted, 6), (charged, 10), (negated, 6), (mixed, 6)] {
+            let _ = crate::counters::take_exec_counters();
+            agrees_with_warnings(&expression, &batch, decimal_type(scale));
+            assert_eq!(
+                crate::counters::take_exec_counters().decimal_unit_batches,
+                1,
+                "{expression:?} runs on units"
+            );
+        }
+        let wide = text("9999999999999999999999.99");
+        let declines = [
+            (step(BinaryOp::Multiply, column(0), column(1), 4), 4),
+            (
+                step(
+                    BinaryOp::Add,
+                    step(BinaryOp::Divide, column(0), column(1), 6),
+                    column(0),
+                    6,
+                ),
+                6,
+            ),
+            (
+                step(
+                    BinaryOp::Multiply,
+                    step(BinaryOp::Multiply, column(0), wide.clone(), 4),
+                    wide,
+                    6,
+                ),
+                6,
+            ),
+        ];
+        for (expression, scale) in declines {
+            let _ = crate::counters::take_exec_counters();
+            if expression
+                .evaluate_column(&batch, Some(decimal_type(scale)))
+                .is_some()
+            {
+                agrees_with_warnings(&expression, &batch, decimal_type(scale));
+            }
+            assert_eq!(
+                crate::counters::take_exec_counters().decimal_unit_batches,
+                0,
+                "{expression:?} takes the exact fractions"
+            );
+        }
+    }
     #[test]
     fn integer_arithmetic_matches_row_evaluation() {
         let batch = fixture();

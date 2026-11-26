@@ -24,6 +24,7 @@ mod counted_join_pairs;
 mod date_literal_fold;
 mod date_part_grouping;
 mod decimal_average_exactness;
+mod decimal_chain_cost;
 mod decimal_internal_digits;
 mod decimal_literal_filters;
 mod decimal_negative_range;
