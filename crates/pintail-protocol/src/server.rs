@@ -10,7 +10,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::command::Command;
 use crate::handshake::{CapabilityFlags, Handshake, HandshakeResponse, SCRAMBLE_SIZE};
-use crate::packet::{PacketReader, PacketWriter, put_length_encoded_integer};
+use crate::packet::{
+    DEFAULT_PAYLOAD_LIMIT, PRE_AUTH_PAYLOAD_LIMIT, PacketReader, PacketWriter,
+    put_length_encoded_integer,
+};
 use crate::resultset::{
     EncodedRows, OkPacket, encode_column_definition, encode_eof, encode_error, encode_ok,
     encode_ok_with_session,
@@ -282,7 +285,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
     /// Wraps a duplex stream.
     pub const fn new(reader: R, writer: W) -> Self {
         let mut reader = PacketReader::new(reader);
-        reader.set_payload_limit(crate::packet::PRE_AUTH_PAYLOAD_LIMIT);
+        reader.set_payload_limit(PRE_AUTH_PAYLOAD_LIMIT);
         Self {
             reader,
             writer: PacketWriter::new(writer),
@@ -501,7 +504,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
     ) -> Self {
         let mut reader = PacketReader::new(reader);
         reader.set_sequence(read_sequence);
-        reader.set_payload_limit(crate::packet::PRE_AUTH_PAYLOAD_LIMIT);
+        reader.set_payload_limit(PRE_AUTH_PAYLOAD_LIMIT);
         let mut writer = PacketWriter::new(writer);
         writer.set_sequence(write_sequence);
         Self {
@@ -610,8 +613,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         watch: Option<&mut dyn DisconnectWatch>,
     ) -> std::io::Result<bool> {
         // Commands come only after authentication, so the full limit applies.
-        self.reader
-            .set_payload_limit(crate::packet::DEFAULT_PAYLOAD_LIMIT);
+        self.reader.set_payload_limit(DEFAULT_PAYLOAD_LIMIT);
         let Some(payload) = self.reader.next_payload().await? else {
             return Ok(false);
         };
