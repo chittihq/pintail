@@ -49,9 +49,10 @@ use super::aggregate::{
 use super::join::{normalized_group_hash_key, normalized_group_text};
 use super::morsel::{Morsel, default_morsel_limit, morsel_plan};
 use super::two_pass::{
-    FINALIZE_CHARGE_SLICE, LaneReader, PackedCell, PackedLane, ReadyColumn, ReadyColumns,
-    TwoPassLane, aggregate_lanes, derived_temporal_units, labelled_text_value, lane_readers,
-    merge_partial_labels, packed_lane, two_pass_key_value, units_fit_a_lane,
+    FINALIZE_CHARGE_SLICE, LaneDecimals, LaneReader, PackedCell, PackedLane, ReadyColumn,
+    ReadyColumns, TwoPassLane, aggregate_lanes, derived_temporal_units, labelled_text_value,
+    lane_readers, lane_units_fit, merge_partial_labels, packed_lane, two_pass_key_value,
+    units_fit_a_lane,
 };
 use super::{ExecError, HASH_ENTRY_OVERHEAD, MaterializedRows, MemoryTracker, PullOperator};
 use crate::batch::{DecimalUnits, TypedValues, mix64};
@@ -117,6 +118,9 @@ pub(super) struct PackedGroupPlan {
     text_collations: Vec<Collation>,
     lanes: Vec<TwoPassLane>,
     packed: Vec<PackedLane>,
+    /// The column and scale of each decimal lane declared wider than a
+    /// lane's 64 bits, whose every batch must show its units fit them.
+    checked_units: Vec<(usize, u8)>,
     /// Where each lane's totals start among a group's cell words.
     cell_offsets: Vec<usize>,
     cell_words: usize,
@@ -175,7 +179,7 @@ impl PackedGroupPlan {
         if aggregates.len() > MAX_LANES {
             return Err("more aggregates than a cut row marks NULLs for".to_owned());
         }
-        let mut lanes = aggregate_lanes(aggregates, first)
+        let mut lanes = aggregate_lanes(aggregates, first, LaneDecimals::Checked)
             .ok_or_else(|| "an aggregate has no lane".to_owned())?;
         // A COUNT of a column reads only whether each row holds a value,
         // whatever lane its column's values would ride for a SUM.
@@ -189,6 +193,13 @@ impl PackedGroupPlan {
             {
                 *lane = TwoPassLane::Present { column };
             }
+        }
+        let checked_units = checked_decimal_lanes(&lanes, first);
+        if !checked_units
+            .iter()
+            .all(|(column, scale)| lane_units_fit(first, *column, *scale))
+        {
+            return Err("a decimal aggregate's units do not fit a lane".to_owned());
         }
         let mut packed = Vec::with_capacity(lanes.len());
         for (index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate() {
@@ -225,6 +236,7 @@ impl PackedGroupPlan {
             text_collations,
             lanes,
             packed,
+            checked_units,
             cell_offsets,
             cell_words,
             lane_words: lane_words
@@ -238,7 +250,8 @@ impl PackedGroupPlan {
 
     /// Whether `batch` carries every key column and lane in the packed form
     /// the plan reads. One that does not - a date column holding a zero
-    /// date, a decimal wider than a cell - folds row by row instead.
+    /// date, a decimal wider than a cell, a wide decimal lane holding a
+    /// value past 64 bits of units - folds row by row instead.
     fn carries(&self, batch: &RecordBatch) -> bool {
         let keys = self.columns.iter().zip(&self.kinds).all(|(column, kind)| {
             match (kind, key_kind(batch, *column, 0)) {
@@ -258,8 +271,30 @@ impl PackedGroupPlan {
                 derived_temporal_units(batch, *column).is_some()
             }
             _ => true,
-        })
+        }) && self
+            .checked_units
+            .iter()
+            .all(|(column, scale)| lane_units_fit(batch, *column, *scale))
     }
+}
+
+/// The column and scale of every decimal lane whose declared digits do not
+/// promise 64 bits of units, judged by the column `first` carries.
+fn checked_decimal_lanes(lanes: &[TwoPassLane], first: &RecordBatch) -> Vec<(usize, u8)> {
+    lanes
+        .iter()
+        .filter_map(|lane| match lane {
+            TwoPassLane::DecimalUnits { column, scale, .. }
+            | TwoPassLane::ExtremeDecimal { column, scale } => match first
+                .column(*column)
+                .map(crate::ColumnVector::data_type)
+            {
+                Some(DataType::Decimal { precision, .. }) if units_fit_a_lane(precision) => None,
+                _ => Some((*column, *scale)),
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 /// The cell kind of `column` as `batch` carries it.
@@ -797,6 +832,13 @@ impl Picked {
     }
 }
 
+/// A morsel's lane values when it is every row and none is NULL: units as
+/// a stored column holds them, or at the full width a computed one does.
+enum SpanUnits<'a> {
+    Narrow(&'a [i64]),
+    Wide(&'a [i128]),
+}
+
 /// Folds one morsel's selected rows into `words`, a dense table laid out
 /// by `dims`. `first_ordinal` is the ordinal of the batch's row zero.
 ///
@@ -956,21 +998,37 @@ fn fold_dense_rows(
                 let mut sums = vec![0_i128; table_slots];
                 // The packed values of the morsel's rows, when it is every
                 // row and none is NULL.
-                let span: Option<&[i64]> = match (&picked, reader) {
+                let span = match (&picked, reader) {
                     (
                         Picked::Span(span),
                         LaneReader::Units(DecimalUnits::Narrow(values), validity),
-                    ) if validity.no_nulls() => values.get(span.clone()),
+                    ) if validity.no_nulls() => values.get(span.clone()).map(SpanUnits::Narrow),
+                    // A computed decimal's units, held at full width. The
+                    // plan let the batch in only once every one of them
+                    // fit 64 bits, so a morsel's total cannot leave 128.
+                    (
+                        Picked::Span(span),
+                        LaneReader::Units(DecimalUnits::Wide(values), validity),
+                    ) if validity.no_nulls() => values.get(span.clone()).map(SpanUnits::Wide),
                     (Picked::Span(span), LaneReader::Int64(values, validity))
                         if validity.no_nulls() =>
                     {
-                        values.get(span.clone())
+                        values.get(span.clone()).map(SpanUnits::Narrow)
                     }
                     _ => None,
                 };
                 let counted = if let Some(values) = span {
-                    for (slot, value) in slots.iter().zip(values) {
-                        sums[*slot as usize] += i128::from(*value);
+                    match values {
+                        SpanUnits::Narrow(values) => {
+                            for (slot, value) in slots.iter().zip(values) {
+                                sums[*slot as usize] += i128::from(*value);
+                            }
+                        }
+                        SpanUnits::Wide(values) => {
+                            for (slot, value) in slots.iter().zip(values) {
+                                sums[*slot as usize] += *value;
+                            }
+                        }
                     }
                     None
                 } else {

@@ -6965,6 +6965,12 @@ impl ProfileNote {
             PullOperator::Profiled { slot, sink, .. } => {
                 Self(Some((*slot, std::sync::Arc::clone(sink))))
             }
+            // A projection the executor put in itself - an aggregate's
+            // computed arguments - is no operator of the plan's, and the
+            // profile has no line for it: what is said of it is said of the
+            // operator it reads. Without this, an aggregate over computed
+            // arguments never said which fold it took or why one declined.
+            PullOperator::Project { input, .. } => Self::of(input),
             _ => Self(None),
         }
     }

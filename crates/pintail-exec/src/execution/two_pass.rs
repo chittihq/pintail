@@ -83,6 +83,49 @@ pub(super) fn units_fit_a_lane(precision: u8) -> bool {
     precision <= LANE_DECIMAL_DIGITS
 }
 
+/// Which decimal columns a lane is built for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum LaneDecimals {
+    /// Only a column whose declared digits fit a lane's 64 bits: no value
+    /// of it can fail to, so no batch needs looking at.
+    Declared,
+    /// Any decimal column. A product of two money columns declares 31
+    /// digits and its values fit 64 bits all the same; a lane over it is
+    /// sound only while every batch's units do, so the caller judges each
+    /// batch with [`lane_units_fit`] before reading it, and folds one that
+    /// does not some other exact way.
+    Checked,
+}
+
+/// Whether every value of `batch`'s decimal `column` the rows select is
+/// held as scaled units at `scale` that fit a lane's 64 bits: the test a
+/// [`LaneDecimals::Checked`] lane puts to each batch. A column held any
+/// other way - as text, or as a value the kernels could not compute - has
+/// no units to read and fails it.
+pub(super) fn lane_units_fit(batch: &RecordBatch, column: usize, scale: u8) -> bool {
+    let Some((
+        crate::batch::TypedValues::Decimal128 {
+            values,
+            scale: held,
+            ..
+        },
+        validity,
+    )) = batch.column(column).and_then(crate::ColumnVector::typed)
+    else {
+        return false;
+    };
+    if *held != scale || values.len() < batch.row_count() {
+        return false;
+    }
+    match values {
+        crate::batch::DecimalUnits::Narrow(_) => true,
+        crate::batch::DecimalUnits::Wide(units) => batch
+            .selection()
+            .selected_rows()
+            .all(|row| !validity.is_valid(row) || i64::try_from(units[row]).is_ok()),
+    }
+}
+
 /// The text a temporal unit of `data_type` spells.
 fn temporal_unit_text(units: i128, data_type: DataType) -> Option<String> {
     let units = i64::try_from(units).ok()?;
@@ -153,7 +196,7 @@ pub(super) fn two_pass_lanes(
         // One mask bit per lane plus the key bit.
         return None;
     }
-    aggregate_lanes(aggregates, batch)
+    aggregate_lanes(aggregates, batch, LaneDecimals::Declared)
 }
 
 /// The lane of every aggregate, however many there are: the scatter's mask
@@ -162,7 +205,9 @@ pub(super) fn two_pass_lanes(
 pub(super) fn aggregate_lanes(
     aggregates: &[CompiledAggregate],
     batch: &RecordBatch,
+    decimals: LaneDecimals,
 ) -> Option<Vec<TwoPassLane>> {
+    let fits = |precision: u8| decimals == LaneDecimals::Checked || units_fit_a_lane(precision);
     aggregates
         .iter()
         .map(|aggregate| {
@@ -223,8 +268,10 @@ pub(super) fn aggregate_lanes(
                                 // The lane carries i64 units. A column
                                 // declared wider can hold a value that does
                                 // not fit them, and a lane has no way to
-                                // say so: the row would read as NULL.
-                                units_fit_a_lane(precision).then_some(TwoPassLane::DecimalUnits {
+                                // say so: the row would read as NULL. Only
+                                // a caller that checks every batch's units
+                                // takes one.
+                                fits(precision).then_some(TwoPassLane::DecimalUnits {
                                     column,
                                     scale,
                                     float_output: aggregate_uses_float(aggregate),
@@ -248,7 +295,7 @@ pub(super) fn aggregate_lanes(
                     if let DataType::Decimal { precision, scale } =
                         batch.column(column)?.data_type()
                     {
-                        return units_fit_a_lane(precision)
+                        return fits(precision)
                             .then_some(TwoPassLane::ExtremeDecimal { column, scale });
                     }
                     matches!(

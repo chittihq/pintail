@@ -163,6 +163,7 @@ mod top_k_ordered_input;
 mod top_k_sort;
 mod ungrouped_column_fold;
 mod unit_key_lanes;
+mod wide_decimal_lanes;
 mod wide_decimal_parity;
 mod wide_integer_comparison_typing;
 mod wide_row_checksum;
