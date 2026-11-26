@@ -1547,6 +1547,18 @@ impl ReplicaEngine {
         // catalog snapshot, and a local database that has not created its
         // first table has none to load.
         if matches!(statement, Statement::CreateTable(_) | Statement::Insert(_)) {
+            // A write being prepared has no columns to describe, and
+            // preparing it must not write: an INSERT prepared with NULL
+            // for each placeholder stored that row.
+            if max_rows == DESCRIBE_ONLY {
+                return Ok(Attempt::Answered(Answer::Whole(QueryOutput {
+                    fields: Vec::new(),
+                    rows: ResultRows::default(),
+                    stats: QueryStats::default(),
+                    truncated: false,
+                    affected: Some(0),
+                })));
+            }
             return self
                 .execute_write(database_id, &statement, started)
                 .map(|output| Attempt::Answered(Answer::Whole(output)));
@@ -1608,7 +1620,14 @@ impl ReplicaEngine {
                 let keep = self
                     .plans
                     .as_ref()
-                    .filter(|_| repeatable && settled_class && sql.len() <= KEPT_STATEMENT_BYTES);
+                    // A described statement keeps no plan: its key carries the
+                    // describe ceiling, which no execution looks up.
+                    .filter(|_| {
+                        repeatable
+                            && settled_class
+                            && sql.len() <= KEPT_STATEMENT_BYTES
+                            && max_rows != DESCRIBE_ONLY
+                    });
                 let mut run = || {
                     let prepared = match prepared.take() {
                         Some(prepared) => prepared,
@@ -1664,6 +1683,17 @@ impl ReplicaEngine {
                 }
                 let key = SharedQueryKey::for_current_session(replica.load_id, sql, max_rows);
                 run_shared(&key, deadline, started, run)
+            }
+            // An EXPLAIN ANALYZE being prepared would run the query it
+            // explains; its one column is all a describe needs.
+            Statement::Explain { .. } if max_rows == DESCRIBE_ONLY => {
+                Ok(Answer::Whole(QueryOutput {
+                    fields: vec![plan_field()],
+                    rows: ResultRows::default(),
+                    stats: QueryStats::default(),
+                    truncated: false,
+                    affected: None,
+                }))
             }
             Statement::Explain { .. } => self
                 .execute_explain(
@@ -2028,20 +2058,11 @@ impl ReplicaEngine {
             group_concat,
             wire_hints,
         } = prepared;
-        let mut execution = Execution::start_with_deadline(
-            physical,
-            provider,
-            self.memory_limit,
-            deadline,
-            collation,
-        )
-        .map_err(query_execution_error)?;
-        crate::trace::mark("started");
-        let fields = execution
-            .output_fields()
-            .iter()
-            .enumerate()
-            .map(|(index, field)| QueryField {
+        let describe = |output: &[pintail_exec::OutputField]| {
+            output
+                .iter()
+                .enumerate()
+                .map(|(index, field)| QueryField {
                 wire_column: wire_columns.get(index).cloned(),
                 name: field.name.clone(),
                 data_type: field.data_type,
@@ -2056,17 +2077,31 @@ impl ReplicaEngine {
                 timestamp: field.timestamp,
                 wire_hint: wire_hints.get(index).copied().flatten(),
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+        };
+        // Described, the statement is planned and nothing more: starting an
+        // execution already runs its uncorrelated subqueries and opens its
+        // scans.
         if max_rows == DESCRIBE_ONLY {
             stats.duration_ms = elapsed_ms(started);
             return Ok(Answer::Whole(QueryOutput {
-                fields,
+                fields: describe(&physical.output_fields()),
                 rows: ResultRows::default(),
                 stats,
                 truncated: false,
                 affected: None,
             }));
         }
+        let mut execution = Execution::start_with_deadline(
+            physical,
+            provider,
+            self.memory_limit,
+            deadline,
+            collation,
+        )
+        .map_err(query_execution_error)?;
+        crate::trace::mark("started");
+        let fields = describe(execution.output_fields());
         let collected = match collect_rows(&mut execution, max_rows, &fields, sink) {
             Ok(collected) => collected,
             Err(error) => {
@@ -2142,17 +2177,7 @@ impl ReplicaEngine {
         stats.duration_ms = elapsed_ms(started);
         stats.rows = 1;
         Ok(QueryOutput {
-            fields: vec![QueryField {
-                wire_column: None,
-                name: "plan".to_owned(),
-                data_type: Some(DataType::Utf8),
-                nullable: false,
-                collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
-                group_concat: false,
-                geometry: false,
-                timestamp: false,
-                wire_hint: None,
-            }],
+            fields: vec![plan_field()],
             rows: vec![vec![Value::Utf8(plan)]].into(),
             stats,
             truncated: false,
@@ -2824,6 +2849,21 @@ fn source_result_nullability(
                 .and_then(|fact| fact.nullable)
         })
         .collect()
+}
+
+/// The one column an EXPLAIN answers with.
+fn plan_field() -> QueryField {
+    QueryField {
+        wire_column: None,
+        name: "plan".to_owned(),
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+        collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
+        group_concat: false,
+        geometry: false,
+        timestamp: false,
+        wire_hint: None,
+    }
 }
 
 /// Whether `statement` reads a relation of `information_schema`, anywhere
@@ -3608,6 +3648,18 @@ mod inline_tests {
         assert!(described.rows.is_empty());
         assert!(!described.truncated);
         assert_eq!(described.fields, ran.fields);
+        // Nothing runs: a scalar subquery that returns several rows fails
+        // when executed, and describes cleanly.
+        let many = "SELECT (SELECT id FROM a) AS one";
+        assert!(engine.execute("db", many, 100).is_err());
+        let described = engine.execute("db", many, DESCRIBE_ONLY).unwrap();
+        assert_eq!(described.fields.len(), 1);
+        // A write being described writes nothing.
+        engine
+            .execute("db", "INSERT INTO a VALUES (999, 0)", DESCRIBE_ONLY)
+            .unwrap();
+        let count = engine.execute("db", "SELECT COUNT(*) FROM a", 10).unwrap();
+        assert_eq!(count.rows.into_values(), vec![vec![Value::UInt64(10)]]);
     }
 
     /// A query that only mentions `information_schema` in a string literal
