@@ -357,7 +357,10 @@ fn restored_database_is_registered_side_by_side_without_source_credentials() {
     assert_eq!(table.schema_version, 3);
     let history = metadata.schema_history("restored", "events").unwrap();
     assert_eq!(
-        history.iter().map(|record| record.version).collect::<Vec<_>>(),
+        history
+            .iter()
+            .map(|record| record.version)
+            .collect::<Vec<_>>(),
         [1, 3]
     );
     assert_eq!(

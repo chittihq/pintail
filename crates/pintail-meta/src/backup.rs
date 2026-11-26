@@ -406,7 +406,10 @@ impl MetaStore {
                         ),
                     )
                     .with_context(|| {
-                        format!("failed to register restored schema history of {}", table.name)
+                        format!(
+                            "failed to register restored schema history of {}",
+                            table.name
+                        )
                     })?;
             }
         }
