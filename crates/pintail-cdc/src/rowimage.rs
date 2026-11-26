@@ -366,7 +366,9 @@ fn packed_datetime(raw: &[u8], fsp: u8) -> Option<Value> {
 
 fn epoch_timestamp(raw: &[u8], fsp: u8) -> Option<Value> {
     let (whole, fraction) = raw.split_at_checked(4)?;
-    let seconds = i32::from_be_bytes(whole.try_into().ok()?);
+    // The seconds are unsigned: MariaDB stores TIMESTAMP up to 2106, and a
+    // moment past 2038 read as signed came back as a date before 1970.
+    let seconds = u32::from_be_bytes(whole.try_into().ok()?);
     let micros = u32::try_from(fraction_micros(fraction)).ok()?;
     if micros >= 1_000_000 {
         return None;
@@ -961,6 +963,21 @@ mod tests {
     use super::{Placement, PlanColumn, Reader};
     use mysql_async::consts::ColumnType;
     use pintail_probe::SourceColumn;
+
+    /// A TIMESTAMP's seconds are unsigned: MariaDB stores moments up to 2106,
+    /// and reading them signed turned 2038-01-19 03:14:08 into 1901.
+    #[test]
+    fn timestamps_past_2038_read_as_unsigned_seconds() {
+        let read = |seconds: u32| super::epoch_timestamp(&seconds.to_be_bytes(), 0);
+        assert_eq!(
+            read(0x8000_0000),
+            Some(pintail_types::Value::Utf8("2038-01-19 03:14:08".to_owned()))
+        );
+        assert_eq!(
+            read(u32::MAX),
+            Some(pintail_types::Value::Utf8("2106-02-07 06:28:15".to_owned()))
+        );
+    }
     use pintail_types::{DataType, Value};
 
     fn column(data_type: &str, column_type: &str, pintail_type: DataType) -> SourceColumn {

@@ -590,6 +590,14 @@ fn adapt_binlog_value(column: &SourceColumn, value: MysqlValue) -> Result<MysqlV
         && let Ok(raw) = std::str::from_utf8(bytes)
         && let Ok(seconds) = raw.split('.').next().unwrap_or(raw).parse::<i64>()
     {
+        // A TIMESTAMP's seconds are unsigned 32 bits on the wire; a value
+        // past 2038 (MariaDB stores them up to 2106) can come back as a
+        // negative number, which is the same bits read signed.
+        let seconds = if seconds < 0 {
+            seconds + (1_i64 << 32)
+        } else {
+            seconds
+        };
         if seconds == 0 {
             return Ok(MysqlValue::Date(0, 0, 0, 0, 0, 0, 0));
         }
