@@ -1,4 +1,4 @@
-//! MIN, MAX and ANY_VALUE over a DOUBLE return the value they saw, and a
+//! `MIN`, `MAX` and `ANY_VALUE` over a DOUBLE return the value they saw, and a
 //! negative zero is a value with a sign: a group holding only `-0` answers
 //! `-0`, as MySQL does. Grouping and DISTINCT are the places the two zeros
 //! are one value; carrying an extreme through the grouped lanes under the
