@@ -1054,6 +1054,12 @@ but may be wrong.
   per-table resync captures the data and recovers. GTID mode has no such
   limit.
 
+- File-position mode also gives the binlog file index 16 bits of the row
+  version, so replication stops with a decode error once the source's
+  binlog sequence passes `.065535`. A resync does not recover it, because
+  every later file is past the range; GTID mode, or a source whose binlog
+  numbering has been reset, is the way out.
+
 - SEC_TO_TIME, MAKETIME, CONVERT_TZ and JSON_UNQUOTE/->> advertise
   MySQL's own column types (TIME, DATETIME, LONG_BLOB) as direct
   projections; wrapped in another expression they fall back to
