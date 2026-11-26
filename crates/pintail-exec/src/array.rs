@@ -511,10 +511,12 @@ impl StrColumn {
             .map_or_else(|| self.views.len(), |dict| dict.codes.len())
     }
 
-    /// Whether the column is empty.
+    /// Whether the column is empty. A dictionary-encoded column holds its
+    /// rows as codes and may have no views of its own, so emptiness is read
+    /// from the row count, not the views.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.views.is_empty()
+        self.len() == 0
     }
 
     /// The views for kernel iteration.
@@ -896,6 +898,15 @@ impl ColumnArray {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dictionary-coded column has rows and no views of its own until its
+    /// text is touched; it is not empty.
+    #[test]
+    fn a_coded_column_with_rows_is_not_empty() {
+        let column = StrColumn::from_dictionary(b"ab", &[0, 1, 2], vec![0, 1, 1], ValidityMask::all_valid(3));
+        assert_eq!(column.len(), 3);
+        assert!(!column.is_empty());
+    }
 
     #[test]
     fn an_enum_column_materializes_its_declaration_index_and_sorts_by_it() {
