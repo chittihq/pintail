@@ -138,14 +138,52 @@ fn typed_comparison_mask(
             }?;
             selection::select_i64(units, validity, op, literal)
         }
-        // Temporal types ride the Utf8 carrier in canonical fixed-width form,
-        // where byte order IS chronological order and collation cannot apply
-        // (digits, dashes, colons only) — byte-wise kernels are exact.
+        // A TIME's text is neither fixed-width (the hours run to three
+        // digits) nor ordered by its bytes once a sign leads it, so it
+        // compares as signed microseconds. Only a literal already in the
+        // column's canonical spelling takes this path; any other spelling
+        // is the row path's to interpret.
         (TypedValues::Utf8(column), Value::Utf8(text))
-            if matches!(
-                logical_type,
-                DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. }
-            ) =>
+            if matches!(logical_type, DataType::Time64 { .. }) =>
+        {
+            let fraction_digits = text.split_once('.').map_or(0, |(_, digits)| digits.len());
+            let needle = pintail_types::parse_time_micros(text).filter(|micros| {
+                u8::try_from(fraction_digits).is_ok_and(|fsp| {
+                    fsp <= 6
+                        && pintail_types::format_time_micros(*micros, fsp) == *text
+                })
+            })?;
+            let views = column.views();
+            let heap = column.heap();
+            let mut mask = SelectionMask::none(views.len());
+            for (row, view) in views.iter().enumerate() {
+                if validity.is_valid(row) {
+                    let cell = view.with_bytes(heap, |bytes| {
+                        std::str::from_utf8(bytes)
+                            .ok()
+                            .and_then(pintail_types::parse_time_micros)
+                    })?;
+                    let relation = cell.cmp(&needle);
+                    let keep = match op {
+                        BinaryOp::Equal => relation == Ordering::Equal,
+                        BinaryOp::NotEqual => relation != Ordering::Equal,
+                        BinaryOp::Less => relation == Ordering::Less,
+                        BinaryOp::LessOrEqual => relation != Ordering::Greater,
+                        BinaryOp::Greater => relation == Ordering::Greater,
+                        _ => relation != Ordering::Less,
+                    };
+                    if keep {
+                        mask.set(row, true).expect("row within mask bounds");
+                    }
+                }
+            }
+            Some(mask)
+        }
+        // Dates and datetimes ride the Utf8 carrier in canonical fixed-width
+        // form, where byte order IS chronological order and collation cannot
+        // apply (digits, dashes, colons only) — byte-wise kernels are exact.
+        (TypedValues::Utf8(column), Value::Utf8(text))
+            if matches!(logical_type, DataType::Date32 | DataType::DateTime64 { .. }) =>
         {
             let needle = text.as_bytes();
             let views = column.views();
@@ -11590,6 +11628,38 @@ mod tests {
                 .expect("no error")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn time_comparisons_order_by_duration_not_by_bytes() {
+        use crate::array::{StrColumn, ValidityMask};
+        use crate::batch::TypedValues;
+        use pintail_sql::BinaryOp;
+        use pintail_types::{DataType, Value};
+        let mut column = StrColumn::default();
+        for text in ["100:00:00", "20:00:00", "-01:00:00", "-02:00:00", "00:00:00"] {
+            column.push(text.as_bytes());
+        }
+        let typed = TypedValues::Utf8(column);
+        let validity = ValidityMask::all_valid(5);
+        let kernel = |op, literal: &str| {
+            super::typed_comparison_mask(
+                &typed,
+                &validity,
+                DataType::Time64 { fsp: 0 },
+                op,
+                &Value::Utf8(literal.to_owned()),
+                Collation::default(),
+            )
+            .map(|mask| mask.selected_rows().collect::<Vec<_>>())
+        };
+        // Three-digit hours sort above two-digit ones.
+        assert_eq!(kernel(BinaryOp::Greater, "20:00:00"), Some(vec![0]));
+        // A larger negative duration is the smaller time.
+        assert_eq!(kernel(BinaryOp::Less, "-01:00:00"), Some(vec![3]));
+        assert_eq!(kernel(BinaryOp::Equal, "-02:00:00"), Some(vec![3]));
+        // A literal outside the canonical spelling is the row path's.
+        assert_eq!(kernel(BinaryOp::Equal, "1 12"), None);
     }
 
     #[test]
