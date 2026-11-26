@@ -83,6 +83,9 @@ pub struct RestoredDatabase<'a> {
     pub tables: &'a [RestoredTable<'a>],
     pub checkpoint: Option<RestoredCheckpoint<'a>>,
     pub now: &'a str,
+    /// The workspace the restored database joins; registered with the row so
+    /// a restore never leaves a database no workspace lists.
+    pub workspace_id: Option<&'a str>,
 }
 
 /// One restored table control-plane row.
@@ -357,8 +360,8 @@ impl MetaStore {
             .execute(
                 "INSERT INTO databases (\
                    id, name, mysql_dsn_encrypted, mode, effective_mode, state, \
-                   probe_json, created_at, updated_at, restored_backup_created_at\
-                 ) VALUES (?1, ?2, X'', 'paused', ?3, 'restored', ?4, ?5, ?5, ?6)",
+                   probe_json, created_at, updated_at, restored_backup_created_at, workspace_id\
+                 ) VALUES (?1, ?2, X'', 'paused', ?3, 'restored', ?4, ?5, ?5, ?6, ?7)",
                 (
                     restored.id,
                     restored.name,
@@ -366,6 +369,7 @@ impl MetaStore {
                     restored.probe_json,
                     restored.now,
                     restored.backup_created_at,
+                    restored.workspace_id,
                 ),
             )
             .context("failed to register restored database")?;

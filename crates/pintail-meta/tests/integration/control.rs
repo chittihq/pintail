@@ -327,6 +327,7 @@ fn restored_database_is_registered_side_by_side_without_source_credentials() {
                 binlog_pos: None,
             }),
             now: "2026-07-30T01:00:00Z",
+            workspace_id: None,
         })
         .unwrap();
 
@@ -417,6 +418,7 @@ fn restore_with_unwritable_schema_history_registers_nothing() {
         tables: &tables,
         checkpoint: None,
         now: "2026-07-30T01:00:00Z",
+        workspace_id: None,
     });
     assert!(result.is_err());
     assert!(metadata.database("restored").unwrap().is_none());

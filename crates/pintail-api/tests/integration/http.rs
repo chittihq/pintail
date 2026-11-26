@@ -356,10 +356,8 @@ async fn restored_data_age_survives_restart_and_is_exposed_by_api_and_metrics() 
             tables: &[],
             checkpoint: None,
             now: &chrono::Utc::now().to_rfc3339(),
+            workspace_id: Some(&workspace),
         })
-        .unwrap();
-    metadata
-        .set_database_workspace("restored-age", &workspace)
         .unwrap();
     drop(metadata);
     drop(app);

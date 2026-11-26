@@ -441,6 +441,9 @@ pub(crate) async fn restore(
             "restored database name cannot be empty",
         ));
     }
+    // Checked before anything is downloaded, so a caller with no workspace
+    // leaves no restored files behind.
+    let workspace_id = principal.require_workspace()?;
     let metadata = state.metadata()?;
     let record = metadata
         .backups(&database_id, 1_000)
@@ -467,17 +470,20 @@ pub(crate) async fn restore(
     let restored = restore_backup(store.as_ref(), manifest, &target)
         .await
         .map_err(unavailable)?;
-    register_restore(&metadata, &restored_id, name, &control, &backup_created_at)
-        .map_err(ApiError::internal)?;
-    // Without this the restored row keeps a NULL workspace_id, and every
-    // dashboard listing filters on `workspace_id = ?`. Restore would report
-    // success, write the segments and register the tables, and produce a
-    // database nothing could ever show - with no UI to assign it afterwards.
-    // It joins the workspace of the backup it was restored from, which is the
-    // one the caller is scoped to.
-    metadata
-        .set_database_workspace(&restored_id, principal.require_workspace()?)
-        .map_err(ApiError::internal)?;
+    // Without a workspace the restored row would keep a NULL workspace_id,
+    // and every dashboard listing filters on `workspace_id = ?`: a database
+    // nothing could ever show, with no UI to assign it afterwards. It joins
+    // the workspace of the backup it was restored from, which is the one
+    // the caller is scoped to, in the same transaction that registers it.
+    register_restore(
+        &metadata,
+        &restored_id,
+        name,
+        workspace_id,
+        &control,
+        &backup_created_at,
+    )
+    .map_err(ApiError::internal)?;
     state.publish(ApiEvent::database(
         "backup.restored",
         &restored_id,
@@ -901,6 +907,7 @@ fn register_restore(
     metadata: &pintail_meta::MetaStore,
     database_id: &str,
     name: &str,
+    workspace_id: &str,
     control: &ControlPlane,
     backup_created_at: &str,
 ) -> anyhow::Result<()> {
@@ -948,6 +955,7 @@ fn register_restore(
         tables: &tables,
         checkpoint,
         now: &Utc::now().to_rfc3339(),
+        workspace_id: Some(workspace_id),
     })?;
     Ok(())
 }
