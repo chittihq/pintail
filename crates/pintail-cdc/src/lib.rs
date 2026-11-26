@@ -53,7 +53,9 @@ use mysql_async::{
     prelude::Queryable as _,
 };
 use pintail_meta::{CascadeKeyRecord, CdcApplyIntent, MetaStore, SnapshotCheckpointRecord};
-use pintail_probe::{ProbeReport, SourceFlavor, SourceTable, probe as probe_source};
+use pintail_probe::{
+    ProbeReport, RowCounts, SourceFlavor, SourceTable, probe as probe_source, probe_with,
+};
 use pintail_snapshot::{
     SnapshotError, SnapshotOptions, SnapshotPosition, SnapshotTarget, run_snapshot,
 };
@@ -1970,7 +1972,9 @@ async fn apply_ddl_actions(
     clock: &added_fill::StatementClock,
     actions: Vec<DdlAction>,
 ) -> Result<(), CdcError> {
-    let refreshed = probe_source(pool, &report.database).await?;
+    // Only the tables' shapes are wanted: an exact count would scan every
+    // table on the source for each DDL statement, holding the stream with it.
+    let refreshed = probe_with(pool, &report.database, RowCounts::Estimated).await?;
     // A MySQL source writes every column into its row images and the mirror
     // holds every one of them, so a statement applied to the tracked table
     // says exactly where each column sits. Elsewhere the mirror leaves some
@@ -3852,7 +3856,9 @@ async fn adopt_drifted_schema(
     metadata: &mut MetaStore,
     table_map: &mysql_async::binlog::events::TableMapEvent<'_>,
 ) -> Result<(), String> {
-    let refreshed = probe_source(pool, database)
+    // The shape is what drift healing reads; counting rows would scan every
+    // table on the source.
+    let refreshed = probe_with(pool, database, RowCounts::Estimated)
         .await
         .map_err(|error| format!("re-probe failed: {error}"))?;
     let source = find_source_table(&refreshed, &target.source.name)
