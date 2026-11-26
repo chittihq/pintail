@@ -2574,6 +2574,11 @@ fn two_pass_lane_bits(batch: &RecordBatch, row: usize, lane: &TwoPassLane) -> Op
             match batch.column(*column).and_then(|column| column.value(row)) {
                 Some(Value::Int64(value)) => Some(u64::from_ne_bytes(value.to_ne_bytes())),
                 Some(Value::UInt64(value)) => Some(*value),
+                // MIN/MAX/ANY_VALUE keep the value they saw, sign of a zero
+                // included; only DISTINCT counts the two zeros as one.
+                Some(Value::Float64(value)) if matches!(lane, TwoPassLane::Exact { .. }) => {
+                    Some(value.get().to_bits())
+                }
                 Some(Value::Float64(value)) => Some(value.key_bits()),
                 Some(Value::Boolean(value)) => Some(u64::from(*value)),
                 _ => None,
