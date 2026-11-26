@@ -344,10 +344,7 @@ fn start_snapshot_holding(
             .spawn(move || {
                 let started = Instant::now();
                 let outcome =
-                    match tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                    {
+                    match snapshot_runtime() {
                         Ok(runtime) => {
                             let outcome = runtime.block_on(signal.until_cancelled(
                                 run_snapshot_job(&job_state, &job_database_id, &job_run_id, force),
@@ -376,6 +373,32 @@ fn start_snapshot_holding(
 }
 
 type SnapshotOutcome = Result<(u64, u64, &'static str, Vec<TableSnapshotFailure>), String>;
+
+/// The runtime one snapshot job runs on, private to it so that whatever the
+/// copy leaves running ends with it. The copy's workers each hold a source
+/// transaction and run as tasks; on a single-threaded runtime one worker's
+/// segment write held up every other worker's reads. It gets a thread per
+/// copy worker (`PINTAIL_SNAPSHOT_THREADS` overrides, 1 to 16; 1 is the
+/// single-threaded runtime).
+fn snapshot_runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    let threads = std::env::var("PINTAIL_SNAPSHOT_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map_or_else(
+            || pintail_snapshot::SnapshotOptions::default().workers,
+            |threads| threads.clamp(1, 16),
+        );
+    if threads <= 1 {
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(threads)
+        .thread_name("pintail-snapshot-worker")
+        .enable_all()
+        .build()
+}
 
 /// Journals how a snapshot ended and releases its job slot, once.
 /// `None` is a snapshot whose slot was taken by a reset.
