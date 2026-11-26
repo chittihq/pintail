@@ -3115,9 +3115,12 @@ fn finish_round(
     kept: std::sync::Mutex<Vec<(u64, RecordBatch)>>,
     mut own: impl FnMut(RecordBatch) -> Result<Option<RecordBatch>, ExecError>,
 ) -> Result<FoldedRound, ExecError> {
-    let FoldedRound::Round { returned } = round else {
+    let FoldedRound::Round { mut returned } = round else {
         return Ok(round);
     };
+    // In the stream's order: what `own` raises - a warning, an error - is
+    // raised by the batches in the order the pulled path reaches them.
+    returned.sort_by_key(|(order, _)| *order);
     let mut kept = kept
         .into_inner()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3174,82 +3177,8 @@ fn project_batch(
                 "projection column is outside its input",
             ));
     }
-    let computed = expressions
-        .iter()
-        .zip(&passthrough)
-        .filter(|(_, position)| position.is_none())
-        .map(|(expression, _)| expression)
-        .collect::<Vec<_>>();
     let batch_bytes = batch.estimated_bytes();
-    // An expression is evaluated a row at a time, and what one
-    // row's evaluation allocates is gone before the next row's
-    // begins: its working memory is the largest row's, once.
-    // What outlives the row is its result, a value per row
-    // counted below, plus that value's own text where the
-    // result is not a number. Adding every row's working
-    // memory together instead charged a checksum over twenty
-    // columns several kilobytes a row for a column of integers,
-    // and a batch of a hundred thousand rows asked for more
-    // than the whole ceiling.
-    let expression_memory = computed
-        .iter()
-        .map(|(expression, data_type)| {
-            let keeps_text = !data_type.is_some_and(holds_no_heap);
-            // Where every row's bound is the same - packed
-            // numbers with no NULL - one row is read and the
-            // sum is that row's, times the rows: the same
-            // figure, without visiting each of them.
-            let by_row = || {
-                batch.selection().selected_rows().fold(
-                    (0_usize, 0_usize),
-                    |(working, kept), row| {
-                        let bound = expression.allocation_upper_bound(&batch, row);
-                        let text = if keeps_text {
-                            expression.result_text_upper_bound(&batch, row).min(bound)
-                        } else {
-                            0
-                        };
-                        (working.max(bound), kept.saturating_add(text))
-                    },
-                )
-            };
-            if let Some((bound, text)) = expression.uniform_row_bounds(&batch) {
-                let rows = batch.visible_row_count();
-                let uniform = if rows == 0 {
-                    (0, 0)
-                } else if keeps_text {
-                    (bound, rows.saturating_mul(text.min(bound)))
-                } else {
-                    (bound, 0)
-                };
-                // Every debug run checks the one row against
-                // all of them.
-                debug_assert_eq!(uniform, by_row());
-                return uniform.0.saturating_add(uniform.1);
-            }
-            let (working, kept) = by_row();
-            working.saturating_add(kept)
-        })
-        .fold(0_usize, usize::saturating_add);
-    let projected_memory = size_of::<RecordBatch>()
-        .saturating_add(
-            expressions
-                .len()
-                .saturating_mul(size_of::<ColumnVector>().saturating_mul(2)),
-        )
-        .saturating_add(
-            computed
-                .len()
-                .saturating_mul(batch.row_count())
-                .saturating_mul(size_of::<Value>()),
-        )
-        .saturating_add(
-            batch
-                .row_count()
-                .div_ceil(64)
-                .saturating_mul(size_of::<u64>()),
-        )
-        .saturating_add(expression_memory);
+    let projected_memory = projection_memory(expressions, &passthrough, &batch);
     memory.ensure_transient(batch_bytes.saturating_add(projected_memory))?;
     let mut columns = Vec::with_capacity(expressions.len());
     // Expressions no kernel answers, by the column each fills.
@@ -3305,6 +3234,139 @@ fn project_batch(
     output.set_selection(batch.selection().clone())?;
     memory.ensure_transient(batch_bytes.saturating_add(output.estimated_bytes()))?;
     Ok(output)
+}
+
+/// One input batch projected through `expressions` on a worker of a fused
+/// round, or the batch handed back, as it came, to be projected by
+/// [`project_batch`] on the query's own thread.
+///
+/// Only the batch kernels answer here, and only quietly: an expression no
+/// kernel answers, or a batch that would raise a warning or an error,
+/// declines whole, so what the statement reports is what the pulled path
+/// reports, raised by the same batch on the query's thread. The working
+/// memory the pulled path checks is reserved for the evaluation, since
+/// workers evaluate side by side, and a reservation the ceiling refuses
+/// declines too.
+fn project_batch_on_worker(
+    expressions: &[(CompiledExpr, Option<DataType>)],
+    batch: RecordBatch,
+    memory: &MemoryTracker,
+) -> Result<Result<RecordBatch, RecordBatch>, ExecError> {
+    let passthrough = passthrough_columns(expressions, &batch);
+    if passthrough.iter().all(Option::is_some) {
+        let positions = passthrough.into_iter().flatten().collect::<Vec<_>>();
+        return batch
+            .project_columns(&positions)
+            .ok_or(ExecError::InvalidBatch(
+                "projection column is outside its input",
+            ))
+            .map(Ok);
+    }
+    memory.check_interruption()?;
+    let working = projection_memory(expressions, &passthrough, &batch);
+    if memory.reserve(working).is_err() {
+        return Ok(Err(batch));
+    }
+    let columns = expressions
+        .iter()
+        .zip(&passthrough)
+        .map(|((expression, data_type), position)| match position {
+            Some(position) => Some(batch.columns()[*position].clone()),
+            None => expression.evaluate_vector_column_quietly(&batch, *data_type),
+        })
+        .collect::<Option<Vec<_>>>();
+    memory.release(working);
+    let Some(columns) = columns else {
+        return Ok(Err(batch));
+    };
+    let mut output = RecordBatch::new(batch.row_count(), columns)?;
+    output.set_selection(batch.selection().clone())?;
+    Ok(Ok(output))
+}
+
+/// The working memory [`project_batch`] checks for one batch beyond the
+/// batch itself: the output's columns and, for each computed expression,
+/// its largest row's working memory plus the text its results keep.
+fn projection_memory(
+    expressions: &[(CompiledExpr, Option<DataType>)],
+    passthrough: &[Option<usize>],
+    batch: &RecordBatch,
+) -> usize {
+    let computed = expressions
+        .iter()
+        .zip(passthrough)
+        .filter(|(_, position)| position.is_none())
+        .map(|(expression, _)| expression)
+        .collect::<Vec<_>>();
+    // An expression is evaluated a row at a time, and what one
+    // row's evaluation allocates is gone before the next row's
+    // begins: its working memory is the largest row's, once.
+    // What outlives the row is its result, a value per row
+    // counted below, plus that value's own text where the
+    // result is not a number. Adding every row's working
+    // memory together instead charged a checksum over twenty
+    // columns several kilobytes a row for a column of integers,
+    // and a batch of a hundred thousand rows asked for more
+    // than the whole ceiling.
+    let expression_memory = computed
+        .iter()
+        .map(|(expression, data_type)| {
+            let keeps_text = !data_type.is_some_and(holds_no_heap);
+            // Where every row's bound is the same - packed
+            // numbers with no NULL - one row is read and the
+            // sum is that row's, times the rows: the same
+            // figure, without visiting each of them.
+            let by_row = || {
+                batch.selection().selected_rows().fold(
+                    (0_usize, 0_usize),
+                    |(working, kept), row| {
+                        let bound = expression.allocation_upper_bound(batch, row);
+                        let text = if keeps_text {
+                            expression.result_text_upper_bound(batch, row).min(bound)
+                        } else {
+                            0
+                        };
+                        (working.max(bound), kept.saturating_add(text))
+                    },
+                )
+            };
+            if let Some((bound, text)) = expression.uniform_row_bounds(batch) {
+                let rows = batch.visible_row_count();
+                let uniform = if rows == 0 {
+                    (0, 0)
+                } else if keeps_text {
+                    (bound, rows.saturating_mul(text.min(bound)))
+                } else {
+                    (bound, 0)
+                };
+                // Every debug run checks the one row against
+                // all of them.
+                debug_assert_eq!(uniform, by_row());
+                return uniform.0.saturating_add(uniform.1);
+            }
+            let (working, kept) = by_row();
+            working.saturating_add(kept)
+        })
+        .fold(0_usize, usize::saturating_add);
+    size_of::<RecordBatch>()
+        .saturating_add(
+            expressions
+                .len()
+                .saturating_mul(size_of::<ColumnVector>().saturating_mul(2)),
+        )
+        .saturating_add(
+            computed
+                .len()
+                .saturating_mul(batch.row_count())
+                .saturating_mul(size_of::<Value>()),
+        )
+        .saturating_add(
+            batch
+                .row_count()
+                .div_ceil(64)
+                .saturating_mul(size_of::<u64>()),
+        )
+        .saturating_add(expression_memory)
 }
 
 /// Narrows `batch`'s selection to the rows `predicate` accepts.
@@ -6149,33 +6211,41 @@ impl PullOperator {
                 })
             }
             Self::Project { input, expressions } => {
-                // Bare columns only: anything computed is evaluated on the
-                // query's own thread.
-                if expressions
+                // A computed expression is evaluated on a worker when it
+                // answers from its row alone; one that reads the clock, a
+                // statement variable or a random sequence is the query's own
+                // thread's, in row order, and the scan is pulled.
+                if !expressions
                     .iter()
-                    .any(|(expression, _)| expression.column_index().is_none())
+                    .all(|(expression, _)| expression.answers_from_row_alone())
                 {
                     return Ok(FoldedRound::Unavailable);
                 }
                 let expressions = &*expressions;
+                let bare = expressions
+                    .iter()
+                    .all(|(expression, _)| expression.column_index().is_some());
                 let kept = std::sync::Mutex::new(Vec::new());
+                // Counted here and added on the calling thread: a worker's
+                // counters never reach the statement's.
+                let computed = std::sync::atomic::AtomicU64::new(0);
                 let round = input.fold_round_through(memory, max_batches, &|batch, place| {
-                    let passthrough = passthrough_columns(expressions, &batch);
-                    if passthrough.iter().any(Option::is_none) {
-                        return Ok(Some(batch));
+                    let projected = match project_batch_on_worker(expressions, batch, memory)? {
+                        Ok(projected) => projected,
+                        Err(declined) => return Ok(Some(declined)),
+                    };
+                    if !bare {
+                        computed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
-                    let positions = passthrough.into_iter().flatten().collect::<Vec<_>>();
-                    let projected =
-                        batch
-                            .project_columns(&positions)
-                            .ok_or(ExecError::InvalidBatch(
-                                "projection column is outside its input",
-                            ))?;
                     if let Some(back) = fold(projected, place)? {
                         keep_returned(&kept, place.order, back);
                     }
                     Ok(None)
                 })?;
+                let computed = computed.into_inner();
+                crate::counters::count(|counters| {
+                    counters.projected_batches_on_workers += computed;
+                });
                 finish_round(round, kept, |batch| {
                     project_batch(expressions, batch, memory).map(Some)
                 })

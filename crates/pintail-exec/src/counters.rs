@@ -74,6 +74,9 @@ pub struct ExecCounters {
     /// Rounds a scan ran long: several times the slices of a first round,
     /// after a round that handed no batch back.
     pub fused_long_rounds: u64,
+    /// Batches a projection with computed expressions evaluated on a
+    /// worker of a fused round, rather than on the query's own thread.
+    pub projected_batches_on_workers: u64,
     /// Stored `TIMESTAMP` texts a session-zone kernel read as canonical
     /// text, without the general time zone conversion.
     pub session_texts_read: u64,
@@ -149,6 +152,7 @@ thread_local! {
             fused_rounds: 0,
             fused_batches: 0,
             fused_long_rounds: 0,
+            projected_batches_on_workers: 0,
             session_texts_read: 0,
             calendar_copies_packed: 0,
             instants_read: 0,

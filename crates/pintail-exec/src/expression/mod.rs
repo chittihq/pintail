@@ -1374,6 +1374,43 @@ impl CompiledExpr {
         }
     }
 
+    /// Whether this answers from its row alone: the same answer on any
+    /// thread, at any time, in any order of rows. No volatile function, no
+    /// reading of the clock, no statement variable read or assigned, and no
+    /// prepared membership set. What a projection may evaluate on a worker,
+    /// away from the query's own thread.
+    pub(crate) fn answers_from_row_alone(&self) -> bool {
+        match self {
+            Self::Column(_) | Self::Literal(_) => true,
+            Self::PreparedIn { .. } => false,
+            Self::Unary { expr, .. } | Self::IsNull { expr, .. } => expr.answers_from_row_alone(),
+            Self::Binary { left, right, .. } => {
+                left.answers_from_row_alone() && right.answers_from_row_alone()
+            }
+            Self::TupleKey(components) => components
+                .iter()
+                .all(|component| component.expr.answers_from_row_alone()),
+            Self::Scalar { function, args, .. } => {
+                !matches!(
+                    function,
+                    ScalarFunction::Now
+                        | ScalarFunction::UnixTimestamp
+                        | ScalarFunction::CurrentDate
+                        | ScalarFunction::Curtime
+                        | ScalarFunction::UtcTimestamp
+                        | ScalarFunction::UtcDate
+                        | ScalarFunction::UtcTime
+                        | ScalarFunction::Rand
+                        | ScalarFunction::RandSeeded
+                        | ScalarFunction::Uuid
+                        | ScalarFunction::UuidShort
+                        | ScalarFunction::UserVariableRead
+                        | ScalarFunction::UserVariableAssign
+                ) && args.iter().all(Self::answers_from_row_alone)
+            }
+        }
+    }
+
     /// A stable textual identity for this expression, or `None` when it
     /// could evaluate differently on identical data (volatile functions).
     /// Column identity is projection-relative; the settled aggregate memo

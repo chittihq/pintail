@@ -4616,6 +4616,64 @@ fn aggregate_round_batches() -> usize {
     rayon::current_num_threads().clamp(8, 64)
 }
 
+/// Reads up to about `max_batches` batches of `input` in one fused round
+/// into `queue`, in the order [`PullOperator::next_batch`] would have
+/// returned them, and answers whether the input reads in fused rounds at
+/// all: `false` sends the caller back to pulling.
+///
+/// The general path's rounds were pulled a batch at a time, so the scan's
+/// decoding, its filters and a projection of computed arguments ran on the
+/// query's thread while the pool waited for the round's morsels. A fused
+/// round does that work on the workers, each on the slice it decoded.
+///
+/// A batch a worker took keeps its reservation in `queue`; one the ceiling
+/// refused there, or an operator below handed back, is queued with none,
+/// and the caller reserves it as it reserves a pulled batch, spilling
+/// groups to make room. `drained` is set once the input has nothing left.
+fn read_ahead_round(
+    input: &mut PullOperator,
+    memory: &MemoryTracker,
+    max_batches: usize,
+    queue: &mut std::collections::VecDeque<(RecordBatch, usize)>,
+    drained: &mut bool,
+) -> Result<bool, ExecError> {
+    let taken = std::sync::Mutex::new(Vec::new());
+    let round = input.fold_round(memory, max_batches.max(1), &|batch, order| {
+        let bytes = batch.estimated_bytes();
+        if memory.reserve(bytes).is_err() {
+            return Ok(Some(batch));
+        }
+        taken
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((order, batch, bytes));
+        Ok(None)
+    });
+    let mut batches = taken
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let round = match round {
+        Ok(round) => round,
+        Err(error) => {
+            for (_, _, bytes) in batches {
+                memory.release(bytes);
+            }
+            return Err(error);
+        }
+    };
+    match round {
+        FoldedRound::Unavailable => return Ok(false),
+        FoldedRound::Done => *drained = true,
+        FoldedRound::Round { returned } => {
+            crate::counters::count(|counters| counters.fused_rounds += 1);
+            batches.extend(returned.into_iter().map(|(order, batch)| (order, batch, 0)));
+        }
+    }
+    batches.sort_by_key(|(order, _, _)| *order);
+    queue.extend(batches.into_iter().map(|(_, batch, bytes)| (batch, bytes)));
+    Ok(true)
+}
+
 /// Evaluates computed aggregate arguments a batch at a time, ahead of the
 /// aggregation, and points those aggregates at the columns that result.
 ///
@@ -5604,6 +5662,11 @@ fn build_buffered_hash_aggregate(
         runs: mut spill_runs,
     } = resumed;
     let mut waves_debug = (0_usize, 0_usize);
+    // Batches a fused round read ahead, in the input's order, each with
+    // the bytes already reserved for it.
+    let mut read_ahead = std::collections::VecDeque::<(RecordBatch, usize)>::new();
+    let mut fuse = !super::switches::fused_fold_disabled();
+    let mut drained = false;
     let per_row_upper = group_by
         .len()
         .saturating_mul(size_of::<Value>())
@@ -5641,21 +5704,38 @@ fn build_buffered_hash_aggregate(
         // the map holds.
         let worth_a_run = |map_bytes: usize| map_bytes >= (own_limit / 16).max(MIN_PRESSED_RUN);
         while batches.len() < round {
-            let batch = match first_batches.pop_front() {
-                Some(batch) => Some(batch),
-                None => input.next_batch(memory)?,
+            if first_batches.is_empty() && read_ahead.is_empty() && fuse && !drained {
+                fuse = read_ahead_round(
+                    input,
+                    memory,
+                    round - batches.len(),
+                    &mut read_ahead,
+                    &mut drained,
+                )?;
+            }
+            let (batch, reserved) = match first_batches.pop_front() {
+                Some(batch) => (Some(batch), 0),
+                None => match read_ahead.pop_front() {
+                    Some((batch, reserved)) => (Some(batch), reserved),
+                    None if drained => (None, 0),
+                    None => (input.next_batch(memory)?, 0),
+                },
             };
             let Some(batch) = batch else {
                 break;
             };
             let bytes = batch.estimated_bytes();
-            match reserve_or_spill_groups(
-                bytes,
-                &mut groups,
-                &mut groups_reserved,
-                &mut spill_runs,
-                memory,
-            ) {
+            match if reserved > 0 {
+                Ok(())
+            } else {
+                reserve_or_spill_groups(
+                    bytes,
+                    &mut groups,
+                    &mut groups_reserved,
+                    &mut spill_runs,
+                    memory,
+                )
+            } {
                 Ok(()) => {}
                 Err(ExecError::MemoryLimitExceeded { .. }) if !batches.is_empty() => {
                     // Nothing left to spill and the round already holds

@@ -47,6 +47,7 @@ mod few_groups_wide_distinct;
 mod filter_first_phases;
 mod filter_kernels;
 mod filter_once_cost;
+mod fused_computed_projection;
 mod fused_fold_interrupts;
 mod fused_fold_rounds;
 mod fused_join_lanes;
