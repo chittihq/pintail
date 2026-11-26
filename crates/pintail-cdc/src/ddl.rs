@@ -164,7 +164,7 @@ fn declared_default(options: &[sqlparser::ast::ColumnOptionDef]) -> DeclaredDefa
 pub(crate) fn added_columns(statement: &str) -> Option<Vec<AddedColumn>> {
     use sqlparser::ast::{ColumnOption, GeneratedExpressionMode, MySQLColumnPosition};
     let mut added = Vec::new();
-    for statement in parse_source_ddl(statement).ok()? {
+    for statement in parse_source_ddl(&column_clauses(statement)).ok()? {
         let Statement::AlterTable(alter) = statement else {
             continue;
         };
@@ -239,7 +239,7 @@ pub(crate) struct ModifiedColumn {
 pub(crate) fn modified_columns(statement: &str) -> Option<Vec<ModifiedColumn>> {
     use sqlparser::ast::ColumnOption;
     let mut modified = Vec::new();
-    for statement in parse_source_ddl(statement).ok()? {
+    for statement in parse_source_ddl(&column_clauses(statement)).ok()? {
         let Statement::AlterTable(alter) = statement else {
             continue;
         };
@@ -291,7 +291,9 @@ pub(crate) fn modified_columns(statement: &str) -> Option<Vec<ModifiedColumn>> {
 /// Whether `statement` does nothing but `RENAME COLUMN`: the form that
 /// restates no type, so the columns it names keep everything but the name.
 pub(crate) fn renames_columns_only(statement: &str) -> bool {
-    parse_source_ddl(statement).is_ok_and(|statements| {
+    // A conversion beside the renames re-describes the other text columns.
+    !converts_charset(statement)
+        && parse_source_ddl(statement).is_ok_and(|statements| {
         !statements.is_empty()
             && statements.iter().all(|statement| {
                 matches!(statement, Statement::AlterTable(alter)
@@ -503,7 +505,7 @@ fn rebuild_only_alter(statement: &str) -> bool {
         return true;
     }
     for part in top_level_clauses(clauses) {
-        let clause = part.trim().to_ascii_uppercase();
+        let clause = clause_words(part);
         if !starts_with_clause(&clause, REBUILD_ONLY_CLAUSES) {
             return false;
         }
@@ -516,14 +518,21 @@ fn rebuild_only_alter(statement: &str) -> bool {
 }
 
 /// The comma-separated clauses of an `ALTER TABLE`, split only at commas
-/// outside quotes and parentheses.
+/// outside quotes and parentheses. A backslash inside a quoted string
+/// escapes the character after it, so `COMMENT 'a\', b'` stays one clause.
 fn top_level_clauses(clauses: &str) -> Vec<&str> {
     let mut depth = 0_i32;
     let mut quote = None;
+    let mut escaped = false;
     let mut start = 0;
     let mut parts = Vec::new();
     for (offset, character) in clauses.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
         match (quote, character) {
+            (Some(open), '\\') if open != '`' => escaped = true,
             (Some(open), c) if c == open => quote = None,
             (None, '\'' | '"' | '`') => quote = Some(character),
             (None, '(') => depth += 1,
@@ -537,6 +546,16 @@ fn top_level_clauses(clauses: &str) -> Vec<&str> {
     }
     parts.push(&clauses[start..]);
     parts
+}
+
+/// A clause's words, upper-cased and one space apart: a statement may break
+/// `CONVERT TO\n  CHARACTER SET` across lines.
+fn clause_words(clause: &str) -> String {
+    clause
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase()
 }
 
 /// Whether an upper-cased clause opens with one of `options` as a whole word.
@@ -564,11 +583,29 @@ fn without_conversion(statement: &str) -> Option<String> {
     let parts = top_level_clauses(clauses);
     let kept = parts
         .iter()
-        .filter(|part| !starts_with_clause(&part.trim().to_ascii_uppercase(), CONVERSION_CLAUSES))
+        .filter(|part| !starts_with_clause(&clause_words(part), CONVERSION_CLAUSES))
         .map(|part| part.trim())
         .collect::<Vec<_>>();
     (kept.len() < parts.len() && !kept.is_empty())
         .then(|| format!("{} {}", head.trim_end(), kept.join(", ")))
+}
+
+/// Whether an `ALTER TABLE` converts the table's character set. Such a
+/// statement re-describes every text column, so what it says of the
+/// columns it names is not the table's whole new shape: the re-probe is.
+pub(crate) fn converts_charset(statement: &str) -> bool {
+    alter_table_parts(statement).is_some_and(|(_, _, clauses)| {
+        top_level_clauses(clauses.trim().trim_end_matches(';'))
+            .iter()
+            .any(|part| starts_with_clause(&clause_words(part), CONVERSION_CLAUSES))
+    })
+}
+
+/// `statement` with any character-set conversion taken out, for the readers
+/// of its column clauses: the parser cannot read the conversion, and failing
+/// on it lost the column clauses beside it.
+fn column_clauses(statement: &str) -> std::borrow::Cow<'_, str> {
+    without_conversion(statement).map_or(std::borrow::Cow::Borrowed(statement), Into::into)
 }
 
 /// Parses one replicated DDL statement.
@@ -1128,6 +1165,16 @@ mod convert_charset_tests {
                 "{statement}",
             );
         }
+        // The column readers see the clauses beside the conversion, across
+        // line breaks inside it and an escaped quote beside it.
+        let statement = "ALTER TABLE orders ADD COLUMN c INT COMMENT 'it\\'s, new', \
+                         CONVERT TO\n  CHARACTER SET utf8mb4";
+        assert!(super::converts_charset(statement));
+        let added = super::added_columns(statement).expect("the column clause is read");
+        assert_eq!(added.len(), 1);
+        assert!(!super::renames_columns_only(
+            "ALTER TABLE orders RENAME COLUMN a TO b, CONVERT TO CHARSET utf8mb4"
+        ));
         // A conversion beside rebuild-only clauses is still metadata.
         assert_eq!(
             parse_ddl(

@@ -3107,6 +3107,11 @@ fn schema_as_of(
                 .to_owned(),
         );
     }
+    // Rebuilding from the tracked columns would keep the collation every
+    // text column had before the conversion; only the probe has the new one.
+    if ddl::converts_charset(statement) {
+        return Err("it converts the table's character set".to_owned());
+    }
     let declarations = ddl::added_columns(statement)
         .ok_or_else(|| "its column definitions cannot be read".to_owned())?;
     let mut as_of = tracked.clone();
