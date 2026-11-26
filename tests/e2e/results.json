@@ -21688,7 +21688,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150020 sync_runs rows for db_f325896985442f91b82423680eb72d29"
+    "detail": "150021 sync_runs rows for db_63fd654ac0646edac4b7b7ccac124692"
   },
   {
     "phase": "activity-history",
@@ -21700,25 +21700,25 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 3ms p95 3ms over 150000 rows"
+    "detail": "p50 2ms p95 2ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 3ms p95 8ms"
+    "detail": "p50 2ms p95 3ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 18ms p99 29ms"
+    "detail": "p50 20ms p99 26ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 28ms"
+    "detail": "health p95 21ms"
   },
   {
     "phase": "activity-history",
@@ -23054,25 +23054,25 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4736"
+    "detail": "0 failed of 4875"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4736 requests: p50 3ms p99 25ms"
+    "detail": "4875 requests: p50 2ms p99 7ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 22ms"
+    "detail": "health p99 2ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 7072 vs source 7072"
+    "detail": "orders replica 8679 vs source 8679"
   },
   {
     "phase": "poll-storm",
@@ -33988,7 +33988,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 85 ok, dashboards 78 ok; no errors"
+    "detail": "wire 240 ok, http 88 ok, dashboards 96 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -34000,31 +34000,31 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 85"
+    "detail": "wire 240 of 240, http 88"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 143ms p99 664ms over 240 queries"
+    "detail": "wire p50 191ms p99 843ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 13ms over 6 samples"
+    "detail": "health p99 22ms over 7 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 166MB with a 256MB budget"
+    "detail": "peak RSS 171MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 200600 vs source 200600"
+    "detail": "big 200700 vs source 200700"
   },
   {
     "phase": "memory-pressure",
@@ -35389,13 +35389,13 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation converges the replica on the source",
     "status": "PASS",
-    "detail": "child 1800000 vs source 1800000 after 4.3s"
+    "detail": "child 1800000 vs source 1800000 after 6.5s"
   },
   {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 72MB before, peak 315MB during (margin 768MB)"
+    "detail": "RSS 124MB before, peak 316MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",

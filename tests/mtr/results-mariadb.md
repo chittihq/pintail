@@ -1,10 +1,10 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-11-14T16:24:08.032Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-11-26T16:49:07.333Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-Replay mode: local. Source commit: 902e0fc50678757ee852a5d72176a5bff07c2d17; source dirty: false. Binary SHA-256: c9221761153d291005a1c882ef24f208c82acf18d9ebeaa9f74ab9b453460bd4.
+Replay mode: local. Source commit: e60445b6ae4cc62c8cbf28f307d0c27314792f8c; source dirty: false. Binary SHA-256: 79025593ea8af3456bc4f88c5c09b9251f7471dd29fce942f5fe163f76f77e50.
 
-**9,873 of 10,026 compared SELECTs match MySQL byte-for-byte** (98.5%; the 430 session-diverged SELECTs are not in that percentage: counted as mismatches it is 94.4%), **out of 30,174 SELECTs replayed** - 20,148 never reached a comparison, so this is a share of what could be compared and not of the suite. 153 differ in rows, 0 in column names only. 3,038 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. 430 did not match after Pintail and MySQL disagreed on a session statement, and say nothing while the sessions differ. Fixtures: 25,847 accepted, 1,076 rejected by Pintail, 25,244 outside the replayed subset.
+**9,874 of 10,027 compared SELECTs match MySQL byte-for-byte** (98.5%; the 429 session-diverged SELECTs are not in that percentage: counted as mismatches it is 94.4%), **out of 30,174 SELECTs replayed** - 20,147 never reached a comparison, so this is a share of what could be compared and not of the suite. 153 differ in rows, 0 in column names only. 3,038 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. 429 did not match after Pintail and MySQL disagreed on a session statement, and say nothing while the sessions differ. Fixtures: 25,847 accepted, 1,076 rejected by Pintail, 25,244 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -263,7 +263,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_json_notembedded | 38 | 18 | 0 | 0 | 1 | 0 | 8 | 0 | 0 | 2 | 7 | 2 | 0 |
 | func_kdf | 42 | 0 | 0 | 0 | 2 | 0 | 37 | 0 | 0 | 0 | 2 | 1 | 0 |
 | func_like | 154 | 32 | 0 | 0 | 4 | 11 | 20 | 49 | 3 | 12 | 9 | 14 | 0 |
-| func_math | 1158 | 261 | 2 | 0 | 4 | 161 | 28 | 205 | 8 | 248 | 41 | 186 | 2 |
+| func_math | 1158 | 262 | 2 | 0 | 4 | 161 | 28 | 205 | 8 | 248 | 41 | 186 | 1 |
 | func_misc | 489 | 183 | 2 | 0 | 25 | 10 | 4 | 68 | 3 | 25 | 20 | 55 | 0 |
 | func_op | 21 | 10 | 0 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 3 | 2 | 0 |
 | func_regexp | 87 | 20 | 0 | 0 | 0 | 1 | 8 | 25 | 0 | 16 | 13 | 4 | 0 |
@@ -747,4 +747,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 40 | DDL: Error: character set ucs2 is not supported on a local table |
 | 39 | DDL: Error: character set utf16 is not supported on a local table |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwgluqfw-113671/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mwxrryw5-137659/diffs/` (not committed).

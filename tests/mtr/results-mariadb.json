@@ -5,18 +5,18 @@
   "ref": "170b1d70737be6f134448f51713cdc1ae215b420",
   "mysqlVersion": "8.4.11",
   "provenance": {
-    "sourceCommit": "902e0fc50678757ee852a5d72176a5bff07c2d17",
+    "sourceCommit": "e60445b6ae4cc62c8cbf28f307d0c27314792f8c",
     "sourceDirty": false,
-    "binarySha256": "c9221761153d291005a1c882ef24f208c82acf18d9ebeaa9f74ab9b453460bd4"
+    "binarySha256": "79025593ea8af3456bc4f88c5c09b9251f7471dd29fce942f5fe163f76f77e50"
   },
-  "artifacts": "validate-out/mtr/runs/mwgluqfw-113671",
-  "measuredAt": "2026-11-14T16:24:08.036Z",
+  "artifacts": "validate-out/mtr/runs/mwxrryw5-137659",
+  "measuredAt": "2026-11-26T16:49:07.338Z",
   "totals": {
-    "exact": 9873,
-    "compared": 10026,
+    "exact": 9874,
+    "compared": 10027,
     "queries": 24004,
     "replayed": 30174,
-    "notCompared": 20148
+    "notCompared": 20147
   },
   "results": [
     {
@@ -6448,7 +6448,7 @@
       "file": "func_math",
       "statements": 1158,
       "counts": {
-        "exact": 261,
+        "exact": 262,
         "mismatch": 2,
         "name-mismatch": 0,
         "pintail-error": 4,
@@ -6462,7 +6462,7 @@
         "volatile": 12,
         "replica-lag": 0,
         "replica-unsettled": 0,
-        "session-diverged": 2
+        "session-diverged": 1
       },
       "errorClasses": {
         "INSERT: Error: only literal values are supported in INSERT, got _": 4,
