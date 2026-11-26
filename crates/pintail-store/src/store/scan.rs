@@ -5533,7 +5533,7 @@ impl ProjectedScanStream {
         let chunk = TableSnapshot {
             instance: self.snapshot.instance,
             memtable_changes: 0,
-            memtable: Arc::new(BTreeMap::new()),
+            memtable: Arc::default(),
             memtable_image: Arc::default(),
             memtable_oldest: None,
             manifest: Arc::new(manifest),

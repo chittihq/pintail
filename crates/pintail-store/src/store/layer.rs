@@ -8,7 +8,7 @@
 //! newer segments column by column, as packed as a base decodes.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     sync::{Arc, Mutex, OnceLock, atomic::AtomicUsize},
 };
 
@@ -17,7 +17,7 @@ use rayon::prelude::*;
 
 use super::projected_scan_pool;
 use super::scan::{DecodedColumn, empty_packed_column};
-use crate::{StoreError, segment};
+use crate::{StoreError, memtable::MemtableRows, segment};
 
 /// One value an overlay writes into a decoded chunk: a memtable row's, or
 /// one read packed from a newer segment.
@@ -788,7 +788,7 @@ struct ImageKeys {
 
 impl ImageKeys {
     /// `None` for a memtable of more rows than an image row can name.
-    fn build(memtable: &BTreeMap<PrimaryKey, StoredRow>) -> Option<Self> {
+    fn build(memtable: &MemtableRows) -> Option<Self> {
         if memtable.is_empty() || u32::try_from(memtable.len()).is_err() {
             return None;
         }
@@ -853,7 +853,7 @@ impl MemtableImage {
         self.keys.get().is_some()
     }
 
-    fn keys(&self, memtable: &BTreeMap<PrimaryKey, StoredRow>) -> Option<&ImageKeys> {
+    fn keys(&self, memtable: &MemtableRows) -> Option<&ImageKeys> {
         self.keys
             .get_or_init(|| ImageKeys::build(memtable))
             .as_ref()
@@ -866,7 +866,7 @@ impl MemtableImage {
         &self,
         position: usize,
         data_type: pintail_types::DataType,
-        memtable: &BTreeMap<PrimaryKey, StoredRow>,
+        memtable: &MemtableRows,
     ) -> ImageColumn {
         let slot = Arc::clone(
             self.columns
@@ -992,7 +992,7 @@ impl LayerIndexSlot {
 /// both hold the greater version wins, and the segments' on a tie.
 #[derive(Clone)]
 pub(super) struct LayerRows {
-    memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>,
+    memtable: Arc<MemtableRows>,
     /// The memtable's image, once a scan that names the key's columns has
     /// reached these rows; without it they are read from the map.
     image: Option<Arc<MemtableImage>>,
@@ -1009,7 +1009,7 @@ pub(super) struct Layer {
 
 impl LayerRows {
     /// The memtable's rows alone.
-    pub(super) fn single(memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>) -> Self {
+    pub(super) fn single(memtable: Arc<MemtableRows>) -> Self {
         Self {
             memtable,
             image: None,
@@ -1071,7 +1071,7 @@ impl LayerRows {
     /// The rows of `segments` (oldest first) under the memtable's.
     pub(super) fn layered(
         segments: Vec<segment::SegmentMeta>,
-        memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>,
+        memtable: Arc<MemtableRows>,
     ) -> Self {
         Self {
             memtable,
@@ -1153,7 +1153,9 @@ impl LayerRows {
                 image,
                 key_range(image.versions.len(), |row| image.key(row), lo, hi),
             ),
-            None => MemtableSide::Map(self.memtable.range((lo.clone(), hi.clone())).peekable()),
+            None => MemtableSide::Map(
+                Box::new(self.memtable.range((lo.clone(), hi.clone()))).peekable(),
+            ),
         };
         Ok(LayerCursor {
             memtable,
@@ -1176,7 +1178,7 @@ pub(super) enum SpanKey<'a> {
 /// The memtable's rows of a range: walked through its map, or a range of
 /// its image.
 enum MemtableSide<'a> {
-    Map(std::iter::Peekable<std::collections::btree_map::Range<'a, PrimaryKey, StoredRow>>),
+    Map(std::iter::Peekable<Box<crate::memtable::Range<'a>>>),
     Image(&'a ImageKeys, std::ops::Range<usize>),
 }
 

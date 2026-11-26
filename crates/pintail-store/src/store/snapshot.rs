@@ -22,7 +22,7 @@ use pintail_types::{PrimaryKey, StoredRow, TableSchema};
 use crate::{
     StoreError,
     manifest::{self, Manifest},
-    memtable::Memtable,
+    memtable::{Memtable, MemtableRows},
     segment,
 };
 
@@ -35,7 +35,7 @@ pub struct TableSnapshot {
     /// snapshots of one instance only when their memtables hold the same
     /// rows. See [`Self::memtable_identity`].
     pub(super) memtable_changes: u64,
-    pub(super) memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>,
+    pub(super) memtable: Arc<MemtableRows>,
     /// The image scans build of `memtable` and share (see
     /// [`super::MemtableImage`]).
     pub(super) memtable_image: Arc<super::MemtableImage>,
@@ -493,7 +493,7 @@ impl TableSnapshot {
         Self {
             instance: super::STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             memtable_changes: 0,
-            memtable: Arc::new(BTreeMap::new()),
+            memtable: Arc::default(),
             memtable_image: Arc::default(),
             memtable_oldest: None,
             manifest: Arc::new(Manifest::empty(&schema)),

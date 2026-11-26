@@ -963,7 +963,7 @@ impl TableStore {
     fn scan_row_is_noop(&self, row: &StoredRow) -> Result<bool, StoreError> {
         // The memtable always holds the newest version of a key when it
         // holds the key at all.
-        if let Some(current) = self.memtable.snapshot().get(row.key()) {
+        if let Some(current) = self.memtable.get(row.key()) {
             return Ok(current.is_deleted() == row.is_deleted() && current.values() == row.values());
         }
         let scan_memory = AtomicUsize::new(0);
@@ -1727,7 +1727,7 @@ impl TableStore {
     }
 
     pub(crate) fn has_pending_rows(&self) -> bool {
-        !self.memtable.snapshot().is_empty()
+        !self.memtable.is_empty()
     }
 
     pub(crate) fn last_sequence(&self) -> u64 {
