@@ -2853,6 +2853,27 @@ impl MemoryTracker {
         }
     }
 
+    /// Scratch accounting for state that lives only until it is merged into
+    /// this tracker's: it may hold what this query has left, it charges the
+    /// process-wide budget as this tracker does, and dropping it hands all
+    /// of that back. Parallel workers share one through `&self`, so together
+    /// they can never take more than the room that was left.
+    pub(super) fn bounded_worker(&self) -> Self {
+        Self {
+            limit: self.limit.saturating_sub(self.used()),
+            deadline: self.deadline,
+            cancellation: self.cancellation.clone(),
+            used: std::sync::atomic::AtomicUsize::new(0),
+            peak: std::sync::atomic::AtomicUsize::new(0),
+            charges_shared: self.charges_shared,
+            shared_charged: std::sync::atomic::AtomicUsize::new(0),
+            spill: self.spill.clone(),
+            profile: self.profile.clone(),
+            outer_sets: std::sync::Arc::clone(&self.outer_sets),
+            subqueries: std::sync::Arc::clone(&self.subqueries),
+        }
+    }
+
     /// The statement's set-at-a-time subquery answers.
     fn outer_sets(&self) -> &outer_set::StatementSets {
         &self.outer_sets
@@ -5650,14 +5671,11 @@ impl PullOperator {
     /// accounting is square before the tracker settles up.
     fn release_reservations(&mut self, memory: &MemoryTracker) {
         match self {
-            // A leaf holds no reservation of its own past its stream, and
-            // a key-lookup join reserves nothing it does not hand back in
-            // the same call.
-            Self::Empty
-            | Self::OneRow { .. }
-            | Self::Scan { .. }
-            | Self::Rows { .. }
-            | Self::KeyLookupJoin(_) => {}
+            // A leaf holds no reservation of its own past its stream.
+            Self::Empty | Self::OneRow { .. } | Self::Scan { .. } | Self::Rows { .. } => {}
+            // A key-lookup join keeps the lookup table it read whole, and
+            // its driving input may hold reservations of its own.
+            Self::KeyLookupJoin(join) => join.release_reservations(memory),
             Self::KeyMembership(membership) => membership.release(memory),
             Self::JsonTable(operator) => operator.release(memory),
             Self::CrossJoin { inputs, .. } | Self::UnionAll { inputs, .. } => {

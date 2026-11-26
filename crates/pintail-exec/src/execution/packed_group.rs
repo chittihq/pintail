@@ -1992,11 +1992,14 @@ impl PackedGroupFold<'_> {
 
     /// The general path's fold of one batch, into groups kept by value.
     fn fold_by_row(&mut self, batch: &RecordBatch) -> Result<(), ExecError> {
+        // The batch's partial groups live until they are merged below; their
+        // scratch charge goes with them.
+        let scratch = self.memory.bounded_worker();
         let partial = build_local_direct_groups(
             &Morsel::whole(batch),
             &self.plan.columns,
             self.aggregates,
-            self.memory,
+            &scratch,
             self.key_collations,
         )?;
         for (key, group) in partial {

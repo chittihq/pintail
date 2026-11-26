@@ -87,9 +87,19 @@ pub(super) struct ColumnarSorted {
     position: usize,
     /// The output's width: the input's, less the sort-only columns.
     width: Option<usize>,
+    /// What the kept batches were reserved at, handed back once the last
+    /// batch is out.
+    reserved: usize,
 }
 
 impl ColumnarSorted {
+    /// The same rows, holding `reserved` bytes of the query's ceiling that
+    /// the last batch out hands back.
+    pub(super) const fn holding(mut self, reserved: usize) -> Self {
+        self.reserved = reserved;
+        self
+    }
+
     /// Rows kept, in order.
     pub(super) fn len(&self) -> usize {
         self.order.len()
@@ -156,6 +166,7 @@ impl ColumnarSorted {
             batches,
             position: 0,
             width,
+            reserved: 0,
         })
     }
 
@@ -205,6 +216,12 @@ impl ColumnarSorted {
         memory: &MemoryTracker,
     ) -> Result<Option<RecordBatch>, ExecError> {
         if self.position >= self.order.len() {
+            // Every row is out: the kept batches go, and their charge with
+            // them, so an operator above that keeps working has the room.
+            if self.reserved > 0 {
+                self.batches = Vec::new();
+                memory.release(std::mem::take(&mut self.reserved));
+            }
             return Ok(None);
         }
         let end = self
@@ -326,7 +343,8 @@ pub(super) fn top_k(
             cutoff = Some(kth);
         }
     }
-    ColumnarSorted::new(kept, keys, width, collation, Some(k), memory).map(TopK::Sorted)
+    ColumnarSorted::new(kept, keys, width, collation, Some(k), memory)
+        .map(|sorted| TopK::Sorted(sorted.holding(reserved)))
 }
 
 /// Each column's type, when every batch gives it the same one.

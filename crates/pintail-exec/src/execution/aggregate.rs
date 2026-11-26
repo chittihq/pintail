@@ -5783,7 +5783,14 @@ fn build_buffered_hash_aggregate(
                 groups_reserved = 0;
                 used_before_merge = memory.used();
             }
-            let build_partials = || {
+            // The partial groups are charged to one scratch tracker the
+            // wave's workers share: it holds at most what the query has left
+            // and charges the server's budget, so a wave whose groups outgrow
+            // the room fails here and the map spills, and dropping the
+            // scratch once the partials are merged hands their charge back.
+            // A tracker without a limit let a wave of distinct sets or long
+            // keys grow past both ceilings unseen.
+            let build_partials = |scratch: &MemoryTracker| {
                 wave.par_iter()
                     .map(|morsel| {
                         direct_columns.map_or_else(
@@ -5792,7 +5799,7 @@ fn build_buffered_hash_aggregate(
                                     morsel,
                                     group_by,
                                     aggregates,
-                                    memory,
+                                    scratch,
                                     key_collations,
                                 )
                             },
@@ -5801,7 +5808,7 @@ fn build_buffered_hash_aggregate(
                                     morsel,
                                     columns,
                                     aggregates,
-                                    memory,
+                                    scratch,
                                     key_collations,
                                 )
                             },
@@ -5809,16 +5816,18 @@ fn build_buffered_hash_aggregate(
                     })
                     .collect::<Result<Vec<_>, _>>()
             };
-            let partials = match build_partials() {
+            let mut scratch = memory.bounded_worker();
+            let partials = match build_partials(&scratch) {
                 Ok(partials) => partials,
                 Err(ExecError::MemoryLimitExceeded { .. }) if !groups.is_empty() => {
-                    // The failed build's partial reservations are dropped with it.
-                    memory.release(memory.used().saturating_sub(used_before_merge));
+                    // The failed build's partials are gone, and a fresh
+                    // scratch hands their charge back.
                     spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
                     memory.release(groups_reserved);
                     groups_reserved = 0;
                     used_before_merge = memory.used();
-                    build_partials()?
+                    scratch = memory.bounded_worker();
+                    build_partials(&scratch)?
                 }
                 Err(error) => return Err(error),
             };
@@ -5878,6 +5887,8 @@ fn build_buffered_hash_aggregate(
                     }
                 }
             }
+            // Every partial is merged and gone; so is its charge.
+            drop(scratch);
             groups_reserved =
                 groups_reserved.saturating_add(memory.used().saturating_sub(used_before_merge));
             memory.release(wave_upper);
@@ -7558,7 +7569,7 @@ fn build_local_dictionary_groups(
     }
     const MAX_CODES: usize = 256;
     const MAX_SLOTS: usize = 4096;
-    let memory = parent_memory.unbounded_worker();
+    let memory = parent_memory;
     let batch = morsel.batch;
     if group_columns.is_empty() || group_columns.len() > 2 {
         return Ok(None);
@@ -7790,7 +7801,7 @@ fn build_local_dictionary_groups(
                     .zip(group.states)
                     .zip(aggregates)
                 {
-                    state.merge(aggregate, other, &memory)?;
+                    state.merge(aggregate, other, memory)?;
                 }
             }
         }
@@ -7818,7 +7829,7 @@ pub(super) fn build_local_direct_groups(
     let mut groups = Vec::<AggregateGroup>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
     let mut collation_index = HashMap::<u64, usize>::new();
-    let memory = parent_memory.unbounded_worker();
+    let memory = parent_memory;
     let batch_bytes = batch.estimated_bytes();
     for (offset, row) in morsel.selected_rows().enumerate() {
         if offset % 1024 == 0 {
@@ -7868,7 +7879,7 @@ pub(super) fn build_local_direct_groups(
             batch_bytes,
             aggregates,
             &mut groups[group_index].states,
-            &memory,
+            memory,
         )?;
     }
     // Groups whose keys NORMALIZE equal must MERGE, not last-write-win: the
@@ -7896,7 +7907,7 @@ pub(super) fn build_local_direct_groups(
                     .zip(group.states)
                     .zip(aggregates)
                 {
-                    state.merge(aggregate, partial_state, &memory)?;
+                    state.merge(aggregate, partial_state, memory)?;
                 }
             }
         }
@@ -7913,7 +7924,7 @@ fn build_local_expression_groups(
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
     let batch = morsel.batch;
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
-    let memory = parent_memory.unbounded_worker();
+    let memory = parent_memory;
     let batch_bytes = batch.estimated_bytes();
     for (offset, row) in morsel.selected_rows().enumerate() {
         if offset % 1024 == 0 {
@@ -7939,7 +7950,7 @@ fn build_local_expression_groups(
             batch_bytes,
             aggregates,
             &mut group.states,
-            &memory,
+            memory,
         )?;
     }
     Ok(groups)

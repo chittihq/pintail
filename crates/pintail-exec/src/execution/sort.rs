@@ -642,9 +642,10 @@ pub(super) fn build_sort(
         }
         return sort_rows(materializer.finish(), keys, trim_to, memory, collation);
     }
-    Ok(SortedRows::Columnar(columnar_sort::ColumnarSorted::new(
-        retained, keys, trim_to, collation, None, memory,
-    )?))
+    Ok(SortedRows::Columnar(
+        columnar_sort::ColumnarSorted::new(retained, keys, trim_to, collation, None, memory)?
+            .holding(reserved),
+    ))
 }
 
 /// The spilling row sort's tail: sorts what stayed resident and merges it

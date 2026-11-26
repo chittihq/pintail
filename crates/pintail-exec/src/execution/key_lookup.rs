@@ -1108,6 +1108,13 @@ pub(super) struct KeyLookupJoin {
 }
 
 impl KeyLookupJoin {
+    /// Hands back what the join and its driving input still hold, for a
+    /// parent that stopped before the join was exhausted.
+    pub(super) fn release_reservations(&mut self, memory: &MemoryTracker) {
+        self.lookup.release(memory);
+        self.driving.release_reservations(memory);
+    }
+
     pub(super) fn next_batch(
         &mut self,
         memory: &MemoryTracker,
@@ -1115,6 +1122,7 @@ impl KeyLookupJoin {
         loop {
             self.fill(memory)?;
             if self.pending.is_empty() {
+                self.lookup.release(memory);
                 return Ok(None);
             }
             let take = self.slice.min(self.pending.len());
@@ -1248,6 +1256,9 @@ enum Lookup {
     Built {
         input: Option<Box<PullOperator>>,
         rows: Matches,
+        /// What the rows were reserved at, handed back once the join is
+        /// done with them.
+        reserved: usize,
     },
 }
 
@@ -1268,6 +1279,17 @@ impl Found<'_> {
 }
 
 impl Lookup {
+    /// Drops the rows a whole read kept and hands back what they were
+    /// reserved at: a join that has answered its last row has no more use
+    /// for them, and an operator above it that keeps working would
+    /// otherwise have less room than it is holding.
+    pub(super) fn release(&mut self, memory: &MemoryTracker) {
+        if let Self::Built { rows, reserved, .. } = self {
+            *rows = Matches::new();
+            memory.release(std::mem::take(reserved));
+        }
+    }
+
     /// Whether finding `keys` reads the whole table rather than its ranges.
     fn reads_all(&self, keys: &[i128]) -> bool {
         matches!(self, Self::Ranged(ranged)
@@ -1314,15 +1336,21 @@ impl Lookup {
             *self = Self::Built {
                 input: Some(Box::new(input)),
                 rows: Matches::new(),
+                reserved: 0,
             };
         }
-        let Self::Built { input, rows } = self else {
+        let Self::Built {
+            input,
+            rows,
+            reserved,
+        } = self
+        else {
             return Err(ExecError::InvalidPhysicalPlan(
                 "a key lookup lost its table",
             ));
         };
         if let Some(mut input) = input.take() {
-            *rows = read_table(&mut input, position, memory)?;
+            (*rows, *reserved) = read_table(&mut input, position, memory)?;
         }
         Ok(Found::Built(rows))
     }
@@ -1547,19 +1575,22 @@ fn read_table(
     input: &mut PullOperator,
     position: usize,
     memory: &MemoryTracker,
-) -> Result<Matches, ExecError> {
+) -> Result<(Matches, usize), ExecError> {
     let mut rows = Matches::new();
+    let mut reserved = 0_usize;
     while let Some(batch) = input.next_batch(memory)? {
         for row in batch.selection().selected_rows() {
             let Some(key) = row_key(&batch, row, position) else {
                 continue;
             };
             let values = row_values(&batch, row)?;
-            memory.reserve(estimated_row_payload_bytes(&values))?;
+            let bytes = estimated_row_payload_bytes(&values);
+            memory.reserve(bytes)?;
+            reserved = reserved.saturating_add(bytes);
             rows.entry(key).or_default().push(values);
         }
     }
-    Ok(rows)
+    Ok((rows, reserved))
 }
 
 /// Sorted, distinct keys grouped into the ranges one read each covers: keys
@@ -1700,6 +1731,7 @@ fn lookup_source(
                     build_operator(table.over(table.scan.clone()), provider, memory, collation)?.0,
                 )),
                 rows: Matches::new(),
+                reserved: 0,
             },
         },
     )
