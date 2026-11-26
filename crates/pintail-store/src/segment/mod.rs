@@ -2788,6 +2788,69 @@ pub(crate) struct ProjectedValueFetch {
 }
 
 #[allow(clippy::too_many_lines)]
+/// Whether the segment can be read under `schema`, from its header and its
+/// column directory alone: what a full read would refuse because of the
+/// schema, it refuses here - a newer or different schema, a column whose
+/// stored type the new one cannot read, a required column the segment
+/// lacks - without decoding a row. Corruption inside a block is left to the
+/// reads that decode it.
+pub(crate) fn check_readable_under(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+) -> Result<(), StoreError> {
+    let path = directory.join(&meta.file_name);
+    verify(directory, meta, schema)?;
+    let layout = read_footer_layout(&path, meta)?;
+    let mut decoder = FileDecoder::open(&path)?;
+    let mut present = std::collections::HashSet::new();
+    for offset in &layout.column_offsets {
+        let (id, logical_type, _) = read_column_directory_entry(&path, &mut decoder, *offset)?;
+        match id {
+            KEY_COLUMN_ID if logical_type == LogicalType::PrimaryKey => {}
+            VERSION_COLUMN_ID if logical_type == LogicalType::UInt64 => {}
+            TOMBSTONE_COLUMN_ID if logical_type == LogicalType::Boolean => {}
+            KEY_COLUMN_ID | VERSION_COLUMN_ID | TOMBSTONE_COLUMN_ID => {
+                return Err(corrupt_here(
+                    &path,
+                    &decoder,
+                    "system column has the wrong logical type",
+                ));
+            }
+            _ => {
+                if !present.insert(id) {
+                    return Err(corrupt_here(
+                        &path,
+                        &decoder,
+                        format!("duplicate user column id {id}"),
+                    ));
+                }
+                if let Some(column) = schema.columns().iter().find(|column| column.id() == id)
+                    && !wire_type_compatible(column.data_type(), logical_type)
+                {
+                    return Err(StoreError::IncompatibleSchema(format!(
+                        "column {} ({id}) changed physical type",
+                        column.name()
+                    )));
+                }
+            }
+        }
+    }
+    if let Some(column) = schema
+        .columns()
+        .iter()
+        .find(|column| !present.contains(&column.id()) && !column.readable_when_absent())
+    {
+        return Err(StoreError::IncompatibleSchema(format!(
+            "required column {} ({}) is absent from segment {}",
+            column.name(),
+            column.id(),
+            meta.file_name
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn read_row_headers_range(
     directory: &Path,
     meta: &SegmentMeta,

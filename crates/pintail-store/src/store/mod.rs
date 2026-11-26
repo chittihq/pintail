@@ -1465,8 +1465,12 @@ impl TableStore {
             ));
         }
         self.flush()?;
+        // Every segment must read under the new schema. Its header and
+        // column directory say whether it can; decoding every row of the
+        // table to find out held the apply loop for as long as a full read
+        // of the table took, on each schema change.
         for segment in &self.manifest.segments {
-            segment::read(&self.directory, segment, &schema)?;
+            segment::check_readable_under(&self.directory, segment, &schema)?;
         }
         let _published = self.publication.publishing();
         let mut next_manifest = self.manifest.as_ref().clone();

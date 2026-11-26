@@ -180,6 +180,31 @@ fn dropped_columns_are_projected_out_of_unflushed_wal_rows_by_stable_id() {
     );
 }
 
+/// A live writer refuses the same evolutions a reopen does, judging its
+/// flushed segments by their headers: it no longer decodes the table to
+/// find out.
+#[test]
+fn a_live_writer_refuses_required_additions_and_physical_type_changes() {
+    for incompatible in [schema_v2_required(), schema_v2_type_change()] {
+        let directory = tempfile::tempdir().expect("temporary table directory");
+        let mut table = TableStore::open(directory.path(), schema_v1(), StoreOptions::default())
+            .expect("open v1");
+        table.ingest(vec![row_v1(1, "old", 1)]).expect("v1 ingest");
+        table.flush().expect("v1 flush");
+        let error = table
+            .evolve_schema(incompatible)
+            .expect_err("incompatible evolution must fail");
+        assert!(
+            error.to_string().contains("incompatible schema evolution"),
+            "{error}"
+        );
+        assert_eq!(
+            table.snapshot().scan().expect("the table still reads"),
+            vec![row_v1(1, "old", 1)]
+        );
+    }
+}
+
 #[test]
 fn live_writer_evolves_nullable_additions_and_drops_without_reopen() {
     let directory = tempfile::tempdir().expect("temporary table directory");
