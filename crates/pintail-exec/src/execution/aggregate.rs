@@ -2356,6 +2356,55 @@ impl AggregateState {
         }
     }
 
+    /// The GROUP_CONCAT of the rows folded so far, read without consuming
+    /// the state: a running window asks after every peer group, and
+    /// cloning the collected items to finish them cost each row the whole
+    /// frame. Joining stops once the session's byte ceiling is passed, so a
+    /// row pays at most that ceiling. `None` for every other state, and for
+    /// a GROUP_CONCAT that sorts its items or has a distinct set, which
+    /// finish as usual.
+    pub(super) fn running_concat(&self, memory: &MemoryTracker) -> Option<Result<Value, ExecError>> {
+        let AggregateValue::GroupConcat {
+            items, separator, ..
+        } = &self.value
+        else {
+            return None;
+        };
+        if !matches!(&self.value, AggregateValue::GroupConcat { order, .. } if order.is_empty())
+            || self.seen.is_some()
+        {
+            return None;
+        }
+        if items.is_empty() {
+            return Some(Ok(Value::Null));
+        }
+        let limit = SESSION_GROUP_CONCAT_MAX_LEN.get();
+        let mut joined = String::new();
+        for (position, item) in items.iter().enumerate() {
+            if position > 0 {
+                joined.push_str(separator);
+            }
+            joined.push_str(item.text());
+            if joined.len() > limit {
+                break;
+            }
+        }
+        if let Err(error) = memory.reserve(joined.len()) {
+            return Some(Err(error));
+        }
+        // MySQL truncates at the session's byte ceiling and raises warning
+        // 1260 for each group that was cut.
+        if joined.len() > limit {
+            let mut cut = limit;
+            while !joined.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            joined.truncate(cut);
+            SESSION_GROUP_CONCAT_WARNINGS.set(SESSION_GROUP_CONCAT_WARNINGS.get().saturating_add(1));
+        }
+        Some(Ok(Value::Utf8(joined)))
+    }
+
     /// Adds `amount` to an integer SUM answered as a DECIMAL: its total is
     /// the scale-0 units of that decimal, the state a decimal column's SUM
     /// keeps, so every fold and finish that reads units reads this one too.

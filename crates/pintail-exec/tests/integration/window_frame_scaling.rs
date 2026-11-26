@@ -54,6 +54,17 @@ fn number(value: &Value) -> Option<i128> {
 
 /// Runs `sql`, returning each row's `id` and window value, and the time.
 fn run(sql: &str) -> (Vec<(i64, Option<i128>)>, std::time::Duration) {
+    let (rows, elapsed) = run_values(sql);
+    (
+        rows.iter()
+            .map(|(id, value)| (*id, number(value)))
+            .collect(),
+        elapsed,
+    )
+}
+
+/// Runs `sql`, returning each row's `id` and window value as it came back.
+fn run_values(sql: &str) -> (Vec<(i64, Value)>, std::time::Duration) {
     let directory = tempfile::tempdir().expect("directory");
     let mut table =
         TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("table");
@@ -109,11 +120,14 @@ fn run(sql: &str) -> (Vec<(i64, Option<i128>)>, std::time::Duration) {
     while let Some(batch) = execution.next_batch().expect("pull") {
         for row in batch.selection().selected_rows() {
             let id = number(batch.columns()[0].value(row).expect("id")).expect("id");
-            let value = number(batch.columns()[1].value(row).expect("window value"));
+            let value = batch.columns()[1]
+                .value(row)
+                .expect("window value")
+                .clone();
             rows.push((i64::try_from(id).expect("id"), value));
         }
     }
-    rows.sort_unstable();
+    rows.sort_unstable_by_key(|(id, _)| *id);
     (rows, started.elapsed())
 }
 
@@ -186,4 +200,25 @@ fn window_frames_over_a_large_partition_cost_about_one_pass() {
         }
         assert!(elapsed.as_secs_f64() < 2.0, "{sql} took {elapsed:?}");
     }
+}
+
+/// A running GROUP_CONCAT reads the items folded so far without copying
+/// them, and stops joining once the session's byte ceiling is passed: each
+/// row pays at most that ceiling, not the whole frame. It copied every
+/// collected item for every row, which was quadratic in the partition.
+#[test]
+fn a_running_group_concat_pays_at_most_the_ceiling_per_row() {
+    let sql = "SELECT id, GROUP_CONCAT(score) OVER (ORDER BY id \
+               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t";
+    let (rows, elapsed) = run_values(sql);
+    eprintln!("{elapsed:?}: {sql}");
+    assert_eq!(rows.len(), usize::try_from(ROWS).expect("rows"));
+    let text = |value: &Value| value.text().expect("text").to_owned();
+    assert_eq!(text(&rows[0].1), "10");
+    assert_eq!(text(&rows[2].1), "10,20,30");
+    // The default ceiling is 1,024 bytes; a long prefix is cut there.
+    let last = text(&rows[rows.len() - 1].1);
+    assert_eq!(last.len(), 1_024);
+    assert!(last.starts_with("10,20,30,40,50,60,0,10"));
+    assert!(elapsed.as_secs_f64() < 2.0, "{sql} took {elapsed:?}");
 }

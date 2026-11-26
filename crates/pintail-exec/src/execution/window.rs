@@ -2023,10 +2023,13 @@ fn compute_window_column(
 /// total as the number it is: the window's column is packed from those
 /// numbers, and none is spelled or cloned per row.
 fn running_value(state: &AggregateState, memory: &MemoryTracker) -> Result<Value, ExecError> {
-    match state.whole_total() {
-        Some(total) => Ok(Value::Int64(total)),
-        None => Ok(materialize_window_value(state.clone().finish(memory)?)),
+    if let Some(total) = state.whole_total() {
+        return Ok(Value::Int64(total));
     }
+    if let Some(joined) = state.running_concat(memory) {
+        return Ok(materialize_window_value(joined?));
+    }
+    Ok(materialize_window_value(state.clone().finish(memory)?))
 }
 
 /// The value of a frame whose state is done with.
