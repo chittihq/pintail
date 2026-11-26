@@ -334,7 +334,14 @@ fn process_resident_bytes() -> u64 {
             status
                 .lines()
                 .find_map(|line| line.strip_prefix("VmRSS:"))
-                .and_then(|value| value.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+                .and_then(|value| {
+                    value
+                        .trim()
+                        .trim_end_matches("kB")
+                        .trim()
+                        .parse::<u64>()
+                        .ok()
+                })
         })
         .and_then(|kilobytes| kilobytes.checked_mul(1024))
     {

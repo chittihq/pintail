@@ -903,7 +903,12 @@ mod tests {
     /// text is touched; it is not empty.
     #[test]
     fn a_coded_column_with_rows_is_not_empty() {
-        let column = StrColumn::from_dictionary(b"ab", &[0, 1, 2], vec![0, 1, 1], ValidityMask::all_valid(3));
+        let column = StrColumn::from_dictionary(
+            b"ab",
+            &[0, 1, 2],
+            vec![0, 1, 1],
+            ValidityMask::all_valid(3),
+        );
         assert_eq!(column.len(), 3);
         assert!(!column.is_empty());
     }

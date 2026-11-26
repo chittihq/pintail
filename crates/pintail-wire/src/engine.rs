@@ -2063,21 +2063,21 @@ impl ReplicaEngine {
                 .iter()
                 .enumerate()
                 .map(|(index, field)| QueryField {
-                wire_column: wire_columns.get(index).cloned(),
-                name: field.name.clone(),
-                data_type: field.data_type,
-                nullable: result_nullability
-                    .get(index)
-                    .copied()
-                    .flatten()
-                    .unwrap_or(field.nullable),
-                collation: result_collations.get(index).cloned().flatten(),
-                group_concat: group_concat.get(index).copied().unwrap_or(false),
-                geometry: field.geometry,
-                timestamp: field.timestamp,
-                wire_hint: wire_hints.get(index).copied().flatten(),
-            })
-            .collect::<Vec<_>>()
+                    wire_column: wire_columns.get(index).cloned(),
+                    name: field.name.clone(),
+                    data_type: field.data_type,
+                    nullable: result_nullability
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .unwrap_or(field.nullable),
+                    collation: result_collations.get(index).cloned().flatten(),
+                    group_concat: group_concat.get(index).copied().unwrap_or(false),
+                    geometry: field.geometry,
+                    timestamp: field.timestamp,
+                    wire_hint: wire_hints.get(index).copied().flatten(),
+                })
+                .collect::<Vec<_>>()
         };
         // Described, the statement is planned and nothing more: starting an
         // execution already runs its uncorrelated subqueries and opens its

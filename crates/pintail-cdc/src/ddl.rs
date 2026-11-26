@@ -294,14 +294,14 @@ pub(crate) fn renames_columns_only(statement: &str) -> bool {
     // A conversion beside the renames re-describes the other text columns.
     !converts_charset(statement)
         && parse_source_ddl(statement).is_ok_and(|statements| {
-        !statements.is_empty()
-            && statements.iter().all(|statement| {
-                matches!(statement, Statement::AlterTable(alter)
-                if alter.operations.iter().all(|operation| {
-                    matches!(operation, AlterTableOperation::RenameColumn { .. })
-                }))
-            })
-    })
+            !statements.is_empty()
+                && statements.iter().all(|statement| {
+                    matches!(statement, Statement::AlterTable(alter)
+                    if alter.operations.iter().all(|operation| {
+                        matches!(operation, AlterTableOperation::RenameColumn { .. })
+                    }))
+                })
+        })
 }
 
 /// A declared type in the terms the source's catalogue reports it.
