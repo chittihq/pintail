@@ -630,7 +630,8 @@ fn exact(expr: &CompiledExpr, batch: &RecordBatch, effects: &mut Effects) -> Opt
 
 /// A decimal subtree's units at its own scale: one value for every row, or
 /// one per row with its validity.
-enum Lane {
+#[derive(Clone)]
+pub(super) enum Lane {
     Fixed(i128, u8),
     Rows {
         units: Vec<i128>,
@@ -677,6 +678,92 @@ impl Lane {
     }
 }
 
+/// Whether `expr` is a chain [`unit_lane`] answers from the batch alone:
+/// columns, constants, and decimal `+`, `-`, unary minus and `*` over
+/// them. Nothing in one calls a function, so nothing is volatile and
+/// nothing warns, and two equal ones answer the same lane.
+fn plain_chain(expr: &CompiledExpr) -> bool {
+    match expr {
+        CompiledExpr::Column(_)
+        | CompiledExpr::Literal(Value::Int64(_) | Value::UInt64(_) | Value::Utf8(_)) => true,
+        CompiledExpr::Binary {
+            op: BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply,
+            left,
+            right,
+            data_type: Some(DataType::Decimal { .. }),
+            ..
+        } => plain_chain(left) && plain_chain(right),
+        CompiledExpr::Unary {
+            op: UnaryOp::Plus | UnaryOp::Minus,
+            expr,
+            data_type: Some(DataType::Decimal { .. }),
+            ..
+        } => plain_chain(expr),
+        _ => false,
+    }
+}
+
+/// The steps of `expr`'s decimal chain that are plain chains themselves,
+/// outermost first, for [`super::SharedLanes`] to find the repeated ones.
+pub(super) fn shareable_subtrees<'expr>(
+    expr: &'expr CompiledExpr,
+    found: &mut Vec<&'expr CompiledExpr>,
+) {
+    let children: [&CompiledExpr; 2] = match expr {
+        CompiledExpr::Binary {
+            op: BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply,
+            left,
+            right,
+            data_type: Some(DataType::Decimal { .. }),
+            ..
+        } => [left, right],
+        CompiledExpr::Unary {
+            op: UnaryOp::Plus | UnaryOp::Minus,
+            expr: inner,
+            data_type: Some(DataType::Decimal { .. }),
+            ..
+        } => [inner, inner],
+        _ => return,
+    };
+    if plain_chain(expr) {
+        found.push(expr);
+    }
+    shareable_subtrees(children[0], found);
+    if !std::ptr::eq(children[0], children[1]) {
+        shareable_subtrees(children[1], found);
+    }
+}
+
+/// [`unit_lane_of`], taking a subtree the batch's other expressions
+/// already computed from the lanes they share, and keeping one they will
+/// want.
+fn unit_lane(expr: &CompiledExpr, batch: &RecordBatch, effects: &mut Effects) -> Option<Lane> {
+    let slot = effects.shared.as_ref().and_then(|shared| {
+        if shared.batch != Some(std::ptr::from_ref(batch)) {
+            return None;
+        }
+        shared.lanes.iter().position(|(subtree, _)| subtree == expr)
+    });
+    let Some(slot) = slot else {
+        return unit_lane_of(expr, batch, effects);
+    };
+    if let Some(lane) = effects
+        .shared
+        .as_ref()
+        .and_then(|shared| shared.lanes[slot].1.clone())
+    {
+        crate::counters::count(|counters| {
+            counters.decimal_lanes_shared = counters.decimal_lanes_shared.saturating_add(1);
+        });
+        return Some(lane);
+    }
+    let lane = unit_lane_of(expr, batch, effects)?;
+    if let Some(shared) = effects.shared.as_mut() {
+        shared.lanes[slot].1 = Some(lane.clone());
+    }
+    Some(lane)
+}
+
 /// `expr` as units at its declared scale, for a chain of decimal `+`, `-`,
 /// unary minus and `*` over columns and constants in which every step's
 /// exact answer has the scale the step declares: a sum or a difference at
@@ -689,7 +776,7 @@ impl Lane {
 /// `None` declines: a division, a step whose declared scale is not its
 /// exact one (a product past the scale cap rounds), or a selected row
 /// that leaves 128 bits. The exact fractions answer those.
-fn unit_lane(expr: &CompiledExpr, batch: &RecordBatch, effects: &mut Effects) -> Option<Lane> {
+fn unit_lane_of(expr: &CompiledExpr, batch: &RecordBatch, effects: &mut Effects) -> Option<Lane> {
     let rows = batch.row_count();
     match expr {
         CompiledExpr::Literal(value @ (Value::Int64(_) | Value::UInt64(_) | Value::Utf8(_))) => {
@@ -1282,6 +1369,65 @@ mod tests {
                 "{expression:?} takes the exact fractions"
             );
         }
+    }
+
+    /// Two expressions over one batch that hold the same exact decimal
+    /// chain compute it once and answer what each answers alone; a chain
+    /// that calls a function is never shared, and a projection whose
+    /// expressions repeat nothing lends nothing.
+    #[test]
+    fn repeated_chains_are_computed_once_per_batch() {
+        let batch = fixture();
+        let step = |op, left, right, scale| binary(op, left, right, decimal_type(scale));
+        let discounted = step(
+            BinaryOp::Multiply,
+            column(0),
+            step(BinaryOp::Subtract, literal(Value::Int64(1)), column(1), 4),
+            6,
+        );
+        let charged = step(
+            BinaryOp::Multiply,
+            discounted.clone(),
+            step(BinaryOp::Add, literal(Value::Int64(1)), column(1), 4),
+            10,
+        );
+        let expressions = [(discounted, 6), (charged, 10)];
+        let mut shared = super::super::SharedLanes::of(
+            &batch,
+            expressions.iter().map(|(expression, _)| expression),
+        )
+        .expect("the product repeats");
+        let _ = crate::counters::take_exec_counters();
+        for (expression, scale) in &expressions {
+            let alone = expression
+                .evaluate_column(&batch, Some(decimal_type(*scale)))
+                .expect("a kernel");
+            let sharing = expression
+                .evaluate_column_sharing(&batch, Some(decimal_type(*scale)), &mut shared)
+                .expect("a kernel");
+            for row in batch.selection().selected_rows() {
+                assert_eq!(
+                    sharing.value(row),
+                    alone.value(row),
+                    "{expression:?} at {row}"
+                );
+            }
+        }
+        assert_eq!(
+            crate::counters::take_exec_counters().decimal_lanes_shared,
+            1
+        );
+        let cast = decimal_cast(column(2), decimal_type(2));
+        let through_a_function = step(BinaryOp::Multiply, cast, column(0), 4);
+        assert!(
+            super::super::SharedLanes::of(&batch, [&through_a_function, &through_a_function])
+                .is_none(),
+            "a chain calling a function is not shared"
+        );
+        assert!(
+            super::super::SharedLanes::of(&batch, expressions.iter().take(1).map(|(e, _)| e))
+                .is_none()
+        );
     }
     #[test]
     fn integer_arithmetic_matches_row_evaluation() {

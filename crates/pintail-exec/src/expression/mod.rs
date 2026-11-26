@@ -10,6 +10,7 @@ mod str_to_date;
 mod temporal;
 pub(crate) mod tuple_key;
 mod vector;
+pub(crate) use vector::SharedLanes;
 
 use temporal::{
     TO_DAYS_EPOCH_OFFSET, convert_tz, mysql_yearweek, parse_mysql_datetime, timestamp_diff,

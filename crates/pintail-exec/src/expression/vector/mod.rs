@@ -53,6 +53,51 @@ pub(super) struct Effects {
     /// against 155 ms for `DATE(placed_at) IN (placed_at, '2025-02-28')`
     /// over 130,000 rows.
     adapter: bool,
+    /// Decimal lanes already computed over this batch, when the caller
+    /// evaluates several expressions over it and lends them.
+    shared: Option<SharedLanes>,
+}
+
+/// Decimal subtrees one batch's evaluation computed, by the subtree, so
+/// that several expressions over the batch sharing one compute it once:
+/// `price * (1 - discount)` and `price * (1 - discount) * (1 + tax)` in
+/// one projection. Only subtrees of columns, constants and exact decimal
+/// `+`, `-` and `*` are kept, whose answer depends on nothing but the
+/// batch: no function, so nothing volatile and nothing that warns.
+/// Belongs to one batch; a new batch needs a new one.
+#[derive(Default)]
+pub(crate) struct SharedLanes {
+    /// The batch the lanes are over. Held only to compare: a kernel that
+    /// evaluates a part of its expression over a batch of its own must not
+    /// be handed lanes of this one.
+    batch: Option<*const RecordBatch>,
+    /// Subtrees that occur more than once, with each one's lane once it
+    /// has been computed.
+    lanes: Vec<(CompiledExpr, Option<numeric::Lane>)>,
+}
+
+impl SharedLanes {
+    /// What `expressions` over `batch` can share, or `None` when no
+    /// subtree occurs twice among them.
+    pub(crate) fn of<'expr>(
+        batch: &RecordBatch,
+        expressions: impl IntoIterator<Item = &'expr CompiledExpr>,
+    ) -> Option<Self> {
+        let mut seen = Vec::new();
+        for expression in expressions {
+            numeric::shareable_subtrees(expression, &mut seen);
+        }
+        let mut lanes: Vec<(CompiledExpr, Option<numeric::Lane>)> = Vec::new();
+        for (index, subtree) in seen.iter().enumerate() {
+            if seen[..index].contains(subtree) && !lanes.iter().any(|(kept, _)| kept == *subtree) {
+                lanes.push(((*subtree).clone(), None));
+            }
+        }
+        (!lanes.is_empty()).then(|| Self {
+            batch: Some(std::ptr::from_ref(batch)),
+            lanes,
+        })
+    }
 }
 
 impl Default for Effects {
@@ -61,6 +106,7 @@ impl Default for Effects {
             divisions_by_zero: 0,
             conversions: None,
             adapter: true,
+            shared: None,
         }
     }
 }
@@ -124,6 +170,31 @@ impl CompiledExpr {
         Some(column)
     }
 
+    /// [`Self::evaluate_column`] for one of several expressions evaluated
+    /// over the same `batch`, which take the decimal subtrees they share
+    /// from `shared` rather than computing each again.
+    pub(crate) fn evaluate_column_sharing(
+        &self,
+        batch: &RecordBatch,
+        data_type: Option<DataType>,
+        shared: &mut SharedLanes,
+    ) -> Option<ColumnVector> {
+        if self.has_variable_effects() {
+            return None;
+        }
+        let mut effects = Effects {
+            shared: Some(std::mem::take(shared)),
+            ..Effects::default()
+        };
+        let column = kernel(self, batch, data_type, &mut effects);
+        if let Some(lanes) = effects.shared.take() {
+            *shared = lanes;
+        }
+        let column = column?;
+        effects.record();
+        Some(column)
+    }
+
     /// `self op literal` as a mask where `self` reads a source `TIMESTAMP`
     /// column in the session's zone (see
     /// [`temporal::session_comparison_mask`]); `None` for anything else.
@@ -168,6 +239,32 @@ impl CompiledExpr {
         // A row this pass skips is a row the operator above never reads, so
         // a warning raised here would never be reported at all. A batch
         // that raised one is left to that operator whole.
+        effects.quiet().then_some(column)
+    }
+
+    /// [`Self::evaluate_vector_column_quietly`] for one of several
+    /// expressions evaluated over the same `batch`, sharing the decimal
+    /// subtrees they hold through `shared`. A shared lane raises nothing,
+    /// so sharing never changes whether a batch is quiet.
+    pub(crate) fn evaluate_vector_column_quietly_sharing(
+        &self,
+        batch: &RecordBatch,
+        data_type: Option<DataType>,
+        shared: &mut SharedLanes,
+    ) -> Option<ColumnVector> {
+        if self.has_variable_effects() {
+            return None;
+        }
+        let mut effects = Effects {
+            adapter: false,
+            shared: Some(std::mem::take(shared)),
+            ..Effects::default()
+        };
+        let column = kernel(self, batch, data_type, &mut effects);
+        if let Some(lanes) = effects.shared.take() {
+            *shared = lanes;
+        }
+        let column = column?;
         effects.quiet().then_some(column)
     }
 }

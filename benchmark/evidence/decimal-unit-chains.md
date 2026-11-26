@@ -43,3 +43,66 @@ general hash aggregate on one thread, while the control is answered by the
 per-segment grouped fold. A profile of the after binary shows allocation,
 per-row group hashing and the projection's per-row memory bound ahead of the
 chain kernel itself.
+
+## Shared subtrees within one projection
+
+`SUM(price * (1 - discount))` and `SUM(price * (1 - discount) * (1 + tax))`
+both compute `price * (1 - discount)`. A projection (the aggregate-argument
+projection included) now finds the decimal subtrees that occur more than once
+among its computed expressions and computes each once per batch. Only plain
+chains are shared: columns, constants, and decimal `+`, `-`, unary minus and
+`*` evaluated on units by the path above, so the shared lane is the exact
+answer at its declared scale. Anything that calls a function is never shared,
+so no volatile or warning expression is merged. Lanes are tied to the
+projection's batch and are never handed to a kernel evaluating over a batch
+of its own. `ExecCounters::decimal_lanes_shared` counts reused subtrees.
+
+Same harness, three binaries interleaved (before, units only, units plus
+sharing), three rounds each:
+
+| case | units only (median per round) | + sharing (median per round) | units only min | + sharing min |
+|---|---|---|---:|---:|
+| summary | 429 / 479 / 537 | 409 / 415 / 498 | 417 | 367 |
+| discounted | 223 / 259 / 260 | 240 / 242 / 287 | 217 | 213 |
+| charged | 279 / 337 / 343 | 296 / 300 / 344 | 265 | 270 |
+
+Sharing only acts where a subtree repeats, so only `summary` can move: about
+5-10% by median and minimum, near this box's run-to-run spread. The single
+sums are the no-sharing control and stay within noise. The remaining cost is
+the general aggregate path, not arithmetic.
+
+## TPC-H Q1 through the server, on top of the parallel packed-key fold
+
+Measured after rebasing on the packed-key fold for wide decimal aggregates
+and the fused-round evaluation of computed projections, which made the
+in-process "general path" remark above obsolete: Q1 now folds on the
+workers, and what they spend is the two products. Release builds, an 8-vCPU
+box, `PINTAIL_DISABLE_SETTLED_MEMO=1` and `PINTAIL_COMPACTION_INPUT_ROWS=1`
+on every arm, each binary on its own copy of one replica, Q1 run over HTTP
+in rotating order, 15 cycles per round after two warm-up runs. The TPC-H
+seed was stopped at 81% of SF1 (4,843,000 line items, 4,500,266 of them
+passing Q1's filter) because the single-connection seeder would not finish
+inside the box's lifetime. Every arm's answer is the same and is
+byte-identical to MySQL 8.4's over the same data; the profile reports the
+packed-key fold with 0 batches folded row by row.
+
+| arm | median per round (ms) | fastest | process CPU, median per run |
+|---|---|---:|---:|
+| dev before this lane | 643 / 564 / 589 / 659 / 597 / 670 | 526 | 3,620-4,130 ms |
+| units + sharing | 133 / 115 / 120 / 130 / 111 / 141 | 89 | 720-840 ms |
+
+Q1 is about 5x faster in wall clock and CPU. The share of sharing alone,
+interleaved against a build of the units slice only (four rounds):
+
+| arm | median per round (ms) | fastest | process CPU, median per run |
+|---|---|---:|---:|
+| units only | 137 / 126 / 110 / 106 | 94 | 670-750 ms |
+| units + sharing | 108 / 106 / 98 / 98 | 84 | 580-630 ms |
+
+Sharing the product saves about 12% of Q1's CPU and 8-20% of its wall time.
+
+Before either the fold or the projection change, on the same data, the
+units path alone took Q1 from 2,486-2,895 ms to 531-665 ms per round median
+and sharing took it to 433-542 ms; on the packed-key fold without the
+fused-round projection, both together took it from 2,486-2,687 ms to
+262-326 ms.

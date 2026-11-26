@@ -3151,6 +3151,24 @@ fn passthrough_columns(
         .collect()
 }
 
+/// The decimal subtrees the computed ones of `expressions` repeat, for
+/// their evaluation over `batch` to compute once; `None` when nothing
+/// repeats.
+fn shared_lanes(
+    expressions: &[(CompiledExpr, Option<DataType>)],
+    passthrough: &[Option<usize>],
+    batch: &RecordBatch,
+) -> Option<crate::expression::SharedLanes> {
+    crate::expression::SharedLanes::of(
+        batch,
+        expressions
+            .iter()
+            .zip(passthrough)
+            .filter(|(_, position)| position.is_none())
+            .map(|((expression, _), _)| expression),
+    )
+}
+
 /// One input batch projected through `expressions`.
 #[allow(clippy::too_many_lines)]
 fn project_batch(
@@ -3183,6 +3201,8 @@ fn project_batch(
     let mut columns = Vec::with_capacity(expressions.len());
     // Expressions no kernel answers, by the column each fills.
     let mut by_row = Vec::new();
+    // A decimal subtree several of them hold is computed once.
+    let mut shared = shared_lanes(expressions, &passthrough, &batch);
     for ((expression, data_type), position) in expressions.iter().zip(&passthrough) {
         if let Some(position) = position {
             columns.push(Some(batch.columns()[*position].clone()));
@@ -3190,7 +3210,10 @@ fn project_batch(
         }
         // A whole batch at a time over packed units where the
         // expression has kernels; row by row where it has not.
-        let column = expression.evaluate_column(&batch, *data_type);
+        let column = match shared.as_mut() {
+            Some(shared) => expression.evaluate_column_sharing(&batch, *data_type, shared),
+            None => expression.evaluate_column(&batch, *data_type),
+        };
         if column.is_none() {
             by_row.push((columns.len(), expression, *data_type));
         }
@@ -3267,13 +3290,20 @@ fn project_batch_on_worker(
     if memory.reserve(working).is_err() {
         return Ok(Err(batch));
     }
+    // A decimal subtree several of them hold is computed once.
+    let mut shared = shared_lanes(expressions, &passthrough, &batch);
     let columns = expressions
         .iter()
         .zip(&passthrough)
-        .map(|((expression, data_type), position)| match position {
-            Some(position) => Some(batch.columns()[*position].clone()),
-            None => expression.evaluate_vector_column_quietly(&batch, *data_type),
-        })
+        .map(
+            |((expression, data_type), position)| match (position, shared.as_mut()) {
+                (Some(position), _) => Some(batch.columns()[*position].clone()),
+                (None, Some(shared)) => {
+                    expression.evaluate_vector_column_quietly_sharing(&batch, *data_type, shared)
+                }
+                (None, None) => expression.evaluate_vector_column_quietly(&batch, *data_type),
+            },
+        )
         .collect::<Option<Vec<_>>>();
     memory.release(working);
     let Some(columns) = columns else {

@@ -126,6 +126,9 @@ pub struct ExecCounters {
     /// Batches whose decimal `+`, `-` and `*` chain was computed on its
     /// operands' scaled units, with no exact fraction built per row.
     pub decimal_unit_batches: u64,
+    /// Decimal subtrees an expression took from another one evaluated over
+    /// the same batch, without computing them again.
+    pub decimal_lanes_shared: u64,
 }
 
 thread_local! {
@@ -173,6 +176,7 @@ thread_local! {
             distinct_units_summed: 0,
             window_spill_rows_batched: 0,
             decimal_unit_batches: 0,
+            decimal_lanes_shared: 0,
         })
     };
 }
