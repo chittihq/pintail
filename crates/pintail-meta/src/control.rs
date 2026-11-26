@@ -1802,6 +1802,22 @@ impl MetaStore {
             .context("failed to decode sync runs")
     }
 
+    /// How many dead-letter records one database holds, counted without
+    /// reading them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the count cannot be read.
+    pub fn dlq_count(&self, database_id: &str) -> Result<u64> {
+        let count: i64 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM dlq WHERE db_id = ?1", [database_id], |row| {
+                row.get(0)
+            })
+            .context("failed to count dead-letter records")?;
+        u64::try_from(count).context("dead-letter count is negative")
+    }
+
     /// Lists recent dead-letter records, optionally limited to one database.
     ///
     /// # Errors

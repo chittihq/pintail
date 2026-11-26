@@ -301,6 +301,24 @@ impl MetaStore {
             .context("failed to decode backups")
     }
 
+    /// How many of one database's backups are in `status`, counted without
+    /// reading them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the count cannot be read.
+    pub fn backup_count(&self, database_id: &str, status: &str) -> Result<u64> {
+        let count: i64 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM backups WHERE db_id = ?1 AND status = ?2",
+                (database_id, status),
+                |row| row.get(0),
+            )
+            .context("failed to count backups")?;
+        u64::try_from(count).context("backup count is negative")
+    }
+
     /// Deletes one non-running backup's audit record (retention pruning).
     ///
     /// # Errors

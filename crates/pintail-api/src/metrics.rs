@@ -251,17 +251,15 @@ fn render(state: &ApiState) -> anyhow::Result<String> {
                 "pintail_catalog_missing_tables{{database=\"{database_id}\"}} {missing}"
             );
         }
-        let dlq = metadata.dlq_records(Some(&database.id), 1_000_000)?.len();
+        // Counted in SQL: a scrape read up to a million records of each
+        // kind into memory only to take their number.
+        let dlq = metadata.dlq_count(&database.id)?;
         let _ = writeln!(
             output,
             "pintail_dead_letters{{database=\"{database_id}\"}} {dlq}"
         );
-        let backups = metadata.backups(&database.id, 1_000_000)?;
         for status in ["running", "completed", "error"] {
-            let count = backups
-                .iter()
-                .filter(|backup| backup.status == status)
-                .count();
+            let count = metadata.backup_count(&database.id, status)?;
             let _ = writeln!(
                 output,
                 "pintail_backup_runs{{database=\"{database_id}\",status=\"{status}\"}} {count}"
@@ -328,6 +326,20 @@ fn visit_storage(path: &Path, observation: &mut StorageObservation) {
 }
 
 fn process_resident_bytes() -> u64 {
+    // Linux says it in /proc; forking `ps` on every scrape is the fallback
+    // for systems that do not.
+    if let Some(bytes) = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix("VmRSS:"))
+                .and_then(|value| value.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        })
+        .and_then(|kilobytes| kilobytes.checked_mul(1024))
+    {
+        return bytes;
+    }
     Command::new("ps")
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
         .output()
