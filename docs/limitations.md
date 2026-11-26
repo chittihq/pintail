@@ -1060,6 +1060,11 @@ but may be wrong.
   every later file is past the range; GTID mode, or a source whose binlog
   numbering has been reset, is the way out.
 
+- A DOUBLE group key holding both zeros forms one group, as in MySQL, but
+  the packed grouping path prints that group's key as `0` where MySQL
+  prints the first zero it met, which may be `-0`. Counts and aggregates
+  are the same.
+
 - SEC_TO_TIME, MAKETIME, CONVERT_TZ and JSON_UNQUOTE/->> advertise
   MySQL's own column types (TIME, DATETIME, LONG_BLOB) as direct
   projections; wrapped in another expression they fall back to
