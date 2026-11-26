@@ -400,8 +400,16 @@ impl TypedValues {
             Self::Float64(values) => values.get(row).copied(),
             Self::Decimal128 { values, scale, .. } => {
                 let value = values.get(row)?;
-                #[allow(clippy::cast_precision_loss)]
-                Some(value as f64 / POW10[usize::from(*scale).min(18)])
+                match POW10.get(usize::from(*scale)) {
+                    #[allow(clippy::cast_precision_loss)]
+                    Some(divisor) => Some(value as f64 / divisor),
+                    // Past 18 fractional digits no single power of ten
+                    // divides exactly; the decimal's own digits read as a
+                    // double round once, as the server's conversion does.
+                    None => pintail_types::format_decimal_scaled(value, *scale)
+                        .parse()
+                        .ok(),
+                }
             }
             Self::Utf8(_) | Self::Temporal { .. } => None,
         }
@@ -1689,6 +1697,26 @@ mod tests {
     use pintail_types::{DataType, Value};
 
     use super::{BatchError, ColumnVector, RecordBatch, SelectionMask};
+
+    #[test]
+    fn decimal_number_keeps_every_fractional_digit_past_eighteen() {
+        use super::{DecimalUnits, LazyText, TypedValues};
+        // 1.5 at scale 30: 15 followed by 29 zeros.
+        let units = 15 * 10_i128.pow(29);
+        let typed = TypedValues::Decimal128 {
+            values: DecimalUnits::Wide(vec![units, -units]),
+            scale: 30,
+            text: LazyText::decimal(30),
+        };
+        assert_eq!(typed.number_at(0), Some(1.5));
+        assert_eq!(typed.number_at(1), Some(-1.5));
+        let narrow = TypedValues::Decimal128 {
+            values: DecimalUnits::Narrow(vec![-125]),
+            scale: 2,
+            text: LazyText::decimal(2),
+        };
+        assert_eq!(narrow.number_at(0), Some(-1.25));
+    }
 
     #[test]
     fn decimal_text_is_canonical_only_as_its_units_format() {
