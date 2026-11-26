@@ -480,6 +480,9 @@ const REBUILD_ONLY_CLAUSES: &[&str] = &[
     "DEFAULT CHARSET",
     "DEFAULT CHARACTER SET",
     "DEFAULT COLLATE",
+    // Re-encodes every text column; see `parse_ddl` on why that is metadata.
+    "CONVERT TO CHARACTER SET",
+    "CONVERT TO CHARSET",
     "CHARSET",
     "CHARACTER SET",
     "COLLATE",
@@ -499,6 +502,22 @@ fn rebuild_only_alter(statement: &str) -> bool {
     if clauses.is_empty() {
         return true;
     }
+    for part in top_level_clauses(clauses) {
+        let clause = part.trim().to_ascii_uppercase();
+        if !starts_with_clause(&clause, REBUILD_ONLY_CLAUSES) {
+            return false;
+        }
+        // ORDER BY comes last and its column list is comma-separated.
+        if clause.starts_with("ORDER BY") {
+            return true;
+        }
+    }
+    true
+}
+
+/// The comma-separated clauses of an `ALTER TABLE`, split only at commas
+/// outside quotes and parentheses.
+fn top_level_clauses(clauses: &str) -> Vec<&str> {
     let mut depth = 0_i32;
     let mut quote = None;
     let mut start = 0;
@@ -517,22 +536,39 @@ fn rebuild_only_alter(statement: &str) -> bool {
         }
     }
     parts.push(&clauses[start..]);
-    for part in parts {
-        let clause = part.trim().to_ascii_uppercase();
-        let rebuild_only = REBUILD_ONLY_CLAUSES.iter().any(|option| {
-            clause
-                .strip_prefix(option)
-                .is_some_and(|after| after.is_empty() || after.starts_with([' ', '=', '\t', '\n']))
-        });
-        if !rebuild_only {
-            return false;
-        }
-        // ORDER BY comes last and its column list is comma-separated.
-        if clause.starts_with("ORDER BY") {
-            return true;
-        }
-    }
-    true
+    parts
+}
+
+/// Whether an upper-cased clause opens with one of `options` as a whole word.
+fn starts_with_clause(clause: &str, options: &[&str]) -> bool {
+    options.iter().any(|option| {
+        clause
+            .strip_prefix(option)
+            .is_some_and(|after| after.is_empty() || after.starts_with([' ', '=', '\t', '\n']))
+    })
+}
+
+const CONVERSION_CLAUSES: &[&str] = &["CONVERT TO CHARACTER SET", "CONVERT TO CHARSET"];
+
+/// An `ALTER TABLE` that converts the table's character set beside other
+/// clauses, with the conversion taken out: the parser cannot read the
+/// conversion, and classifying the whole statement by it kept a column it
+/// added from ever reaching the mirror. The conversion itself changes no
+/// stored value, and the re-probe that follows any column change adopts the
+/// collation it sets. `None` when the statement has no conversion, or
+/// nothing but conversions and rebuild-only clauses.
+fn without_conversion(statement: &str) -> Option<String> {
+    let (_, _, clauses) = alter_table_parts(statement)?;
+    let head = &statement[..statement.len() - clauses.len()];
+    let clauses = clauses.trim().trim_end_matches(';').trim();
+    let parts = top_level_clauses(clauses);
+    let kept = parts
+        .iter()
+        .filter(|part| !starts_with_clause(&part.trim().to_ascii_uppercase(), CONVERSION_CLAUSES))
+        .map(|part| part.trim())
+        .collect::<Vec<_>>();
+    (kept.len() < parts.len() && !kept.is_empty())
+        .then(|| format!("{} {}", head.trim_end(), kept.join(", ")))
 }
 
 /// Parses one replicated DDL statement.
@@ -754,11 +790,7 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
     // represent losslessly would change values, and needs an operator resync -
     // recorded in docs/limitations.md rather than guessed at here, because the
     // statement alone does not say which kind it is.
-    if normalized.starts_with("ALTER TABLE")
-        && (normalized.contains(" CONVERT TO CHARACTER SET")
-            || normalized.contains(" CONVERT TO CHARSET")
-            || rebuild_only_alter(statement))
-    {
+    if normalized.starts_with("ALTER TABLE") && rebuild_only_alter(statement) {
         return Ok(alter_table_target(statement)
             .map(|(schema, table)| {
                 let foreign = schema
@@ -776,6 +808,11 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
                 }
             })
             .unwrap_or_default());
+    }
+    if normalized.starts_with("ALTER TABLE")
+        && let Some(rest) = without_conversion(statement)
+    {
+        return parse_ddl(&rest, database);
     }
     let statements = parse_source_ddl(statement)?;
     let mut parsed = ParsedDdl::default();
@@ -1068,6 +1105,42 @@ mod convert_charset_tests {
                 "{statement}",
             );
         }
+    }
+
+    /// A conversion beside a column clause keeps the column change: the
+    /// statement was classified by the conversion alone, so the column it
+    /// added never reached the mirror.
+    #[test]
+    fn a_conversion_beside_a_column_clause_is_read_as_the_column_change() {
+        for statement in [
+            "ALTER TABLE orders ADD COLUMN c INT, CONVERT TO CHARACTER SET utf8mb4",
+            "ALTER TABLE shop.orders CONVERT TO CHARSET utf8mb4 COLLATE utf8mb4_bin, ADD COLUMN c INT",
+        ] {
+            assert_eq!(
+                parse_ddl(statement, "shop").expect(statement).actions,
+                vec![DdlAction::Alter {
+                    table: "orders".to_owned(),
+                    kind: AlterKind::AddOrDropColumns {
+                        added: vec!["c".to_owned()],
+                        dropped: Vec::new(),
+                    },
+                }],
+                "{statement}",
+            );
+        }
+        // A conversion beside rebuild-only clauses is still metadata.
+        assert_eq!(
+            parse_ddl(
+                "ALTER TABLE orders CONVERT TO CHARACTER SET utf8mb4, ALGORITHM=INPLACE",
+                "shop",
+            )
+            .unwrap()
+            .actions,
+            vec![DdlAction::Alter {
+                table: "orders".to_owned(),
+                kind: AlterKind::IndexOnly,
+            }],
+        );
     }
 
     /// The prefix match must not swallow statements that merely mention the
