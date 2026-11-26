@@ -140,6 +140,20 @@ struct ControlTable {
     rows_synced: u64,
     schema_version: u32,
     soft_delete_column: Option<String>,
+    /// Every schema generation the table has been through, oldest first.
+    /// The store's segments are written under these shapes, so a restore
+    /// without them cannot open a table that has seen DDL. Empty in
+    /// backups taken before the history was carried.
+    #[serde(default)]
+    schema_history: Vec<ControlSchemaVersion>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ControlSchemaVersion {
+    version: u32,
+    ddl_text: Option<String>,
+    columns_json: String,
+    applied_at: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -427,7 +441,7 @@ pub(crate) async fn restore(
             "restored database name cannot be empty",
         ));
     }
-    let metadata = state.metadata()?;
+    let mut metadata = state.metadata()?;
     let record = metadata
         .backups(&database_id, 1_000)
         .map_err(ApiError::internal)?
@@ -453,7 +467,7 @@ pub(crate) async fn restore(
     let restored = restore_backup(store.as_ref(), manifest, &target)
         .await
         .map_err(unavailable)?;
-    register_restore(&metadata, &restored_id, name, &control, &backup_created_at)
+    register_restore(&mut metadata, &restored_id, name, &control, &backup_created_at)
         .map_err(ApiError::internal)?;
     // Without this the restored row keeps a NULL workspace_id, and every
     // dashboard listing filters on `workspace_id = ?`. Restore would report
@@ -710,7 +724,7 @@ async fn run_backup_job(
     let checkpoint = metadata
         .snapshot_checkpoint(database_id)
         .map_err(ApiError::internal)?;
-    let control = control_plane(&database, &records, checkpoint.as_ref())?;
+    let control = control_plane(&metadata, &database, &records, checkpoint.as_ref())?;
     let config = metadata
         .backup_config(database_id)
         .map_err(ApiError::internal)?
@@ -741,7 +755,7 @@ async fn run_backup_job(
     };
     drop(metadata);
 
-    let (tables, _pins) = pinned_tables(state, database_id, &report, &records)?;
+    let (tables, _pins) = pinned_tables(state, database_id, &report, &records, &control)?;
     let source = BackupSource {
         database_id: database_id.to_owned(),
         backup_id: backup_id.to_owned(),
@@ -760,7 +774,13 @@ fn pinned_tables(
     database_id: &str,
     report: &ProbeReport,
     records: &[TableRecord],
+    control: &ControlPlane,
 ) -> Result<(Vec<SourceTable>, Vec<TableSnapshot>), ApiError> {
+    let history_by_name = control
+        .tables
+        .iter()
+        .map(|table| (table.name.to_ascii_lowercase(), &table.schema_history))
+        .collect::<BTreeMap<_, _>>();
     let by_name = records
         .iter()
         .map(|record| (record.name.to_ascii_lowercase(), record))
@@ -782,9 +802,23 @@ fn pinned_tables(
             .and_then(|name| name.to_str())
             .ok_or_else(|| ApiError::internal("table directory is not valid UTF-8"))?
             .to_owned();
+        // The store is opened under the table's current schema generation,
+        // as the query path opens it: the probe's columns at version 1 do
+        // not describe a table that has seen DDL.
+        let mut source = source.clone();
+        let latest = history_by_name
+            .get(&source.name.to_ascii_lowercase())
+            .and_then(|history| history.last());
+        let version = latest.map_or(1, |record| record.version);
+        if let Some(record) = latest {
+            source.columns =
+                serde_json::from_str(&record.columns_json).map_err(ApiError::internal)?;
+        }
         let mut store = TableStore::open(
             &directory,
-            source.table_schema().map_err(ApiError::internal)?,
+            source
+                .table_schema_with_version(version)
+                .map_err(ApiError::internal)?,
             StoreOptions::default(),
         )
         .map_err(unavailable)?;
@@ -811,10 +845,35 @@ fn pinned_tables(
 }
 
 fn control_plane(
+    metadata: &pintail_meta::MetaStore,
     database: &pintail_meta::DatabaseRecord,
     tables: &[TableRecord],
     checkpoint: Option<&pintail_meta::SnapshotCheckpointRecord>,
 ) -> Result<ControlPlane, ApiError> {
+    let mut control_tables = Vec::with_capacity(tables.len());
+    for table in tables {
+        let schema_history = metadata
+            .schema_history(&database.id, &table.name)
+            .map_err(ApiError::internal)?
+            .into_iter()
+            .map(|record| ControlSchemaVersion {
+                version: record.version,
+                ddl_text: record.ddl_text,
+                columns_json: record.columns_json,
+                applied_at: record.applied_at,
+            })
+            .collect();
+        control_tables.push(ControlTable {
+            name: table.name.clone(),
+            primary_key_json: table.primary_key_json.clone(),
+            cursor_column: table.cursor_column.clone(),
+            sort_key_json: table.sort_key_json.clone(),
+            rows_synced: table.rows_synced,
+            schema_version: table.schema_version,
+            soft_delete_column: table.soft_delete_column.clone(),
+            schema_history,
+        });
+    }
     Ok(ControlPlane {
         database: ControlDatabase {
             name: database.name.clone(),
@@ -828,18 +887,7 @@ fn control_plane(
                 .clone()
                 .ok_or_else(|| ApiError::conflict("database has not been probed"))?,
         },
-        tables: tables
-            .iter()
-            .map(|table| ControlTable {
-                name: table.name.clone(),
-                primary_key_json: table.primary_key_json.clone(),
-                cursor_column: table.cursor_column.clone(),
-                sort_key_json: table.sort_key_json.clone(),
-                rows_synced: table.rows_synced,
-                schema_version: table.schema_version,
-                soft_delete_column: table.soft_delete_column.clone(),
-            })
-            .collect(),
+        tables: control_tables,
         checkpoint: checkpoint.map(|checkpoint| ControlCheckpoint {
             kind: checkpoint.kind.clone(),
             gtid_set: checkpoint.gtid_set.clone(),
@@ -850,7 +898,7 @@ fn control_plane(
 }
 
 fn register_restore(
-    metadata: &pintail_meta::MetaStore,
+    metadata: &mut pintail_meta::MetaStore,
     database_id: &str,
     name: &str,
     control: &ControlPlane,
@@ -887,7 +935,23 @@ fn register_restore(
         tables: &tables,
         checkpoint,
         now: &Utc::now().to_rfc3339(),
-    })
+    })?;
+    // The restored segments were written under these generations; without
+    // them the restored tables open at version 1 and cannot read their own
+    // files once the source has seen DDL.
+    for table in &control.tables {
+        for record in &table.schema_history {
+            metadata.record_schema_history(
+                database_id,
+                &table.name,
+                record.version,
+                record.ddl_text.as_deref(),
+                &record.columns_json,
+                &record.applied_at,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn destination(state: &ApiState, config: &BackupConfigRecord) -> Result<S3Destination, ApiError> {
@@ -1068,6 +1132,32 @@ pub(crate) fn restored_data_age(
 #[cfg(test)]
 mod restored_age_tests {
     use super::*;
+
+    #[test]
+    fn a_backup_from_before_schema_history_still_reads_and_a_new_one_carries_it() {
+        let old = serde_json::json!({
+            "name": "orders",
+            "primary_key_json": null,
+            "cursor_column": null,
+            "sort_key_json": null,
+            "rows_synced": 3,
+            "schema_version": 1,
+            "soft_delete_column": null,
+        });
+        let table: ControlTable = serde_json::from_value(old).expect("old control table");
+        assert!(table.schema_history.is_empty());
+        let mut new = serde_json::to_value(&table).expect("serialize");
+        new["schema_history"] = serde_json::json!([{
+            "version": 2,
+            "ddl_text": "ALTER TABLE orders ADD COLUMN note TEXT",
+            "columns_json": "[]",
+            "applied_at": "2026-01-01T00:00:00Z",
+        }]);
+        let table: ControlTable = serde_json::from_value(new).expect("new control table");
+        assert_eq!(table.schema_history.len(), 1);
+        assert_eq!(table.schema_history[0].version, 2);
+    }
+
     #[test]
     fn age_uses_backup_time_and_clamps_clock_skew() {
         let now = chrono::DateTime::parse_from_rfc3339("2024-02-03T02:00:00Z")
