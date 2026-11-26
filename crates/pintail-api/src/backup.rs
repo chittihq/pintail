@@ -467,8 +467,14 @@ pub(crate) async fn restore(
     let restored = restore_backup(store.as_ref(), manifest, &target)
         .await
         .map_err(unavailable)?;
-    register_restore(&mut metadata, &restored_id, name, &control, &backup_created_at)
-        .map_err(ApiError::internal)?;
+    register_restore(
+        &mut metadata,
+        &restored_id,
+        name,
+        &control,
+        &backup_created_at,
+    )
+    .map_err(ApiError::internal)?;
     // Without this the restored row keeps a NULL workspace_id, and every
     // dashboard listing filters on `workspace_id = ?`. Restore would report
     // success, write the segments and register the tables, and produce a

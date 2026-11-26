@@ -513,7 +513,10 @@ mod tests {
             super::Float64::new(-0.0).cmp(&super::Float64::new(0.0)),
             std::cmp::Ordering::Equal
         );
-        assert_eq!(super::Float64::new(-0.0).get().to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(
+            super::Float64::new(-0.0).get().to_bits(),
+            (-0.0_f64).to_bits()
+        );
     }
 
     #[test]

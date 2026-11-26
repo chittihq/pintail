@@ -610,7 +610,8 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         watch: Option<&mut dyn DisconnectWatch>,
     ) -> std::io::Result<bool> {
         // Commands come only after authentication, so the full limit applies.
-        self.reader.set_payload_limit(crate::packet::DEFAULT_PAYLOAD_LIMIT);
+        self.reader
+            .set_payload_limit(crate::packet::DEFAULT_PAYLOAD_LIMIT);
         let Some(payload) = self.reader.next_payload().await? else {
             return Ok(false);
         };

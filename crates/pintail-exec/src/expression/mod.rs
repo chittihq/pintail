@@ -149,8 +149,7 @@ fn typed_comparison_mask(
             let fraction_digits = text.split_once('.').map_or(0, |(_, digits)| digits.len());
             let needle = pintail_types::parse_time_micros(text).filter(|micros| {
                 u8::try_from(fraction_digits).is_ok_and(|fsp| {
-                    fsp <= 6
-                        && pintail_types::format_time_micros(*micros, fsp) == *text
+                    fsp <= 6 && pintail_types::format_time_micros(*micros, fsp) == *text
                 })
             })?;
             let views = column.views();
@@ -11637,7 +11636,13 @@ mod tests {
         use pintail_sql::BinaryOp;
         use pintail_types::{DataType, Value};
         let mut column = StrColumn::default();
-        for text in ["100:00:00", "20:00:00", "-01:00:00", "-02:00:00", "00:00:00"] {
+        for text in [
+            "100:00:00",
+            "20:00:00",
+            "-01:00:00",
+            "-02:00:00",
+            "00:00:00",
+        ] {
             column.push(text.as_bytes());
         }
         let typed = TypedValues::Utf8(column);
