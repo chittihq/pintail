@@ -806,8 +806,7 @@ impl TableStore {
             changed = true;
             publish_schema_upgrade(&directory, &mut manifest, &schema)?;
         }
-        let next_append_row_id =
-            find_next_append_row_id(&directory, &manifest, &schema, &memtable)?;
+        let next_append_row_id = find_next_append_row_id(&manifest, &schema, &memtable)?;
         if !options.transactional {
             // A replicated table keeps here the highest row version it has
             // ever flushed: a merge that drops a delete takes the delete's
@@ -3645,7 +3644,6 @@ fn pinned_manifests(directory: &Path) -> Vec<Arc<Manifest>> {
 }
 
 fn find_next_append_row_id(
-    directory: &Path,
     manifest: &Manifest,
     schema: &TableSchema,
     memtable: &Memtable,
@@ -3657,10 +3655,11 @@ fn find_next_append_row_id(
     for row in memtable.snapshot().values() {
         maximum = maximum.max(append_row_id(row.key())?);
     }
+    // A segment's rows are sorted by key and its manifest entry records the
+    // last one, so the highest id is read from there rather than by
+    // decoding every row of the table on each open.
     for meta in &manifest.segments {
-        for row in segment::read(directory, meta, schema)? {
-            maximum = maximum.max(append_row_id(row.key())?);
-        }
+        maximum = maximum.max(append_row_id(&meta.max_key)?);
     }
     maximum.checked_add(1).ok_or(StoreError::SequenceOverflow)
 }
