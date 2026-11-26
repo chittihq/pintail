@@ -61,6 +61,7 @@ struct Fixture {
     table: TableStore,
     catalog: CatalogSnapshot,
     zero_divisors: u64,
+    segments: u64,
 }
 
 impl Fixture {
@@ -123,6 +124,7 @@ impl Fixture {
             ])
             .expect("catalog"),
             zero_divisors,
+            segments,
         }
     }
 
@@ -220,9 +222,14 @@ fn computed_projections_fold_on_workers_with_the_pulled_answers() {
             })
             .collect::<Vec<_>>();
         assert_eq!(fused_rows, pulled_rows, "{fused}");
-        assert!(
-            fused_counters.projected_batches_on_workers > 0,
-            "{fused}: nothing was projected on a worker\n{fused_counters:?}\n{profile}"
+        // A segment is a batch. Every one is projected on a worker but the
+        // one whose divisions by zero send it to the query's thread, and a
+        // grouped aggregate's first, which it pulls to choose its path.
+        let declined = u64::from(select.contains("divisor")) + u64::from(rest.contains("GROUP BY"));
+        assert_eq!(
+            fused_counters.projected_batches_on_workers,
+            fixture.segments - declined,
+            "{fused}\n{fused_counters:?}\n{profile}"
         );
         assert_eq!(
             pulled_counters.projected_batches_on_workers, 0,

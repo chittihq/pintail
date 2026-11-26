@@ -5293,17 +5293,43 @@ fn build_ungrouped_fold(
     let mut states: Vec<AggregateState> = aggregates.iter().map(AggregateState::new).collect();
     let mut rows_buffer = Vec::new();
     let mut tally = FoldTally::default();
-    let drained = fold_ungrouped_in_place(input, aggregates, &mut states, &mut tally, memory)?;
-    while !drained && let Some(batch) = input.next_batch(memory)? {
+    let mut drained = fold_ungrouped_in_place(input, aggregates, &mut states, &mut tally, memory)?;
+    // What the column fold declined is folded here, in the input's order.
+    // The batches are still read a round ahead, so the scan, its filters
+    // and a projection of computed arguments run on the workers; only the
+    // fold is this thread's.
+    let mut read_ahead = std::collections::VecDeque::new();
+    let mut fuse = !super::switches::fused_fold_disabled();
+    loop {
+        if read_ahead.is_empty() && fuse && !drained {
+            fuse = read_ahead_round(
+                input,
+                memory,
+                rayon::current_num_threads().max(1),
+                &mut read_ahead,
+                &mut drained,
+            )?;
+        }
+        let (batch, reserved) = match read_ahead.pop_front() {
+            Some(entry) => entry,
+            None if drained => break,
+            None => match input.next_batch(memory)? {
+                Some(batch) => (batch, 0),
+                None => break,
+            },
+        };
         memory.check_interruption()?;
-        fold_batch(
+        let folded = fold_batch(
             &batch,
             aggregates,
             &mut states,
             &mut rows_buffer,
             &mut tally,
             memory,
-        )?;
+        );
+        drop(batch);
+        memory.release(reserved);
+        folded?;
     }
     super::ProfileNote::of(input).set(&format!(
         "ungrouped column fold: {} aggregate-batches by column, {} per row",
