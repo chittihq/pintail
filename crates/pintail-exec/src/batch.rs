@@ -8,8 +8,8 @@ use crate::array::{StrColumn, ValidityMask};
 ///
 /// Every operator pays a fixed cost per batch - a selection mask, a column
 /// vector set-up, a round trip through the chain - and 4,096-row batches
-/// paid it sixteen times as often. Measured at 138-141ms against 156-157ms on a join and 23-24ms
-/// against 27ms on a join-free group-by.
+/// paid it sixteen times as often. Measured at 138-141ms against 156-157ms
+/// on a join and 23-24ms against 27ms on a join-free group-by.
 pub const DEFAULT_BATCH_ROWS: usize = 65_536;
 
 /// Largest batch a scan may hand the executor.
@@ -286,7 +286,11 @@ impl TypedValues {
         Some(match self {
             Self::Int64(values) => mix64(u64::from_ne_bytes(values.get(row)?.to_ne_bytes()) ^ 0x01),
             Self::UInt64(values) => mix64(*values.get(row)? ^ 0x02),
-            Self::Float64(values) => mix64(values.get(row)?.to_bits() ^ 0x03),
+            // The two zeros are one group, so they hash alike.
+            Self::Float64(values) => {
+                let value = *values.get(row)?;
+                mix64(if value == 0.0 { 0 } else { value.to_bits() } ^ 0x03)
+            }
             Self::Utf8(column) => {
                 let (head, tail) = column.views().get(row)?.hash_words();
                 mix64(head) ^ mix64(tail ^ 0x04)

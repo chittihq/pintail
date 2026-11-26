@@ -115,7 +115,7 @@ fn value_hash(value: &Value) -> Option<u64> {
         Value::Boolean(value) => Some(xxh3_64(&[u8::from(*value)])),
         Value::Int64(value) => Some(xxh3_64(&value.to_le_bytes())),
         Value::UInt64(value) => Some(xxh3_64(&value.to_le_bytes())),
-        Value::Float64(value) => Some(xxh3_64(&value.to_bits().to_le_bytes())),
+        Value::Float64(value) => Some(xxh3_64(&value.key_bits().to_le_bytes())),
         Value::Utf8(value) => Some(text(value.as_bytes())),
         Value::Binary(bytes) => Some(text(bytes)),
         other => other.text().map(|value| text(value.as_bytes())),
