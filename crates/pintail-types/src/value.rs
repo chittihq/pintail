@@ -102,7 +102,9 @@ impl DataType {
     }
 }
 
-/// An IEEE-754 value with bitwise equality and total ordering.
+/// An IEEE-754 value that keeps its own bits, with total ordering. Equality,
+/// hashing and ordering treat negative zero as positive zero (see
+/// [`Float64::key_bits`]), because SQL compares the two equal.
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 pub struct Float64(u64);
 

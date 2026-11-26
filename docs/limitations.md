@@ -1058,12 +1058,13 @@ but may be wrong.
   version, so replication stops with a decode error once the source's
   binlog sequence passes `.065535`. A resync does not recover it, because
   every later file is past the range; GTID mode, or a source whose binlog
-  numbering has been reset, is the way out.
+  numbering has been reset, is the way out. A MariaDB source has only the
+  second way out, because MariaDB always replicates in file-position mode.
 
-- A DOUBLE group key holding both zeros forms one group, as in MySQL, but
-  the packed grouping path prints that group's key as `0` where MySQL
-  prints the first zero it met, which may be `-0`. Counts and aggregates
-  are the same.
+- A DOUBLE group key of negative zero prints as `0` on the packed grouping
+  path, where MySQL prints the first zero the group met: `-0` for a group
+  holding only negative zeros, and either for one holding both. The rows
+  form the same groups as in MySQL, and counts and aggregates are the same.
 
 - SEC_TO_TIME, MAKETIME, CONVERT_TZ and JSON_UNQUOTE/->> advertise
   MySQL's own column types (TIME, DATETIME, LONG_BLOB) as direct
