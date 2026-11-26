@@ -2382,18 +2382,28 @@ impl AggregateState {
             return Some(Ok(Value::Null));
         }
         let limit = SESSION_GROUP_CONCAT_MAX_LEN.get();
-        let mut joined = String::new();
+        // Measured, and reserved, before the string is built.
+        let mut bytes = 0_usize;
+        let mut taken = 0;
         for (position, item) in items.iter().enumerate() {
+            if position > 0 {
+                bytes = bytes.saturating_add(separator.len());
+            }
+            bytes = bytes.saturating_add(item.text().len());
+            taken = position + 1;
+            if bytes > limit {
+                break;
+            }
+        }
+        if let Err(error) = memory.reserve(bytes) {
+            return Some(Err(error));
+        }
+        let mut joined = String::with_capacity(bytes);
+        for (position, item) in items.iter().take(taken).enumerate() {
             if position > 0 {
                 joined.push_str(separator);
             }
             joined.push_str(item.text());
-            if joined.len() > limit {
-                break;
-            }
-        }
-        if let Err(error) = memory.reserve(joined.len()) {
-            return Some(Err(error));
         }
         // MySQL truncates at the session's byte ceiling and raises warning
         // 1260 for each group that was cut.
