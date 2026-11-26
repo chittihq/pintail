@@ -94,6 +94,17 @@ pub struct RestoredTable<'a> {
     pub rows_synced: u64,
     pub schema_version: u32,
     pub soft_delete_column: Option<&'a str>,
+    /// The generations the restored segments were written under, recorded
+    /// in the same transaction as the table.
+    pub schema_history: Vec<RestoredSchemaVersion<'a>>,
+}
+
+/// One restored schema generation of a table.
+pub struct RestoredSchemaVersion<'a> {
+    pub version: u32,
+    pub ddl_text: Option<&'a str>,
+    pub columns_json: &'a str,
+    pub applied_at: &'a str,
 }
 
 /// One restored source checkpoint retained for audit and optional recovery.
@@ -379,6 +390,25 @@ impl MetaStore {
                     ),
                 )
                 .with_context(|| format!("failed to register restored table {}", table.name))?;
+            for record in &table.schema_history {
+                transaction
+                    .execute(
+                        "INSERT INTO schema_history (\
+                           db_id, table_name, version, ddl_text, columns_json, applied_at\
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        (
+                            restored.id,
+                            table.name,
+                            i64::from(record.version),
+                            record.ddl_text,
+                            record.columns_json,
+                            record.applied_at,
+                        ),
+                    )
+                    .with_context(|| {
+                        format!("failed to register restored schema history of {}", table.name)
+                    })?;
+            }
         }
         if let Some(checkpoint) = &restored.checkpoint {
             if !matches!(checkpoint.kind, "gtid" | "filepos" | "polling") {

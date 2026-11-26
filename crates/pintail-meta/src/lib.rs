@@ -26,7 +26,7 @@ mod maintenance;
 
 pub use backup::{
     BackupConfigRecord, BackupRecord, NewBackup, NewBackupConfig, RestoredCheckpoint,
-    RestoredDatabase, RestoredTable,
+    RestoredDatabase, RestoredSchemaVersion, RestoredTable,
 };
 pub use control::{
     ApiKeyRecord, AuditEventRecord, DatabaseRecord, DatabaseUpdate, DlqRecord, GoogleAdmission,

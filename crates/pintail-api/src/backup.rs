@@ -12,7 +12,7 @@ use pintail_backup::{
 };
 use pintail_meta::{
     BackupConfigRecord, BackupRecord, NewBackup, NewBackupConfig, RestoredCheckpoint,
-    RestoredDatabase, RestoredTable, TableRecord,
+    RestoredDatabase, RestoredSchemaVersion, RestoredTable, TableRecord,
 };
 use pintail_probe::ProbeReport;
 use pintail_store::{StoreOptions, TableSnapshot, TableStore};
@@ -441,7 +441,7 @@ pub(crate) async fn restore(
             "restored database name cannot be empty",
         ));
     }
-    let mut metadata = state.metadata()?;
+    let metadata = state.metadata()?;
     let record = metadata
         .backups(&database_id, 1_000)
         .map_err(ApiError::internal)?
@@ -467,13 +467,7 @@ pub(crate) async fn restore(
     let restored = restore_backup(store.as_ref(), manifest, &target)
         .await
         .map_err(unavailable)?;
-    register_restore(
-        &mut metadata,
-        &restored_id,
-        name,
-        &control,
-        &backup_created_at,
-    )
+    register_restore(&metadata, &restored_id, name, &control, &backup_created_at)
     .map_err(ApiError::internal)?;
     // Without this the restored row keeps a NULL workspace_id, and every
     // dashboard listing filters on `workspace_id = ?`. Restore would report
@@ -904,7 +898,7 @@ fn control_plane(
 }
 
 fn register_restore(
-    metadata: &mut pintail_meta::MetaStore,
+    metadata: &pintail_meta::MetaStore,
     database_id: &str,
     name: &str,
     control: &ControlPlane,
@@ -921,6 +915,19 @@ fn register_restore(
             rows_synced: table.rows_synced,
             schema_version: table.schema_version,
             soft_delete_column: table.soft_delete_column.as_deref(),
+            // The restored segments were written under these generations;
+            // without them the restored tables open at version 1 and cannot
+            // read their own files once the source has seen DDL.
+            schema_history: table
+                .schema_history
+                .iter()
+                .map(|record| RestoredSchemaVersion {
+                    version: record.version,
+                    ddl_text: record.ddl_text.as_deref(),
+                    columns_json: &record.columns_json,
+                    applied_at: &record.applied_at,
+                })
+                .collect(),
         })
         .collect::<Vec<_>>();
     let checkpoint = control
@@ -942,21 +949,6 @@ fn register_restore(
         checkpoint,
         now: &Utc::now().to_rfc3339(),
     })?;
-    // The restored segments were written under these generations; without
-    // them the restored tables open at version 1 and cannot read their own
-    // files once the source has seen DDL.
-    for table in &control.tables {
-        for record in &table.schema_history {
-            metadata.record_schema_history(
-                database_id,
-                &table.name,
-                record.version,
-                record.ddl_text.as_deref(),
-                &record.columns_json,
-                &record.applied_at,
-            )?;
-        }
-    }
     Ok(())
 }
 

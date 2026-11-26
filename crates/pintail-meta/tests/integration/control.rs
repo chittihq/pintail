@@ -1,6 +1,6 @@
 use pintail_meta::{
     DatabaseUpdate, GoogleAdmission, MetaStore, NewApiKey, NewBackup, NewBackupConfig, NewInvite,
-    RestoredCheckpoint, RestoredDatabase, RestoredTable,
+    RestoredCheckpoint, RestoredDatabase, RestoredSchemaVersion, RestoredTable,
 };
 
 #[test]
@@ -297,6 +297,20 @@ fn restored_database_is_registered_side_by_side_without_source_credentials() {
         rows_synced: 42,
         schema_version: 3,
         soft_delete_column: Some("deleted_at"),
+        schema_history: vec![
+            RestoredSchemaVersion {
+                version: 1,
+                ddl_text: None,
+                columns_json: "[]",
+                applied_at: "2026-07-29T20:00:00Z",
+            },
+            RestoredSchemaVersion {
+                version: 3,
+                ddl_text: Some("ALTER TABLE events ADD COLUMN note TEXT"),
+                columns_json: "[{\"name\":\"note\"}]",
+                applied_at: "2026-07-29T21:00:00Z",
+            },
+        ],
     }];
     metadata
         .register_restored_database(&RestoredDatabase {
@@ -341,6 +355,15 @@ fn restored_database_is_registered_side_by_side_without_source_credentials() {
     assert_eq!(table.state, "restored");
     assert_eq!(table.rows_synced, 42);
     assert_eq!(table.schema_version, 3);
+    let history = metadata.schema_history("restored", "events").unwrap();
+    assert_eq!(
+        history.iter().map(|record| record.version).collect::<Vec<_>>(),
+        [1, 3]
+    );
+    assert_eq!(
+        history[1].ddl_text.as_deref(),
+        Some("ALTER TABLE events ADD COLUMN note TEXT")
+    );
     assert_eq!(
         metadata
             .snapshot_checkpoint("restored")
@@ -349,6 +372,57 @@ fn restored_database_is_registered_side_by_side_without_source_credentials() {
             .gtid_set
             .as_deref(),
         Some("server:1-9")
+    );
+}
+
+/// A restore whose schema history cannot be written registers nothing: the
+/// database, its tables and its history land in one transaction, so no
+/// restored table is left without the generations its segments need.
+#[test]
+fn restore_with_unwritable_schema_history_registers_nothing() {
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata =
+        MetaStore::open(&data_dir.path().join("pintail-meta.db")).expect("metadata store");
+    let generation = RestoredSchemaVersion {
+        version: 2,
+        ddl_text: None,
+        columns_json: "[]",
+        applied_at: "2026-07-29T21:00:00Z",
+    };
+    let duplicate = RestoredSchemaVersion {
+        version: 2,
+        ddl_text: None,
+        columns_json: "[]",
+        applied_at: "2026-07-29T21:00:00Z",
+    };
+    let tables = [RestoredTable {
+        name: "events",
+        primary_key_json: None,
+        cursor_column: None,
+        sort_key_json: None,
+        rows_synced: 0,
+        schema_version: 2,
+        soft_delete_column: None,
+        schema_history: vec![generation, duplicate],
+    }];
+    let result = metadata.register_restored_database(&RestoredDatabase {
+        backup_created_at: "2026-07-29T23:00:00Z",
+        id: "restored",
+        name: "app recovery",
+        probe_json: "{}",
+        effective_mode: "cdc",
+        tables: &tables,
+        checkpoint: None,
+        now: "2026-07-30T01:00:00Z",
+    });
+    assert!(result.is_err());
+    assert!(metadata.database("restored").unwrap().is_none());
+    assert!(metadata.tables("restored").unwrap().is_empty());
+    assert!(
+        metadata
+            .schema_history("restored", "events")
+            .unwrap()
+            .is_empty()
     );
 }
 
