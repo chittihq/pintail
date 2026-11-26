@@ -273,7 +273,7 @@ pub(super) fn aggregate_lanes(
                 // carries everything the moments need. Riding a lane is the
                 // point: an aggregate with no lane drops its whole query
                 // onto the per-row Value path, which is what costs Q7 its
-                // margin against ClickHouse (issue #6).
+                // benchmark margin (issue #6).
                 AggregateFunction::StdDev { .. } | AggregateFunction::Variance { .. } => matches!(
                     storage,
                     DataType::Int64 | DataType::UInt64 | DataType::Float64 | DataType::Boolean
