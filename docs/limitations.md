@@ -1061,6 +1061,13 @@ but may be wrong.
   numbering has been reset, is the way out. A MariaDB source has only the
   second way out, because MariaDB always replicates in file-position mode.
 
+- A MySQL source that fails over to a primary with a new server UUID, in GTID
+  mode, makes the mirror take a full copy of the database. Row versions come
+  from the GTID sequence, the new primary numbers its own transactions from
+  where it stands, and Pintail cannot tell a failover from a source rebuilt
+  with different data, so it copies rather than risk a change losing to the
+  stored row it replaces.
+
 - A DOUBLE group key of negative zero prints as `0` on the packed grouping
   path, where MySQL prints the first zero the group met: `-0` for a group
   holding only negative zeros, and either for one holding both. The rows
