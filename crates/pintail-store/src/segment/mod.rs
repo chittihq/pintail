@@ -2787,7 +2787,6 @@ pub(crate) struct ProjectedValueFetch {
     pub(crate) reserved_bytes: usize,
 }
 
-#[allow(clippy::too_many_lines)]
 /// Whether the segment can be read under `schema`, from its header and its
 /// column directory alone: what a full read would refuse because of the
 /// schema, it refuses here - a newer or different schema, a column whose
@@ -2851,6 +2850,7 @@ pub(crate) fn check_readable_under(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn read_row_headers_range(
     directory: &Path,
     meta: &SegmentMeta,
