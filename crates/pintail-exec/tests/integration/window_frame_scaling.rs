@@ -120,10 +120,7 @@ fn run_values(sql: &str) -> (Vec<(i64, Value)>, std::time::Duration) {
     while let Some(batch) = execution.next_batch().expect("pull") {
         for row in batch.selection().selected_rows() {
             let id = number(batch.columns()[0].value(row).expect("id")).expect("id");
-            let value = batch.columns()[1]
-                .value(row)
-                .expect("window value")
-                .clone();
+            let value = batch.columns()[1].value(row).expect("window value").clone();
             rows.push((i64::try_from(id).expect("id"), value));
         }
     }
@@ -202,7 +199,7 @@ fn window_frames_over_a_large_partition_cost_about_one_pass() {
     }
 }
 
-/// A running GROUP_CONCAT reads the items folded so far without copying
+/// A running `GROUP_CONCAT` reads the items folded so far without copying
 /// them, and stops joining once the session's byte ceiling is passed: each
 /// row pays at most that ceiling, not the whole frame. It copied every
 /// collected item for every row, which was quadratic in the partition.

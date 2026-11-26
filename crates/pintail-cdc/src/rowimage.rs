@@ -964,7 +964,7 @@ mod tests {
     use mysql_async::consts::ColumnType;
     use pintail_probe::SourceColumn;
 
-    /// A TIMESTAMP's seconds are unsigned: MariaDB stores moments up to 2106,
+    /// A TIMESTAMP's seconds are unsigned: `MariaDB` stores moments up to 2106,
     /// and reading them signed turned 2038-01-19 03:14:08 into 1901.
     #[test]
     fn timestamps_past_2038_read_as_unsigned_seconds() {

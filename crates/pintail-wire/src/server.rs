@@ -930,7 +930,7 @@ struct Session {
     user: String,
     /// The address the client connected from, the host half of `USER()`.
     client_host: String,
-    /// Set while COM_STMT_PREPARE describes a statement: the engine plans
+    /// Set while `COM_STMT_PREPARE` describes a statement: the engine plans
     /// it and answers its columns without running it.
     describing: bool,
 }

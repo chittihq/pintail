@@ -3595,9 +3595,8 @@ mod inline_tests {
         }
     }
 
-
     /// Describing a statement plans it and answers its columns with no rows:
-    /// COM_STMT_PREPARE ran the whole query to read them.
+    /// `COM_STMT_PREPARE` ran the whole query to read them.
     #[test]
     fn a_described_statement_answers_its_columns_and_runs_nothing() {
         let (_directory, _writer, engine) = loaded(10);
@@ -3618,7 +3617,9 @@ mod inline_tests {
     #[test]
     fn the_words_information_schema_in_a_literal_route_nothing() {
         let (_directory, _writer, engine) = loaded(10);
-        let plain = engine.execute("db", "SELECT id FROM a ORDER BY id", 10).unwrap();
+        let plain = engine
+            .execute("db", "SELECT id FROM a ORDER BY id", 10)
+            .unwrap();
         let mentioned = engine
             .execute(
                 "db",
@@ -3637,7 +3638,6 @@ mod inline_tests {
             .unwrap();
         assert_eq!(metadata.rows.len(), 1);
     }
-
 
     /// The thread a statement arrives on serves other connections, so
     /// anything that reads a table, or whose work its text does not bound,

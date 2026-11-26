@@ -2356,14 +2356,17 @@ impl AggregateState {
         }
     }
 
-    /// The GROUP_CONCAT of the rows folded so far, read without consuming
+    /// The `GROUP_CONCAT` of the rows folded so far, read without consuming
     /// the state: a running window asks after every peer group, and
     /// cloning the collected items to finish them cost each row the whole
     /// frame. Joining stops once the session's byte ceiling is passed, so a
     /// row pays at most that ceiling. `None` for every other state, and for
-    /// a GROUP_CONCAT that sorts its items or has a distinct set, which
+    /// a `GROUP_CONCAT` that sorts its items or has a distinct set, which
     /// finish as usual.
-    pub(super) fn running_concat(&self, memory: &MemoryTracker) -> Option<Result<Value, ExecError>> {
+    pub(super) fn running_concat(
+        &self,
+        memory: &MemoryTracker,
+    ) -> Option<Result<Value, ExecError>> {
         let AggregateValue::GroupConcat {
             items, separator, ..
         } = &self.value
@@ -2400,7 +2403,8 @@ impl AggregateState {
                 cut -= 1;
             }
             joined.truncate(cut);
-            SESSION_GROUP_CONCAT_WARNINGS.set(SESSION_GROUP_CONCAT_WARNINGS.get().saturating_add(1));
+            SESSION_GROUP_CONCAT_WARNINGS
+                .set(SESSION_GROUP_CONCAT_WARNINGS.get().saturating_add(1));
         }
         Some(Ok(Value::Utf8(joined)))
     }
