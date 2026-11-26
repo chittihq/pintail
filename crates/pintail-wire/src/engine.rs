@@ -2829,7 +2829,7 @@ fn source_result_nullability(
 /// Whether `statement` reads a relation of `information_schema`, anywhere
 /// in it: a subquery, a join, a CTE. Only the relations it names count; the
 /// words in a string literal or a comment route nothing, and a query that
-/// compared a column with the text 'information_schema' was answered from
+/// compared a column with the text `'information_schema'` was answered from
 /// the metadata catalog, where none of its tables exist.
 fn names_information_schema(statement: &Statement) -> bool {
     sqlparser::ast::visit_relations(statement, |relation| {
