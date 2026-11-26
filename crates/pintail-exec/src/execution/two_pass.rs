@@ -315,7 +315,7 @@ fn two_pass_key_bits(value: &Value) -> Option<(u64, bool)> {
         Value::Null => Some((0, true)),
         Value::Int64(value) => Some((u64::from_ne_bytes(value.to_ne_bytes()), false)),
         Value::UInt64(value) => Some((*value, false)),
-        Value::Float64(value) => Some((value.get().to_bits(), false)),
+        Value::Float64(value) => Some((value.key_bits(), false)),
         Value::Boolean(value) => Some((u64::from(*value), false)),
         // Text-shaped values have no fixed-width lane key.
         Value::Utf8(_) | Value::Binary(_) | Value::Enum { .. } | Value::DecimalAverage(_) => None,
@@ -2574,7 +2574,7 @@ fn two_pass_lane_bits(batch: &RecordBatch, row: usize, lane: &TwoPassLane) -> Op
             match batch.column(*column).and_then(|column| column.value(row)) {
                 Some(Value::Int64(value)) => Some(u64::from_ne_bytes(value.to_ne_bytes())),
                 Some(Value::UInt64(value)) => Some(*value),
-                Some(Value::Float64(value)) => Some(value.get().to_bits()),
+                Some(Value::Float64(value)) => Some(value.key_bits()),
                 Some(Value::Boolean(value)) => Some(u64::from(*value)),
                 _ => None,
             }

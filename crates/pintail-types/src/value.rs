@@ -119,6 +119,14 @@ impl Float64 {
         f64::from_bits(self.0)
     }
 
+    /// The bits this value is grouped, joined and deduplicated by: its own,
+    /// except that a negative zero takes positive zero's, because the two
+    /// compare equal in SQL.
+    #[must_use]
+    pub fn key_bits(self) -> u64 {
+        if self.get() == 0.0 { 0 } else { self.0 }
+    }
+
     /// The value as `MySQL` prints a DOUBLE: the shortest digits that read
     /// back to it, in fixed notation from 1e-15 up to 1e15 and in exponent
     /// notation (`1e20`, `1.5e-16`) outside that range - except that a
@@ -228,7 +236,7 @@ impl Float64 {
 
 impl PartialEq for Float64 {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.key_bits() == other.key_bits()
     }
 }
 
@@ -242,13 +250,13 @@ impl PartialOrd for Float64 {
 
 impl Ord for Float64 {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.get().total_cmp(&other.get())
+        f64::from_bits(self.key_bits()).total_cmp(&f64::from_bits(other.key_bits()))
     }
 }
 
 impl std::hash::Hash for Float64 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
+        self.key_bits().hash(state);
     }
 }
 
@@ -489,6 +497,24 @@ fn even_of_two_shortest(magnitude: f64, digits: &str, exponent: i32) -> Option<S
 mod tests {
     use super::{DecimalQuotient, Value};
     use std::hash::{Hash, Hasher};
+
+    #[test]
+    fn negative_zero_groups_with_zero_but_keeps_its_sign() {
+        let hash = |value: &Value| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            value.hash(&mut hasher);
+            hasher.finish()
+        };
+        let negative = Value::float64(-0.0);
+        let positive = Value::float64(0.0);
+        assert_eq!(negative, positive);
+        assert_eq!(hash(&negative), hash(&positive));
+        assert_eq!(
+            super::Float64::new(-0.0).cmp(&super::Float64::new(0.0)),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(super::Float64::new(-0.0).get().to_bits(), (-0.0_f64).to_bits());
+    }
 
     #[test]
     fn a_negative_zero_float_prints_its_sign() {

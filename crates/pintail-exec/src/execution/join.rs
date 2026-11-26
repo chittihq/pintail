@@ -743,7 +743,7 @@ fn encode_group_value(
         }
         Value::Float64(number) => {
             out.push(4);
-            out.extend_from_slice(&number.get().to_bits().to_le_bytes());
+            out.extend_from_slice(&number.key_bits().to_le_bytes());
         }
         // An ENUM groups and joins by its label, under the SAME tag as a
         // plain string: MySQL compares an ENUM to a text column by string,
