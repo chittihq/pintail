@@ -281,8 +281,10 @@ pub struct Connection<R, W> {
 impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W> {
     /// Wraps a duplex stream.
     pub const fn new(reader: R, writer: W) -> Self {
+        let mut reader = PacketReader::new(reader);
+        reader.set_payload_limit(crate::packet::PRE_AUTH_PAYLOAD_LIMIT);
         Self {
-            reader: PacketReader::new(reader),
+            reader,
             writer: PacketWriter::new(writer),
             capabilities: CapabilityFlags::empty(),
             watch_ended: false,
@@ -499,6 +501,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
     ) -> Self {
         let mut reader = PacketReader::new(reader);
         reader.set_sequence(read_sequence);
+        reader.set_payload_limit(crate::packet::PRE_AUTH_PAYLOAD_LIMIT);
         let mut writer = PacketWriter::new(writer);
         writer.set_sequence(write_sequence);
         Self {
@@ -606,6 +609,8 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         handler: &mut dyn Handler,
         watch: Option<&mut dyn DisconnectWatch>,
     ) -> std::io::Result<bool> {
+        // Commands come only after authentication, so the full limit applies.
+        self.reader.set_payload_limit(crate::packet::DEFAULT_PAYLOAD_LIMIT);
         let Some(payload) = self.reader.next_payload().await? else {
             return Ok(false);
         };

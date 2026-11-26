@@ -13,6 +13,18 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 /// marker, never a complete message.
 pub const MAX_PAYLOAD: usize = 0xff_ff_ff;
 
+/// The longest logical payload a reader rejoins unless told otherwise: the
+/// server's default `max_allowed_packet`. A peer announcing more is refused
+/// before its body is allocated, so a run of continuation headers cannot
+/// grow one payload without bound.
+pub const DEFAULT_PAYLOAD_LIMIT: usize = 64 * 1024 * 1024;
+
+/// The longest payload read before the client has authenticated. A
+/// handshake response, its connection attributes and an auth exchange fit
+/// far inside it, and an anonymous socket cannot make the server allocate
+/// more.
+pub const PRE_AUTH_PAYLOAD_LIMIT: usize = 1024 * 1024;
+
 /// Reads length-prefixed packets, rejoining continuations into one payload.
 pub struct PacketReader<R> {
     inner: R,
@@ -28,6 +40,8 @@ pub struct PacketReader<R> {
     end: usize,
     /// Whether a read may take more from the transport than was asked for.
     read_ahead: bool,
+    /// The longest logical payload [`Self::next_payload`] accepts.
+    limit: usize,
 }
 
 /// The most one read takes from the transport when reading ahead. A command
@@ -47,6 +61,7 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
             start: 0,
             end: 0,
             read_ahead: false,
+            limit: DEFAULT_PAYLOAD_LIMIT,
         }
     }
 
@@ -59,6 +74,12 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
     /// at zero for every new command.
     pub const fn set_sequence(&mut self, sequence: u8) {
         self.sequence = sequence;
+    }
+
+    /// Sets the longest logical payload a read accepts; a longer one fails
+    /// with `InvalidData` before its body is allocated.
+    pub const fn set_payload_limit(&mut self, limit: usize) {
+        self.limit = limit;
     }
 
     /// Lets a read take whatever the transport has, up to a small bound,
@@ -214,6 +235,12 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
                 usize::from(header[0]) | usize::from(header[1]) << 8 | usize::from(header[2]) << 16;
             self.sequence = header[3].wrapping_add(1);
             let start = payload.len();
+            if start.saturating_add(length) > self.limit {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "packet larger than the payload limit",
+                ));
+            }
             payload.resize(start + length, 0);
             self.read_exact_primed(&mut payload[start..]).await?;
             if length < MAX_PAYLOAD {
@@ -416,6 +443,24 @@ mod tests {
             .await
             .expect("read")
             .expect("one payload")
+    }
+
+    #[tokio::test]
+    async fn a_payload_past_the_limit_is_refused_before_its_body_is_read() {
+        // A header announcing a full packet, then nothing: the reader must
+        // refuse on the header alone rather than allocate and wait.
+        let header = [0xff_u8, 0xff, 0xff, 0];
+        let mut reader = PacketReader::new(header.as_slice());
+        reader.set_payload_limit(1024);
+        let error = reader.next_payload().await.expect_err("over the limit");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        // Within the limit, the same reader shape reads normally.
+        let mut reader = PacketReader::new([3_u8, 0, 0, 0, b'a', b'b', b'c'].as_slice());
+        reader.set_payload_limit(3);
+        assert_eq!(
+            reader.next_payload().await.expect("read"),
+            Some(b"abc".to_vec())
+        );
     }
 
     #[tokio::test]
