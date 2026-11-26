@@ -3842,19 +3842,24 @@ pub(crate) fn column_vector_from_decoded(
             // the defensive arm below still needed them to rebuild the
             // column - so every temporal column copied its whole values
             // vector on a path that then threw the original away.
-            let agrees = matches!(
-                (units, data_type),
+            // The width counts too: a segment written before an ALTER that
+            // changed a DECIMAL's scale or a DATETIME's precision holds units
+            // at the old width, and reading them as the new type's would
+            // answer every value at the wrong scale.
+            let agrees = match (units, data_type) {
                 (
-                    pintail_store::NativeUnits::Decimal { .. },
-                    pintail_types::DataType::Decimal { .. }
-                ) | (
-                    pintail_store::NativeUnits::Date,
-                    pintail_types::DataType::Date32
-                ) | (
-                    pintail_store::NativeUnits::DateTime { .. },
-                    pintail_types::DataType::DateTime64 { .. }
-                )
-            );
+                    pintail_store::NativeUnits::Decimal { scale },
+                    pintail_types::DataType::Decimal {
+                        scale: declared, ..
+                    },
+                ) => scale == declared,
+                (pintail_store::NativeUnits::Date, pintail_types::DataType::Date32) => true,
+                (
+                    pintail_store::NativeUnits::DateTime { fsp },
+                    pintail_types::DataType::DateTime64 { fsp: declared },
+                ) => fsp == declared,
+                _ => false,
+            };
             if !agrees {
                 // Unit kind and schema type disagree (defensive): fall back
                 // to row values.
