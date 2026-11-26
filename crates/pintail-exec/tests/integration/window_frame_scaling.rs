@@ -217,5 +217,8 @@ fn a_running_group_concat_pays_at_most_the_ceiling_per_row() {
     let last = text(&rows[rows.len() - 1].1);
     assert_eq!(last.len(), 1_024);
     assert!(last.starts_with("10,20,30,40,50,60,0,10"));
-    assert!(elapsed.as_secs_f64() < 2.0, "{sql} took {elapsed:?}");
+    // Every row answers a kilobyte, so this takes about two seconds in a
+    // test build beside the rest of the suite; copying the frame per row
+    // took minutes.
+    assert!(elapsed.as_secs_f64() < 10.0, "{sql} took {elapsed:?}");
 }
