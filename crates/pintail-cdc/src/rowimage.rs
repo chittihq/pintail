@@ -963,6 +963,7 @@ mod tests {
     use super::{Placement, PlanColumn, Reader};
     use mysql_async::consts::ColumnType;
     use pintail_probe::SourceColumn;
+    use pintail_types::{DataType, Value};
 
     /// A TIMESTAMP's seconds are unsigned: `MariaDB` stores moments up to 2106,
     /// and reading them signed turned 2038-01-19 03:14:08 into 1901.
@@ -971,14 +972,13 @@ mod tests {
         let read = |seconds: u32| super::epoch_timestamp(&seconds.to_be_bytes(), 0);
         assert_eq!(
             read(0x8000_0000),
-            Some(pintail_types::Value::Utf8("2038-01-19 03:14:08".to_owned()))
+            Some(Value::Utf8("2038-01-19 03:14:08".to_owned()))
         );
         assert_eq!(
             read(u32::MAX),
-            Some(pintail_types::Value::Utf8("2106-02-07 06:28:15".to_owned()))
+            Some(Value::Utf8("2106-02-07 06:28:15".to_owned()))
         );
     }
-    use pintail_types::{DataType, Value};
 
     fn column(data_type: &str, column_type: &str, pintail_type: DataType) -> SourceColumn {
         SourceColumn {

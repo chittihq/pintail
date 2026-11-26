@@ -959,6 +959,26 @@ mod tests {
         );
     }
 
+    /// A TIMESTAMP's seconds that came back negative are the same unsigned
+    /// bits read signed: a moment past 2038, which `MariaDB` stores.
+    #[test]
+    fn negative_timestamp_seconds_are_read_as_unsigned() {
+        let timestamp = column("timestamp", "timestamp(3)");
+        let past_2038 = i64::from(i32::MIN);
+        assert_eq!(
+            adapt_binlog_value(
+                &timestamp,
+                MysqlValue::Bytes(format!("{past_2038}.250").into_bytes())
+            )
+            .expect("timestamp"),
+            MysqlValue::Date(2038, 1, 19, 3, 14, 8, 250_000)
+        );
+        assert_eq!(
+            adapt_binlog_value(&timestamp, MysqlValue::Bytes(b"-1".to_vec())).expect("timestamp"),
+            MysqlValue::Date(2106, 2, 7, 6, 28, 15, 0)
+        );
+    }
+
     #[test]
     fn maps_enum_indexes_and_set_masks_to_labels() {
         let enum_column = column("enum", "enum('alpha','βeta','it\\'s')");
