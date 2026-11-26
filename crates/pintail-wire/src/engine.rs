@@ -124,6 +124,12 @@ pub struct QueryOutput {
     pub affected: Option<u64>,
 }
 
+/// The row ceiling that asks for a statement's columns and no rows: a
+/// prepared statement is described by planning it, and preparing it ran the
+/// whole query only to throw its rows away. No other ceiling is zero, since
+/// the server reads an unset or zero limit as no limit.
+pub const DESCRIBE_ONLY: usize = 0;
+
 /// Where a result too large to hold whole goes while execution produces
 /// it.
 pub trait RowSink {
@@ -1514,7 +1520,7 @@ impl ReplicaEngine {
                 }
                 // The metadata tables are built per statement, which is not
                 // bounded work.
-                if contains_ignore_ascii_case(sql, "information_schema") {
+                if names_information_schema(&statement) {
                     return Ok(Attempt::Declined(InlineAnswer::NotBounded));
                 }
                 // Waiting for a slot is a worker's to do.
@@ -1570,9 +1576,7 @@ impl ReplicaEngine {
             Err(error) => return Err(QueryError::Invalid(error.to_string())),
         }
         crate::trace::mark("metadata");
-        if matches!(statement, Statement::Query(_))
-            && contains_ignore_ascii_case(sql, "information_schema")
-        {
+        if matches!(statement, Statement::Query(_)) && names_information_schema(&statement) {
             let mut statement = statement.clone();
             pintail_sql::resolve_database_function(&mut statement, &replica.database.name);
             let (metadata_catalog, metadata_provider) =
@@ -2053,6 +2057,16 @@ impl ReplicaEngine {
                 wire_hint: wire_hints.get(index).copied().flatten(),
             })
             .collect::<Vec<_>>();
+        if max_rows == DESCRIBE_ONLY {
+            stats.duration_ms = elapsed_ms(started);
+            return Ok(Answer::Whole(QueryOutput {
+                fields,
+                rows: ResultRows::default(),
+                stats,
+                truncated: false,
+                affected: None,
+            }));
+        }
         let collected = match collect_rows(&mut execution, max_rows, &fields, sink) {
             Ok(collected) => collected,
             Err(error) => {
@@ -2812,6 +2826,26 @@ fn source_result_nullability(
         .collect()
 }
 
+/// Whether `statement` reads a relation of `information_schema`, anywhere
+/// in it: a subquery, a join, a CTE. Only the relations it names count; the
+/// words in a string literal or a comment route nothing, and a query that
+/// compared a column with the text 'information_schema' was answered from
+/// the metadata catalog, where none of its tables exist.
+fn names_information_schema(statement: &Statement) -> bool {
+    sqlparser::ast::visit_relations(statement, |relation| {
+        match relation.0.first().and_then(|part| part.as_ident()) {
+            Some(schema)
+                if relation.0.len() > 1
+                    && schema.value.eq_ignore_ascii_case("information_schema") =>
+            {
+                std::ops::ControlFlow::Break(())
+            }
+            _ => std::ops::ControlFlow::Continue(()),
+        }
+    })
+    .is_break()
+}
+
 /// The cached replica, but only when `stamp` - taken from disk - says
 /// nothing has moved since it was loaded, and only when the copy returned
 /// is the one the caller's checks were made against.
@@ -2821,15 +2855,6 @@ fn source_result_nullability(
 /// already holds would prove nothing: that stamp was recorded when the
 /// replica was loaded, and the commit this query must see may have landed
 /// since.
-/// Whether `text` holds `needle` (given in lower case), compared without
-/// regard to ASCII case and without copying `text`.
-fn contains_ignore_ascii_case(text: &str, needle: &str) -> bool {
-    let needle = needle.as_bytes();
-    text.as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle))
-}
-
 fn revalidated(
     cache: &ReplicaCache<LoadedReplica>,
     key: &CacheKey,
@@ -3570,6 +3595,50 @@ mod inline_tests {
         }
     }
 
+
+    /// Describing a statement plans it and answers its columns with no rows:
+    /// COM_STMT_PREPARE ran the whole query to read them.
+    #[test]
+    fn a_described_statement_answers_its_columns_and_runs_nothing() {
+        let (_directory, _writer, engine) = loaded(10);
+        let ran = engine.execute("db", "SELECT id, n FROM a", 100).unwrap();
+        let described = engine
+            .execute("db", "SELECT id, n FROM a", DESCRIBE_ONLY)
+            .unwrap();
+        assert_eq!(ran.rows.len(), 10);
+        assert!(described.rows.is_empty());
+        assert!(!described.truncated);
+        assert_eq!(described.fields, ran.fields);
+    }
+
+    /// A query that only mentions `information_schema` in a string literal
+    /// reads its own tables: the metadata catalog answers only a query that
+    /// names one of its relations, so comparing a column with that text
+    /// came back as an unknown table.
+    #[test]
+    fn the_words_information_schema_in_a_literal_route_nothing() {
+        let (_directory, _writer, engine) = loaded(10);
+        let plain = engine.execute("db", "SELECT id FROM a ORDER BY id", 10).unwrap();
+        let mentioned = engine
+            .execute(
+                "db",
+                "SELECT id FROM a WHERE 'information_schema' <> '' ORDER BY id",
+                10,
+            )
+            .unwrap();
+        assert_eq!(mentioned.rows, plain.rows);
+        assert!(!plain.rows.is_empty());
+        let metadata = engine
+            .execute(
+                "db",
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'a'",
+                10,
+            )
+            .unwrap();
+        assert_eq!(metadata.rows.len(), 1);
+    }
+
+
     /// The thread a statement arrives on serves other connections, so
     /// anything that reads a table, or whose work its text does not bound,
     /// is left for a worker - and left untouched, so the worker starts it
@@ -3590,7 +3659,7 @@ mod inline_tests {
             "SELECT 1 UNION SELECT 2",
             "WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < 9) SELECT i FROM c",
             "SELECT table_name FROM information_schema.tables",
-            "SELECT 'information_schema'",
+            "SELECT COUNT(*) FROM information_schema.tables",
             "SHOW TABLES",
             long.as_str(),
         ] {

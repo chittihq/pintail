@@ -930,6 +930,9 @@ struct Session {
     user: String,
     /// The address the client connected from, the host half of `USER()`.
     client_host: String,
+    /// Set while COM_STMT_PREPARE describes a statement: the engine plans
+    /// it and answers its columns without running it.
+    describing: bool,
 }
 
 impl Session {
@@ -1004,6 +1007,7 @@ impl Default for Session {
             connection_id: 0,
             user: String::new(),
             client_host: "localhost".to_owned(),
+            describing: false,
         }
     }
 }
@@ -1432,6 +1436,12 @@ impl<F> StatementRun<F> {
             &*session,
             *deadline,
         );
+        // A statement being prepared is described, never run.
+        let row_ceiling = if session.describing {
+            crate::engine::DESCRIBE_ONLY
+        } else {
+            max_result_rows()
+        };
         let ran = pintail_sql::with_parse_mode(*parse_mode, || {
             pintail_exec::with_execution_cancellation(cancellation.clone(), || {
                 let installs = SessionInstalls::install(session);
@@ -1445,13 +1455,13 @@ impl<F> StatementRun<F> {
                                 Lane::Inline => engine.execute_answer_inline(
                                     database_id,
                                     sql,
-                                    max_result_rows(),
+                                    row_ceiling,
                                     deadline,
                                 ),
                                 Lane::SmallRead(how) => engine.execute_answer_in_place(
                                     database_id,
                                     sql,
-                                    max_result_rows(),
+                                    row_ceiling,
                                     deadline,
                                     &|read: &mut dyn FnMut()| match how {
                                         SmallReads::HandOver => {
@@ -1464,7 +1474,7 @@ impl<F> StatementRun<F> {
                                     .execute_answer(
                                         database_id,
                                         sql,
-                                        max_result_rows(),
+                                        row_ceiling,
                                         deadline,
                                         sink.as_mut()
                                             .map(|sink| sink as &mut dyn crate::engine::RowSink),
@@ -3101,18 +3111,25 @@ impl Handler for Backend {
                 )
             });
         let preview = preview.map_err(|error| (ErrorKind::ErParseError, error))?;
-        let variables = self
-            .session
-            .lock()
-            .map_err(|error| (ErrorKind::ErUnknownError, error.to_string()))?
-            .user_variables
-            .clone();
+        let variables = {
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|error| (ErrorKind::ErUnknownError, error.to_string()))?;
+            // Preparing plans the statement for its columns; it runs nothing.
+            session.describing = true;
+            session.user_variables.clone()
+        };
         let output = Backend::execute(self, &preview).await;
         // Preparing describes the result without committing expression assignments.
-        self.session
-            .lock()
-            .map_err(|error| (ErrorKind::ErUnknownError, error.to_string()))?
-            .user_variables = variables;
+        {
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|error| (ErrorKind::ErUnknownError, error.to_string()))?;
+            session.describing = false;
+            session.user_variables = variables;
+        }
         let output = output.map_err(|error| (error_kind(&error), error.to_string()))?;
         let statement_id = self.next_statement_id;
         self.next_statement_id = self.next_statement_id.wrapping_add(1).max(1);
