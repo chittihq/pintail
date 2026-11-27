@@ -12,8 +12,58 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `vue-router` 5 it requires, for the advisories published against the
   versions before them.
 
+### Changed
+
+- Decimal `+`, `-` and `*` chains such as `price * (1 - discount) * (1 + tax)`
+  are computed on scaled integer units instead of exact fractions, and a
+  decimal subtree repeated across a projection is computed once per batch.
+- Aggregates over decimals declared wider than 18 digits fold in the
+  packed-key grouping path instead of row by row.
+- Computed projections under an aggregate are evaluated on the scan's
+  worker threads when they are deterministic and cannot raise a warning;
+  anything else stays on the query thread, so warnings and errors are
+  unchanged. Together with the two entries above, TPC-H Q1 at scale
+  factor 1 runs in about a thirtieth of the time it took.
+- A write while a snapshot of the memtable is open copies the one chunk
+  it lands in instead of the whole memtable, so a one-row write that took
+  tens of milliseconds next to a large memtable takes microseconds, and
+  the memory is no longer doubled while the snapshot lives.
+- A snapshot's copy workers run on threads of their own; a multi-table
+  copy finishes about a fifth sooner.
+- A schema change is judged from the segment headers instead of reading
+  every segment.
+- DDL and drift re-probes read estimated row counts instead of counting
+  each table.
+- Metrics count dead-letter and backup records in SQL and read the
+  process's resident memory from `/proc`.
+- A running `GROUP_CONCAT` in a window reads its items without copying
+  them.
+
 ### Fixed
 
+- Parallel aggregate waves, key-lookup join builds and sorted outputs
+  charge their memory to the query's budget and hand it back once
+  exhausted, so a query can no longer exceed its memory limit through
+  them.
+- A running `GROUP_CONCAT` reserves its bytes before building the value.
+- Preparing a statement over the wire describes it without running it,
+  and a write is never executed by a prepare.
+- Statements naming `information_schema` are routed by the relations
+  they read, not by the text.
+- An `ALTER TABLE` that changes a column and also converts the table's
+  character set keeps the column change, and the column clauses beside
+  the conversion are read.
+- TIMESTAMP values past 2038 replicate correctly: the binlog's seconds
+  are read as unsigned.
+- Grouped `MIN`, `MAX` and `ANY_VALUE` over DOUBLE keep a negative zero's
+  sign, and both zeros hash alike in batch grouping and the distinct-count
+  sketch.
+- Packed decimal and temporal units are read only when their scale or
+  precision matches the column's declaration.
+- A dictionary-coded text column with rows no longer reports itself
+  empty.
+- A restore records its schema history and joins its workspace inside the
+  same transaction that registers the database.
 - The nightly replay of MySQL's and MariaDB's suites runs against the
   MySQL patch its baselines were banked on; `mysql:8.4` had moved to a
   newer patch and every job stopped at its start.
