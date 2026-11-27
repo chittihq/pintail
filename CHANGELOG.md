@@ -6,11 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.8-rc5] - 2026-11-27
+
+The metadata schema stays at version 26, so this release and 0.1.8-rc4
+open each other's directories. A backup taken by an earlier release
+carries no schema history and restores as before.
+
 ### Security
 
 - `rustls` 0.23.46 and, in the dashboard, `nuxt` 4.6.2 with the
   `vue-router` 5 it requires, for the advisories published against the
   versions before them.
+- A wire connection's announced payload is bounded before its body is
+  allocated: 1 MiB until the client authenticates, then the default
+  `max_allowed_packet` of 64 MiB. A single unauthenticated socket could
+  make the server allocate until it ran out of memory.
 
 ### Changed
 
@@ -38,6 +48,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   process's resident memory from `/proc`.
 - A running `GROUP_CONCAT` in a window reads its items without copying
   them.
+- Opening a table keyed by generated row ids reads the highest id from
+  segment metadata instead of decoding every row.
 
 ### Fixed
 
@@ -62,8 +74,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   precision matches the column's declaration.
 - A dictionary-coded text column with rows no longer reports itself
   empty.
-- A restore records its schema history and joins its workspace inside the
-  same transaction that registers the database.
+- A backup opens each table at its current schema generation and carries
+  the schema history, so a table that had seen DDL restores readable. A
+  restore records that history and joins its workspace inside the same
+  transaction that registers the database.
+- A negative-zero DOUBLE groups, joins and deduplicates with zero; the
+  stored value keeps its sign.
+- Decimals with more than 18 fractional digits convert to doubles exactly
+  in float aggregates.
+- TIME values compare by duration in the typed comparison kernel, so
+  `100:00:00` sorts above `20:00:00` and negative times order correctly.
 - The nightly replay of MySQL's and MariaDB's suites runs against the
   MySQL patch its baselines were banked on; `mysql:8.4` had moved to a
   newer patch and every job stopped at its start.
